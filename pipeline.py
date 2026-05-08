@@ -37,7 +37,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     # ── STEP 1: Fantasy Info Central ──────────────────────────────────
     emit({"type": "section", "msg": "Step 1 — Loading player list from Fantasy Info Central"})
     step1 = get_step1_players_or_scrape(run_date, emit=emit)
-    top30 = step1[:30]
+    top30 = step1  # no limit — use all qualifying players
     pitcher_map = {p["batter"]: p["pitcher"] for p in top30}
     emit({"type": "step1_done", "msg": f"✅ {len(top30)} players loaded", "count": len(top30)})
 
