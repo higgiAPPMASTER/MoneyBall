@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: mlb-daily-picks
+    runtime: python
+    buildCommand: pip install -r requirements.txt && playwright install chromium --with-deps
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: USERS
+        value: "admin:picks2026"
+      - key: STATMUSE_EMAIL
+        sync: false
+      - key: STATMUSE_PASSWORD
+        sync: false
+      - key: PYTHON_VERSION
+        value: "3.11.0"
