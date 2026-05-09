@@ -46,7 +46,7 @@ def get_game_time_type(team_name, date_str):
                 game_date = event.get("date", "")
                 if game_date:
                     dt = datetime.fromisoformat(game_date.replace("Z", "+00:00"))
-                    return "day" if dt.hour < 21 else "night"
+                    return "night" if (dt.hour >= 21 or dt.hour <= 5) else "day"
         return "unknown"
     except:
         return "unknown"
