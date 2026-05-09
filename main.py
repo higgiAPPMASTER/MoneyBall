@@ -335,7 +335,7 @@ _HTML = """
     <div class="flex items-center gap-3">
       <span class="text-3xl">⚾</span>
       <div>
-        <h1 class="text-xl font-black tracking-tight">MLB Daily Picks</h1>
+        <h1 class="text-3xl font-black tracking-tight" style="letter-spacing:3px">MoneyBall</h1>
         <p class="text-xs text-slate-500" id="hdr-date"></p>
       </div>
     </div>
