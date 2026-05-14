@@ -1,0 +1,817 @@
+"""
+main.py — FastAPI app for MoneyBall
+  • POST /api/run            — kick off pipeline (returns task_id)
+  • GET  /api/stream/{id}   — SSE progress stream
+  • GET  /api/results/{date} — fetch cached results
+  • GET  /                   — serves the frontend SPA
+  Auth handled by Money Picks Arena hub — no per-app login needed.
+"""
+import asyncio, json, os, uuid
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date
+from typing import Optional
+
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse, HTMLResponse
+
+# ── App setup ────────────────────────────────────
+app = FastAPI(title="MoneyBall", docs_url=None, redoc_url=None)
+executor = ThreadPoolExecutor(max_workers=4)
+_tasks: dict = {}   # task_id -> {events, status, result, notify}
+_cache: dict = {}   # date -> result (in-memory, cleared on restart)
+
+
+# ── Health ────────────────────────────────────────────────────────────
+@app.get("/api/health")
+async def health():
+    return {"status": "ok", "today": str(date.today())}
+
+
+
+
+
+
+@app.get("/api/test-statmuse")
+async def test_statmuse():
+    """Steps 2 & 3 now use MLB Stats API — always ready."""
+    return {"ok": True, "message": "✅ MLB Stats API active"}
+
+
+# ── Run pipeline ──────────────────────────────────────────────────────
+@app.post("/api/run")
+async def start_run(date_str: str):
+    """
+    Kick off the 4-step pipeline for date_str (YYYY-MM-DD).
+    Returns task_id immediately; stream progress via /api/stream/{task_id}.
+    """
+    # Return cached result instantly
+    if date_str in _cache:
+        task_id = str(uuid.uuid4())
+        notify  = asyncio.Event()
+        _tasks[task_id] = {
+            "events": [
+                {"type": "cached", "msg": "⚡ Results loaded from cache — no re-run needed"},
+                {"type": "done",   "result": _cache[date_str]},
+            ],
+            "status": "done",
+            "result": _cache[date_str],
+            "notify": notify,
+        }
+        notify.set()
+        return {"task_id": task_id, "cached": True}
+
+    task_id = str(uuid.uuid4())
+    loop    = asyncio.get_event_loop()
+    notify  = asyncio.Event()
+    task    = {"events": [], "status": "running", "result": None, "notify": notify}
+    _tasks[task_id] = task
+
+    def emit(event: dict):
+        task["events"].append(event)
+        loop.call_soon_threadsafe(notify.set)
+
+    def run_in_thread():
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from pipeline import run_pipeline
+        try:
+            result = run_pipeline(date_str, emit=emit)
+            task["status"] = "done"
+            task["result"] = result
+            _cache[date_str] = result
+        except Exception as exc:
+            import traceback
+            msg = f"{exc}\n{traceback.format_exc()}"
+            emit({"type": "error", "msg": msg})
+            task["status"] = "error"
+
+    executor.submit(run_in_thread)
+    return {"task_id": task_id, "cached": False}
+
+
+# ── SSE stream ────────────────────────────────────────────────────────
+@app.get("/api/stream/{task_id}")
+async def stream_task(task_id: str):
+    """Server-Sent Events stream for a running task."""
+    if task_id not in _tasks:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task = _tasks[task_id]
+
+    async def event_generator():
+        idx = 0
+        while True:
+            # Flush any buffered events
+            while idx < len(task["events"]):
+                ev = task["events"][idx]
+                yield f"data: {json.dumps(ev)}\n\n"
+                idx += 1
+
+            # Done?
+            if task["status"] in ("done", "error"):
+                # One final flush
+                while idx < len(task["events"]):
+                    ev = task["events"][idx]
+                    yield f"data: {json.dumps(ev)}\n\n"
+                    idx += 1
+                return
+
+            # Wait for next event (or heartbeat every 20 s)
+            task["notify"].clear()
+            try:
+                await asyncio.wait_for(task["notify"].wait(), timeout=20.0)
+            except asyncio.TimeoutError:
+                yield ": heartbeat\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control":    "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection":       "keep-alive",
+        },
+    )
+
+
+# ── Results cache ─────────────────────────────────────────────────────
+@app.get("/api/results/{date_str}")
+async def get_results(date_str: str):
+    if date_str in _cache:
+        return _cache[date_str]
+    raise HTTPException(status_code=404, detail="No results for this date. Run the pipeline first.")
+
+
+# ── Frontend HTML (embedded — no static folder needed) ───────────────
+_HTML = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>⚾ MoneyBall</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root {
+      --navy:   #0d0d0d;
+      --navy2:  #1a1a1a;
+      --navy3:  #2a2a2a;
+      --green:  #FDB827;
+      --red:    #ff1744;
+      --yellow: #FDB827;
+      --orange: #FDB827;
+      --gold:   #FDB827;
+      --silver: #c0c0c0;
+      --bronze: #cd7f32;
+    }
+    body { background: #0d0d0d; color: #f0e6c8; font-family: 'Segoe UI', system-ui, sans-serif; }
+    .card { background: var(--navy2); border: 1px solid rgba(255,255,255,.08); border-radius: 12px; }
+    .btn-primary { background: linear-gradient(135deg, #FDB827, #e6a800); border: none; cursor: pointer; border-radius: 8px; padding: 12px 28px; font-size: 1rem; font-weight: 700; color: #000; transition: all .2s; letter-spacing:.5px; }
+    .btn-primary:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.15); box-shadow: 0 4px 20px rgba(21,101,192,.5); }
+    .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-danger { background: linear-gradient(135deg, #c62828, #b71c1c); }
+
+    /* Terminal log */
+    #log-box { background: #050d1a; border: 1px solid rgba(0,200,83,.2); border-radius: 8px; height: 260px; overflow-y: auto; padding: 12px 16px; font-family: 'Courier New', monospace; font-size: .82rem; line-height: 1.6; }
+    .log-section { color: var(--yellow); font-weight: 700; margin-top: 6px; }
+    .log-ok  { color: var(--green); }
+    .log-dq  { color: var(--red); }
+    .log-skip { color: #64748b; }
+    .log-info { color: #93c5fd; }
+    .log-cached { color: #a78bfa; }
+    .log-default { color: #cbd5e1; }
+    .log-under { color: #ff8a65; }
+
+    /* Progress bar */
+    #prog-bar-inner { height: 6px; border-radius: 3px; background: linear-gradient(90deg, #FDB827, #fff176); transition: width .4s ease; }
+
+    /* Results table */
+    .results-table { width: 100%; border-collapse: collapse; }
+    .results-table th { background: #1a1a1a; color: #FDB827; font-size: .75rem; text-transform: uppercase; letter-spacing: 1px; padding: 10px 14px; text-align: left; white-space: nowrap; }
+    .results-table td { padding: 12px 14px; border-bottom: 1px solid rgba(255,255,255,.05); vertical-align: middle; }
+    .results-table tr:hover td { background: rgba(255,255,255,.03); }
+    .results-table tr:last-child td { border-bottom: none; }
+
+    .rank-badge { width: 32px; height: 32px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-weight: 800; font-size: .85rem; }
+    .rank-1 { background: var(--gold);   color: #000; }
+    .rank-2 { background: var(--silver); color: #000; }
+    .rank-3 { background: var(--bronze); color: #fff; }
+    .rank-n { background: var(--navy3);  color: #94a3b8; }
+
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: .72rem; font-weight: 700; letter-spacing:.3px; }
+    .badge-home { background: rgba(21,101,192,.35); color: #90caf9; }
+    .badge-away { background: rgba(103,58,183,.35); color: #ce93d8; }
+    .badge-pos  { background: rgba(255,255,255,.08); color: #94a3b8; }
+    .badge-day  { background: rgba(255,214,0,.2);  color: var(--yellow); }
+    .badge-night{ background: rgba(100,100,255,.2);color: #a5b4fc; }
+    .badge-dq   { background: rgba(255,23,68,.15); color: #ff6b6b; font-size:.7rem; padding: 2px 6px; }
+
+    .stat-cell { font-family: 'Courier New', monospace; font-size: .88rem; font-weight: 600; }
+    .stat-good { color: var(--green); }
+    .stat-warn { color: var(--yellow); }
+    .stat-na   { color: #475569; }
+    .stat-under { color: #ff8a65; font-weight: 700; }  /* under-pick low BA */
+    .score-big { font-size: 1.1rem; font-weight: 800; color: #FDB827; }
+
+    .section-hdr { display: flex; align-items: center; gap: 8px; font-size: .9rem; font-weight: 700; color: #FDB827; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
+    .section-hdr::after { content:''; flex:1; height:1px; background:rgba(255,255,255,.07); }
+
+    /* DQ accordion */
+    details > summary { cursor: pointer; list-style: none; user-select: none; }
+    details > summary::-webkit-details-marker { display: none; }
+    .dq-row { font-size: .82rem; padding: 7px 14px; border-bottom: 1px solid rgba(255,255,255,.04); display: flex; gap: 16px; align-items: center; }
+    .dq-row:last-child { border-bottom: none; }
+
+    /* Spinner */
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner { width: 18px; height: 18px; border: 3px solid rgba(255,255,255,.15); border-top-color: #3b82f6; border-radius: 50%; animation: spin .7s linear infinite; display: inline-block; }
+
+    /* Login */
+    ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.12); border-radius: 3px; }
+  </style>
+</head>
+<body class="min-h-screen">
+
+<!-- ═══════════════════════ DASHBOARD ══════════════════════════════ -->
+<div id="dashboard" class="min-h-screen flex flex-col">
+
+  <!-- Header -->
+  <header class="border-b border-white/5 px-6 py-5 flex items-center justify-between" style="background:var(--navy2)">
+    <div class="flex items-center gap-4">
+      <span style="font-size:4.5rem;line-height:1">⚾</span>
+      <div>
+        <h1 style="font-size:3.2rem;font-weight:900;letter-spacing:-1.5px;line-height:1">MoneyBall</h1>
+        <p class="text-sm text-slate-500 mt-1" id="hdr-date"></p>
+      </div>
+    </div>
+    <div class="flex items-center gap-4">
+      <span id="hdr-user" class="text-sm text-slate-400"></span>
+    </div>
+  </header>
+
+  <main class="flex-1 px-4 py-6 max-w-7xl mx-auto w-full space-y-6">
+
+        <!-- Controls card -->
+    <div class="card p-6">
+      <div class="flex flex-col sm:flex-row gap-4 items-start sm:items-end">
+        <div>
+          <label class="block text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2">Date</label>
+          <input type="date" id="date-picker"
+                 style="background:var(--navy3);border:1px solid rgba(255,255,255,.15);color:#e2e8f0;border-radius:8px;padding:11px 16px;width:auto;min-width:160px;font-size:1rem;outline:none;color-scheme:dark;" />
+        </div>
+        <button id="run-btn" onclick="startRun()" class="btn-primary flex items-center gap-2">
+          <span>▶</span> Run Today's Picks
+        </button>
+        <div id="run-spinner" class="hidden flex items-center gap-2 text-slate-400 text-sm">
+          <span class="spinner"></span> Pipeline running…
+        </div>
+      </div>
+      <p class="text-xs text-slate-500 mt-3">
+        Runs all 5 steps: FIC matchups → MLB H/A splits → ESPN Day/Night filter → Pitcher ERA filter (top 10 lowest ERA starters removed).
+        Takes 3–5 minutes. Results are cached — re-selecting same date is instant.
+      </p>
+    </div>
+
+    <!-- Progress card (hidden until running) -->
+    <div id="progress-card" class="card p-6 hidden">
+      <div class="flex justify-between items-center mb-3">
+        <div class="section-hdr mb-0">Live Progress</div>
+        <span id="prog-label" class="text-xs text-slate-400"></span>
+      </div>
+      <div class="bg-white/5 rounded-full overflow-hidden mb-4">
+        <div id="prog-bar-inner" style="width:0%"></div>
+      </div>
+      <div id="log-box"></div>
+    </div>
+
+    <!-- Results card (hidden until done) -->
+    <div id="results-card" class="hidden space-y-6">
+
+      <!-- Stats summary -->
+      <div id="stats-row" class="grid grid-cols-2 sm:grid-cols-4 gap-4"></div>
+
+      <!-- Top 9 table -->
+      <div class="card p-6">
+        <div class="section-hdr">🏆 Top Picks</div>
+        <div class="overflow-x-auto">
+          <table class="results-table" id="picks-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Player</th>
+                <th>Pos</th>
+                <th>H/A</th>
+                <th>Opponent</th>
+                <th>S1 BA</th>
+                <th>S2 BA</th>
+                <th>S3 BA</th>
+                <th>D/N</th>
+                <th>Score</th>
+              </tr>
+            </thead>
+            <tbody id="picks-body"></tbody>
+          </table>
+        </div>
+        <p class="text-xs text-slate-500 mt-4">
+          <strong>S1</strong> Lifetime BA vs today's pitcher (FIC) &nbsp;|&nbsp;
+          <strong>S2</strong> Lifetime H/A BA vs today's opponent &nbsp;|&nbsp;
+          <strong>S3</strong> 2026 season H/A BA vs all teams &nbsp;|&nbsp;
+          <strong>Score</strong> = S1+S2+S3 × 1000
+        </p>
+      </div>
+
+      <!-- Also Ran — picks #10+ who passed all 5 steps -->
+      <div class="card p-6 hidden" id="also-ran-card">
+        <div class="section-hdr">⏳ Also Ran — Passed All Steps, Just Missed Top 9</div>
+        <div class="overflow-x-auto">
+          <table class="results-table" id="also-ran-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Player</th>
+                <th>Pos</th>
+                <th>H/A</th>
+                <th>Opponent</th>
+                <th>S1 BA</th>
+                <th>S2 BA</th>
+                <th>S3 BA</th>
+                <th>D/N</th>
+                <th>Score</th>
+              </tr>
+            </thead>
+            <tbody id="also-ran-body"></tbody>
+          </table>
+        </div>
+        <p class="text-xs text-slate-500 mt-3">These players passed all 5 steps — ranked by score.</p>
+      </div>
+
+      <!-- Under Picks — 3rd subcategory -->
+      <div class="card p-6 hidden" id="under-picks-card" style="border-color:rgba(255,107,107,.25)">
+        <div class="section-hdr" style="color:#ff8a65">⬇️ Under Picks — Bet Under 1.5 Hits (DraftKings)</div>
+        <div class="overflow-x-auto">
+          <table class="results-table" id="under-picks-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Player</th>
+                <th>Pos</th>
+                <th>H/A</th>
+                <th>Opponent</th>
+                <th>Pitcher</th>
+                <th>S1 vs Pitcher</th>
+                <th>S2 H/A</th>
+                <th>S3 2026</th>
+                <th>DK Line</th>
+              </tr>
+            </thead>
+            <tbody id="under-picks-body"></tbody>
+          </table>
+        </div>
+        <p class="text-xs text-slate-500 mt-4">
+          <strong>Source</strong>: DraftKings players with 1.5 hits O/U &nbsp;|&nbsp;
+          <strong>S1</strong> Career BA vs today's pitcher (under &lt; .200, min 4 AB) &nbsp;|&nbsp;
+          <strong>S2</strong> Lifetime H/A BA vs today's opponent (under &lt; .225) &nbsp;|&nbsp;
+          <strong>S3</strong> 2026 H/A BA (under &lt; .250) &nbsp;|&nbsp;
+          All three must pass for a player to appear here. &nbsp;|&nbsp;
+          <strong>Ranked #1 → coldest bat</strong> (lowest combined BA = strongest under pick).
+        </p>
+      </div>
+
+      <!-- Pitcher K Picks -->
+      <div class="card p-6 hidden" id="pitcher-k-card" style="border-color:rgba(99,202,183,.25)">
+        <div class="section-hdr" style="color:#63cab7">⚾ Pitcher K Picks — Over / Under Strikeout Line</div>
+        <div class="overflow-x-auto">
+          <table class="results-table" id="pitcher-k-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Pitcher</th>
+                <th>H/A</th>
+                <th>Opponent</th>
+                <th>K Line</th>
+                <th>Avg K vs Opp</th>
+                <th>Gap</th>
+                <th>Starts</th>
+                <th>K History</th>
+                <th>Pick</th>
+              </tr>
+            </thead>
+            <tbody id="pitcher-k-body"></tbody>
+          </table>
+        </div>
+        <details class="mt-4" id="pitcher-k-nopick-details">
+          <summary class="cursor-pointer text-xs text-slate-500 hover:text-slate-300 select-none">▸ Show pitchers with insufficient H/A history vs today’s opponent</summary>
+          <table class="results-table mt-2" id="pitcher-k-nopick-table">
+            <thead>
+              <tr>
+                <th>Pitcher</th><th>H/A</th><th>Opponent</th>
+                <th>K Line</th><th>Starts Found</th><th>Note</th>
+              </tr>
+            </thead>
+            <tbody id="pitcher-k-nopick-body"></tbody>
+          </table>
+        </details>
+        <p class="text-xs text-slate-500 mt-4">
+          <strong>Avg K vs Opp</strong> = career H/A avg Ks vs today’s opponent &nbsp;| 
+          <strong>Gap</strong> = how far avg is from the line &nbsp;| 
+          <strong>Pick</strong> = OVER if avg &gt; line, UNDER if avg &lt; line &nbsp;| 
+          <strong>K History</strong> = Ks per start vs that team (newest first, min 2 starts).
+        </p>
+      </div>
+
+      <!-- DQ'd players accordion -->
+      <div class="card p-6" id="dq-card">
+        <details>
+          <summary>
+            <div class="section-hdr cursor-pointer select-none">
+              <span>❌ Disqualified Players</span>
+              <span id="dq-count-badge" class="badge badge-dq ml-2"></span>
+              <span class="ml-auto text-xs text-slate-500">click to expand ▾</span>
+            </div>
+          </summary>
+          <div id="dq-body" class="mt-2 rounded-lg overflow-hidden border border-white/5"></div>
+        </details>
+      </div>
+
+    </div><!-- /results-card -->
+
+  </main>
+</div><!-- /dashboard -->
+
+<script>
+// ─── State ────────────────────────────────────────────────────────────
+let username = 'user';
+let es       = null;   // EventSource
+
+// ─── Boot ─────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', function() {
+  var d = new Date();
+  var today = d.getFullYear() + '-' +
+              String(d.getMonth()+1).padStart(2,'0') + '-' +
+              String(d.getDate()).padStart(2,'0');
+  var dp = document.getElementById('date-picker');
+  if (dp) dp.value = today;
+  showDashboard();
+});
+
+// ─── Dashboard init ────────────────────────────────────────────────────
+function showDashboard() {
+  show('dashboard');
+  const _d = new Date();
+  const today = _d.getFullYear() + '-' +
+                String(_d.getMonth()+1).padStart(2,'0') + '-' +
+                String(_d.getDate()).padStart(2,'0');
+  document.getElementById('hdr-date').textContent = `Today: ${today}`;
+  document.getElementById('date-picker').value = today;
+  hide('progress-card'); hide('results-card');
+}
+// ─── Run pipeline ──────────────────────────────────────────────────────
+async function startRun() {
+  const dateStr = document.getElementById('date-picker').value;
+  if (!dateStr) { alert('Please select a date first.'); return; }
+
+  // Reset UI
+  clearLog(); hide('results-card');
+  show('progress-card'); setProgress(0, 'Starting...');
+  document.getElementById('progress-card').scrollIntoView({ behavior: 'smooth' });
+  show('run-spinner'); disableRunBtn(true);
+  appendLog('🚀 Connecting to server...', 'info');
+
+  try {
+    const r = await fetch(`/api/run?date_str=${dateStr}`, { method: 'POST' });
+    if (!r.ok) {
+      let msg = 'Server error';
+      try { const e = await r.json(); msg = e.detail || msg; } catch {}
+      throw new Error(msg + ' (HTTP ' + r.status + ')');
+    }
+    const { task_id, cached } = await r.json();
+    appendLog('✅ Connected — streaming results...', 'ok');
+    openSSE(task_id, cached);
+  } catch (err) {
+    appendLog(`❌ ${err.message}`, 'dq');
+    appendLog('Check that the server is running on Render.', 'info');
+    hide('run-spinner'); disableRunBtn(false);
+  }
+}
+
+function openSSE(taskId, cached) {
+  if (es) es.close();
+  es = new EventSource(`/api/stream/${taskId}`);
+
+  es.onmessage = evt => handleEvent(JSON.parse(evt.data));
+  es.onerror   = () => {
+    appendLog('⚠️  Connection lost — refresh and try again.', 'dq');
+    hide('run-spinner'); disableRunBtn(false);
+    es.close();
+  };
+}
+
+let _progTotal = 30;
+
+function handleEvent(ev) {
+  switch (ev.type) {
+
+    case 'section':
+      appendLog('', 'default');
+      appendLog(`▸ ${ev.msg}`, 'section');
+      break;
+
+    case 'log':
+    case 'step1_done':
+      appendLog(ev.msg, ev.msg.startsWith('✅') ? 'ok' : 'info');
+      break;
+
+    case 'cached':
+      appendLog(ev.msg, 'cached');
+      break;
+
+    case 'progress':
+      _progTotal = ev.total;
+      setProgress(Math.round((ev.current / ev.total) * 80), `${ev.current}/${ev.total}: ${ev.name}`);
+      break;
+
+    case 'player_ok':
+      appendLog(
+        `  ✅ ${pad(ev.name,22)} S1:${ev.s1}  S2:${ev.s2}  S3:${ev.s3}  ${ev.side} vs ${ev.opp}  → ${ev.total}pts`,
+        'ok'
+      );
+      break;
+
+    case 'player_dq':
+      appendLog(
+        `  ❌ ${pad(ev.name,22)} S1:${ev.s1}  S2:${ev.s2}  S3:${ev.s3}  DQ: ${ev.reason}`,
+        'dq'
+      );
+      break;
+
+    case 'player_skip':
+      appendLog(`  — ${pad(ev.name,22)} No game today`, 'skip');
+      break;
+
+    case 'dn_ok':
+      appendLog(`  ✅ ${pad(ev.name,22)} ${ev.label} ${ev.display}`, 'ok');
+      break;
+
+    case 'dn_dq':
+      appendLog(`  ❌ ${pad(ev.name,22)} ${ev.label} ${ev.display} < .200 — DQ`, 'dq');
+      break;
+
+    case 'done':
+      setProgress(100, 'Complete!');
+      appendLog('', 'default');
+      appendLog(`🏆 Done! ${ev.result.stats.picks} picks found in ${ev.result.stats.elapsed}s`, 'ok');
+      hide('run-spinner'); disableRunBtn(false);
+      showResults(ev.result);
+      es.close();
+      break;
+
+    case 'under_progress':
+      // logged inline in the log box by the pipeline
+      break;
+
+    case 'under_pick_found':
+      appendLog(
+        `  ✅ UNDER: ${pad(ev.name,22)} S1:${ev.s1}  S2:${ev.s2}  S3:${ev.s3}  ${ev.side} vs ${ev.opp}`,
+        'under'
+      );
+      break;
+
+    case 'error':
+      appendLog(`❌ ERROR: ${ev.msg}`, 'dq');
+      hide('run-spinner'); disableRunBtn(false);
+      es.close();
+      break;
+  }
+}
+
+// ─── Results rendering ────────────────────────────────────────────────
+function showResults(result) {
+  const { top9, dq_s1_s3, dq_step4, dq_step5, stats } = result;
+  hide('also-ran-card'); hide('under-picks-card');  // reset on each run
+
+  // Stats summary
+  const sr = document.getElementById('stats-row');
+  sr.innerHTML = [
+    statCard('🎯', 'Top Picks',    top9.length,                              'text-yellow-400'),
+    statCard('⬇️', 'Under Picks',  stats.under_count ?? 0,                   'text-orange-400'),
+    statCard('🕊️', 'Pitcher K',    stats.pitcher_k_count ?? 0,              'text-teal-400'),
+    statCard('🔍', 'Players Run',  stats.step1_count,                        'text-purple-400'),
+  ].join('');
+
+  // Top 9
+  const tbody = document.getElementById('picks-body');
+  tbody.innerHTML = top9.map((p, i) => {
+    const rank = i + 1;
+    const rnk  = rank <= 3 ? `rank-${rank}` : 'rank-n';
+    const s1c  = statColor(p.s1);
+    const s2c  = statColorStr(p.s2?.display);
+    const s3c  = statColorStr(p.s3?.display);
+    const dnLabel = p.dn_label || '—';
+    const dnDisp  = p.dn?.display || 'N/A';
+    const dnCls   = dnLabel === 'DAY' ? 'badge-day' : 'badge-night';
+    return `
+      <tr>
+        <td><span class="rank-badge ${rnk}">${rank}</span></td>
+        <td class="font-semibold">${p.name}</td>
+        <td><span class="badge badge-pos">${p.pos || '—'}</span></td>
+        <td><span class="badge ${p.side === 'HOME' ? 'badge-home' : 'badge-away'}">${p.side}</span></td>
+        <td class="text-slate-300 text-sm">${p.opp}</td>
+        <td class="stat-cell ${s1c}">${p.s1?.toFixed(3) || '—'}</td>
+        <td class="stat-cell ${s2c}">${p.s2?.display || '—'}</td>
+        <td class="stat-cell ${s3c}">${p.s3?.display || '—'}</td>
+        <td><span class="badge ${dnCls} text-xs">${dnLabel}</span> <span class="stat-cell text-slate-300 text-xs">${dnDisp}</span></td>
+        <td><span class="score-big">${p.total}</span></td>
+      </tr>`;
+  }).join('');
+
+  // Also Ran section (#10+)
+  const alsoRan = result.also_ran || [];
+  if (alsoRan.length > 0) {
+    show('also-ran-card');
+    document.getElementById('also-ran-body').innerHTML = alsoRan.map((p, i) => {
+      const rank   = i + 10;
+      const dnLabel = p.dn_label || '—';
+      const dnDisp  = p.dn?.display || 'N/A';
+      const dnCls   = dnLabel === 'DAY' ? 'badge-day' : 'badge-night';
+      const s1c = statColor(p.s1);
+      const s2c = statColorStr(p.s2?.display);
+      const s3c = statColorStr(p.s3?.display);
+      return `
+      <tr style="opacity:0.8">
+        <td><span class="rank-badge rank-n" style="background:#2a2a2a;color:#FDB827">${rank}</span></td>
+        <td class="font-semibold">${p.name}</td>
+        <td><span class="badge badge-pos">${p.pos || '—'}</span></td>
+        <td><span class="badge ${p.side === 'HOME' ? 'badge-home' : 'badge-away'}">${p.side}</span></td>
+        <td class="text-slate-300 text-sm">${p.opp}</td>
+        <td class="stat-cell ${s1c}">${p.s1?.toFixed(3) || '—'}</td>
+        <td class="stat-cell ${s2c}">${p.s2?.display || '—'}</td>
+        <td class="stat-cell ${s3c}">${p.s3?.display || '—'}</td>
+        <td><span class="badge ${dnCls} text-xs">${dnLabel}</span> <span class="stat-cell text-slate-300 text-xs">${dnDisp}</span></td>
+        <td><span style="color:#94a3b8;font-weight:700">${p.total}</span></td>
+      </tr>`;
+    }).join('');
+  }
+
+  // Under Picks section
+  hide('under-picks-card');
+  const underPicks = result.under_picks || [];
+  if (underPicks.length > 0) {
+    show('under-picks-card');
+    document.getElementById('under-picks-body').innerHTML = underPicks.map((p, i) => {
+      const rank = i + 1;
+      const rnkBg = rank === 1 ? '#5a0a0a' : rank === 2 ? '#4a0a0a' : '#3a1a1a';
+      return `
+      <tr>
+        <td><span class="rank-badge" style="background:${rnkBg};color:#ff8a65;font-weight:900">${rank}</span></td>
+        <td class="font-semibold">${p.name}</td>
+        <td><span class="badge badge-pos">${p.pos || '—'}</span></td>
+        <td><span class="badge ${p.side === 'HOME' ? 'badge-home' : 'badge-away'}">${p.side}</span></td>
+        <td class="text-slate-300 text-sm">${p.opp}</td>
+        <td class="text-slate-400 text-sm">${p.pitcher || '—'}</td>
+        <td class="stat-cell stat-under">${p.s1_disp || '—'} <span class="text-slate-500" style="font-size:.7rem">(${p.s1_ab}AB)</span></td>
+        <td class="stat-cell stat-under">${p.s2?.display || '—'}</td>
+        <td class="stat-cell stat-under">${p.s3?.display || '—'}</td>
+        <td><span style="color:#ff8a65;font-weight:800;font-size:1rem">U 1.5</span>
+            <span class="text-slate-500" style="font-size:.68rem;display:block">score ${p.under_score}</span></td>
+      </tr>`;
+    }).join('');
+  }
+
+  // Pitcher K Picks section
+  hide('pitcher-k-card');
+  const pkData  = (result.pitcher_k) || {};
+  const pkPicks = pkData.picks || [];
+  const pkAll   = pkData.all   || [];
+  if (pkAll.length > 0) {
+    show('pitcher-k-card');
+    // ── Confirmed picks table ──────────────────────────────────────
+    document.getElementById('pitcher-k-body').innerHTML = pkPicks.length > 0
+      ? pkPicks.map((p, i) => {
+          const isOver  = p.pick === 'OVER';
+          const pickClr = isOver ? '#63cab7' : '#ff8a65';
+          const sideCls = p.side === 'HOME' ? 'badge-home' : 'badge-away';
+          const odds    = isOver
+            ? (p.over_odds  != null ? (p.over_odds  > 0 ? '+' : '') + p.over_odds  : '')
+            : (p.under_odds != null ? (p.under_odds > 0 ? '+' : '') + p.under_odds : '');
+          const gap     = p.avg_k != null ? (p.avg_k - p.line).toFixed(1) : '—';
+          const gapClr  = isOver ? '#63cab7' : '#ff8a65';
+          const gapDisp = p.avg_k != null ? (isOver ? '+' : '') + gap : '—';
+          return `<tr>
+            <td><span class="rank-badge rank-n" style="background:#0d2e2e;color:#63cab7">${i+1}</span></td>
+            <td class="font-semibold">${p.name}</td>
+            <td><span class="badge ${sideCls}">${p.side}</span></td>
+            <td class="text-slate-300 text-sm">${p.opp}</td>
+            <td style="font-family:monospace;font-weight:700;color:#fff">${p.line} Ks</td>
+            <td style="font-family:monospace;font-weight:700;color:${pickClr};font-size:1.05rem">${p.avg_k != null ? p.avg_k + ' K' : '—'}</td>
+            <td style="font-family:monospace;color:${gapClr};font-weight:700">${gapDisp}</td>
+            <td class="text-slate-400 text-sm">${p.starts} starts</td>
+            <td style="font-family:monospace;font-size:.75rem;color:#94a3b8;max-width:160px">${p.k_history || '—'}</td>
+            <td><span style="color:${pickClr};font-weight:900;font-size:1rem">${p.pick}</span>
+                <span class="text-slate-500" style="font-size:.68rem;display:block">${odds}</span></td>
+          </tr>`;
+        }).join('')
+      : '<tr><td colspan="10" class="text-slate-500 text-center py-4">No picks today — pitchers are right on the line or need more H/A history vs today\'s opponent</td></tr>';
+
+    // ── No-pick (insufficient history) sub-table ───────────────────
+    const noPick = pkAll.filter(p => !p.pick);
+    const npDet  = document.getElementById('pitcher-k-nopick-details');
+    if (noPick.length > 0) {
+      npDet.style.display = '';
+      document.getElementById('pitcher-k-nopick-body').innerHTML = noPick.map(p => {
+        const sideCls = p.side === 'HOME' ? 'badge-home' : 'badge-away';
+        return `<tr style="opacity:0.6">
+          <td class="font-semibold">${p.name}</td>
+          <td><span class="badge ${sideCls}">${p.side}</span></td>
+          <td class="text-slate-400 text-sm">${p.opp}</td>
+          <td style="font-family:monospace">${p.line} Ks</td>
+          <td class="text-slate-400 text-sm">${p.starts}</td>
+          <td class="text-slate-500 text-xs">${p.pick_note || '—'}</td>
+        </tr>`;
+      }).join('');
+    } else {
+      npDet.style.display = 'none';
+    }
+  }
+
+  // DQ section
+  const allDQ = [...(dq_s1_s3 || []), ...(dq_step4 || []), ...(dq_step5 || [])];
+  document.getElementById('dq-count-badge').textContent = allDQ.length + ' players';
+  const dqBody = document.getElementById('dq-body');
+  if (allDQ.length === 0) {
+    dqBody.innerHTML = `<div class="dq-row text-slate-500">None — all qualified!</div>`;
+  } else {
+    dqBody.innerHTML = allDQ.map(p => `
+      <div class="dq-row">
+        <span class="font-semibold w-36">${p.name}</span>
+        <span class="badge badge-pos">${p.pos || '—'}</span>
+        <span class="text-slate-400 text-xs">S1: ${p.s1?.toFixed(3)||'—'}</span>
+        <span class="text-slate-400 text-xs">S2: ${p.s2?.display||'—'}</span>
+        <span class="text-slate-400 text-xs">S3: ${p.s3?.display||'—'}</span>
+        <span class="badge badge-dq ml-auto">${p.dq_reason || 'DQ'}</span>
+      </div>`).join('');
+  }
+
+  show('results-card');
+}
+
+function statCard(icon, label, value, cls) {
+  return `
+    <div class="card p-5 text-center">
+      <div class="text-2xl mb-1">${icon}</div>
+      <div class="text-2xl font-black ${cls}">${value}</div>
+      <div class="text-xs text-slate-500 uppercase tracking-wider mt-1">${label}</div>
+    </div>`;
+}
+
+function statColor(ba) {
+  if (!ba && ba !== 0) return 'stat-na';
+  return ba >= 0.300 ? 'stat-good' : ba >= 0.250 ? 'stat-warn' : 'stat-na';
+}
+function statColorStr(s) {
+  if (!s || s === 'N/A' || s === '—') return 'stat-na';
+  const n = parseFloat(s);
+  return isNaN(n) ? 'stat-na' : statColor(n);
+}
+
+// ─── Log helpers ──────────────────────────────────────────────────────
+function appendLog(msg, type) {
+  const box = document.getElementById('log-box');
+  const div = document.createElement('div');
+  div.className = {
+    section: 'log-section', ok: 'log-ok', dq: 'log-dq',
+    skip: 'log-skip', info: 'log-info', cached: 'log-cached',
+    under: 'log-under', default: 'log-default'
+  }[type] || 'log-default';
+  div.textContent = msg;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+function clearLog() { document.getElementById('log-box').innerHTML = ''; }
+
+function setProgress(pct, label) {
+  document.getElementById('prog-bar-inner').style.width = pct + '%';
+  document.getElementById('prog-label').textContent    = label;
+}
+
+// ─── Misc helpers ─────────────────────────────────────────────────────
+function authFetch(url, opts = {}) {
+  return fetch(url, opts);
+}
+
+function pad(s, n) { return (s + ' '.repeat(n)).slice(0, n); }
+function show(id)  { document.getElementById(id)?.classList.remove('hidden'); }
+function hide(id)  { document.getElementById(id)?.classList.add('hidden'); }
+function disableRunBtn(d) {
+  const b = document.getElementById('run-btn');
+  b.disabled = d;
+  b.textContent = d ? "Running..." : "Run Picks";
+}
+</script>
+</body>
+</html>
+
+"""
+
+@app.get("/")
+async def serve_spa():
+    return HTMLResponse(_HTML)
