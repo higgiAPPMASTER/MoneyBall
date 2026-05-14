@@ -11,10 +11,11 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Form
 from fastapi.responses import StreamingResponse, FileResponse, HTMLResponse
 # StaticFiles removed — HTML is now embedded directly in this file
 
+from auth import verify_user, create_token, get_current_user, get_user_from_query
 
 # ── App setup ────────────────────────────────────────────────────────
 app = FastAPI(title="MoneyBall", docs_url=None, redoc_url=None)
@@ -22,6 +23,13 @@ executor = ThreadPoolExecutor(max_workers=4)
 _tasks: dict = {}   # task_id -> {events, status, result, notify}
 _cache: dict = {}   # date -> result (in-memory, cleared on restart)
 
+# ── Auth ─────────────────────────────────────────────────────────────
+@app.post("/api/login")
+async def login(username: str = Form(...), password: str = Form(...)):
+    if not verify_user(username, password):
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+    token = create_token(username)
+    return {"access_token": token, "token_type": "bearer", "username": username}
 
 
 # ── Health ────────────────────────────────────────────────────────────
@@ -35,14 +43,14 @@ async def health():
 
 
 @app.get("/api/test-statmuse")
-async def test_statmuse():
+async def test_statmuse(user: str = Depends(get_current_user)):
     """Steps 2 & 3 now use MLB Stats API — always ready."""
     return {"ok": True, "message": "✅ MLB Stats API active"}
 
 
 # ── Run pipeline ──────────────────────────────────────────────────────
 @app.post("/api/run")
-async def start_run(date_str: str):
+async def start_run(date_str: str, user: str = Depends(get_current_user)):
     """
     Kick off the 4-step pipeline for date_str (YYYY-MM-DD).
     Returns task_id immediately; stream progress via /api/stream/{task_id}.
@@ -94,11 +102,13 @@ async def start_run(date_str: str):
 
 # ── SSE stream ────────────────────────────────────────────────────────
 @app.get("/api/stream/{task_id}")
-async def stream_task(task_id: str):
+async def stream_task(task_id: str, token: Optional[str] = None):
     """
     Server-Sent Events stream for a running task.
     Pass JWT as ?token=... (browsers can't set custom headers for SSE).
     """
+    get_user_from_query(token)  # auth check
+
     if task_id not in _tasks:
         raise HTTPException(status_code=404, detail="Task not found")
 
@@ -142,7 +152,7 @@ async def stream_task(task_id: str):
 
 # ── Results cache ─────────────────────────────────────────────────────
 @app.get("/api/results/{date_str}")
-async def get_results(date_str: str):
+async def get_results(date_str: str, user: str = Depends(get_current_user)):
     if date_str in _cache:
         return _cache[date_str]
     raise HTTPException(status_code=404, detail="No results for this date. Run the pipeline first.")
@@ -244,8 +254,35 @@ _HTML = """
 </head>
 <body class="min-h-screen">
 
+<!-- ═══════════════════════ LOGIN SCREEN ═══════════════════════════ -->
+<div id="login-screen" class="min-h-screen flex items-center justify-center px-4">
+  <div class="card p-10 w-full max-w-md shadow-2xl">
+    <div class="text-center mb-8">
+      <div style="font-size:7rem;line-height:1;margin-bottom:12px">⚾</div>
+      <h1 style="font-size:3rem;font-weight:900;letter-spacing:-1px">MoneyBall</h1>
+      <p class="text-slate-400 text-sm mt-1">Your daily MLB edge ⚫🟡</p>
+    </div>
+
+    <div id="login-error" class="hidden bg-red-900/40 border border-red-700 text-red-300 rounded-lg px-4 py-3 text-sm mb-4"></div>
+
+    <form id="login-form" onsubmit="doLogin(event)" class="space-y-4">
+      <div>
+        <label class="block text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2">Username</label>
+        <input id="inp-user" type="text" autocomplete="username" placeholder="your username"
+               class="login-input" required />
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2">Password</label>
+        <input id="inp-pass" type="password" autocomplete="current-password" placeholder="••••••••"
+               class="login-input" required />
+      </div>
+      <button type="submit" class="btn-primary w-full mt-2" id="login-btn">Sign In</button>
+    </form>
+  </div>
+</div>
+
 <!-- ═══════════════════════ DASHBOARD ══════════════════════════════ -->
-<div id="dashboard" class="min-h-screen flex flex-col">
+<div id="dashboard" class="hidden min-h-screen flex flex-col">
 
   <!-- Header -->
   <header class="border-b border-white/5 px-6 py-4 flex items-center justify-between" style="background:var(--navy2)">
@@ -270,7 +307,7 @@ _HTML = """
         <div>
           <label class="block text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2">Date</label>
           <input type="date" id="date-picker"
-                 class="login-input" style="width:auto; min-width:160px; color-scheme:dark;" />
+                 class="login-input" style="width:auto; min-width:160px;" />
         </div>
         <button id="run-btn" onclick="startRun()" class="btn-primary flex items-center gap-2">
           <span>▶</span> Run Today's Picks
@@ -393,6 +430,36 @@ _HTML = """
         </p>
       </div>
 
+      <!-- Pitcher K Picks -->
+      <div class="card p-6 hidden" id="pitcher-k-card" style="border-color:rgba(99,202,183,.25)">
+        <div class="section-hdr" style="color:#63cab7">⚾ Pitcher K Picks — Over / Under Strikeout Line</div>
+        <div class="overflow-x-auto">
+          <table class="results-table" id="pitcher-k-table">
+            <thead>
+              <tr>
+                <th>#</th><th>Pitcher</th><th>H/A</th><th>Opponent</th>
+                <th>K Line</th><th>Avg K vs Opp</th><th>Gap</th>
+                <th>Starts</th><th>K History</th><th>Pick</th>
+              </tr>
+            </thead>
+            <tbody id="pitcher-k-body"></tbody>
+          </table>
+        </div>
+        <details class="mt-4" id="pitcher-k-nopick-details">
+          <summary class="cursor-pointer text-xs text-slate-500 hover:text-slate-300 select-none">▸ Show pitchers with insufficient history vs today's opponent</summary>
+          <table class="results-table mt-2" id="pitcher-k-nopick-table">
+            <thead><tr><th>Pitcher</th><th>H/A</th><th>Opponent</th><th>K Line</th><th>Starts</th><th>Note</th></tr></thead>
+            <tbody id="pitcher-k-nopick-body"></tbody>
+          </table>
+        </details>
+        <p class="text-xs text-slate-500 mt-4">
+          <strong>Avg K vs Opp</strong> = career H/A avg Ks vs today's opponent &nbsp;|&nbsp;
+          <strong>Gap</strong> = how far avg is from the line &nbsp;|&nbsp;
+          <strong>Pick</strong> = OVER if avg &gt; line, UNDER if avg &lt; line (min 2 starts).
+          Pitchers facing bottom 5 K-rate teams are excluded.
+        </p>
+      </div>
+
       <!-- DQ'd players accordion -->
       <div class="card p-6" id="dq-card">
         <details>
@@ -414,12 +481,14 @@ _HTML = """
 
 <script>
 // ─── State ────────────────────────────────────────────────────────────
-let es = null;   // EventSource
+let token    = localStorage.getItem('mlb_token') || '';
+let username = localStorage.getItem('mlb_user')  || '';
+let es       = null;   // EventSource
 
 // ─── Boot ─────────────────────────────────────────────────────────────
 window.onload = () => { showDashboard(); };
 
-// ─── REMOVED (kept for reference) ─────────────────────────────────────
+// ─── Auth ─────────────────────────────────────────────────────────────
 async function doLogin(e) {
   e.preventDefault();
   const user = document.getElementById('inp-user').value.trim();
@@ -454,7 +523,7 @@ function doLogout() {
   localStorage.removeItem('mlb_token');
   localStorage.removeItem('mlb_user');
   if (es) { es.close(); es = null; }
-  show('dashboard');  // auth removed — stay on dashboard
+  hide('dashboard'); show('login-screen');
 }
 
 function showLoginError(msg) {
@@ -464,9 +533,9 @@ function showLoginError(msg) {
 
 // ─── Dashboard init ────────────────────────────────────────────────────
 function showDashboard() {
-  show('dashboard');
-  const _d = new Date();
-  const today = _d.getFullYear() + '-' + String(_d.getMonth()+1).padStart(2,'0') + '-' + String(_d.getDate()).padStart(2,'0');
+  hide('login-screen'); show('dashboard');
+  document.getElementById('hdr-user').textContent = `👤 ${username}`;
+  const _d=new Date(); const today=_d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');
   document.getElementById('hdr-date').textContent = `Today: ${today}`;
   document.getElementById('date-picker').value = today;
   hide('progress-card'); hide('results-card');
@@ -478,8 +547,7 @@ async function startRun() {
 
   // Reset UI
   clearLog(); hide('results-card');
-  show('progress-card'); setProgress(0, 'Starting...');
-  document.getElementById('progress-card').scrollIntoView({behavior:'smooth'});
+  show('progress-card'); setProgress(0, '');
   show('run-spinner'); disableRunBtn(true);
 
   try {
@@ -496,7 +564,7 @@ async function startRun() {
 
 function openSSE(taskId, cached) {
   if (es) es.close();
-  es = new EventSource(`/api/stream/${taskId}`);
+  es = new EventSource(`/api/stream/${taskId}?token=${encodeURIComponent(token)}`);
 
   es.onmessage = evt => handleEvent(JSON.parse(evt.data));
   es.onerror   = () => {
@@ -607,7 +675,7 @@ function showResults(result) {
   sr.innerHTML = [
     statCard('🎯', 'Top Picks',    top9.length,                         'text-yellow-400'),
     statCard('⬇️', 'Under Picks',  stats.under_count ?? 0,              'text-orange-400'),
-    statCard('🗡️', 'Pitcher K',    stats.pitcher_k_count ?? 0,          'text-teal-400'),
+    statCard('⚾', 'Pitcher K',    stats.pitcher_k_count ?? 0,          'text-teal-400'),
     statCard('⚾', 'Games Today',  stats.games,                         'text-blue-400'),
     statCard('🔍', 'Players Run',  stats.step1_count,                   'text-purple-400'),
     statCard('📋', 'Lineups Posted', stats.lineups_posted ?? 0,           'text-teal-400'),
@@ -695,63 +763,60 @@ function showResults(result) {
     }).join('');
   }
 
-  // Pitcher K Picks section
+
+  // ── Pitcher K Picks ──────────────────────────────────────────────
   hide('pitcher-k-card');
-  const pkData  = (result.pitcher_k) || {};
+  const pkData  = result.pitcher_k || {};
   const pkPicks = pkData.picks || [];
   const pkAll   = pkData.all   || [];
   if (pkAll.length > 0) {
     show('pitcher-k-card');
-    // ── Confirmed picks table ──────────────────────────────────────
     document.getElementById('pitcher-k-body').innerHTML = pkPicks.length > 0
       ? pkPicks.map((p, i) => {
           const isOver  = p.pick === 'OVER';
           const pickClr = isOver ? '#63cab7' : '#ff8a65';
-          const sideCls = p.side === 'HOME' ? 'badge-home' : 'badge-away';
-          const odds    = isOver
-            ? (p.over_odds  != null ? (p.over_odds  > 0 ? '+' : '') + p.over_odds  : '')
-            : (p.under_odds != null ? (p.under_odds > 0 ? '+' : '') + p.under_odds : '');
           const gap     = p.avg_k != null ? (p.avg_k - p.line).toFixed(1) : '—';
-          const gapClr  = isOver ? '#63cab7' : '#ff8a65';
           const gapDisp = p.avg_k != null ? (isOver ? '+' : '') + gap : '—';
+          const odds    = isOver
+            ? (p.over_odds  != null ? (p.over_odds  > 0 ? '+':'') + p.over_odds  : '')
+            : (p.under_odds != null ? (p.under_odds > 0 ? '+':'') + p.under_odds : '');
+          const sideCls = p.side === 'HOME' ? 'badge-home' : 'badge-away';
           return `<tr>
             <td><span class="rank-badge rank-n" style="background:#0d2e2e;color:#63cab7">${i+1}</span></td>
             <td class="font-semibold">${p.name}</td>
             <td><span class="badge ${sideCls}">${p.side}</span></td>
             <td class="text-slate-300 text-sm">${p.opp}</td>
             <td style="font-family:monospace;font-weight:700;color:#fff">${p.line} Ks</td>
-            <td style="font-family:monospace;font-weight:700;color:${pickClr};font-size:1.05rem">${p.avg_k != null ? p.avg_k + ' K' : '—'}</td>
-            <td style="font-family:monospace;color:${gapClr};font-weight:700">${gapDisp}</td>
-            <td class="text-slate-400 text-sm">${p.starts} starts</td>
-            <td style="font-family:monospace;font-size:.75rem;color:#94a3b8;max-width:160px">${p.k_history || '—'}</td>
+            <td style="font-family:monospace;font-weight:700;color:${pickClr};font-size:1.05rem">${p.avg_k != null ? p.avg_k+' K' : '—'}</td>
+            <td style="font-family:monospace;color:${pickClr};font-weight:700">${gapDisp}</td>
+            <td class="text-slate-400 text-sm">${p.starts}</td>
+            <td style="font-family:monospace;font-size:.75rem;color:#94a3b8">${p.k_history || '—'}</td>
             <td><span style="color:${pickClr};font-weight:900;font-size:1rem">${p.pick}</span>
                 <span class="text-slate-500" style="font-size:.68rem;display:block">${odds}</span></td>
           </tr>`;
         }).join('')
-      : '<tr><td colspan="10" class="text-slate-500 text-center py-4">No picks today — pitchers are right on the line or need more H/A history vs today\'s opponent</td></tr>';
-
-    // ── No-pick (insufficient history) sub-table ───────────────────
+      : '<tr><td colspan="10" class="text-slate-500 text-center py-4">No picks today — pitchers on the line or vs tough K teams</td></tr>';
     const noPick = pkAll.filter(p => !p.pick);
     const npDet  = document.getElementById('pitcher-k-nopick-details');
-    if (noPick.length > 0) {
-      npDet.style.display = '';
-      document.getElementById('pitcher-k-nopick-body').innerHTML = noPick.map(p => {
-        const sideCls = p.side === 'HOME' ? 'badge-home' : 'badge-away';
-        return `<tr style="opacity:0.6">
-          <td class="font-semibold">${p.name}</td>
-          <td><span class="badge ${sideCls}">${p.side}</span></td>
-          <td class="text-slate-400 text-sm">${p.opp}</td>
-          <td style="font-family:monospace">${p.line} Ks</td>
-          <td class="text-slate-400 text-sm">${p.starts}</td>
-          <td class="text-slate-500 text-xs">${p.pick_note || '—'}</td>
-        </tr>`;
-      }).join('');
-    } else {
-      npDet.style.display = 'none';
+    if (npDet) {
+      if (noPick.length > 0) {
+        npDet.style.display = '';
+        document.getElementById('pitcher-k-nopick-body').innerHTML = noPick.map(p => {
+          const sideCls = p.side === 'HOME' ? 'badge-home' : 'badge-away';
+          return `<tr style="opacity:0.6">
+            <td class="font-semibold">${p.name}</td>
+            <td><span class="badge ${sideCls}">${p.side}</span></td>
+            <td class="text-slate-400 text-sm">${p.opp}</td>
+            <td style="font-family:monospace">${p.line} Ks</td>
+            <td class="text-slate-400 text-sm">${p.starts}</td>
+            <td class="text-slate-500 text-xs">${p.pick_note || '—'}</td>
+          </tr>`;
+        }).join('');
+      } else { npDet.style.display = 'none'; }
     }
   }
 
-  // DQ section
+  // ── DQ section
   const allDQ = [...(dq_s1_s3 || []), ...(dq_step4 || []), ...(result.dq_lineup || [])];
   document.getElementById('dq-count-badge').textContent = allDQ.length + ' players';
   const dqBody = document.getElementById('dq-body');
@@ -819,7 +884,13 @@ function setProgress(pct, label) {
 
 // ─── Misc helpers ─────────────────────────────────────────────────────
 function authFetch(url, opts = {}) {
-  return fetch(url, opts);
+  return fetch(url, {
+    ...opts,
+    headers: { ...(opts.headers || {}), 'Authorization': `Bearer ${token}` }
+  }).then(r => {
+    if (r.status === 401) { doLogout(); throw new Error('Session expired — please sign in again.'); }
+    return r;
+  });
 }
 
 function pad(s, n) { return (s + ' '.repeat(n)).slice(0, n); }
