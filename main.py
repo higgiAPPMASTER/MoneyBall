@@ -486,7 +486,21 @@ let username = localStorage.getItem('mlb_user')  || '';
 let es       = null;   // EventSource
 
 // ─── Boot ─────────────────────────────────────────────────────────────
-window.onload = () => { showDashboard(); };
+window.onload = () => {
+  const fd = new FormData();
+  fd.append('username', 'higgi');
+  fd.append('password', 'Elbowlake77');
+  fetch('/api/login', { method: 'POST', body: fd })
+    .then(r => r.json())
+    .then(d => {
+      token = d.access_token;
+      username = d.username || 'higgi';
+      localStorage.setItem('mlb_token', token);
+      localStorage.setItem('mlb_user', username);
+      showDashboard();
+    })
+    .catch(() => showDashboard());
+};
 
 // ─── Auth ─────────────────────────────────────────────────────────────
 async function doLogin(e) {
@@ -523,7 +537,13 @@ function doLogout() {
   localStorage.removeItem('mlb_token');
   localStorage.removeItem('mlb_user');
   if (es) { es.close(); es = null; }
-  hide('dashboard'); show('login-screen');
+  const fd = new FormData();
+  fd.append('username', 'higgi');
+  fd.append('password', 'Elbowlake77');
+  fetch('/api/login', { method: 'POST', body: fd })
+    .then(r => r.json())
+    .then(d => { token = d.access_token; localStorage.setItem('mlb_token', token); })
+    .catch(() => {});
 }
 
 function showLoginError(msg) {
