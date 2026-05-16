@@ -2,3 +2,4 @@ fastapi
 uvicorn[standard]
 requests
 curl_cffi
+python-multipart
