@@ -147,6 +147,13 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         slug     = info.get("slug", "")
         team     = info.get("team_name", "")
         sched    = team_schedule.get(team, {})
+        if not sched and team:
+            # Fuzzy fallback — handles minor name diffs between MLB API and ESPN
+            tl = team.lower()
+            for k, v in team_schedule.items():
+                if tl in k.lower() or k.lower() in tl:
+                    sched = v
+                    break
         side     = sched.get("side", "")
         opp_slug = sched.get("opp_slug", "")
         opp_name = sched.get("opponent", "")
@@ -214,7 +221,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
             fetch_day_night_ba(eid, gtype)
             if eid and gtype != "unknown"
             else {"display": "N/A", "flag": "❌ skip", "dq": False, "ba": None, "ab": None}
-        ) or {"display": "N/A", "flag": "❌ skip", "dq": False, "ba": None, "ab": None}
+        )
         label = "DAY" if gtype == "day" else "NIGHT"
         r["dn"]       = dn
         r["dn_label"] = label
