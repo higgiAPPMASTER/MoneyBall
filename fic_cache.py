@@ -53,6 +53,9 @@ def _parse_avg(s) -> float:
 def _find_chromium() -> str | None:
     browsers = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "/opt/render/project/.browsers")
     patterns = [
+        # Newer Playwright — headless shell
+        f"{browsers}/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell",
+        # Older Playwright — full chromium
         f"{browsers}/chromium-*/chrome-linux/chrome",
         f"{browsers}/chromium-*/chrome-linux/chromium",
     ]
