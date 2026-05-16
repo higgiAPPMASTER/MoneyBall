@@ -1,34 +1,59 @@
 """
-pitcher_k.py — MLB Pitcher Strikeout Picks for MoneyBall
-=========================================================
-Columns returned: name, team, side, opp, line,
-                  avg_k, avg_ip, era, k_hit_rate,
-                  starts, k_history, pick, over_odds, under_odds
-Data sources:
-  - MLB Stats API  (schedule, game logs, season ERA)  free, no key
-  - The Odds API   (pitcher_strikeouts O/U lines)      ODDS_API_KEY env var
+pitcher_k.py — Pitcher Strikeout Picks for MoneyBall.
+
+Simplified algorithm:
+  Step 1 : Get pitcher K lines from The Odds API (pitcher_strikeouts market).
+  Step 2 : Pull career H/A game logs vs today's specific opponent (all seasons).
+           Calculate avg Ks in those H/A starts.
+  Pick   : Compare avg K to the line.
+           avg > line  → lean OVER
+           avg < line  → lean UNDER
+           Shows ALL pitchers with at least MIN_STARTS qualifying starts vs that team.
 """
-import os, requests
-from datetime import datetime
 
-MLB          = "https://statsapi.mlb.com/api/v1"
-ODDS_API_KEY = os.getenv("ODDS_API_KEY", "")
-CUR_YEAR     = datetime.now().year
-MIN_STARTS   = 2     # min H/A starts vs opponent to issue a pick
-GAP_THRESH   = 0.4   # avg_k must differ from line by this much to pick
+import os, time, requests
+
+ODDS_API_KEY  = os.environ.get("ODDS_API_KEY", "")
+ODDS_BASE     = "https://api.the-odds-api.com/v4"
+MLB_API       = "https://statsapi.mlb.com/api/v1"
+
+MIN_STARTS       = 2       # minimum qualifying H/A starts vs opponent to show a pick
+MIN_IP_START     = 3.0     # min innings pitched to count as a qualifying start
+K_SEASONS        = [2021, 2022, 2023, 2024, 2025, 2026]
+SEASON           = "2026"
+BOTTOM_K_TEAMS_N = 5       # cut pitchers facing the bottom N lowest K-rate teams
+
+_pitcher_id_cache = {}
+_team_id_cache    = {}
 
 
-# ─────────────────  HELPERS  ────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────────────
 
-def _req(url, **kw):
-    try:
-        return requests.get(url, timeout=13, **kw).json()
-    except Exception:
-        return {}
+def _normalize(text: str) -> str:
+    subs = {'á':'a','à':'a','ä':'a','é':'e','è':'e','ë':'e',
+            'í':'i','ì':'i','ó':'o','ò':'o','ö':'o','ú':'u',
+            'ù':'u','ü':'u','ñ':'n','ç':'c'}
+    t = text.lower()
+    for a, p in subs.items():
+        t = t.replace(a, p)
+    return t
+
+
+def _teams_match(t1: str, t2: str) -> bool:
+    """Fuzzy team name match."""
+    n1, n2 = _normalize(t1), _normalize(t2)
+    if n1 == n2 or n1 in n2 or n2 in n1:
+        return True
+    stop = {"of", "the", "los", "las", "san", "new", "de"}
+    w1 = set(n1.split()) - stop
+    w2 = set(n2.split()) - stop
+    return len(w1 & w2) >= 2
 
 
 def _ip_to_float(ip_str) -> float:
-    """'6.1' -> 6.333  |  '5.2' -> 5.667"""
+    """'6.2' → 6.667  (MLB fractional innings)"""
     try:
         parts = str(ip_str).split(".")
         full   = int(parts[0])
@@ -38,219 +63,371 @@ def _ip_to_float(ip_str) -> float:
         return 0.0
 
 
-def _hit_rate_label(over: int, total: int) -> str:
-    pct   = round(over / total * 100)
-    emoji = "🟢" if pct >= 65 else ("🟡" if pct >= 40 else "🔴")
-    return f"{over}/{total} ({pct}%) {emoji}"
+# ─────────────────────────────────────────────────────────────────────
+# Team K-rate filter — bottom 5 strikeout teams (hardest to K as batters)
+# ─────────────────────────────────────────────────────────────────────
 
-
-# ─────────────────  DATA  ───────────────────────────────────────────────────
-
-def _schedule(date_str: str) -> list:
-    d = _req(f"{MLB}/schedule", params={
-        "date": date_str, "sportId": 1, "hydrate": "probablePitcher,team",
-    })
-    out = []
-    for dd in d.get("dates", []):
-        for g in dd.get("games", []):
-            ht = g["teams"]["home"]
-            at = g["teams"]["away"]
-            hp = ht.get("probablePitcher")
-            ap = at.get("probablePitcher")
-            hn = ht.get("team", {}).get("name", "")
-            an = at.get("team", {}).get("name", "")
-            hi = ht.get("team", {}).get("id")
-            ai = at.get("team", {}).get("id")
-            if hp:
-                out.append({"pitcher_id": hp["id"], "pitcher_name": hp["fullName"],
-                            "team": hn, "side": "HOME", "opp": an, "opp_id": ai})
-            if ap:
-                out.append({"pitcher_id": ap["id"], "pitcher_name": ap["fullName"],
-                            "team": an, "side": "AWAY", "opp": hn, "opp_id": hi})
-    return out
-
-
-def _k_lines() -> dict:
+def _get_bottom_k_teams(season: str, n: int = BOTTOM_K_TEAMS_N):
     """
-    Pitcher strikeout O/U lines from The Odds API.
-    Returns {last_name_lower: {line, over_odds, under_odds}}
+    Fetch all team batting stats and find the bottom N teams by K/game.
+    These teams strike out the LEAST as batters — toughest for pitcher K props.
+    Returns:
+      dq_set  : set of team names to DQ against
+      ranked  : list of {name, k_per_g} for display in logs
     """
-    if not ODDS_API_KEY:
-        print("[pitcher_k] ODDS_API_KEY not set — add it to Render environment variables")
-        return {}
-
-    lines: dict = {}
     try:
-        r   = requests.get(
-            "https://api.the-odds-api.com/v4/sports/baseball_mlb/events",
-            params={"apiKey": ODDS_API_KEY}, timeout=10,
+        r = requests.get(
+            f"{MLB_API}/teams/stats",
+            params={
+                "season":   season,
+                "sportId":  1,
+                "group":    "hitting",
+                "stats":    "season",
+            },
+            timeout=12,
         )
-        raw = r.json()
-        if isinstance(raw, dict) and raw.get("message"):
-            print(f"[pitcher_k] Odds API error: {raw['message']}")
-            return {}
-        event_ids = [e["id"] for e in raw] if isinstance(raw, list) else []
-        print(f"[pitcher_k] Odds API: {len(event_ids)} events found")
-    except Exception as exc:
-        print(f"[pitcher_k] Odds API events error: {exc}")
-        return {}
-
-    for eid in event_ids[:20]:
-        try:
-            r2 = requests.get(
-                f"https://api.the-odds-api.com/v4/sports/baseball_mlb/events/{eid}/odds",
-                params={"apiKey": ODDS_API_KEY, "regions": "us,us2",
-                        "markets": "pitcher_strikeouts", "oddsFormat": "american"},
-                timeout=10,
-            )
-            for bookie in r2.json().get("bookmakers", []):
-                for mkt in bookie.get("markets", []):
-                    if mkt.get("key") != "pitcher_strikeouts":
-                        continue
-                    over_p = under_p = line_v = name_k = None
-                    for oc in mkt.get("outcomes", []):
-                        desc = oc.get("description", "").lower().strip()
-                        if oc.get("name") == "Over":
-                            line_v = oc.get("point")
-                            over_p = oc.get("price")
-                            name_k = desc
-                        elif oc.get("name") == "Under":
-                            under_p = oc.get("price")
-                    if name_k and line_v is not None and name_k not in lines:
-                        lines[name_k] = {"line": line_v, "over_odds": over_p, "under_odds": under_p}
-        except Exception:
-            continue
-    return lines
-
-
-def _pitcher_logs(pitcher_id: int) -> list:
-    logs = []
-    for season in [CUR_YEAR, CUR_YEAR - 1, CUR_YEAR - 2]:
-        try:
-            d = _req(f"{MLB}/people/{pitcher_id}/stats", params={
-                "stats": "gameLog", "group": "pitching",
-                "season": season, "hydrate": "team,opponent",
+        splits = r.json().get("stats", [{}])[0].get("splits", [])
+        teams_data = []
+        for sp in splits:
+            stat = sp.get("stat", {})
+            ks   = stat.get("strikeOuts", 0)
+            gp   = stat.get("gamesPlayed", 1)
+            if gp < 5:
+                continue   # skip teams with tiny sample
+            k_per_g = round(ks / gp, 2)
+            teams_data.append({
+                "name":    sp.get("team", {}).get("name", ""),
+                "k_per_g": k_per_g,
             })
-            logs.extend(d.get("stats", [{}])[0].get("splits", []))
-        except Exception:
-            pass
-    return logs
+        # Sort ascending — fewest Ks per game first
+        teams_data.sort(key=lambda x: x["k_per_g"])
+        bottom_n = teams_data[:n]
+        dq_set   = {t["name"] for t in bottom_n}
+        return dq_set, bottom_n
+    except Exception:
+        return set(), []
 
 
-def _pitcher_era(pitcher_id: int) -> str:
+# ─────────────────────────────────────────────────────────────────────
+# Odds API
+# ─────────────────────────────────────────────────────────────────────
+
+def _get_today_events() -> list:
     try:
-        d = _req(f"{MLB}/people/{pitcher_id}/stats", params={
-            "stats": "season", "group": "pitching", "season": CUR_YEAR,
-        })
-        splits = d.get("stats", [{}])[0].get("splits", [])
-        if splits:
-            return str(splits[0].get("stat", {}).get("era", "-.--"))
+        r = requests.get(
+            f"{ODDS_BASE}/sports/baseball_mlb/events",
+            params={"apiKey": ODDS_API_KEY, "dateFormat": "iso"},
+            timeout=15,
+        )
+        return r.json() if r.ok and isinstance(r.json(), list) else []
+    except Exception:
+        return []
+
+
+def _get_k_lines_for_event(event_id: str) -> list:
+    """Returns list of {name, line, over_odds, under_odds} for pitcher_strikeouts."""
+    try:
+        r = requests.get(
+            f"{ODDS_BASE}/sports/baseball_mlb/events/{event_id}/odds",
+            params={
+                "apiKey":     ODDS_API_KEY,
+                "regions":    "us,us2",
+                "markets":    "pitcher_strikeouts",
+                "bookmakers": "draftkings,fanduel,betmgm,williamhill_us",
+                "oddsFormat": "american",
+            },
+            timeout=15,
+        )
+        if not r.ok:
+            return []
+        lines = {}
+        for bm in r.json().get("bookmakers", []):
+            for mkt in bm.get("markets", []):
+                if mkt.get("key") != "pitcher_strikeouts":
+                    continue
+                for oc in mkt.get("outcomes", []):
+                    name  = oc.get("description") or oc.get("name", "")
+                    side  = oc.get("name", "")
+                    point = oc.get("point")
+                    price = oc.get("price")
+                    if not name or point is None:
+                        continue
+                    key = _normalize(name)
+                    if key not in lines:
+                        lines[key] = {"name": name, "line": float(point),
+                                      "over_odds": None, "under_odds": None}
+                    if side == "Over":
+                        lines[key]["over_odds"] = price
+                    elif side == "Under":
+                        lines[key]["under_odds"] = price
+        return list(lines.values())
+    except Exception:
+        return []
+
+
+# ─────────────────────────────────────────────────────────────────────
+# MLB Stats API
+# ─────────────────────────────────────────────────────────────────────
+
+def _get_pitcher_id(full_name: str) -> int | None:
+    key = _normalize(full_name)
+    if key in _pitcher_id_cache:
+        return _pitcher_id_cache[key]
+    try:
+        last = full_name.strip().split()[-1]
+        r = requests.get(f"{MLB_API}/people/search",
+            params={"names": last, "sportId": 1}, timeout=8)
+        norm = _normalize(full_name)
+        candidates = r.json().get("people", [])
+        # Exact name + active pitcher
+        for p in candidates:
+            if (_normalize(p.get("fullName", "")) == norm and p.get("active") and
+                    p.get("primaryPosition", {}).get("code") == "1"):
+                _pitcher_id_cache[key] = p["id"]
+                return p["id"]
+        # Last-name match among active pitchers
+        for p in candidates:
+            if (_normalize(p.get("lastName", "")) == _normalize(last) and
+                    p.get("active") and
+                    p.get("primaryPosition", {}).get("code") == "1"):
+                _pitcher_id_cache[key] = p["id"]
+                return p["id"]
     except Exception:
         pass
-    return "-.--"
-
-
-def _filter_logs(logs: list, side: str, opp_id) -> list:
-    want_home = (side == "HOME")
-    return [
-        g for g in logs
-        if g.get("isHome", False) == want_home
-        and (opp_id is None or g.get("opponent", {}).get("id") == opp_id)
-    ]
-
-
-def _match_line(name: str, k_lines: dict):
-    nl   = name.lower()
-    last = nl.split()[-1] if nl else ""
-    if nl in k_lines:
-        return k_lines[nl]
-    for key, val in k_lines.items():
-        if last and (last in key or key.endswith(last)):
-            return val
     return None
 
 
-# ─────────────────  MAIN  ───────────────────────────────────────────────────
+def _get_pitcher_team(pitcher_id: int) -> str:
+    try:
+        r = requests.get(f"{MLB_API}/people/{pitcher_id}",
+            params={"hydrate": "currentTeam"}, timeout=8)
+        return r.json()["people"][0].get("currentTeam", {}).get("name", "")
+    except Exception:
+        return ""
 
-def get_pitcher_k_picks(date_str: str, emit=None) -> dict:
-    def log(msg):
-        if emit:
-            emit({"type": "log", "msg": msg})
 
-    log("⚾ Pitcher K: fetching schedule…")
-    matchups = _schedule(date_str)
-    if not matchups:
-        log("⚾ Pitcher K: no probable pitchers found")
+def _get_team_id(team_name: str) -> int | None:
+    key = _normalize(team_name)
+    if key in _team_id_cache:
+        return _team_id_cache[key]
+    try:
+        r = requests.get(f"{MLB_API}/teams",
+            params={"sportId": 1, "season": SEASON}, timeout=8)
+        for t in r.json().get("teams", []):
+            if _teams_match(t.get("name", ""), team_name):
+                _team_id_cache[key] = t["id"]
+                return t["id"]
+    except Exception:
+        pass
+    return None
+
+
+def _get_pitching_logs(pitcher_id: int, season: int) -> list:
+    try:
+        r = requests.get(f"{MLB_API}/people/{pitcher_id}/stats",
+            params={"stats": "gameLog", "group": "pitching",
+                    "season": season, "gameType": "R"},
+            timeout=12)
+        data = r.json().get("stats", [])
+        return data[0].get("splits", []) if data else []
+    except Exception:
+        return []
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Core: career H/A K avg vs specific opponent
+# ─────────────────────────────────────────────────────────────────────
+
+def career_ha_ks_vs_opp(pitcher_id: int, side: str, opp_name: str) -> dict:
+    """
+    Pull all career H/A qualifying starts vs today's opponent across all seasons.
+    Returns {avg_k, starts, k_list, min_k, max_k} or None if not enough data.
+    """
+    opp_id = _get_team_id(opp_name)
+    time.sleep(0.1)
+    if not opp_id:
+        return None
+
+    is_home   = (side == "HOME")
+    k_list    = []
+
+    for season in reversed(K_SEASONS):   # newest first so most recent context is prioritized
+        splits = _get_pitching_logs(pitcher_id, season)
+        time.sleep(0.08)
+        for sp in reversed(splits):      # reverse so newest game is first within season
+            opp_id_sp = sp.get("opponent", {}).get("id")
+            if opp_id_sp != opp_id:
+                continue
+            if sp.get("isHome") != is_home:
+                continue
+            ip = _ip_to_float(sp.get("stat", {}).get("inningsPitched", "0"))
+            if ip < MIN_IP_START:
+                continue   # filter out relief appearances
+            ks = sp.get("stat", {}).get("strikeOuts", 0)
+            k_list.append(ks)
+
+    if len(k_list) < MIN_STARTS:
+        return {"avg_k": None, "starts": len(k_list), "k_list": k_list,
+                "min_k": None, "max_k": None}
+
+    avg_k = round(sum(k_list) / len(k_list), 1)
+    return {
+        "avg_k":  avg_k,
+        "starts": len(k_list),
+        "k_list": k_list,
+        "min_k":  min(k_list),
+        "max_k":  max(k_list),
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Main entry point
+# ─────────────────────────────────────────────────────────────────────
+
+def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
+    """
+    Pitcher K Picks pipeline.
+    Returns {"picks": [...confirmed direction picks], "all": [...all analyzed]}
+    """
+    if emit is None:
+        emit = lambda _: None
+
+    if not ODDS_API_KEY:
+        emit({"type": "log", "msg": "⚠️ No ODDS_API_KEY — Pitcher K Picks skipped"})
         return {"picks": [], "all": []}
 
-    log(f"⚾ Pitcher K: {len(matchups)} pitchers — fetching K lines from Odds API…")
-    lines = _k_lines()
-    log(f"⚾ Pitcher K: {len(lines)} K lines returned")
+    emit({"type": "section", "msg": "⚾ Pitcher K Picks — Fetching lines from Odds API"})
 
-    picks:   list = []
-    all_pit: list = []
+    # ── Get events & lines ───────────────────────────────────────────
+    events = _get_today_events()
+    if not events:
+        emit({"type": "log", "msg": "⚠️ No MLB events today — Pitcher K Picks skipped"})
+        return {"picks": [], "all": []}
 
-    for m in matchups:
-        pid   = m["pitcher_id"]
-        name  = m["pitcher_name"]
-        team  = m["team"]
-        side  = m["side"]
-        opp   = m["opp"]
-        opp_id = m["opp_id"]
+    all_lines = []
+    for event in events:
+        k_lines = _get_k_lines_for_event(event["id"])
+        for l in k_lines:
+            l["home_team"] = event.get("home_team", "")
+            l["away_team"] = event.get("away_team", "")
+        all_lines.extend(k_lines)
+        time.sleep(0.15)
 
-        ld = _match_line(name, lines)
-        if not ld:
-            all_pit.append({"name": name, "team": team, "side": side, "opp": opp,
-                            "line": None, "avg_k": None, "avg_ip": None, "era": None,
-                            "k_hit_rate": None, "k_hit_rate_pct": None,
-                            "starts": 0, "k_history": "", "pick": None,
-                            "over_odds": None, "under_odds": None,
-                            "pick_note": "No K line available"})
+    if not all_lines:
+        emit({"type": "log", "msg": "⚠️ No pitcher K lines posted yet — check back closer to game time"})
+        return {"picks": [], "all": []}
+
+    emit({"type": "log", "msg": f"✅ {len(all_lines)} pitcher K lines found"})
+
+    # ── Bottom-K teams filter (lowest K/game as batters) ───────────────
+    bottom_k_set, bottom_k_list = _get_bottom_k_teams(SEASON)
+    if bottom_k_set:
+        team_lines = ", ".join(
+            f"{t['name']} ({t['k_per_g']} K/G)" for t in bottom_k_list
+        )
+        emit({"type": "log", "msg": f"✅ Bottom {BOTTOM_K_TEAMS_N} K teams (DQ zone): {team_lines}"})
+    else:
+        emit({"type": "log", "msg": "⚠️ Could not load team K stats — K-team filter skipped"})
+
+    emit({"type": "section", "msg": "⚾ Pitcher K Picks — Pulling career H/A history vs opponent"})
+
+    # ── Analyze each pitcher ─────────────────────────────────────────
+    all_results = []
+    for pl in all_lines:
+        name = pl["name"]
+        line = pl["line"]
+
+        pid = _get_pitcher_id(name)
+        time.sleep(0.15)
+        if not pid:
+            emit({"type": "log", "msg": f"  ⚠️ {name} — player not found, skipping"})
             continue
 
-        k_line     = ld["line"]
-        over_odds  = ld.get("over_odds")
-        under_odds = ld.get("under_odds")
+        # Determine H/A context
+        pitcher_team = _get_pitcher_team(pid)
+        time.sleep(0.1)
+        if _teams_match(pitcher_team, pl["home_team"]):
+            side = "HOME"
+            opp  = pl["away_team"]
+        else:
+            side = "AWAY"
+            opp  = pl["home_team"]
 
-        logs     = _pitcher_logs(pid)
-        opp_logs = _filter_logs(logs, side, opp_id)
-        era      = _pitcher_era(pid)
-
-        base = {"name": name, "team": team, "side": side, "opp": opp,
-                "line": k_line, "over_odds": over_odds, "under_odds": under_odds, "era": era}
-
-        if len(opp_logs) < MIN_STARTS:
-            base.update({"avg_k": None, "avg_ip": None,
-                         "k_hit_rate": None, "k_hit_rate_pct": None,
-                         "starts": len(opp_logs), "k_history": "", "pick": None,
-                         "pick_note": f"Only {len(opp_logs)} H/A start(s) vs {opp}"})
-            all_pit.append(base)
+        # ── Bottom-K team DQ check ──────────────────────────────────
+        opp_k_info = next((t for t in bottom_k_list if _teams_match(t["name"], opp)), None)
+        if bottom_k_set and opp_k_info:
+            dq_note = f"Opp {opp} is bottom {BOTTOM_K_TEAMS_N} K team ({opp_k_info['k_per_g']} K/G)"
+            emit({"type": "log", "msg": f"  ❌ {name} — {dq_note}"})
+            all_results.append({
+                "name": name, "team": pitcher_team, "opp": opp, "side": side,
+                "line": line, "over_odds": pl.get("over_odds"), "under_odds": pl.get("under_odds"),
+                "avg_k": None, "starts": 0, "min_k": None, "max_k": None,
+                "k_history": "—", "pick": None, "pick_note": dq_note,
+            })
             continue
 
-        k_vals  = [int(g.get("stat", {}).get("strikeOuts", 0)) for g in opp_logs]
-        ip_vals = [_ip_to_float(g.get("stat", {}).get("inningsPitched", 0)) for g in opp_logs]
+        emit({"type": "log",
+              "msg": f"  {name}  K line: {line}  {side} vs {opp} — pulling history..."})
 
-        avg_k  = round(sum(k_vals)  / len(k_vals),  1)
-        avg_ip = round(sum(ip_vals) / len(ip_vals), 1)
+        # Career H/A K avg vs today's opponent
+        hist = career_ha_ks_vs_opp(pid, side, opp)
 
-        k_history     = ",".join(str(k) for k in list(reversed(k_vals))[:8])
-        over_count    = sum(1 for k in k_vals if k >= k_line)
-        total         = len(k_vals)
-        k_hit_rate    = _hit_rate_label(over_count, total)
-        k_hit_rate_pct = round(over_count / total * 100)
+        avg_k  = hist["avg_k"]  if hist else None
+        starts = hist["starts"] if hist else 0
+        k_list = hist["k_list"] if hist else []
+        min_k  = hist["min_k"]  if hist else None
+        max_k  = hist["max_k"]  if hist else None
 
-        gap  = avg_k - k_line
-        pick = "OVER" if gap > GAP_THRESH else ("UNDER" if gap < -GAP_THRESH else None)
+        # Determine pick direction
+        if avg_k is None:
+            pick     = None
+            pick_note = f"N/A — only {starts} qualifying start{'s' if starts != 1 else ''} vs {opp}"
+            emit({"type": "log", "msg": f"    — No pick: {pick_note}"})
+        elif avg_k > line:
+            pick      = "OVER"
+            pick_note = f"avg {avg_k} K > line {line}"
+            emit({"type": "log", "msg": f"    ✅ OVER — avg {avg_k} K > line {line}  ({starts} starts)"})
+        elif avg_k < line:
+            pick      = "UNDER"
+            pick_note = f"avg {avg_k} K < line {line}"
+            emit({"type": "log", "msg": f"    ✅ UNDER — avg {avg_k} K < line {line}  ({starts} starts)"})
+        else:
+            pick      = None
+            pick_note = f"avg {avg_k} K exactly on the line — no pick"
+            emit({"type": "log", "msg": f"    — Avg exactly on line {line} — no pick"})
 
-        base.update({"avg_k": avg_k, "avg_ip": avg_ip,
-                     "k_hit_rate": k_hit_rate, "k_hit_rate_pct": k_hit_rate_pct,
-                     "starts": total, "k_history": k_history,
-                     "pick": pick, "pick_note": None})
+        # Build a compact K history string e.g. "8, 7, 5, 9, 6"
+        k_history = ", ".join(str(k) for k in k_list) if k_list else "—"
 
-        if pick:
-            picks.append(base)
-        all_pit.append(base)
+        all_results.append({
+            "name":       name,
+            "team":       pitcher_team,
+            "opp":        opp,
+            "side":       side,
+            "line":       line,
+            "over_odds":  pl.get("over_odds"),
+            "under_odds": pl.get("under_odds"),
+            "avg_k":      avg_k,
+            "starts":     starts,
+            "min_k":      min_k,
+            "max_k":      max_k,
+            "k_history":  k_history,
+            "pick":       pick,
+            "pick_note":  pick_note,
+        })
 
-    picks.sort(key=lambda p: abs((p.get("avg_k") or 0) - (p.get("line") or 0)), reverse=True)
-    log(f"⚾ Pitcher K complete: {len(picks)} picks from {len(all_pit)} pitchers processed")
-    return {"picks": picks, "all": all_pit}
+    # Confirmed picks = any pitcher with enough history and avg ≠ line
+    confirmed = [r for r in all_results if r["pick"]]
+    no_pick   = [r for r in all_results if not r["pick"]]
+
+    # Sort confirmed: biggest gap between avg and line first
+    confirmed.sort(
+        key=lambda r: abs((r["avg_k"] or 0) - r["line"]),
+        reverse=True
+    )
+
+    cnt = len(confirmed)
+    emit({"type": "log",
+          "msg": f"✅ Pitcher K Picks done — {cnt} pick{'s' if cnt != 1 else ''} (avg vs line)"})
+
+    return {"picks": confirmed, "all": all_results}
