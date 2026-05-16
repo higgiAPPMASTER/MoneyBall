@@ -186,10 +186,11 @@ def lookup_player(short_name, todays_teams=None, matchups=None, pitcher_name=Non
         # candidate whose team is not playing today (catches minor-league players,
         # wrong-name matches, etc.).
         if todays_teams:
-            mlb_today = [c for c in full_candidates if c["team_name"] in todays_teams]
-            # If none of the API results land on an MLB team playing today,
-            # there is no reliable match — return None so the player is skipped
-            # rather than silently returning a wrong (e.g. minor-league) player.
+            # Fuzzy match — handles minor name differences between MLB API and ESPN
+            def _team_in_today(cand_team):
+                ct = cand_team.lower()
+                return any(ct in t.lower() or t.lower() in ct for t in todays_teams)
+            mlb_today = [c for c in full_candidates if _team_in_today(c["team_name"])]
             if not mlb_today:
                 return None
             full_candidates = mlb_today   # work only with valid MLB players
