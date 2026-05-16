@@ -142,6 +142,8 @@ def fetch_day_night_ba(espn_id, game_type):
                 return {"ba": None, "ab": None, "display": "N/A", "flag": "❌ no data", "dq": False}
     except:
         return {"ba": None, "ab": None, "display": "N/A", "flag": "❌ ERR", "dq": False}
+    # Safety net: ESPN returned no 'Breakdown' category — never return None
+    return {"ba": None, "ab": None, "display": "N/A", "flag": "❌ no data", "dq": False}
 
 
 def run_day_night_filter(qualified_players, date_str, roster):
