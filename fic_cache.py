@@ -68,6 +68,27 @@ def _find_chromium() -> str | None:
 
 # ── SOURCE 1 (PRIMARY): FIC via Playwright ────────────────────────────
 
+def _ensure_browser(log_fn):
+    """Auto-install Playwright browser if the executable is missing."""
+    exec_path = _find_chromium()
+    if exec_path:
+        return  # already installed
+    log_fn("   Browser not found — running 'python -m playwright install chromium'...")
+    try:
+        import subprocess, sys
+        env = os.environ.copy()
+        result = subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "chromium"],
+            capture_output=True, text=True, timeout=120, env=env
+        )
+        if result.returncode == 0:
+            log_fn("   ✅ Browser installed successfully")
+        else:
+            log_fn(f"   ⚠️ Browser install failed: {result.stderr[:200]}")
+    except Exception as exc:
+        log_fn(f"   ⚠️ Browser install error: {exc}")
+
+
 def _fic_html_via_playwright(log_fn) -> str:
     """
     Use Playwright (sync API, already installed on Render) to render FIC.
@@ -76,22 +97,24 @@ def _fic_html_via_playwright(log_fn) -> str:
     """
     try:
         from playwright.sync_api import sync_playwright
-        exec_path = _find_chromium()
-        log_fn(f"   Launching Playwright chromium{' at '+exec_path if exec_path else ''}...")
+        _ensure_browser(log_fn)           # auto-install if missing
+        exec_path = _find_chromium()      # find after potential install
+        log_fn(f"   Launching Playwright chromium{' at '+exec_path if exec_path else ' (auto-detect)'}...")
         with sync_playwright() as p:
-            browser = p.chromium.launch(
-                executable_path=exec_path,
+            launch_kwargs = dict(
                 headless=True,
                 args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
             )
+            if exec_path:
+                launch_kwargs["executable_path"] = exec_path
+            browser = p.chromium.launch(**launch_kwargs)
             ctx  = browser.new_context(user_agent=_BROWSER_UA)
             page = ctx.new_page()
             page.goto(FIC_URL, wait_until="domcontentloaded", timeout=25_000)
-            # Wait for the data table to appear (up to 12s after initial load)
             try:
                 page.wait_for_selector("table", timeout=12_000)
             except Exception:
-                pass  # proceed anyway — might still have content
+                pass
             html = page.content()
             browser.close()
             log_fn(f"   Playwright rendered {len(html):,} bytes")
