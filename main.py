@@ -464,9 +464,9 @@ _HTML = """
           <table class="results-table" id="pitcher-k-table">
             <thead>
               <tr>
-                <th>#</th><th>Pitcher</th><th>H/A</th><th>Opponent</th>
-                <th>K Line</th><th>Avg K vs Opp</th><th>Gap</th>
-                <th>Starts</th><th>K History</th><th>Pick</th>
+                <th>#</th><th>Pitcher · Team</th><th>H/A</th><th>Opponent</th>
+                <th>K Line</th><th>Avg K</th><th>Avg IP</th><th>ERA</th>
+                <th>K / Starts H/A</th><th>Gap</th><th>Starts</th><th>K History</th><th>Pick</th>
               </tr>
             </thead>
             <tbody id="pitcher-k-body"></tbody>
@@ -480,10 +480,12 @@ _HTML = """
           </table>
         </details>
         <p class="text-xs text-slate-500 mt-4">
-          <strong>Avg K vs Opp</strong> = career H/A avg Ks vs today's opponent &nbsp;|&nbsp;
-          <strong>Gap</strong> = how far avg is from the line &nbsp;|&nbsp;
-          <strong>Pick</strong> = OVER if avg &gt; line, UNDER if avg &lt; line (min 2 starts).
-          Pitchers facing bottom 5 K-rate teams are excluded.
+          <strong>Avg K</strong> = avg Ks in H/A starts vs today's opponent &nbsp;|&nbsp;
+          <strong>Avg IP</strong> = avg innings pitched in those starts &nbsp;|&nbsp;
+          <strong>ERA</strong> = current season ERA &nbsp;|&nbsp;
+          <strong>K / Starts H/A</strong> = how many of those starts the pitcher exceeded the K line &nbsp;|&nbsp;
+          <strong>Gap</strong> = avg K minus the line &nbsp;|&nbsp;
+          <strong>Pick</strong> = OVER if avg &gt; line, UNDER if avg &lt; line (min 2 H/A starts vs opponent).
         </p>
       </div>
 
@@ -841,11 +843,14 @@ function showResults(result) {
           const sideCls = p.side === 'HOME' ? 'badge-home' : 'badge-away';
           return `<tr>
             <td><span class="rank-badge rank-n" style="background:#0d2e2e;color:#63cab7">${i+1}</span></td>
-            <td class="font-semibold">${p.name}</td>
+            <td class="font-semibold">${p.name}${p.team ? ' <span style="color:#6b7280;font-size:.74rem;font-weight:400">· '+p.team+'</span>' : ''}</td>
             <td><span class="badge ${sideCls}">${p.side}</span></td>
             <td class="text-slate-300 text-sm">${p.opp}</td>
             <td style="font-family:monospace;font-weight:700;color:#fff">${p.line} Ks</td>
             <td style="font-family:monospace;font-weight:700;color:${pickClr};font-size:1.05rem">${p.avg_k != null ? p.avg_k+' K' : '—'}</td>
+            <td style="font-family:monospace;color:#93c5fd;font-weight:600">${p.avg_ip != null ? p.avg_ip+' IP' : '—'}</td>
+            <td style="font-family:monospace;color:#fbbf24;font-weight:600">${p.era || '—'}</td>
+            <td style="font-family:monospace;font-size:.82rem">${p.k_hit_rate || '—'}</td>
             <td style="font-family:monospace;color:${pickClr};font-weight:700">${gapDisp}</td>
             <td class="text-slate-400 text-sm">${p.starts}</td>
             <td style="font-family:monospace;font-size:.75rem;color:#94a3b8">${p.k_history || '—'}</td>
@@ -853,7 +858,7 @@ function showResults(result) {
                 <span class="text-slate-500" style="font-size:.68rem;display:block">${odds}</span></td>
           </tr>`;
         }).join('')
-      : '<tr><td colspan="10" class="text-slate-500 text-center py-4">No picks today — pitchers on the line or vs tough K teams</td></tr>';
+      : '<tr><td colspan="13" class="text-slate-500 text-center py-4">No picks today — pitchers on the line or vs tough K teams</td></tr>';
     const noPick = pkAll.filter(p => !p.pick);
     const npDet  = document.getElementById('pitcher-k-nopick-details');
     if (npDet) {
