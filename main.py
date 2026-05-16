@@ -160,7 +160,7 @@ _HTML = """
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>⚾ MoneyBall</title>
+  <title>MLB MoneyBall &mdash; Money Picks Arena</title>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&family=Source+Sans+Pro:wght@300;400;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
@@ -178,8 +178,8 @@ _HTML = """
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: #0f0f0f; color: #fff; font-family: 'Source Sans Pro', sans-serif; min-height: 100vh; }
     /* Hub-style fixed nav */
-    .app-nav { position: fixed; top: 0; width: 100%; background: rgba(10,10,10,.95); backdrop-filter: blur(12px); border-bottom: 1px solid #1c1c1c; z-index: 100; padding: 0 28px; height: 72px; display: flex; align-items: center; justify-content: space-between; }
-    .app-nav-logo { font-family: 'Playfair Display', serif; font-size: 1.5rem; font-weight: 900; color: #f59e0b; }
+    .app-nav { position: fixed; top: 0; width: 100%; background: rgba(10,10,10,.95); backdrop-filter: blur(12px); border-bottom: 1px solid #1c1c1c; z-index: 100; padding: 0 32px; height: 80px; display: flex; align-items: center; justify-content: space-between; }
+    .app-nav-logo { font-family: 'Playfair Display', serif; font-size: 36px; font-weight: 900; color: #f59e0b; letter-spacing:.02em; line-height:1; }
     .app-nav-logo span { color: #fff; }
     .app-nav-right { display: flex; align-items: center; gap: 16px; }
     .app-nav-user { font-size: 12px; color: #6b7280; }
@@ -322,16 +322,11 @@ _HTML = """
 </div>
 
 <!-- ═══════════════════════ DASHBOARD ══════════════════════════════ -->
-<div id="dashboard" class="hidden min-h-screen flex flex-col" style="padding-top:72px">
+<div id="dashboard" class="hidden min-h-screen flex flex-col" style="padding-top:80px">
 
   <!-- Header -->
   <nav class="app-nav">
-    <span class="app-nav-logo">Money<span>Ball</span> ⚾</span>
-    <div class="app-nav-right">
-      <span id="hdr-user" class="app-nav-user"></span>
-      <span id="hdr-date" class="app-nav-user"></span>
-      <button onclick="doLogout()" class="app-nav-signout">Sign out</button>
-    </div>
+    <span class="app-nav-logo">Money<span> Picks</span> Arena</span>
   </nav>
 
   <main class="flex-1 px-4 py-6 max-w-7xl mx-auto w-full space-y-6">
@@ -968,6 +963,11 @@ function disableRunBtn(d) {
   b.textContent = d ? "Running..." : "Run Picks";
 }
 </script>
+<footer style="text-align:center;padding:32px 24px;color:#4b5563;font-size:.78rem;border-top:1px solid #1c1c1c;margin-top:24px;font-family:'Source Sans Pro',sans-serif">
+  <div style="font-family:'Playfair Display',serif;color:#f59e0b;font-weight:700;font-size:.95rem;margin-bottom:6px">Money Picks Arena</div>
+  <div>MLB MoneyBall &middot; Daily Picks</div>
+  <div style="margin-top:8px;font-size:.7rem">For entertainment only. Not a betting service. Must be 18+. Please gamble responsibly.</div>
+</footer>
 </body>
 </html>
 
