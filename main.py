@@ -284,6 +284,7 @@ _HTML = """
     .btn-run{background:#f59e0b;color:#000;border:none;border-radius:8px;padding:14px 48px;font-size:1rem;font-weight:900;cursor:pointer;letter-spacing:.5px;transition:all .2s;font-family:'Source Sans Pro',sans-serif}
     .btn-run:hover{background:#fbbf24;transform:translateY(-1px);box-shadow:0 4px 20px rgba(245,158,11,.4)}
     .btn-run:disabled{background:#333;color:#666;cursor:not-allowed;transform:none}
+    input[type=date]::-webkit-calendar-picker-indicator{filter:invert(1);opacity:.7;cursor:pointer}
 
     /* Stat chips — NHL style */
     .chips{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-bottom:24px}
@@ -331,19 +332,24 @@ _HTML = """
 
   <main class="flex-1 px-4 py-6 max-w-7xl mx-auto w-full space-y-6">
 
+    <!-- App Header -->
+    <div style="text-align:center;margin-bottom:32px">
+      <h1 style="font-family:'Playfair Display',serif;font-size:2.6rem;font-weight:900;color:#fff;margin-bottom:6px">MLB <span style="color:#f59e0b">MoneyBall</span></h1>
+      <p style="font-size:.85rem;color:#6b7280;letter-spacing:.15em;text-transform:uppercase">MLB Daily Picks</p>
+    </div>
+
         <!-- Controls card -->
-    <div class="run-box" id="runBox">
-      <h2>Run Picks</h2>
-      <p>Pick a date and run the algorithm.</p>
-      <div class="date-row">
-        <label>DATE</label>
+    <div class="run-box" id="runBox" style="text-align:center;max-width:600px;margin:0 auto 20px">
+      <h2 style="font-family:'Playfair Display',serif;font-size:1.5rem;font-weight:700;color:#fff;margin-bottom:20px">Run Today's Picks</h2>
+      <div class="date-row" style="justify-content:center;margin-bottom:20px">
+        <label>Date</label>
         <input type="date" id="date-picker" max=""/>
       </div>
-      <button class="btn-run" id="run-btn" onclick="startRun()">
-        ⚡ RUN PICKS
-      </button>
+      <div style="text-align:center;margin-bottom:12px">
+        <button class="btn-primary" id="run-btn" onclick="startRun()">Run Picks</button>
+      </div>
       <div id="run-spinner" class="hidden" style="margin-top:12px;color:#6b7280;font-size:13px">
-        <span class="spinner"></span> Pipeline running…
+        <span class="spinner"></span> Analyzing player histories…
       </div>
       <p class="text-xs text-slate-500 mt-3">
 
