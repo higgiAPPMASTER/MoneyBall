@@ -1,28 +1,23 @@
 """
 fic_cache.py — Step 1: Player pool builder.
 
-SOURCE 1 (PRIMARY): Fantasy Info Central  https://www.fantasyinfocentral.com/mlb/daily-matchups
-        FIC is a JavaScript-rendered page — uses Playwright (already on Render) to load it.
-        Filter: min 4 AB career vs today's pitcher, min .250 BA.
+SOURCE 1 (PRIMARY): MLB Stats API — career BA vs today's probable pitcher.
+        Filter: min 4 AB, min .250 BA. Parallelised (8 threads, fast).
 
-SOURCE 1b (FALLBACK): MLB Stats API  — parallel career BA vs pitcher lookups.
-        Used automatically if FIC/Playwright fails. Parallelised (8 threads, ~30s max).
+SOURCE 2: Baseball Musings hot streaks — adds players on active hit streaks.
 
-SOURCE 2: Baseball Musings hot streaks — adds players on active hitting streaks.
+SOURCE 3: MLB Stats API last-7-day hot hitters — .300+ BA, 5+ AB, always works.
 
-SOURCE 3: MLB Stats API last-7-day hot hitters — .300+ BA, 5+ AB, always works on Render.
-
-All sources merged + deduplicated before passing to Steps 2-5.
+All sources merged + deduplicated, sorted by BA descending.
 """
-import json, os, time, re, glob, requests
+import json, os, time, requests
 from datetime import date as _date, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from bs4 import BeautifulSoup
 
-CACHE_DIR  = os.environ.get("CACHE_DIR", "/tmp")
-MLB_API    = "https://statsapi.mlb.com/api/v1"
-FIC_URL    = "https://www.fantasyinfocentral.com/mlb/daily-matchups"
-BM_URL     = "https://www.baseballmusings.com/cgi-bin/CurStreak.py"
+CACHE_DIR = os.environ.get("CACHE_DIR", "/tmp")
+MLB_API   = "https://statsapi.mlb.com/api/v1"
+BM_URL    = "https://www.baseballmusings.com/cgi-bin/CurStreak.py"
 
 _BROWSER_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -50,191 +45,45 @@ def _parse_avg(s) -> float:
         return 0.0
 
 
-def _find_chromium() -> str | None:
-    browsers = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "/opt/render/project/.browsers")
-    patterns = [
-        # Newer Playwright — headless shell
-        f"{browsers}/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell",
-        # Older Playwright — full chromium
-        f"{browsers}/chromium-*/chrome-linux/chrome",
-        f"{browsers}/chromium-*/chrome-linux/chromium",
-    ]
-    for pat in patterns:
-        hits = glob.glob(pat)
-        if hits:
-            return hits[0]
-    return None
-
-
-# ── SOURCE 1 (PRIMARY): FIC via Playwright ────────────────────────────
-
-def _ensure_browser(log_fn):
-    """Auto-install Playwright browser if the executable is missing."""
-    exec_path = _find_chromium()
-    if exec_path:
-        return  # already installed
-    log_fn("   Browser not found — running 'python -m playwright install chromium'...")
-    try:
-        import subprocess, sys
-        env = os.environ.copy()
-        result = subprocess.run(
-            [sys.executable, "-m", "playwright", "install", "chromium"],
-            capture_output=True, text=True, timeout=120, env=env
-        )
-        if result.returncode == 0:
-            log_fn("   ✅ Browser installed successfully")
-        else:
-            log_fn(f"   ⚠️ Browser install failed: {result.stderr[:200]}")
-    except Exception as exc:
-        log_fn(f"   ⚠️ Browser install error: {exc}")
-
-
-def _fic_html_via_playwright(log_fn) -> str:
-    """
-    Use Playwright (sync API, already installed on Render) to render FIC.
-    FIC is a React/JS app — plain HTTP gets only the 5KB shell.
-    Returns full rendered HTML, or '' on failure.
-    """
-    try:
-        from playwright.sync_api import sync_playwright
-        _ensure_browser(log_fn)           # auto-install if missing
-        exec_path = _find_chromium()      # find after potential install
-        log_fn(f"   Launching Playwright chromium{' at '+exec_path if exec_path else ' (auto-detect)'}...")
-        with sync_playwright() as p:
-            launch_kwargs = dict(
-                headless=True,
-                args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
-            )
-            if exec_path:
-                launch_kwargs["executable_path"] = exec_path
-            browser = p.chromium.launch(**launch_kwargs)
-            ctx  = browser.new_context(user_agent=_BROWSER_UA)
-            page = ctx.new_page()
-            page.goto(FIC_URL, wait_until="domcontentloaded", timeout=25_000)
-            try:
-                page.wait_for_selector("table", timeout=12_000)
-            except Exception:
-                pass
-            html = page.content()
-            browser.close()
-            log_fn(f"   Playwright rendered {len(html):,} bytes")
-            return html
-    except Exception as exc:
-        log_fn(f"   ⚠️ Playwright error: {exc}")
-        return ""
-
-
-def _parse_fic_table(html: str, min_ab: int, min_ba: float, log_fn) -> list:
-    """Parse BeautifulSoup table from FIC page. Returns player list."""
-    soup   = BeautifulSoup(html, "lxml")
-    tables = soup.find_all("table")
-    target = None
-    for t in tables:
-        hdrs = [th.get_text(strip=True).upper() for th in t.find_all("th")]
-        if any(h in ("AB", "BA", "AVG") for h in hdrs):
-            target = t
-            break
-    if not target:
-        log_fn(f"   ⚠️ No FIC table found (page size {len(html):,} bytes)")
-        return []
-
-    hdrs = [th.get_text(strip=True).upper() for th in target.find_all("th")]
-
-    def col(*names):
-        for n in names:
-            if n in hdrs:
-                return hdrs.index(n)
-        return None
-
-    ip = col("PLAYER","BATTER","NAME")
-    ipos = col("POS","POSITION")
-    ipit = col("PITCHER","OPP PITCHER","VS PITCHER","OPP")
-    iab  = col("AB")
-    ih   = col("H","HITS")
-    ihr  = col("HR")
-    iba  = col("BA","AVG","AVERAGE")
-
-    if ip is None or iab is None or iba is None:
-        log_fn(f"   ⚠️ FIC column layout unexpected: {hdrs[:10]}")
-        return []
-
-    results = []
-    for row in target.find_all("tr")[1:]:
-        cells = row.find_all(["td","th"])
-        def cell(i):
-            return cells[i].get_text(strip=True) if i is not None and i < len(cells) else ""
-
-        name = cell(ip)
-        if not name or name.upper() in ("PLAYER","BATTER","NAME"):
-            continue
-        try:
-            ab = int(cell(iab).replace(",",""))
-        except ValueError:
-            continue
-        ba = _parse_avg(cell(iba))
-        if ab < min_ab or ba < min_ba:
-            continue
-        try:
-            h  = int(cell(ih).replace(",",""))  if ih  is not None else 0
-            hr = int(cell(ihr).replace(",","")) if ihr is not None else 0
-        except ValueError:
-            h = hr = 0
-        results.append({
-            "batter":  name,
-            "pos":     cell(ipos) if ipos is not None else "",
-            "pitcher": cell(ipit) if ipit is not None else "",
-            "ab": ab, "h": h, "hr": hr, "ba": ba,
-            "source": "fic",
-        })
-    return results
-
-
-def _get_fic_players(run_date: str, min_ab: int, min_ba: float, emit=None) -> list:
-    def log(msg):
-        if emit: emit({"type": "log", "msg": msg})
-
-    log("⬇️  Source 1: Fantasy Info Central (FIC) via Playwright...")
-    html = _fic_html_via_playwright(log)
-
-    if len(html) < 10_000:
-        log("   ⚠️ FIC page too small — JS may not have rendered yet")
-        return []
-
-    results = _parse_fic_table(html, min_ab, min_ba, log)
-    log(f"✅ Source 1 (FIC): {len(results)} players (min {min_ab} AB, min {min_ba:.3f} BA)")
-    return results
-
-
-# ── SOURCE 1b (FALLBACK): MLB Stats API  parallel  ───────────────────
+# ── SOURCE 1: MLB Stats API — career BA vs today's pitcher ─────────────
 
 def _get_schedule_with_pitchers(run_date: str) -> list:
-    r = requests.get(f"{MLB_API}/schedule",
-        params={"date": run_date, "sportId": 1, "hydrate": "probablePitcher"}, timeout=15)
-    out = []
-    for dd in r.json().get("dates", []):
-        for g in dd.get("games", []):
-            ht = g["teams"]["home"]; at = g["teams"]["away"]
-            hp = ht.get("probablePitcher",{}); ap = at.get("probablePitcher",{})
-            away_t = at.get("team", {})
-            home_t = ht.get("team", {})
-            if hp and away_t.get("id"):
-                out.append({"team_id": away_t["id"], "team_name": away_t.get("name",""),
-                            "pitcher_id": hp["id"], "pitcher_short": _short_name(hp["fullName"])})
-            if ap and home_t.get("id"):
-                out.append({"team_id": home_t["id"], "team_name": home_t.get("name",""),
-                            "pitcher_id": ap["id"], "pitcher_short": _short_name(ap["fullName"])})
-    return out
+    """Return matchup list: one entry per batting team with probable pitcher."""
+    try:
+        r = requests.get(f"{MLB_API}/schedule",
+            params={"date": run_date, "sportId": 1, "hydrate": "probablePitcher"},
+            timeout=15)
+        out = []
+        for dd in r.json().get("dates", []):
+            for g in dd.get("games", []):
+                ht = g["teams"]["home"]
+                at = g["teams"]["away"]
+                hp = ht.get("probablePitcher", {})
+                ap = at.get("probablePitcher", {})
+                away_t = at.get("team", {})
+                home_t = ht.get("team", {})
+                if hp and away_t.get("id"):
+                    out.append({"team_id": away_t["id"],
+                                "pitcher_id": hp["id"],
+                                "pitcher_short": _short_name(hp["fullName"])})
+                if ap and home_t.get("id"):
+                    out.append({"team_id": home_t["id"],
+                                "pitcher_id": ap["id"],
+                                "pitcher_short": _short_name(ap["fullName"])})
+        return out
+    except Exception:
+        return []
 
 
-def _check_one_player(batter_id, batter_name, pos, pitcher_id, pitcher_short,
-                      min_ab, min_ba):
+def _check_batter(batter_id, batter_name, pos, pitcher_id, pitcher_short,
+                  min_ab, min_ba) -> dict | None:
     """Check one batter vs one pitcher. Returns player dict or None."""
     try:
         r = requests.get(f"{MLB_API}/people/{batter_id}/stats",
             params={"stats": "vsPlayerTotal", "group": "hitting",
                     "opposingPlayerId": pitcher_id}, timeout=8)
         for sg in r.json().get("stats", []):
-            if "vsPlayer" in sg.get("type",{}).get("displayName",""):
+            if "vsPlayer" in sg.get("type", {}).get("displayName", ""):
                 for sp in sg.get("splits", []):
                     s  = sp.get("stat", {})
                     ab = s.get("atBats", 0)
@@ -242,56 +91,61 @@ def _check_one_player(batter_id, batter_name, pos, pitcher_id, pitcher_short,
                     hr = s.get("homeRuns", 0)
                     ba = _parse_avg(s.get("avg"))
                     if ab >= min_ab and ba >= min_ba:
-                        return {"batter": _short_name(batter_name), "pos": pos,
-                                "pitcher": pitcher_short, "ab": ab, "h": h,
-                                "hr": hr, "ba": ba, "source": "mlb_api"}
+                        return {
+                            "batter":  _short_name(batter_name),
+                            "pos":     pos,
+                            "pitcher": pitcher_short,
+                            "ab": ab, "h": h, "hr": hr, "ba": ba,
+                            "source": "mlb_api",
+                        }
     except Exception:
         pass
     return None
 
 
-def _get_mlb_api_players(run_date: str, min_ab: int, min_ba: float, emit=None) -> list:
+def _get_mlb_api_players(run_date: str, min_ab: int, min_ba: float,
+                          emit=None) -> list:
     def log(msg):
         if emit: emit({"type": "log", "msg": msg})
 
-    log("⬇️  Source 1b (fallback): MLB Stats API — parallel career BA vs pitchers...")
+    log("⬇️  Source 1: MLB Stats API — career BA vs today's pitchers (parallel)...")
     matchups = _get_schedule_with_pitchers(run_date)
-    log(f"   {len(matchups)//2} games | building player tasks in parallel (8 threads)...")
+    games    = len(matchups) // 2
+    log(f"   {games} games today")
 
-    # Build list of (batter_id, batter_name, pos, pitcher_id, pitcher_short) tasks
-    tasks   = []
-    seen    = set()
+    # Build all (batter, pitcher) tasks from active rosters
+    tasks = []
+    seen  = set()
     for m in matchups:
         try:
             r = requests.get(f"{MLB_API}/teams/{m['team_id']}/roster",
                 params={"rosterType": "active"}, timeout=10)
             for pl in r.json().get("roster", []):
-                if pl.get("position",{}).get("code") == "1":
-                    continue  # skip pitchers
-                bid  = pl["person"]["id"]
-                key  = (bid, m["pitcher_id"])
+                if pl.get("position", {}).get("code") == "1":
+                    continue   # skip pitchers
+                bid = pl["person"]["id"]
+                key = (bid, m["pitcher_id"])
                 if key in seen:
                     continue
                 seen.add(key)
                 tasks.append((
                     bid,
                     pl["person"]["fullName"],
-                    pl.get("position",{}).get("abbreviation",""),
+                    pl.get("position", {}).get("abbreviation", ""),
                     m["pitcher_id"],
                     m["pitcher_short"],
                 ))
         except Exception:
             pass
 
-    log(f"   {len(tasks)} batter-pitcher combos to check...")
-
+    log(f"   Checking {len(tasks)} batter-pitcher combos (8 threads)...")
     results = []
     with ThreadPoolExecutor(max_workers=8) as ex:
         futs = {
-            ex.submit(_check_one_player, bid, bname, pos, pid, pshort, min_ab, min_ba): None
-            for bid, bname, pos, pid, pshort in tasks
+            ex.submit(_check_batter, bid, name, pos, pid, pshort, min_ab, min_ba): None
+            for bid, name, pos, pid, pshort in tasks
         }
-        for fut in as_completed(futs, timeout=60):
+        for fut in as_completed(futs, timeout=90):
             try:
                 r = fut.result()
                 if r:
@@ -299,11 +153,11 @@ def _get_mlb_api_players(run_date: str, min_ab: int, min_ba: float, emit=None) -
             except Exception:
                 pass
 
-    log(f"✅ Source 1b (MLB API): {len(results)} players")
+    log(f"✅ Source 1: {len(results)} players (min {min_ab} AB, min {min_ba:.3f} BA)")
     return results
 
 
-# ── SOURCE 2: Baseball Musings ────────────────────────────────────────
+# ── SOURCE 2: Baseball Musings hot streaks ────────────────────────────
 
 def _get_bm_players(run_date: str, emit=None) -> list:
     def log(msg):
@@ -313,11 +167,12 @@ def _get_bm_players(run_date: str, emit=None) -> list:
     matchups_by_team = {}
     try:
         r = requests.get(f"{MLB_API}/schedule",
-            params={"date": run_date, "sportId": 1, "hydrate": "probablePitcher"}, timeout=15)
+            params={"date": run_date, "sportId": 1, "hydrate": "probablePitcher"},
+            timeout=15)
         for dd in r.json().get("dates", []):
             for g in dd.get("games", []):
                 ht = g["teams"]["home"]; at = g["teams"]["away"]
-                hp = ht.get("probablePitcher",{}); ap = at.get("probablePitcher",{})
+                hp = ht.get("probablePitcher", {}); ap = at.get("probablePitcher", {})
                 if hp: matchups_by_team[at["team"]["id"]] = _short_name(hp.get("fullName",""))
                 if ap: matchups_by_team[ht["team"]["id"]] = _short_name(ap.get("fullName",""))
     except Exception:
@@ -360,8 +215,8 @@ def _get_bm_players(run_date: str, emit=None) -> list:
             r2  = requests.get(f"{MLB_API}/people/{pid}",
                 params={"hydrate": "currentTeam"}, timeout=8)
             info    = r2.json()["people"][0]
-            team_id = info.get("currentTeam",{}).get("id")
-            pos     = info.get("primaryPosition",{}).get("abbreviation","")
+            team_id = info.get("currentTeam", {}).get("id")
+            pos     = info.get("primaryPosition", {}).get("abbreviation", "")
             if not team_id or team_id not in matchups_by_team:
                 continue
             results.append({
@@ -378,11 +233,11 @@ def _get_bm_players(run_date: str, emit=None) -> list:
             pass
         time.sleep(0.1)
 
-    log(f"✅ Source 2 (Baseball Musings): {len(results)} players")
+    log(f"✅ Source 2: {len(results)} hot streak players playing today")
     return results
 
 
-# ── SOURCE 3: MLB Stats API last-7-day hot hitters ────────────────────
+# ── SOURCE 3: MLB last-7-day hot hitters ─────────────────────────────
 
 def _get_recent_hot_hitters(run_date: str, emit=None) -> list:
     def log(msg):
@@ -403,15 +258,16 @@ def _get_recent_hot_hitters(run_date: str, emit=None) -> list:
         log(f"   ⚠️ Source 3 failed: {exc}")
         return []
 
-    playing_teams = set()
+    playing_teams   = set()
     pitcher_by_team = {}
     try:
         r2 = requests.get(f"{MLB_API}/schedule",
-            params={"date": run_date, "sportId": 1, "hydrate": "probablePitcher"}, timeout=10)
+            params={"date": run_date, "sportId": 1, "hydrate": "probablePitcher"},
+            timeout=10)
         for dd in r2.json().get("dates", []):
             for g in dd.get("games", []):
                 ht = g["teams"]["home"]; at = g["teams"]["away"]
-                hp = ht.get("probablePitcher",{}); ap = at.get("probablePitcher",{})
+                hp = ht.get("probablePitcher", {}); ap = at.get("probablePitcher", {})
                 playing_teams.update([ht["team"]["id"], at["team"]["id"]])
                 if hp: pitcher_by_team[at["team"]["id"]] = _short_name(hp.get("fullName",""))
                 if ap: pitcher_by_team[ht["team"]["id"]] = _short_name(ap.get("fullName",""))
@@ -428,13 +284,13 @@ def _get_recent_hot_hitters(run_date: str, emit=None) -> list:
         ba = round(h / ab, 3) if ab > 0 else 0.0
         if ba < 0.300:
             continue
-        fname   = sp.get("player",{}).get("fullName","")
-        team_id = sp.get("team",{}).get("id")
+        fname   = sp.get("player", {}).get("fullName", "")
+        team_id = sp.get("team", {}).get("id")
         if not fname or not team_id:
             continue
         if playing_teams and team_id not in playing_teams:
             continue
-        pos = sp.get("player",{}).get("primaryPosition",{}).get("abbreviation","")
+        pos = sp.get("player", {}).get("primaryPosition", {}).get("abbreviation", "")
         results.append({
             "batter":  _short_name(fname),
             "pos":     pos,
@@ -445,7 +301,7 @@ def _get_recent_hot_hitters(run_date: str, emit=None) -> list:
             "source":  "mlb_recent_7d",
         })
 
-    log(f"✅ Source 3 (MLB last 7d): {len(results)} hot hitters playing today")
+    log(f"✅ Source 3: {len(results)} hot hitters playing today")
     return results
 
 
@@ -477,25 +333,15 @@ def get_step1_players_or_scrape(run_date=None, min_ab=4, min_ba=0.250, emit=None
         log(f"✅ Loaded {len(players)} players from cache")
         return players
 
-    log("🔍 Building Step 1 player pool (FIC + streaks + recent hot hitters)...")
+    log("🔍 Building Step 1 player pool...")
 
-    # Source 1: FIC via Playwright
-    s1 = _get_fic_players(run_date, min_ab, min_ba, emit)
-
-    # Source 1b: MLB Stats API (parallel) — only if FIC returned nothing
-    if not s1:
-        log("   FIC returned 0 — running MLB Stats API fallback (parallel, ~30s)...")
-        s1 = _get_mlb_api_players(run_date, min_ab, min_ba, emit)
-
-    # Source 2: Baseball Musings streaks
+    s1 = _get_mlb_api_players(run_date, min_ab, min_ba, emit)
     s2 = _get_bm_players(run_date, emit)
-
-    # Source 3: MLB last-7-day hot hitters (always runs)
     s3 = _get_recent_hot_hitters(run_date, emit)
 
     combined = _merge(s1, s2, s3)
     log(f"✅ Step 1 pool: {len(combined)} players "
-        f"(FIC/API:{len(s1)} + BM:{len(s2)} + last7d:{len(s3)}, deduped)")
+        f"(career vs pitcher: {len(s1)} + streaks: {len(s2)} + last 7d hot: {len(s3)}, deduped)")
 
     with open(path, "w") as f:
         json.dump(combined, f)
