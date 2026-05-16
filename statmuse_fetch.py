@@ -22,20 +22,51 @@ _team_cache   = {}
 
 
 def _get_player_id(first: str, last: str) -> int | None:
+    """
+    Look up MLB player ID by first + last name.
+    Handles both full names ('bobby', 'witt-jr') and
+    initial-only first names ('b', 'witt-jr') — single
+    initials search by last name then filter by initial.
+    """
     key = f"{first}-{last}".lower()
     if key in _player_cache:
         return _player_cache[key]
-    try:
-        full = f"{first.capitalize()} {last.title()}"
-        r = requests.get(f"{MLB_API}/people/search",
-            params={"names": full, "sportId": 1}, timeout=8)
-        for p in r.json().get("people", []):
-            if p.get("active"):
-                _player_cache[key] = p["id"]
+
+    last_clean = last.replace('-', ' ').title()   # 'witt-jr' → 'Witt Jr'
+
+    def _search(query: str, initial_filter: str = "") -> int | None:
+        try:
+            r = requests.get(f"{MLB_API}/people/search",
+                params={"names": query, "sportId": 1}, timeout=8)
+            for p in r.json().get("people", []):
+                if not p.get("active"):
+                    continue
+                if initial_filter:
+                    if not p.get("firstName", "")[:1].upper() == initial_filter.upper():
+                        continue
                 return p["id"]
-    except Exception:
-        pass
-    return None
+        except Exception:
+            pass
+        return None
+
+    pid = None
+    if len(first) <= 1:
+        # Single initial: search by last name only, filter by initial
+        pid = _search(last_clean, initial_filter=first)
+        if pid is None:
+            # Try with suffix removed (e.g. 'Witt' instead of 'Witt Jr')
+            base_last = last_clean.split()[0]
+            pid = _search(base_last, initial_filter=first)
+    else:
+        # Full first name: normal search
+        pid = _search(f"{first.capitalize()} {last_clean}")
+        if pid is None:
+            # Fallback: search by last name + first initial
+            pid = _search(last_clean, initial_filter=first[0])
+
+    if pid is not None:
+        _player_cache[key] = pid
+    return pid
 
 
 def _get_team_id(opp_slug: str) -> int | None:
@@ -95,15 +126,13 @@ def _calc_ba(games: list) -> dict:
 
 # ── Step 2: Last 10 H/A games vs today's opponent ────────────────────
 
-def fetch_step2_ba(first: str, last: str, side: str, opp: str, session=None, player_id: int = None) -> dict:
+def fetch_step2_ba(first: str, last: str, side: str, opp: str, session=None) -> dict:
     """
     STEP 2: BA in last 10 Home (or Away) games vs today's specific opponent.
     Searches career game logs across all seasons, filtered by opponent + isHome.
-    Accepts player_id directly to skip name lookup (avoids slug reconstruction bugs).
     """
-    if not player_id:
-        player_id = _get_player_id(first, last)
-        time.sleep(0.1)
+    player_id = _get_player_id(first, last)
+    time.sleep(0.1)
     if not player_id:
         return _na_result()
 
@@ -133,14 +162,12 @@ def fetch_step2_ba(first: str, last: str, side: str, opp: str, session=None, pla
 
 # ── Step 3: Last 10 H/A games in 2026 season ─────────────────────────
 
-def fetch_step3_ba(first: str, last: str, side: str, session=None, player_id: int = None) -> dict:
+def fetch_step3_ba(first: str, last: str, side: str, session=None) -> dict:
     """
     STEP 3: BA in last 10 Home (or Away) games in the 2026 season (any opponent).
-    Accepts player_id directly to skip name lookup (avoids slug reconstruction bugs).
     """
-    if not player_id:
-        player_id = _get_player_id(first, last)
-        time.sleep(0.1)
+    player_id = _get_player_id(first, last)
+    time.sleep(0.1)
     if not player_id:
         return _na_result()
 
