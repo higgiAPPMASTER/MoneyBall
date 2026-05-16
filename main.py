@@ -599,10 +599,9 @@ function showLoginError(msg) {
 // ─── Dashboard init ────────────────────────────────────────────────────
 function showDashboard() {
   hide('login-screen'); show('dashboard');
-  document.getElementById('hdr-user').textContent = `👤 ${username}`;
   const _d=new Date(); const today=_d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');
-  document.getElementById('hdr-date').textContent = `Today: ${today}`;
-  document.getElementById('date-picker').value = today;
+  const dp = document.getElementById('date-picker');
+  if(dp){ dp.value = today; dp.max = today; }
   hide('progress-card'); hide('results-card');
 }
 // ─── Run pipeline ──────────────────────────────────────────────────────
