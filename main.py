@@ -470,7 +470,7 @@ _HTML = """
           <table class="results-table" id="pitcher-k-table">
             <thead>
               <tr>
-                <th>#</th><th>Pitcher · Team</th><th>H/A</th><th>Opponent</th>
+                <th>#</th><th>Pitcher</th><th>H/A</th><th>Opponent</th>
                 <th>K Line</th><th>Avg K</th><th>Avg IP</th><th>ERA</th>
                 <th>K / Starts H/A</th><th>Gap</th><th>Starts</th><th>K History</th><th>Pick</th>
               </tr>
@@ -486,12 +486,10 @@ _HTML = """
           </table>
         </details>
         <p class="text-xs text-slate-500 mt-4">
-          <strong>Avg K</strong> = avg Ks in H/A starts vs today's opponent &nbsp;|&nbsp;
-          <strong>Avg IP</strong> = avg innings pitched in those starts &nbsp;|&nbsp;
-          <strong>ERA</strong> = current season ERA &nbsp;|&nbsp;
-          <strong>K / Starts H/A</strong> = starts where pitcher exceeded the K line &nbsp;|&nbsp;
-          <strong>Gap</strong> = avg K minus the line &nbsp;|&nbsp;
-          <strong>Pick</strong> = OVER if avg &gt; line, UNDER if avg &lt; line (min 2 H/A starts vs opponent).
+          <strong>Avg K vs Opp</strong> = career H/A avg Ks vs today's opponent &nbsp;|&nbsp;
+          <strong>Gap</strong> = how far avg is from the line &nbsp;|&nbsp;
+          <strong>Pick</strong> = OVER if avg &gt; line, UNDER if avg &lt; line (min 2 starts).
+          Pitchers facing bottom 5 K-rate teams are excluded.
         </p>
       </div>
 
@@ -634,7 +632,6 @@ function openSSE(taskId, cached) {
 
   es.onmessage = evt => handleEvent(JSON.parse(evt.data));
   es.onerror   = () => {
-    // Only show error if results haven't loaded yet (normal SSE close fires onerror too)
     if (document.getElementById('results-card').classList.contains('hidden')) {
       appendLog('⚠️  Connection lost — refresh and try again.', 'dq');
     }
@@ -852,7 +849,7 @@ function showResults(result) {
           const sideCls = p.side === 'HOME' ? 'badge-home' : 'badge-away';
           return `<tr>
             <td><span class="rank-badge rank-n" style="background:#0d2e2e;color:#63cab7">${i+1}</span></td>
-            <td class="font-semibold">${p.name}${p.team ? ' <span style="color:#6b7280;font-size:.74rem;font-weight:400">· '+p.team+'</span>' : ''}</td>
+            <td class="font-semibold">${p.name}</td>
             <td><span class="badge ${sideCls}">${p.side}</span></td>
             <td class="text-slate-300 text-sm">${p.opp}</td>
             <td style="font-family:monospace;font-weight:700;color:#fff">${p.line} Ks</td>
