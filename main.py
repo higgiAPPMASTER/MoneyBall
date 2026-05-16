@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Form
 from fastapi.responses import StreamingResponse, FileResponse, HTMLResponse
 # StaticFiles removed — HTML is now embedded directly in this file
 
@@ -23,6 +23,12 @@ _tasks: dict = {}   # task_id -> {events, status, result, notify}
 _cache: dict = {}   # date -> result (in-memory, cleared on restart)
 
 # ── Auth ─────────────────────────────────────────────────────────────
+@app.post("/api/login")
+async def login(username: str = Form(...), password: str = Form(...)):
+    if username == "higgi" and password == "Elbowlake77":
+        return {"access_token": "mpa-token", "username": username}
+    raise HTTPException(status_code=401, detail="Invalid credentials")
+
 # ── Health ────────────────────────────────────────────────────────────
 @app.get("/api/health")
 async def health():
@@ -483,7 +489,7 @@ _HTML = """
           <strong>Avg K</strong> = avg Ks in H/A starts vs today's opponent &nbsp;|&nbsp;
           <strong>Avg IP</strong> = avg innings pitched in those starts &nbsp;|&nbsp;
           <strong>ERA</strong> = current season ERA &nbsp;|&nbsp;
-          <strong>K / Starts H/A</strong> = how many of those starts the pitcher exceeded the K line &nbsp;|&nbsp;
+          <strong>K / Starts H/A</strong> = starts where pitcher exceeded the K line &nbsp;|&nbsp;
           <strong>Gap</strong> = avg K minus the line &nbsp;|&nbsp;
           <strong>Pick</strong> = OVER if avg &gt; line, UNDER if avg &lt; line (min 2 H/A starts vs opponent).
         </p>
@@ -628,7 +634,10 @@ function openSSE(taskId, cached) {
 
   es.onmessage = evt => handleEvent(JSON.parse(evt.data));
   es.onerror   = () => {
-    appendLog('⚠️  Connection lost — refresh and try again.', 'dq');
+    // Only show error if results haven't loaded yet (normal SSE close fires onerror too)
+    if (document.getElementById('results-card').classList.contains('hidden')) {
+      appendLog('⚠️  Connection lost — refresh and try again.', 'dq');
+    }
     hide('run-spinner'); disableRunBtn(false);
     es.close();
   };
