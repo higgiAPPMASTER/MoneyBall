@@ -587,10 +587,7 @@ window.onload = () => {
     window.history.replaceState({}, '', window.location.pathname);
   }
   var _tok=localStorage.getItem(KEY);
-  if (!_tok || _tok.split(".").length !== 3) {
-    localStorage.removeItem(KEY);
-    window.location.href = HUB;
-    return;
+  return;
   }
 
   // Token confirmed — proceed with internal login
