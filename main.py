@@ -601,7 +601,7 @@ function showDashboard() {
   hide('login-screen'); show('dashboard');
   const _d=new Date(); const today=_d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');
   const dp = document.getElementById('date-picker');
-  if(dp){ dp.value = today; dp.max = today; }
+  if(dp){ dp.value = today; }
   hide('progress-card'); hide('results-card');
 }
 // ─── Run pipeline ──────────────────────────────────────────────────────
