@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Form
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse, FileResponse, HTMLResponse
 # StaticFiles removed — HTML is now embedded directly in this file
 
@@ -21,61 +21,9 @@ app = FastAPI(title="MoneyBall", docs_url=None, redoc_url=None)
 executor = ThreadPoolExecutor(max_workers=4)
 _tasks: dict = {}   # task_id -> {events, status, result, notify}
 _cache: dict = {}   # date -> result (in-memory, cleared on restart)
-# ── File-based Picks Cache ────────────────────────────────────────────────────
-import pathlib
-_CACHE_DIR = pathlib.Path("/tmp/mpa_cache")
-_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-_CACHE_TTL = 6 * 3600  # 6 hours
-
-def _cache_path(app: str, date_key: str) -> pathlib.Path:
-    return _CACHE_DIR / f"{app}_{date_key}.json"
-
-def _cache_get(app: str, date_key: str):
-    p = _cache_path(app, date_key)
-    try:
-        if p.exists() and (time.time() - p.stat().st_mtime) < _CACHE_TTL:
-            data = json.loads(p.read_text(encoding="utf-8"))
-            print(f"[Cache] FILE HIT {app}/{date_key}")
-            return data
-    except Exception as e:
-        print(f"[Cache] Read error: {e}")
-    return None
-
-def _cache_set(app: str, date_key: str, result: dict):
-    try:
-        _cache_path(app, date_key).write_text(
-            json.dumps(result, ensure_ascii=False), encoding="utf-8")
-        print(f"[Cache] FILE SET {app}/{date_key}")
-    except Exception as e:
-        print(f"[Cache] Write error: {e}")
-
-def _cache_clear(app: str = None):
-    for p in _CACHE_DIR.glob("*.json"):
-        if app is None or p.name.startswith(app + "_"):
-            p.unlink(missing_ok=True)
 
 # ── Auth ─────────────────────────────────────────────────────────────
-@app.post("/api/login")
-async def login(username: str = Form(...), password: str = Form(...)):
-    if username == "higgi" and password == "Elbowlake77":
-        return {"access_token": "mpa-token", "username": username}
-    raise HTTPException(status_code=401, detail="Invalid credentials")
-
 # ── Health ────────────────────────────────────────────────────────────
-
-@app.get("/api/warm")
-async def api_warm_mlb():
-    """Pre-compute today's picks — called by cron-job.org at 10 AM."""
-    from datetime import date as _date
-    today = _date.today().isoformat()
-    cached = _cache_get("mlb", today)
-    if cached:
-        return {"ok": True, "source": "cache", "date": today}
-    # Kick off a run
-    result = await start_run(today)
-    return {"ok": True, "source": "computed", "date": today,
-            "task_id": result.get("task_id"), "cached": result.get("cached", False)}
-
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "today": str(date.today())}
@@ -99,10 +47,6 @@ async def start_run(date_str: str):
     Returns task_id immediately; stream progress via /api/stream/{task_id}.
     """
     # Return cached result instantly
-    # File cache check first
-    _fc = _cache_get("mlb", date_str)
-    if _fc:
-        _cache[date_str] = _fc
     if date_str in _cache:
         task_id = str(uuid.uuid4())
         notify  = asyncio.Event()
@@ -137,7 +81,6 @@ async def start_run(date_str: str):
             task["status"] = "done"
             task["result"] = result
             _cache[date_str] = result
-            _cache_set("mlb", date_str, result)
         except Exception as exc:
             import traceback
             msg = f"{exc}\n{traceback.format_exc()}"
@@ -199,10 +142,6 @@ async def stream_task(task_id: str):
 # ── Results cache ─────────────────────────────────────────────────────
 @app.get("/api/results/{date_str}")
 async def get_results(date_str: str):
-    # File cache check first
-    _fc = _cache_get("mlb", date_str)
-    if _fc:
-        _cache[date_str] = _fc
     if date_str in _cache:
         return _cache[date_str]
     raise HTTPException(status_code=404, detail="No results for this date. Run the pipeline first.")
@@ -215,7 +154,7 @@ _HTML = """
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>MLB MoneyBall &mdash; Money Picks Arena</title>
+  <title>⚾ MoneyBall</title>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&family=Source+Sans+Pro:wght@300;400;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
@@ -233,8 +172,8 @@ _HTML = """
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: #0f0f0f; color: #fff; font-family: 'Source Sans Pro', sans-serif; min-height: 100vh; }
     /* Hub-style fixed nav */
-    .app-nav { position: fixed; top: 0; width: 100%; background: rgba(10,10,10,.95); backdrop-filter: blur(12px); border-bottom: 1px solid #1c1c1c; z-index: 100; padding: 0 32px; height: 80px; display: flex; align-items: center; justify-content: space-between; }
-    .app-nav-logo { font-family: 'Playfair Display', serif; font-size: 36px; font-weight: 900; color: #f59e0b; letter-spacing:.02em; line-height:1; }
+    .app-nav { position: fixed; top: 0; width: 100%; background: rgba(10,10,10,.95); backdrop-filter: blur(12px); border-bottom: 1px solid #1c1c1c; z-index: 100; padding: 0 28px; height: 72px; display: flex; align-items: center; justify-content: space-between; }
+    .app-nav-logo { font-family: 'Playfair Display', serif; font-size: 1.5rem; font-weight: 900; color: #f59e0b; }
     .app-nav-logo span { color: #fff; }
     .app-nav-right { display: flex; align-items: center; gap: 16px; }
     .app-nav-user { font-size: 12px; color: #6b7280; }
@@ -339,7 +278,6 @@ _HTML = """
     .btn-run{background:#f59e0b;color:#000;border:none;border-radius:8px;padding:14px 48px;font-size:1rem;font-weight:900;cursor:pointer;letter-spacing:.5px;transition:all .2s;font-family:'Source Sans Pro',sans-serif}
     .btn-run:hover{background:#fbbf24;transform:translateY(-1px);box-shadow:0 4px 20px rgba(245,158,11,.4)}
     .btn-run:disabled{background:#333;color:#666;cursor:not-allowed;transform:none}
-    input[type=date]::-webkit-calendar-picker-indicator{filter:invert(1);opacity:.7;cursor:pointer}
 
     /* Stat chips — NHL style */
     .chips{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-bottom:24px}
@@ -378,33 +316,33 @@ _HTML = """
 </div>
 
 <!-- ═══════════════════════ DASHBOARD ══════════════════════════════ -->
-<div id="dashboard" class="hidden min-h-screen flex flex-col" style="padding-top:80px">
+<div id="dashboard" class="hidden min-h-screen flex flex-col" style="padding-top:72px">
 
   <!-- Header -->
   <nav class="app-nav">
-    <span class="app-nav-logo">Money<span> Picks</span> Arena</span>
+    <span class="app-nav-logo">Money<span>Ball</span> ⚾</span>
+    <div class="app-nav-right">
+      <span id="hdr-user" class="app-nav-user"></span>
+      <span id="hdr-date" class="app-nav-user"></span>
+      <button onclick="doLogout()" class="app-nav-signout">Sign out</button>
+    </div>
   </nav>
 
   <main class="flex-1 px-4 py-6 max-w-7xl mx-auto w-full space-y-6">
 
-    <!-- App Header -->
-    <div style="text-align:center;margin-bottom:32px">
-      <h1 style="font-family:'Playfair Display',serif;font-size:2.6rem;font-weight:900;color:#fff;margin-bottom:6px">MLB <span style="color:#f59e0b">MoneyBall</span></h1>
-      <p style="font-size:.85rem;color:#6b7280;letter-spacing:.15em;text-transform:uppercase">MLB Daily Picks</p>
-    </div>
-
         <!-- Controls card -->
-    <div class="run-box" id="runBox" style="text-align:center;max-width:600px;margin:0 auto 20px">
-      <h2 style="font-family:'Playfair Display',serif;font-size:1.5rem;font-weight:700;color:#fff;margin-bottom:20px">Run Today's Picks</h2>
-      <div class="date-row" style="justify-content:center;margin-bottom:20px">
-        <label>Date</label>
+    <div class="run-box" id="runBox">
+      <h2>Run Picks</h2>
+      <p>Pick a date and run the algorithm.</p>
+      <div class="date-row">
+        <label>DATE</label>
         <input type="date" id="date-picker" max=""/>
       </div>
-      <div style="text-align:center;margin-bottom:12px">
-        <button class="btn-primary" id="run-btn" onclick="startRun()">Run Picks</button>
-      </div>
+      <button class="btn-run" id="run-btn" onclick="startRun()">
+        ⚡ RUN PICKS
+      </button>
       <div id="run-spinner" class="hidden" style="margin-top:12px;color:#6b7280;font-size:13px">
-        <span class="spinner"></span> Analyzing player histories…
+        <span class="spinner"></span> Pipeline running…
       </div>
       <p class="text-xs text-slate-500 mt-3">
 
@@ -527,8 +465,8 @@ _HTML = """
             <thead>
               <tr>
                 <th>#</th><th>Pitcher</th><th>H/A</th><th>Opponent</th>
-                <th>K Line</th><th>Avg K</th><th>Avg IP</th><th>ERA</th>
-                <th>K / Starts H/A</th><th>Gap</th><th>Starts</th><th>K History</th><th>Pick</th>
+                <th>K Line</th><th>Avg K vs Opp</th><th>Gap</th>
+                <th>Starts</th><th>K History</th><th>Pick</th>
               </tr>
             </thead>
             <tbody id="pitcher-k-body"></tbody>
@@ -586,8 +524,9 @@ window.onload = () => {
     localStorage.setItem(KEY, urlTok);
     window.history.replaceState({}, '', window.location.pathname);
   }
-  var _tok=localStorage.getItem(KEY);
-  return;
+  if (!localStorage.getItem(KEY)) {
+    // no redirect
+    // return;  // exits window.onload — nothing below runs without a token
   }
 
   // Token confirmed — proceed with internal login
@@ -653,9 +592,10 @@ function showLoginError(msg) {
 // ─── Dashboard init ────────────────────────────────────────────────────
 function showDashboard() {
   hide('login-screen'); show('dashboard');
+  document.getElementById('hdr-user').textContent = `👤 ${username}`;
   const _d=new Date(); const today=_d.getFullYear()+'-'+String(_d.getMonth()+1).padStart(2,'0')+'-'+String(_d.getDate()).padStart(2,'0');
-  const dp = document.getElementById('date-picker');
-  if(dp){ dp.value = today; dp.max = today; }
+  document.getElementById('hdr-date').textContent = `Today: ${today}`;
+  document.getElementById('date-picker').value = today;
   hide('progress-card'); hide('results-card');
 }
 // ─── Run pipeline ──────────────────────────────────────────────────────
@@ -686,9 +626,7 @@ function openSSE(taskId, cached) {
 
   es.onmessage = evt => handleEvent(JSON.parse(evt.data));
   es.onerror   = () => {
-    if (document.getElementById('results-card').classList.contains('hidden')) {
-      appendLog('⚠️  Connection lost — refresh and try again.', 'dq');
-    }
+    appendLog('⚠️  Connection lost — refresh and try again.', 'dq');
     hide('run-spinner'); disableRunBtn(false);
     es.close();
   };
@@ -908,9 +846,6 @@ function showResults(result) {
             <td class="text-slate-300 text-sm">${p.opp}</td>
             <td style="font-family:monospace;font-weight:700;color:#fff">${p.line} Ks</td>
             <td style="font-family:monospace;font-weight:700;color:${pickClr};font-size:1.05rem">${p.avg_k != null ? p.avg_k+' K' : '—'}</td>
-            <td style="font-family:monospace;color:#93c5fd;font-weight:600">${p.avg_ip != null ? p.avg_ip+' IP' : '—'}</td>
-            <td style="font-family:monospace;color:#fbbf24;font-weight:600">${p.era || '—'}</td>
-            <td style="font-family:monospace;font-size:.82rem">${p.k_hit_rate || '—'}</td>
             <td style="font-family:monospace;color:${pickClr};font-weight:700">${gapDisp}</td>
             <td class="text-slate-400 text-sm">${p.starts}</td>
             <td style="font-family:monospace;font-size:.75rem;color:#94a3b8">${p.k_history || '—'}</td>
@@ -918,7 +853,7 @@ function showResults(result) {
                 <span class="text-slate-500" style="font-size:.68rem;display:block">${odds}</span></td>
           </tr>`;
         }).join('')
-      : '<tr><td colspan="13" class="text-slate-500 text-center py-4">No picks today — pitchers on the line or vs tough K teams</td></tr>';
+      : '<tr><td colspan="10" class="text-slate-500 text-center py-4">No picks today — pitchers on the line or vs tough K teams</td></tr>';
     const noPick = pkAll.filter(p => !p.pick);
     const npDet  = document.getElementById('pitcher-k-nopick-details');
     if (npDet) {
@@ -1022,11 +957,6 @@ function disableRunBtn(d) {
   b.textContent = d ? "Running..." : "Run Picks";
 }
 </script>
-<footer style="text-align:center;padding:32px 24px;color:#4b5563;font-size:.78rem;border-top:1px solid #1c1c1c;margin-top:24px;font-family:'Source Sans Pro',sans-serif">
-  <div style="font-family:'Playfair Display',serif;color:#f59e0b;font-weight:700;font-size:.95rem;margin-bottom:6px">Money Picks Arena</div>
-  <div>MLB MoneyBall &middot; Daily Picks</div>
-  <div style="margin-top:8px;font-size:.7rem">For entertainment only. Not a betting service. Must be 18+. Please gamble responsibly.</div>
-</footer>
 </body>
 </html>
 
