@@ -1,3 +1,4 @@
+
 """
 pipeline.py — MLB Daily Picks master pipeline (web-optimized).
 Runs all 4 steps with real-time progress via emit callback.
@@ -6,36 +7,22 @@ import os, sys, time, json, requests
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from fic_cache      import get_step1_players_or_scrape
-from mlb_roster     import build_player_roster
-from mlb_stats_splits import fetch_step2_ba, fetch_step3_ba
-from day_night_check import get_game_time_type, find_espn_player_id, fetch_day_night_ba
+from fic_cache        import get_step1_players_or_scrape
+from mlb_roster       import build_player_roster
+from mlb_stats_splits import fetch_step2_ba, fetch_step3_ba, prefetch_game_logs
+from day_night_check  import get_game_time_type, find_espn_player_id, fetch_day_night_ba
 
-
-TOP_N_ERA_PITCHERS = 10    # DQ batters facing the top-N lowest ERA starters
-MIN_IP_STARTER     = 20.0  # minimum innings pitched to count as a qualified starter
+TOP_N_ERA_PITCHERS = 10
+MIN_IP_STARTER     = 20.0
 
 
 def _get_top_era_starters(season: str, n: int = TOP_N_ERA_PITCHERS, min_ip: float = MIN_IP_STARTER):
-    """
-    Fetch the top-N lowest ERA qualified starters from MLB Stats API.
-    Returns:
-      last_name_set : set of lowercased last names for fast matching against FIC pitcher names
-      top_list      : list of {"name", "era", "ip"} for display in logs
-    """
     try:
         r = requests.get(
             "https://statsapi.mlb.com/api/v1/stats",
-            params={
-                "stats":    "season",
-                "group":    "pitching",
-                "gameType": "R",
-                "season":   season,
-                "sportId":  1,
-                "limit":    300,
-                "sortStat": "earnedRunAverage",
-                "order":    "asc",
-            },
+            params={"stats": "season", "group": "pitching", "gameType": "R",
+                    "season": season, "sportId": 1, "limit": 300,
+                    "sortStat": "earnedRunAverage", "order": "asc"},
             timeout=14,
         )
         splits = r.json().get("stats", [{}])[0].get("splits", [])
@@ -48,27 +35,20 @@ def _get_top_era_starters(season: str, n: int = TOP_N_ERA_PITCHERS, min_ip: floa
             except (ValueError, TypeError):
                 continue
             if ip >= min_ip:
-                full_name = sp.get("player", {}).get("fullName", "")
-                qualified.append({"name": full_name, "era": era, "ip": ip})
-
-        top_n = qualified[:n]   # already sorted lowest ERA first
-
-        # Build last-name lookup set (lowercase) for matching "P. Skenes" -> "skenes"
+                qualified.append({"name": sp.get("player", {}).get("fullName", ""),
+                                   "era": era, "ip": ip})
+        top_n = qualified[:n]
         last_name_set = set()
         for p in top_n:
             parts = p["name"].lower().split()
             if parts:
                 last_name_set.add(parts[-1])
-
         return last_name_set, top_n
     except Exception:
         return set(), []
 
 
 def _pitcher_last_name(pitcher_raw: str) -> str:
-    """Normalize FIC pitcher string to a lowercase last name.
-    Examples: 'P. Skenes' -> 'skenes'  |  'Paul Skenes' -> 'skenes'
-    """
     name = pitcher_raw.strip()
     if "." in name:
         last = name.split(".")[-1].strip()
@@ -79,31 +59,19 @@ def _pitcher_last_name(pitcher_raw: str) -> str:
 
 
 def run_pipeline(run_date: str, emit=None) -> dict:
-    """
-    Run the full 4-step MLB Daily Picks pipeline.
-
-    Parameters
-    ----------
-    run_date : str  "YYYY-MM-DD"
-    emit     : callable(dict)  — progress callback for SSE streaming
-
-    Returns
-    -------
-    dict  {date, top9, all_qualified, dq_s1_s3, dq_step4, stats}
-    """
     if emit is None:
         emit = lambda _: None
 
-    t_start    = time.time()
-    date_espn  = run_date.replace("-", "")
+    t_start   = time.time()
+    date_espn = run_date.replace("-", "")
 
     def log(msg, type_="log"):
         emit({"type": type_, "msg": msg})
 
-    # ── STEP 1: Fantasy Info Central ──────────────────────────────────
+    # ── STEP 1 ────────────────────────────────────────────────────────
     emit({"type": "section", "msg": "Step 1 — Loading player list from Fantasy Info Central"})
     step1 = get_step1_players_or_scrape(run_date, emit=emit)
-    top30 = step1  # no limit — use all qualifying players
+    top30 = step1
     pitcher_map = {p["batter"]: p["pitcher"] for p in top30}
     emit({"type": "step1_done", "msg": f"✅ {len(top30)} players loaded", "count": len(top30)})
 
@@ -111,8 +79,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     emit({"type": "section", "msg": "ESPN — Fetching today's schedule"})
     espn_r = requests.get(
         f"https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard?dates={date_espn}",
-        timeout=15
-    ).json()
+        timeout=15).json()
     team_schedule = {}
     for event in espn_r.get("events", []):
         comps = event.get("competitions", [{}])[0]
@@ -127,35 +94,36 @@ def run_pipeline(run_date: str, emit=None) -> dict:
             team_schedule[away["displayName"]] = {
                 "side": "AWAY", "opponent": home["displayName"],
                 "opp_slug": home["displayName"].lower().replace(" ", "-")}
-    games = len(team_schedule) // 2
-    log(f"✅ {games} games found today")
+    log(f"✅ {len(team_schedule) // 2} games found today")
 
-    # ── MLB Roster Lookup ─────────────────────────────────────────────
+    # ── Roster Lookup ─────────────────────────────────────────────────
     emit({"type": "section", "msg": "Roster — Resolving player teams via MLB Stats API"})
     log(f"Looking up {len(top30)} players (this takes ~30 seconds)…")
     roster = build_player_roster([p["batter"] for p in top30], date_espn, pitcher_map)
     found = len([v for v in roster.values() if v.get("player_id")])
     log(f"✅ Resolved {found}/{len(top30)} players")
 
-    # ── STEPS 2 & 3: MLB Stats API game-log splits ─────────────────────
+    # ── STEPS 2 & 3 ───────────────────────────────────────────────────
     emit({"type": "section", "msg": "Steps 2 & 3 — Fetching MLB Stats API H/A game logs"})
-    results = []
+    all_player_ids = [roster.get(p["batter"], {}).get("player_id") for p in top30]
+    log(f"  Pre-fetching game logs for {len(all_player_ids)} players (parallel)...")
+    prefetch_game_logs(all_player_ids)
+    log("  ✅ Game logs cached — running splits...")
 
+    results = []
     for i, p in enumerate(top30):
-        name     = p["batter"]
-        info     = roster.get(name, {})
-        slug     = info.get("slug", "")
-        team     = info.get("team_name", "")
-        sched    = team_schedule.get(team, {})
+        name  = p["batter"]
+        info  = roster.get(name, {})
+        slug  = info.get("slug", "")
+        team  = info.get("team_name", "")
+        sched = team_schedule.get(team, {})
         if not sched and team:
-            # Fuzzy fallback — handles minor name diffs between MLB API and ESPN
             tl = team.lower()
             for k, v in team_schedule.items():
                 if tl in k.lower() or k.lower() in tl:
                     sched = v
                     break
         side     = sched.get("side", "")
-        opp_slug = sched.get("opp_slug", "")
         opp_name = sched.get("opponent", "")
 
         emit({"type": "progress", "current": i + 1, "total": len(top30), "name": name})
@@ -169,7 +137,6 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         s3 = fetch_step3_ba(player_id, side)
 
         dq = []
-        # DQ if N/A (no data = no pick)
         if s2["ba"] is None:
             dq.append("S2 N/A")
         elif "✅" in s2["flag"] and s2["ba"] < 0.225:
@@ -202,80 +169,57 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                   "s1": f"{p['ba']:.3f}", "s2": s2["display"], "s3": s3["display"],
                   "opp": opp_name, "side": side, "total": total})
 
-    # ── STEP 4: Day / Night filter ────────────────────────────────────
+    # ── STEP 4 ────────────────────────────────────────────────────────
     emit({"type": "section", "msg": "Step 4 — ESPN Day/Night BA filter"})
-    qualified = []
-    dn_dq     = []
-
+    qualified, dn_dq = [], []
     for r in [x for x in results if not x["dq"]]:
         team      = roster.get(r["name"], {}).get("team_name", "")
         full_name = r.get("full_name", r["name"])
         gtype     = get_game_time_type(team, date_espn)
         eid       = find_espn_player_id(full_name)
-        dn = (
-            fetch_day_night_ba(eid, gtype)
-            if eid and gtype != "unknown"
-            else {"display": "N/A", "flag": "❌ skip", "dq": False, "ba": None, "ab": None}
-        )
+        dn = (fetch_day_night_ba(eid, gtype)
+              if eid and gtype != "unknown"
+              else {"display": "N/A", "flag": "❌ skip", "dq": False, "ba": None, "ab": None})
         label = "DAY" if gtype == "day" else "NIGHT"
-        r["dn"]       = dn
+        r["dn"] = dn
         r["dn_label"] = label
-
         if dn["dq"]:
-            r["dq"]        = True
+            r["dq"] = True
             r["dq_reason"] = f"Step 4 {label} {dn['display']} < .200"
             dn_dq.append(r)
-            emit({"type": "dn_dq",  "name": r["name"], "label": label, "display": dn["display"]})
+            emit({"type": "dn_dq", "name": r["name"], "label": label, "display": dn["display"]})
         else:
             qualified.append(r)
-            emit({"type": "dn_ok",  "name": r["name"], "label": label, "display": dn["display"]})
+            emit({"type": "dn_ok", "name": r["name"], "label": label, "display": dn["display"]})
 
-    # ── STEP 5: Individual Pitcher ERA filter ────────────────────────
-    # DQ any batter whose starting pitcher is in the top-10 lowest ERA starters
-    emit({"type": "section", "msg": f"Step 5 — Pitcher ERA filter (top {TOP_N_ERA_PITCHERS} lowest ERA starters removed)"})
-    era_qualified = []
-    era_dq        = []
+    # ── STEP 5 ────────────────────────────────────────────────────────
+    emit({"type": "section", "msg": f"Step 5 — Pitcher ERA filter (top {TOP_N_ERA_PITCHERS} lowest ERA)"})
+    era_qualified, era_dq = [], []
     top_era_lastnames, top_era_list = _get_top_era_starters(run_date[:4])
-
     if top_era_lastnames:
-        # Log the top-10 list so users can see who's being filtered
-        pitcher_lines = ", ".join(
-            f"{p['name']} ({p['era']:.2f})" for p in top_era_list
-        )
-        emit({"type": "log", "msg": f"✅ Top {TOP_N_ERA_PITCHERS} lowest ERA starters (DQ zone): {pitcher_lines}"})
-
+        emit({"type": "log", "msg": f"✅ Top {TOP_N_ERA_PITCHERS} ERA: " +
+              ", ".join(f"{p['name']} ({p['era']:.2f})" for p in top_era_list)})
         for r in qualified:
-            pitcher_raw  = r.get("pitcher", "")
-            pitcher_last = _pitcher_last_name(pitcher_raw)
+            pitcher_last = _pitcher_last_name(r.get("pitcher", ""))
             if pitcher_last and pitcher_last in top_era_lastnames:
-                # Find the ERA for display
-                matched_era = next(
-                    (p["era"] for p in top_era_list
-                     if p["name"].lower().endswith(pitcher_last)),
-                    None
-                )
-                era_str = f" ERA {matched_era:.2f}" if matched_era is not None else ""
-                r["dq"]        = True
-                r["dq_reason"] = f"Facing top-ERA pitcher {pitcher_raw}{era_str}"
+                matched_era = next((p["era"] for p in top_era_list
+                                    if p["name"].lower().endswith(pitcher_last)), None)
+                era_str = f" ERA {matched_era:.2f}" if matched_era else ""
+                r["dq"] = True
+                r["dq_reason"] = f"Facing top-ERA pitcher {r.get('pitcher','')}{era_str}"
                 era_dq.append(r)
-                emit({"type": "era_dq", "name": r["name"],
-                      "pitcher": pitcher_raw, "era": era_str.strip()})
-                emit({"type": "log",
-                      "msg": f"  ❌ {r['name']} — facing {pitcher_raw}{era_str} (top {TOP_N_ERA_PITCHERS} ERA)"})
+                emit({"type": "log", "msg": f"  ❌ {r['name']} — facing {r.get('pitcher','')}{era_str}"})
             else:
                 era_qualified.append(r)
-                emit({"type": "era_ok", "name": r["name"], "pitcher": pitcher_raw})
     else:
-        # ERA fetch failed — skip this filter so picks still run
-        emit({"type": "log", "msg": "⚠️ Could not load pitcher ERA rankings — skipping Step 5"})
+        emit({"type": "log", "msg": "⚠️ ERA rankings unavailable — skipping Step 5"})
         era_qualified = qualified
 
-    # ── FINAL TOP 9 ───────────────────────────────────────────────────
     all_ranked = sorted(era_qualified, key=lambda x: x["total"], reverse=True)
-    top9         = all_ranked[:9]
-    also_ran     = all_ranked[9:]   # picks #10+ who passed all 5 steps
+    top9     = all_ranked[:9]
+    also_ran = all_ranked[9:]
 
-    # ── UNDER PICKS (runs after main pipeline) ────────────────────────
+    # ── Under Picks ───────────────────────────────────────────────────
     try:
         from under_picks import run_under_picks
         under_picks_list = run_under_picks(run_date, team_schedule, emit=emit)
@@ -283,7 +227,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         emit({"type": "log", "msg": f"⚠️ Under Picks skipped: {exc}"})
         under_picks_list = []
 
-    # ── PITCHER K PICKS ─────────────────────────────────────────────
+    # ── Pitcher K Picks ───────────────────────────────────────────────
     try:
         from pitcher_k import run_pitcher_k_picks
         pitcher_k_result = run_pitcher_k_picks(run_date, team_schedule, emit=emit)
@@ -292,26 +236,15 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         pitcher_k_result = {"picks": [], "all": []}
 
     elapsed = round(time.time() - t_start, 1)
-
     result = {
-        "date":          run_date,
-        "top9":          top9,
-        "also_ran":      also_ran,
-        "under_picks":   under_picks_list,
-        "all_qualified": era_qualified,
-        "dq_s1_s3":      [x for x in results if x["dq"] and x not in dn_dq and x not in era_dq],
-        "dq_step4":      dn_dq,
-        "dq_step5":      era_dq,
-        "pitcher_k":     pitcher_k_result,
-        "stats": {
-            "step1_count":  len(top30),
-            "games":        games,
-            "elapsed":      elapsed,
-            "picks":        len(top9),
-            "under_count":  len(under_picks_list),
-            "pitcher_k_count": len(pitcher_k_result.get("picks", [])),
-        },
+        "date": run_date, "top9": top9, "also_ran": also_ran,
+        "under_picks": under_picks_list, "all_qualified": era_qualified,
+        "dq_s1_s3": [x for x in results if x["dq"] and x not in dn_dq and x not in era_dq],
+        "dq_step4": dn_dq, "dq_step5": era_dq, "pitcher_k": pitcher_k_result,
+        "stats": {"step1_count": len(top30), "games": len(team_schedule) // 2,
+                  "elapsed": elapsed, "picks": len(top9),
+                  "under_count": len(under_picks_list),
+                  "pitcher_k_count": len(pitcher_k_result.get("picks", []))},
     }
-
     emit({"type": "done", "result": result})
     return result
