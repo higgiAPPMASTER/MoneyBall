@@ -66,25 +66,25 @@ def prefetch_game_logs(player_ids: list, seasons: list = None):
     """Pre-fetch and cache game logs for multiple players concurrently."""
     if seasons is None:
         current_year = date.today().year
-        seasons = list(range(current_year, current_year - 3, -1))
+        seasons = list(range(current_year, current_year - 5, -1))
     tasks = [(pid, s) for pid in player_ids if pid
              for s in seasons if (pid, s) not in _CACHE]
     if not tasks:
         return
     def _fetch_one(args):
         _get_game_logs(args[0], args[1])
-    with ThreadPoolExecutor(max_workers=20) as ex:
+    with ThreadPoolExecutor(max_workers=30) as ex:
         list(ex.map(_fetch_one, tasks))
 
 
 def fetch_step2_ba(player_id, side: str, opp_name: str,
                    max_games: int = 10, min_games: int = 3) -> dict:
-    """Step 2 — Last 10 H/A game logs vs today's opponent (3 seasons back)."""
+    """Step 2 — Last 10 H/A game logs vs today's opponent (5 seasons back)."""
     if not player_id:
         return {"ba": None, "display": "N/A", "flag": "❌ skip",
                 "ab": 0, "h": 0, "games": 0}
     current_year = date.today().year
-    seasons = list(range(current_year, current_year - 3, -1))
+    seasons = list(range(current_year, current_year - 5, -1))
     matching = []
     for season in seasons:
         splits = _get_game_logs(player_id, season)
