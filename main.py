@@ -455,7 +455,7 @@ _HTML = """
           </table>
         </div>
         <p class="text-xs text-slate-500 mt-4">
-          <strong>Source</strong>: DraftKings players with 1.5 hits O/U &nbsp;|&nbsp;
+          <strong>Source</strong>: The Odds API — players with 1.5 hits O/U line &nbsp;|&nbsp;
           <strong>S1</strong> Career BA vs today's pitcher (under &lt; .250, any AB or N/A passes) &nbsp;|&nbsp;
           <strong>S2</strong> Lifetime H/A BA vs today's opponent (under &lt; .225) &nbsp;|&nbsp;
           <strong>S3</strong> 2026 H/A BA (under &lt; .250) &nbsp;|&nbsp;
