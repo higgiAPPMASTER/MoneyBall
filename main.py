@@ -207,7 +207,7 @@ _HTML = """
     .mt-2 { margin-top: 8px; } .mt-4 { margin-top: 16px; }
     .text-xs { font-size: 12px; } .text-sm { font-size: 14px; }
     .text-slate-400 { color: #94a3b8; } .text-slate-500 { color: #64748b; }
-    .sm\:flex-row { flex-direction: row; } .sm\:items-end { align-items: flex-end; }
+    .sm\\:flex-row { flex-direction: row; } .sm\\:items-end { align-items: flex-end; }
 
     /* Terminal log */
     #log-box { background: #0a0a0a; border: 1px solid #262626; border-radius: 8px; height: 260px; overflow-y: auto; padding: 12px 16px; font-family: 'Courier New', monospace; font-size: .82rem; line-height: 1.6; }
