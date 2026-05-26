@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from fic_cache      import get_step1_players_or_scrape
 from mlb_roster     import build_player_roster
-from statmuse_fetch import fetch_step2_ba, fetch_step3_ba
+from mlb_stats_splits import fetch_step2_ba, fetch_step3_ba
 from day_night_check import get_game_time_type, find_espn_player_id, fetch_day_night_ba
 
 
@@ -137,8 +137,8 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     found = len([v for v in roster.values() if v.get("player_id")])
     log(f"✅ Resolved {found}/{len(top30)} players")
 
-    # ── STEPS 2 & 3: StatMuse splits ─────────────────────────────────
-    emit({"type": "section", "msg": "Steps 2 & 3 — Fetching StatMuse batting splits"})
+    # ── STEPS 2 & 3: MLB Stats API game-log splits ─────────────────────
+    emit({"type": "section", "msg": "Steps 2 & 3 — Fetching MLB Stats API H/A game logs"})
     results = []
 
     for i, p in enumerate(top30):
@@ -160,18 +160,13 @@ def run_pipeline(run_date: str, emit=None) -> dict:
 
         emit({"type": "progress", "current": i + 1, "total": len(top30), "name": name})
 
-        if not side or not slug:
+        player_id = info.get("player_id")
+        if not side or not player_id:
             emit({"type": "player_skip", "name": name, "reason": "no game today"})
             continue
 
-        parts = slug.split("-")
-        first = parts[0]
-        last  = "-".join(parts[1:])
-
-        s2 = fetch_step2_ba(first, last, side, opp_slug)
-        time.sleep(0.25)
-        s3 = fetch_step3_ba(first, last, side)
-        time.sleep(0.25)
+        s2 = fetch_step2_ba(player_id, side, opp_name)
+        s3 = fetch_step3_ba(player_id, side)
 
         dq = []
         # DQ if N/A (no data = no pick)
