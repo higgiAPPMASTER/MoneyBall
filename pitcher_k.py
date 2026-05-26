@@ -109,136 +109,85 @@ def _get_bottom_k_teams(season: str, n: int = BOTTOM_K_TEAMS_N):
 
 
 
-UNDERDOG_URL     = "https://api.underdogfantasy.com/beta/v5/over_under_lines"
-UNDERDOG_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    "Accept": "application/json"}
-
-
-def _get_underdog_k_lines(emit=None) -> list:
-    """Fetch pitcher K lines from Underdog — free, no key needed."""
+def _fetch_k_lines(run_date: str, emit=None) -> list:
+    """
+    Fetch pitcher strikeout lines from The Odds API — single bulk call.
+    Tries pitcher_strikeouts first, then pitcher_strikeouts_alternate.
+    Returns list of {name, line, home_team, away_team, over_odds, under_odds}.
+    """
     def log(m):
         if emit: emit({"type": "log", "msg": m})
-    log("⬇️  Fetching pitcher K lines from Underdog Fantasy...")
-    try:
-        r = requests.get(UNDERDOG_URL, headers=UNDERDOG_HEADERS, timeout=15)
-        if not r.ok:
-            log(f"   ⚠️ Underdog status {r.status_code}")
-            return []
-        results = {}
-        for l in r.json().get("over_under_lines", []):
-            title = l.get("over_under", {}).get("title", "")
-            stat  = l.get("stat_value")
-            if ("Strikeouts O/U" in title and
-                    "Batter" not in title and "1st" not in title):
-                try:
-                    name = title.replace(" Strikeouts O/U", "").strip()
-                    key  = _normalize(name)
-                    if key not in results:
-                        results[key] = {"name": name, "line": float(stat),
-                                        "over_odds": None, "under_odds": None}
-                except Exception:
-                    pass
-        lines = list(results.values())
-        log(f"✅ Underdog: {len(lines)} pitcher K lines")
-        return lines
-    except Exception as e:
-        log(f"   ⚠️ Underdog error: {e}")
+
+    if not ODDS_API_KEY:
+        log("⚠️  ODDS_API_KEY not set — Pitcher K Picks skipped")
         return []
 
+    PREFERRED = ["draftkings", "fanduel", "betmgm", "caesars", "pointsbetus"]
+    seen: dict = {}   # normalized_name → entry (standard market wins over alternate)
 
-def _match_underdog_to_schedule(ud_lines: list, run_date: str, emit=None) -> list:
-    """Match Underdog pitcher names to today's schedule for home/away team info."""
-    def log(m):
-        if emit: emit({"type": "log", "msg": m})
-    try:
-        r = requests.get(f"{MLB_API}/schedule",
-            params={"date": run_date, "sportId": 1, "hydrate": "probablePitcher"},
-            timeout=15)
-        pitcher_map = {}  # normalized_name → {home_team, away_team}
-        for date_data in r.json().get("dates", []):
-            for game in date_data.get("games", []):
-                home = game["teams"]["home"]
-                away = game["teams"]["away"]
-                home_name = home["team"]["name"]
-                away_name = away["team"]["name"]
-                for team in [home, away]:
-                    pp = team.get("probablePitcher", {})
-                    if pp.get("fullName"):
-                        pitcher_map[_normalize(pp["fullName"])] = {
-                            "home_team": home_name,
-                            "away_team": away_name,
-                        }
-    except Exception as e:
-        log(f"   ⚠️ Schedule lookup failed: {e}")
-        return []
+    for market in ["pitcher_strikeouts", "pitcher_strikeouts_alternate"]:
+        try:
+            r = requests.get(
+                f"{ODDS_BASE}/sports/baseball_mlb/odds",
+                params={
+                    "apiKey":           ODDS_API_KEY,
+                    "regions":          "us,us2",
+                    "markets":          market,
+                    "oddsFormat":       "american",
+                    "dateFormat":       "iso",
+                    "commenceTimeFrom": f"{run_date}T00:00:00Z",
+                    "commenceTimeTo":   f"{run_date}T23:59:59Z",
+                },
+                timeout=20,
+            )
+            if not r.ok:
+                log(f"  ⚠️  Odds API {market} returned {r.status_code}")
+                continue
 
-    matched = []
-    for l in ud_lines:
-        key = _normalize(l["name"])
-        sched = pitcher_map.get(key)
-        if not sched:
-            # Try partial match
-            sched = next((v for k, v in pitcher_map.items()
-                         if key in k or k in key), None)
-        if sched:
-            l["home_team"] = sched["home_team"]
-            l["away_team"] = sched["away_team"]
-            matched.append(l)
-    log(f"✅ {len(matched)} Underdog lines matched to today's schedule")
-    return matched
+            for ev in r.json():
+                home_team = ev.get("home_team", "")
+                away_team = ev.get("away_team", "")
+
+                bms = ev.get("bookmakers", [])
+                bm  = next((b for b in bms if b.get("key") in PREFERRED),
+                           bms[0] if bms else None)
+                if not bm:
+                    continue
+
+                for mkt in bm.get("markets", []):
+                    # Pair Over + Under by (player, point)
+                    pairs: dict = {}
+                    for oc in mkt.get("outcomes", []):
+                        name  = (oc.get("description") or oc.get("name", "")).strip()
+                        pt    = oc.get("point")
+                        side  = oc.get("name", "")
+                        price = oc.get("price")
+                        if not name or pt is None:
+                            continue
+                        key = _normalize(name)
+                        pairs.setdefault(key, {"name": name, "point": float(pt)})
+                        if side == "Over":   pairs[key]["over_odds"]  = price
+                        elif side == "Under": pairs[key]["under_odds"] = price
+
+                    for key, p in pairs.items():
+                        if key not in seen:   # standard market wins; don't overwrite
+                            seen[key] = {
+                                "name":       p["name"],
+                                "line":       p["point"],
+                                "home_team":  home_team,
+                                "away_team":  away_team,
+                                "over_odds":  p.get("over_odds"),
+                                "under_odds": p.get("under_odds"),
+                            }
+        except Exception as exc:
+            log(f"  ⚠️  {market} fetch error: {exc}")
+            continue
+
+    return list(seen.values())
 
 # ─────────────────────────────────────────────────────────────────────
 # Odds API
 # ─────────────────────────────────────────────────────────────────────
-
-def _get_today_events() -> list:
-    try:
-        r = requests.get(
-            f"{ODDS_BASE}/sports/baseball_mlb/events",
-            params={"apiKey": ODDS_API_KEY, "dateFormat": "iso"},
-            timeout=15,
-        )
-        return r.json() if r.ok and isinstance(r.json(), list) else []
-    except Exception:
-        return []
-
-
-def _get_k_lines_for_event(event_id: str) -> list:
-    """Try both pitcher_strikeouts and pitcher_strikeouts_alternate markets."""
-    lines = {}
-    for market in ["pitcher_strikeouts", "pitcher_strikeouts_alternate"]:
-        try:
-            r = requests.get(
-                f"{ODDS_BASE}/sports/baseball_mlb/events/{event_id}/odds",
-                params={
-                    "apiKey":     ODDS_API_KEY,
-                    "regions":    "us,us2",
-                    "markets":    market,
-                    "bookmakers": "draftkings,fanduel,betmgm,caesars,pointsbetus",
-                    "oddsFormat": "american",
-                },
-                timeout=15,
-            )
-            if not r.ok:
-                continue
-            for bm in r.json().get("bookmakers", []):
-                for mkt in bm.get("markets", []):
-                    for oc in mkt.get("outcomes", []):
-                        name  = oc.get("description") or oc.get("name", "")
-                        side  = oc.get("name", "")
-                        point = oc.get("point")
-                        price = oc.get("price")
-                        if not name or point is None:
-                            continue
-                        key = _normalize(name)
-                        if key not in lines:
-                            lines[key] = {"name": name, "line": float(point),
-                                          "over_odds": None, "under_odds": None}
-                        if side == "Over":   lines[key]["over_odds"]  = price
-                        elif side == "Under": lines[key]["under_odds"] = price
-        except Exception:
-            continue
-    return list(lines.values())
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -370,28 +319,10 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
 
     # ODDS_API_KEY optional — Underdog is primary source
 
-    emit({"type": "section", "msg": "⚾ Pitcher K Picks — Fetching lines from Odds API"})
+    emit({"type": "section", "msg": "⚾ Pitcher K Picks — Fetching lines from The Odds API"})
 
-    # ── Get events & lines — Underdog first, Odds API fallback ─────
-    events = _get_today_events()
-    if not events:
-        emit({"type": "log", "msg": "⚠️ No MLB events today — Pitcher K Picks skipped"})
-        return {"picks": [], "all": []}
-
-    # Try Underdog first (free, no key, reliable)
-    ud_raw   = _get_underdog_k_lines(emit)
-    all_lines = _match_underdog_to_schedule(ud_raw, run_date, emit) if ud_raw else []
-
-    # Fall back to Odds API if Underdog returns nothing
-    if not all_lines and ODDS_API_KEY:
-        emit({"type": "log", "msg": "   Trying Odds API (both market keys)..."})
-        for event in events:
-            k_lines = _get_k_lines_for_event(event["id"])
-            for l in k_lines:
-                l["home_team"] = event.get("home_team", "")
-                l["away_team"] = event.get("away_team", "")
-            all_lines.extend(k_lines)
-            time.sleep(0.15)
+    # ── Bulk fetch K lines from Odds API (2 calls max) ─────────────
+    all_lines = _fetch_k_lines(run_date, emit)
 
     if not all_lines:
         emit({"type": "log", "msg": "⚠️ No pitcher K lines found from any source"})
