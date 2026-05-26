@@ -215,7 +215,40 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         emit({"type": "log", "msg": "⚠️ ERA rankings unavailable — skipping Step 5"})
         era_qualified = qualified
 
-    all_ranked = sorted(era_qualified, key=lambda x: x["total"], reverse=True)
+    # ── LINEUP CHECK ─────────────────────────────────────────────
+    emit({"type": "section", "msg": "Lineup Check — MLB Stats API + Rotowire"})
+    dq_lineup = []
+    try:
+        from lineup_check import build_lineup_map, get_lineup_status
+        id_map, name_map, teams_confirmed, rw_lineups, rw_teams = build_lineup_map(run_date)
+        projected = len(rw_teams - teams_confirmed)
+        emit({"type": "log", "msg": f"✅ Coverage: {len(teams_confirmed)} confirmed + {projected} projected teams"})
+        lineup_qualified = []
+        for r in era_qualified:
+            info      = roster.get(r["name"], {})
+            player_id = info.get("player_id")
+            full_name = r.get("full_name") or info.get("full_name", r["name"])
+            team_name = info.get("team_name", "")
+            status    = get_lineup_status(player_id, full_name, team_name,
+                                          id_map, name_map, teams_confirmed,
+                                          rw_lineups, rw_teams)
+            r["lineup_status"] = status
+            if status == "NOT_IN_LINEUP":
+                r["dq"] = True
+                r["dq_reason"] = "Not in lineup"
+                dq_lineup.append(r)
+                emit({"type": "lineup_ok", "name": r["name"], "status": "NOT_IN_LINEUP"})
+            else:
+                lineup_qualified.append(r)
+                emit({"type": "lineup_ok", "name": r["name"], "status": status})
+        emit({"type": "log", "msg": f"✅ Lineup: {len(lineup_qualified)} in/TBD, {len(dq_lineup)} removed"})
+    except Exception as exc:
+        emit({"type": "log", "msg": f"⚠️ Lineup check skipped: {exc}"})
+        lineup_qualified = era_qualified
+        for r in lineup_qualified:
+            r.setdefault("lineup_status", "TBD")
+
+    all_ranked = sorted(lineup_qualified, key=lambda x: x["total"], reverse=True)
     top9     = all_ranked[:9]
     also_ran = all_ranked[9:]
 
@@ -239,8 +272,8 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     result = {
         "date": run_date, "top9": top9, "also_ran": also_ran,
         "under_picks": under_picks_list, "all_qualified": era_qualified,
-        "dq_s1_s3": [x for x in results if x["dq"] and x not in dn_dq and x not in era_dq],
-        "dq_step4": dn_dq, "dq_step5": era_dq, "pitcher_k": pitcher_k_result,
+        "dq_s1_s3": [x for x in results if x["dq"] and x not in dn_dq and x not in era_dq and x not in dq_lineup],
+        "dq_step4": dn_dq, "dq_step5": era_dq, "dq_lineup": dq_lineup, "pitcher_k": pitcher_k_result,
         "stats": {"step1_count": len(top30), "games": len(team_schedule) // 2,
                   "elapsed": elapsed, "picks": len(top9),
                   "under_count": len(under_picks_list),
