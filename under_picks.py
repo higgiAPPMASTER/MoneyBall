@@ -1,461 +1,372 @@
 """
-under_picks.py — "Under Picks" section for MoneyBall.
+under_picks.py — Under Picks via The Odds API (batter_hits 1.5 line).
+Replaces the DraftKings scraper. Requires ODDS_API_KEY env var.
 
-Fetches DraftKings batter_hits lines from The Odds API.
-Filters for players with line = 1.5 (not 0.5).
-Runs them through 3 UNDER-focused filters:
-  Step U1: Career BA vs today's pitcher  < .250  (any AB or N/A qualifies)
-  Step U2: Lifetime H/A BA vs opponent   < .225  (min 3 games required)
-  Step U3: 2026 season H/A BA            < .250  (min 3 games required)
-Players passing ALL three filters = Under Picks.
+Algorithm per candidate:
+  S1  Career BA vs today's probable pitcher  — N/A passes; DQ only if ≥ .250 with AB > 0
+  S2  H/A BA vs today's opponent             — must have data AND < .225
+  S3  Current-season H/A BA                  — must have data AND < .250
+  All three pass → ranked coldest first (lowest S2 + S3 combined BA).
 """
+import os
+import requests
+import time
+from datetime import date
 
-import os, re, time, requests
-from statmuse_fetch import fetch_step2_ba, fetch_step3_ba
+from mlb_stats_splits import fetch_step2_ba, fetch_step3_ba
 
-ODDS_API_KEY  = os.environ.get("ODDS_API_KEY", "")
-ODDS_BASE     = "https://api.the-odds-api.com/v4"
-MLB_API       = "https://statsapi.mlb.com/api/v1"
+ODDS_API_KEY = os.environ.get("ODDS_API_KEY", "")
 
-MIN_AB_U1    = 0      # no minimum AB — any AB count or N/A qualifies
-UNDER_S1_MAX = 0.250  # career BA vs pitcher must be BELOW this
-UNDER_S2_MAX = 0.225  # lifetime H/A vs opponent must be BELOW this
-UNDER_S3_MAX = 0.250  # 2026 H/A BA must be BELOW this
-
-
-# ─────────────────────────────────────────────────────────────────────
-# Helpers
-# ─────────────────────────────────────────────────────────────────────
-
-def _short_name(full_name: str) -> str:
-    parts = full_name.strip().split()
-    return f"{parts[0][0]}. {' '.join(parts[1:])}" if len(parts) >= 2 else full_name
+# ── Module-level caches ──────────────────────────────────────────────
+_PLAYER_MAP:    dict = {}   # name_lower → player_id (int)
+_PITCHER_CACHE: dict = {}   # run_date   → {team_name: {"name": str, "id": int}}
 
 
-def _parse_avg(val) -> float:
-    try:
-        s = str(val or "0").strip()
-        if s in ("", "-.--", "-.-", "---"):
-            return 0.0
-        return float(f"0{s}") if s.startswith(".") else float(s)
-    except (ValueError, TypeError):
-        return 0.0
+# ─── logging helper ──────────────────────────────────────────────────
+
+def _log(emit, msg, type_="log"):
+    if emit:
+        emit({"type": type_, "msg": msg})
 
 
-def _normalize(text: str) -> str:
-    """Lowercase + strip accents for fuzzy matching."""
-    subs = {
-        'á':'a','à':'a','ä':'a','â':'a','ã':'a',
-        'é':'e','è':'e','ë':'e','ê':'e',
-        'í':'i','ì':'i','ï':'i','î':'i',
-        'ó':'o','ò':'o','ö':'o','ô':'o','õ':'o',
-        'ú':'u','ù':'u','ü':'u','û':'u',
-        'ñ':'n','ç':'c',
-    }
-    t = text.lower()
-    for a, p in subs.items():
-        t = t.replace(a, p)
-    return t
+# ─── team name fuzzy match ────────────────────────────────────────────
+
+def _team_match(a: str, b: str) -> bool:
+    a, b = a.lower().strip(), b.lower().strip()
+    if a == b:
+        return True
+    al = a.split()[-1] if a else ""
+    bl = b.split()[-1] if b else ""
+    if al and al == bl:
+        return True
+    return (a in b) or (b in a)
 
 
-def _name_to_slug(full_name: str) -> str:
-    """'Freddie Freeman' → 'freddie-freeman', 'Bobby Witt Jr.' → 'bobby-witt-jr'"""
-    return re.sub(r"[^a-z0-9]+", "-", _normalize(full_name)).strip("-")
+# ─── player ID map (bulk, one call) ──────────────────────────────────
 
-
-def _match_team(mlb_team_name: str, team_schedule: dict) -> dict:
-    """
-    Match an MLB Stats API team name to a team_schedule entry.
-    Falls back to normalized and partial matching.
-    """
-    if mlb_team_name in team_schedule:
-        return team_schedule[mlb_team_name]
-    norm = _normalize(mlb_team_name)
-    for key, val in team_schedule.items():
-        if _normalize(key) == norm:
-            return val
-    for key, val in team_schedule.items():
-        if norm in _normalize(key) or _normalize(key) in norm:
-            return val
-    return {}
-
-
-# ─────────────────────────────────────────────────────────────────────
-# The Odds API — fetch DraftKings 1.5 hit-line players
-# ─────────────────────────────────────────────────────────────────────
-
-def _get_today_events() -> list:
-    """Fetch today's MLB events from The Odds API."""
+def _build_player_map(season: int):
+    """One-time bulk fetch: all active MLB players → {name_lower: player_id}."""
+    global _PLAYER_MAP
+    if _PLAYER_MAP:
+        return
     try:
         r = requests.get(
-            f"{ODDS_BASE}/sports/baseball_mlb/events",
-            params={"apiKey": ODDS_API_KEY, "dateFormat": "iso"},
+            "https://statsapi.mlb.com/api/v1/sports/1/players",
+            params={"season": season, "gameType": "R"},
             timeout=15,
         )
-        data = r.json()
-        return data if isinstance(data, list) else []
+        for p in r.json().get("people", []):
+            name = p.get("fullName", "").lower().strip()
+            pid  = p.get("id")
+            if name and pid:
+                _PLAYER_MAP[name] = pid
     except Exception:
-        return []
+        pass
 
 
-def _get_event_players_15(event_id: str) -> list:
-    """Return player names with batter_hits line = 1.5 on DraftKings for one event."""
+def _resolve_id(name: str):
+    """name → player_id, with last-name fallback."""
+    key = name.lower().strip()
+    if key in _PLAYER_MAP:
+        return _PLAYER_MAP[key]
+    last = key.split()[-1] if key else ""
+    for k, v in _PLAYER_MAP.items():
+        if k.endswith(last) and abs(len(k) - len(key)) <= 6:
+            return v
+    return None
+
+
+# ─── batch team lookup ────────────────────────────────────────────────
+
+def _get_teams_batch(player_ids: list) -> dict:
+    """
+    One API call to get currentTeam for multiple player IDs.
+    Returns {player_id: team_name}.
+    """
+    if not player_ids:
+        return {}
     try:
         r = requests.get(
-            f"{ODDS_BASE}/sports/baseball_mlb/events/{event_id}/odds",
+            "https://statsapi.mlb.com/api/v1/people",
             params={
-                "apiKey": ODDS_API_KEY,
-                "regions": "us",
-                "markets": "batter_hits",
-                "bookmakers": "draftkings",
-                "oddsFormat": "american",
+                "personIds": ",".join(str(i) for i in player_ids),
+                "hydrate":   "currentTeam",
             },
-            timeout=15,
-        )
-        if not r.ok:
-            return []
-        players = set()
-        for bm in r.json().get("bookmakers", []):
-            if bm.get("key") != "draftkings":
-                continue
-            for mkt in bm.get("markets", []):
-                if mkt.get("key") != "batter_hits":
-                    continue
-                for outcome in mkt.get("outcomes", []):
-                    if outcome.get("point") == 1.5:
-                        name = outcome.get("description", "").strip()
-                        if name:
-                            players.add(name)
-        return list(players)
-    except Exception:
-        return []
-
-
-
-UNDERDOG_MLB_URL = "https://api.underdogfantasy.com/beta/v5/over_under_lines"
-UNDERDOG_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", "Accept": "application/json"}
-
-
-def _get_underdog_hits_15_players(log=None) -> list:
-    """Fetch batter Hits O/U 1.5 lines from Underdog Fantasy — free, no key needed."""
-    if log: log("⬇️  Fetching Hits 1.5 lines from Underdog Fantasy...")
-    try:
-        r = requests.get(UNDERDOG_MLB_URL, headers=UNDERDOG_HEADERS, timeout=15)
-        if not r.ok:
-            if log: log(f"   ⚠️ Underdog status {r.status_code}")
-            return []
-        lines = r.json().get("over_under_lines", [])
-        players = []
-        for l in lines:
-            title = l.get("over_under", {}).get("title", "")
-            stat  = str(l.get("stat_value", ""))
-            # Filter: "Hits O/U" with line 1.5 (exclude "1st Inn.", "Batter")
-            if "Hits O/U" in title and stat == "1.5" and "1st" not in title and "Batter" not in title:
-                # Extract name: "Aaron Judge Hits O/U" → "Aaron Judge"
-                name = title.replace(" Hits O/U", "").strip()
-                if name:
-                    players.append(name)
-        players = list(dict.fromkeys(players))  # dedupe
-        if log: log(f"✅ Underdog: {len(players)} players with Hits 1.5 line")
-        return players
-    except Exception as e:
-        if log: log(f"   ⚠️ Underdog error: {e}")
-        return []
-
-def get_dk_15_hit_players(emit=None) -> list:
-    """Returns full names of players with a 1.5 hits line today.
-    Tries Underdog Fantasy first (free), falls back to Odds API."""
-    def log(msg):
-        if emit:
-            emit({"type": "log", "msg": msg})
-
-    # Try Underdog first — free, no key needed
-    ud_players = _get_underdog_hits_15_players(log)
-    if ud_players:
-        return ud_players
-
-    # Fall back to Odds API
-    if not ODDS_API_KEY:
-        log("⚠️  No ODDS_API_KEY and Underdog returned nothing — Under Picks skipped")
-        return []
-
-    log("⬇️  Fetching DraftKings batter_hits lines (1.5 O/U only)…")
-    events = _get_today_events()
-    if not events:
-        log("⚠️  No MLB events returned from Odds API — Under Picks skipped")
-        return []
-
-    log(f"   {len(events)} MLB events found")
-    all_players = []
-    for ev in events:
-        players = _get_event_players_15(ev["id"])
-        all_players.extend(players)
-        time.sleep(0.2)
-
-    unique = list(dict.fromkeys(p for p in all_players if p))
-    log(f"✅ {len(unique)} players have a 1.5 hits line")
-    return unique
-
-
-# ─────────────────────────────────────────────────────────────────────
-# MLB Stats API helpers
-# ─────────────────────────────────────────────────────────────────────
-
-def _build_team_pitcher_map(run_date: str) -> dict:
-    """
-    Returns {team_id (int): {pitcher_id, pitcher_short}} from today's MLB schedule.
-    Away batters face the home pitcher and vice versa.
-    """
-    try:
-        r = requests.get(
-            f"{MLB_API}/schedule",
-            params={"date": run_date, "sportId": 1, "hydrate": "probablePitcher"},
-            timeout=15,
+            timeout=12,
         )
         result = {}
-        for dd in r.json().get("dates", []):
-            for game in dd.get("games", []):
-                home   = game["teams"]["home"]
-                away   = game["teams"]["away"]
-                home_p = home.get("probablePitcher", {})
-                away_p = away.get("probablePitcher", {})
-                if home_p:   # away batters face home pitcher
-                    result[away["team"]["id"]] = {
-                        "pitcher_id":    home_p["id"],
-                        "pitcher_short": _short_name(home_p["fullName"]),
-                    }
-                if away_p:   # home batters face away pitcher
-                    result[home["team"]["id"]] = {
-                        "pitcher_id":    away_p["id"],
-                        "pitcher_short": _short_name(away_p["fullName"]),
-                    }
+        for p in r.json().get("people", []):
+            pid  = p.get("id")
+            team = p.get("currentTeam", {}).get("name", "")
+            if pid:
+                result[pid] = team
         return result
     except Exception:
         return {}
 
 
-def _lookup_player_full(full_name: str) -> dict:
-    """
-    Look up an MLB player by full name via MLB Stats API.
-    Returns {player_id, team_id, team_name, pos, slug, full_name} or None.
-    """
+# ─── probable pitchers ────────────────────────────────────────────────
+
+def _get_probable_pitchers(run_date: str) -> dict:
+    """Returns {team_name: {"name": str, "id": int}} for today's games."""
+    if run_date in _PITCHER_CACHE:
+        return _PITCHER_CACHE[run_date]
+    result = {}
     try:
         r = requests.get(
-            f"{MLB_API}/people/search",
-            params={"names": full_name, "sportId": 1},
-            timeout=8,
+            "https://statsapi.mlb.com/api/v1/schedule",
+            params={
+                "sportId":  1,
+                "date":     run_date,
+                "hydrate":  "probablePitcher,team",
+                "gameType": "R",
+            },
+            timeout=12,
         )
-        people = r.json().get("people", [])
-        active = [p for p in people if p.get("active")]
-        if not active:
-            return None
-        exact  = [p for p in active if p.get("fullName", "").lower() == full_name.lower()]
-        person = exact[0] if exact else active[0]
-        pid    = person["id"]
-
-        r2   = requests.get(f"{MLB_API}/people/{pid}",
-                            params={"hydrate": "currentTeam"}, timeout=8)
-        info = r2.json()["people"][0]
-        team = info.get("currentTeam", {})
-
-        return {
-            "player_id": pid,
-            "team_id":   team.get("id"),
-            "team_name": team.get("name", ""),
-            "pos":       info.get("primaryPosition", {}).get("abbreviation", ""),
-            "slug":      _name_to_slug(info.get("fullName", full_name)),
-            "full_name": info.get("fullName", full_name),
-        }
-    except Exception:
-        return None
-
-
-def _career_ba_vs_pitcher(batter_id: int, pitcher_id: int) -> dict:
-    """Career BA vs a specific pitcher from MLB Stats vsPlayerTotal."""
-    try:
-        r = requests.get(
-            f"{MLB_API}/people/{batter_id}/stats",
-            params={"stats": "vsPlayerTotal", "group": "hitting",
-                    "opposingPlayerId": pitcher_id},
-            timeout=8,
-        )
-        for sg in r.json().get("stats", []):
-            if "vsPlayer" in sg.get("type", {}).get("displayName", ""):
-                for sp in sg.get("splits", []):
-                    s = sp.get("stat", {})
-                    return {
-                        "ab":   s.get("atBats", 0),
-                        "hits": s.get("hits", 0),
-                        "ba":   _parse_avg(s.get("avg")),
-                    }
+        for d in r.json().get("dates", []):
+            for game in d.get("games", []):
+                for side in ("home", "away"):
+                    t         = game.get("teams", {}).get(side, {})
+                    team_name = t.get("team", {}).get("name", "")
+                    pitcher   = t.get("probablePitcher", {})
+                    if team_name and pitcher:
+                        result[team_name] = {
+                            "name": pitcher.get("fullName", "TBD"),
+                            "id":   pitcher.get("id"),
+                        }
     except Exception:
         pass
-    return {"ab": 0, "hits": 0, "ba": 0.0}
+    _PITCHER_CACHE[run_date] = result
+    return result
 
 
-# ─────────────────────────────────────────────────────────────────────
-# Main Under Picks runner
-# ─────────────────────────────────────────────────────────────────────
+# ─── S1: career vs specific pitcher ──────────────────────────────────
 
-def run_under_picks(run_date: str, team_schedule: dict, lineup_data=None, emit=None) -> list:
+def _get_s1_vs_pitcher(batter_id, pitcher_id) -> dict:
+    """Career BA for batter vs this pitcher via MLB Stats vsPlayer endpoint."""
+    if not batter_id or not pitcher_id:
+        return {"ba": None, "display": "N/A", "ab": 0}
+    try:
+        r = requests.get(
+            f"https://statsapi.mlb.com/api/v1/people/{batter_id}/stats",
+            params={
+                "stats":            "vsPlayer",
+                "opposingPlayerId": pitcher_id,
+                "group":            "hitting",
+                "gameType":         "R",
+            },
+            timeout=10,
+        )
+        splits = r.json().get("stats", [{}])[0].get("splits", [])
+        if not splits:
+            return {"ba": None, "display": "N/A", "ab": 0}
+        stat = splits[0].get("stat", {})
+        ab   = int(stat.get("atBats", 0) or 0)
+        h    = int(stat.get("hits",   0) or 0)
+        if ab == 0:
+            return {"ba": None, "display": "N/A", "ab": 0}
+        ba = h / ab
+        return {"ba": ba, "display": f".{int(ba * 1000):03d} ({ab}AB)", "ab": ab}
+    except Exception:
+        return {"ba": None, "display": "N/A", "ab": 0}
+
+
+# ─── Odds API fetch ───────────────────────────────────────────────────
+
+def _fetch_hits_lines(run_date: str, emit=None) -> list:
     """
-    Build the Under Picks list.
-
-    Parameters
-    ----------
-    run_date      : "YYYY-MM-DD"
-    team_schedule : {team_display_name: {side, opponent, opp_slug}} — from pipeline.py
-    emit          : SSE callback
-
-    Returns
-    -------
-    List of under-pick player dicts.
+    Pull batter_hits 1.5 lines from The Odds API for today.
+    Returns list of {name, line, home_team, away_team, over_odds, under_odds}.
     """
-    if emit is None:
-        emit = lambda _: None
-
-    def log(msg):
-        emit({"type": "log", "msg": msg})
-
-    emit({"type": "section", "msg": "Under Picks — DraftKings 1.5 Hits Line Analysis"})
-
-    # Step 1: fetch DK 1.5 hit-line players
-    dk_players = get_dk_15_hit_players(emit)
-    if not dk_players:
-        log("⚠️  No DK 1.5 hit-line players found — Under Picks section empty")
+    if not ODDS_API_KEY:
+        _log(emit, "⚠️  ODDS_API_KEY not set — Under Picks skipped")
         return []
 
-    # Step 2: build team → pitcher map from MLB schedule
-    log("⬇️  Building pitcher map from MLB Stats API…")
-    pitcher_map = _build_team_pitcher_map(run_date)
-    log(f"   {len(pitcher_map)} teams with probable pitchers")
+    try:
+        r = requests.get(
+            "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds",
+            params={
+                "apiKey":            ODDS_API_KEY,
+                "regions":           "us,us2",
+                "markets":           "batter_hits",
+                "oddsFormat":        "american",
+                "dateFormat":        "iso",
+                "commenceTimeFrom":  f"{run_date}T00:00:00Z",
+                "commenceTimeTo":    f"{run_date}T23:59:59Z",
+            },
+            timeout=20,
+        )
+        if r.status_code != 200:
+            _log(emit, f"⚠️  Odds API returned {r.status_code}: {r.text[:200]}")
+            return []
 
-    # Lineup data (passed from pipeline to avoid duplicate API calls)
-    if lineup_data:
-        lin_id_map, lin_name_map, lin_teams, lin_rw, lin_rw_teams = lineup_data
-    else:
-        from lineup_check import build_lineup_map
-        lin_id_map, lin_name_map, lin_teams, lin_rw, lin_rw_teams = build_lineup_map(run_date)
-    from lineup_check import get_lineup_status
+        events = r.json()
+        _log(emit, f"  Odds API: {len(events)} events for {run_date}")
 
-    under_picks = []
-    total = len(dk_players)
+        # Preferred books in priority order
+        PREFERRED = [
+            "draftkings", "fanduel", "betmgm",
+            "williamhill_us", "pointsbetus", "bovada",
+        ]
 
-    for i, full_name in enumerate(dk_players):
-        emit({"type": "under_progress", "current": i + 1,
-              "total": total, "name": full_name})
+        seen: dict = {}   # player_name → entry (keep first book found per player)
 
-        # ── Resolve player via MLB Stats API ───────────────────────
-        info = _lookup_player_full(full_name)
-        time.sleep(0.15)
-        if not info or not info.get("player_id"):
-            log(f"  — {full_name}: not found in MLB Stats API")
+        for ev in events:
+            home_team = ev.get("home_team", "")
+            away_team = ev.get("away_team", "")
+
+            # Pick best available bookmaker for this event
+            bms = ev.get("bookmakers", [])
+            bm  = next((b for b in bms if b.get("key") in PREFERRED), None)
+            if bm is None and bms:
+                bm = bms[0]
+            if not bm:
+                continue
+
+            for mkt in bm.get("markets", []):
+                if mkt.get("key") != "batter_hits":
+                    continue
+
+                # Pair Over + Under by (player, point)
+                pairs: dict = {}
+                for oc in mkt.get("outcomes", []):
+                    player = oc.get("description", "").strip()
+                    pt     = oc.get("point")
+                    side   = oc.get("name", "")   # "Over" or "Under"
+                    price  = oc.get("price")
+                    if not player or pt is None:
+                        continue
+                    key = (player, pt)
+                    pairs.setdefault(key, {})
+                    pairs[key][side] = price
+
+                for (player, pt), sides in pairs.items():
+                    if pt != 1.5 or player in seen:
+                        continue
+                    seen[player] = {
+                        "name":       player,
+                        "line":       pt,
+                        "home_team":  home_team,
+                        "away_team":  away_team,
+                        "over_odds":  sides.get("Over"),
+                        "under_odds": sides.get("Under"),
+                    }
+
+        _log(emit, f"  ✅ {len(seen)} players on 1.5 hits line")
+        return list(seen.values())
+
+    except Exception as exc:
+        _log(emit, f"⚠️  Odds API error: {exc}")
+        return []
+
+
+# ─── main entry point ─────────────────────────────────────────────────
+
+def run_under_picks(run_date: str, team_schedule: dict, emit=None) -> list:
+    _log(emit, "", "log")
+    _log(emit, "▸ Under Picks — Fetching 1.5 hits lines from The Odds API", "section")
+
+    season = int(run_date[:4])
+
+    # ── A. Pull odds lines ───────────────────────────────────────────
+    candidates = _fetch_hits_lines(run_date, emit)
+    if not candidates:
+        return []
+
+    # ── B. Probable pitchers ─────────────────────────────────────────
+    _log(emit, "  Loading probable pitchers…")
+    pitchers = _get_probable_pitchers(run_date)
+    _log(emit, f"  ✅ {len(pitchers)} probable pitchers found")
+
+    # ── C. Player ID map (one bulk call) ─────────────────────────────
+    _log(emit, "  Building MLB player ID map…")
+    _build_player_map(season)
+    _log(emit, f"  ✅ {len(_PLAYER_MAP)} active players indexed")
+
+    # ── D. Resolve player IDs for all candidates ─────────────────────
+    id_map: dict = {}   # name → player_id
+    for c in candidates:
+        pid = _resolve_id(c["name"])
+        if pid:
+            id_map[c["name"]] = pid
+
+    # ── E. Batch fetch current teams (one API call) ──────────────────
+    _log(emit, f"  Looking up teams for {len(id_map)} players…")
+    team_map = _get_teams_batch(list(id_map.values()))   # {player_id: team_name}
+    _log(emit, f"  ✅ Teams resolved")
+
+    # ── F. Evaluate each candidate ───────────────────────────────────
+    _log(emit, f"  Evaluating {len(candidates)} candidates…")
+    picks = []
+
+    for c in candidates:
+        name      = c["name"]
+        home_team = c["home_team"]
+        away_team = c["away_team"]
+
+        batter_id   = id_map.get(name)
+        player_team = team_map.get(batter_id, "") if batter_id else ""
+
+        if not batter_id or not player_team:
             continue
 
-        team_name = info["team_name"]
-        team_id   = info["team_id"]
-        sched     = _match_team(team_name, team_schedule)
-        side      = sched.get("side", "")
-        opp_name  = sched.get("opponent", "")
-        opp_slug  = sched.get("opp_slug", "")
-
-        if not side:
-            log(f"  — {full_name}: no game today ({team_name})")
+        # Determine home/away and opponent name
+        if _team_match(player_team, home_team):
+            side     = "HOME"
+            opp_name = away_team
+        elif _team_match(player_team, away_team):
+            side     = "AWAY"
+            opp_name = home_team
+        else:
             continue
 
-        # ── Lineup Check ───────────────────────────────────────────
-        lin_status = get_lineup_status(info["player_id"], info["full_name"],
-                                       team_name, lin_id_map, lin_name_map, lin_teams,
-                                       lin_rw, lin_rw_teams)
-        if lin_status == "NOT_IN_LINEUP":
-            log(f"  ❌ {full_name}: not in today\'s lineup — skip")
+        # Find probable pitcher for opposing team
+        pitcher_name = "TBD"
+        pitcher_id   = None
+        for pteam, pinfo in pitchers.items():
+            if _team_match(pteam, opp_name):
+                pitcher_name = pinfo["name"]
+                pitcher_id   = pinfo.get("id")
+                break
+
+        # ── S1: career vs today's pitcher (N/A passes; ≥ .250 with ABs → DQ) ──
+        s1 = _get_s1_vs_pitcher(batter_id, pitcher_id)
+        if s1["ba"] is not None and s1["ab"] > 0 and s1["ba"] >= 0.250:
             continue
 
-        # ── Step U1: Career BA vs today's pitcher (< .200) ─────────
-        pitch_info    = pitcher_map.get(team_id, {})
-        pitcher_id    = pitch_info.get("pitcher_id")
-        pitcher_short = pitch_info.get("pitcher_short", "TBD")
-
-        if not pitcher_id:
-            log(f"  — {full_name}: no probable pitcher listed — skip")
+        # ── S2: H/A BA vs today's opponent (must be < .225) ──────────
+        s2 = fetch_step2_ba(batter_id, side, opp_name)
+        if s2["ba"] is None or s2["ba"] >= 0.225:
             continue
 
-        career  = _career_ba_vs_pitcher(info["player_id"], pitcher_id)
-        time.sleep(0.1)
-        s1_ab   = career["ab"]
-        s1_ba   = career["ba"]
-        s1_disp = f".{int(s1_ba * 1000):03d}" if s1_ab > 0 else "N/A"
-
-        # No minimum AB — if no data at all (0 AB), treat as N/A and pass through
-        if s1_ab == 0:
-            s1_disp = "N/A"
-        if s1_ab > 0 and s1_ba >= UNDER_S1_MAX:
-            log(f"  ❌ {full_name}: S1 {s1_disp} ≥ .250 vs {pitcher_short} — not an under pick")
+        # ── S3: current-season H/A BA (must be < .250) ───────────────
+        s3 = fetch_step3_ba(batter_id, side, season)
+        if s3["ba"] is None or s3["ba"] >= 0.250:
             continue
 
-        # ── Step U2: Lifetime H/A BA vs today's opponent (< .225) ──
-        slug_parts = info["slug"].split("-")
-        first_s    = slug_parts[0]
-        last_s     = "-".join(slug_parts[1:])
+        under_score = round((s2["ba"] + s3["ba"]) * 1000)
 
-        s2 = fetch_step2_ba(first_s, last_s, side, opp_slug)
-        time.sleep(0.25)
-
-        if s2["ba"] is None:
-            log(f"  — {full_name}: S2 no data {side} vs {opp_name} — skip")
-            continue
-        if s2["ba"] >= UNDER_S2_MAX:
-            log(f"  ❌ {full_name}: S2 {s2['display']} ≥ .225 {side} vs {opp_name} — not under pick")
-            continue
-
-        # ── Step U3: 2026 H/A BA (< .250) ──────────────────────────
-        s3 = fetch_step3_ba(first_s, last_s, side)
-        time.sleep(0.25)
-
-        if s3["ba"] is None:
-            log(f"  — {full_name}: S3 no 2026 data — skip")
-            continue
-        if s3["ba"] >= UNDER_S3_MAX:
-            log(f"  ❌ {full_name}: S3 {s3['display']} ≥ .250 {side} — not under pick")
-            continue
-
-        # ── Passed all 3! ───────────────────────────────────────────
-        log(f"  ✅ UNDER PICK: {full_name}  S1:{s1_disp} vs {pitcher_short}"
-            f"  S2:{s2['display']}  S3:{s3['display']}  {side} vs {opp_name}")
-        emit({
-            "type":    "under_pick_found",
-            "name":    full_name,
-            "pos":     info["pos"],
-            "side":    side,
-            "opp":     opp_name,
-            "pitcher": pitcher_short,
-            "s1":      s1_disp,
-            "s1_ab":   s1_ab,
-            "s2":      s2["display"],
-            "s3":      s3["display"],
+        picks.append({
+            "name":          name,
+            "pos":           "—",
+            "side":          side,
+            "opp":           opp_name,
+            "pitcher":       pitcher_name,
+            "s1_disp":       s1["display"],
+            "s1_ab":         s1["ab"],
+            "s2":            s2,
+            "s3":            s3,
+            "lineup_status": "TBD",
+            "under_score":   under_score,
         })
 
-        # under_score: lower combined BA = better under pick
-        under_score = round((s1_ba + (s2["ba"] or 0) + (s3["ba"] or 0)) * 1000)
+        _log(
+            emit,
+            f"  ✅ UNDER: {name:<22}  S1:{s1['display']:<14}  "
+            f"S2:{s2['display']}  S3:{s3['display']}",
+        )
 
-        under_picks.append({
-            "name":        full_name,
-            "pos":         info["pos"],
-            "side":        side,
-            "opp":         opp_name,
-            "pitcher":     pitcher_short,
-            "s1_ba":       s1_ba,
-            "s1_ab":       s1_ab,
-            "s1_disp":     s1_disp,
-            "s2":          s2,
-            "s3":          s3,
-            "dk_line":        1.5,
-            "under_score":    under_score,
-            "lineup_status":  lin_status,
-        })
-
-    # Rank by under_score ascending — LOWEST combined BA = Rank 1 (coldest bat)
-    under_picks.sort(key=lambda x: x["under_score"])
-
-    log(f"✅ Under Picks complete — {len(under_picks)} players passed all 3 under filters (ranked coldest → warmest)")
-    return under_picks
+    # Coldest bat first
+    picks.sort(key=lambda x: x["under_score"])
+    _log(emit, f"✅ Under Picks: {len(picks)} picks found")
+    return picks
