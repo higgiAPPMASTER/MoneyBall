@@ -188,7 +188,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
 
         player_result = {
             "name": name, "pos": p["pos"], "s1": p["ba"],
-            "opp": opp_name, "side": side, "slug": slug,
+            "team": team, "opp": opp_name, "side": side, "slug": slug,
             "full_name": info.get("full_name", name),
             "pitcher": pitcher_map.get(name, ""),
             "s2": s2, "s3": s3, "total": total,
@@ -314,6 +314,14 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     except Exception as exc:
         emit({"type": "log", "msg": f"⚠️ Under Picks skipped: {exc}"})
         under_picks_list = []
+    # Inject team into each under pick (reverse-lookup from team_schedule)
+    for _up in under_picks_list:
+        _side, _opp = _up.get("side", ""), _up.get("opp", "")
+        for _t, _sched in team_schedule.items():
+            if _sched.get("side") == _side and _sched.get("opponent") == _opp:
+                _up["team"] = _t
+                break
+        _up.setdefault("team", "")
 
     # ── Pitcher K Picks ───────────────────────────────────────────────
     try:
