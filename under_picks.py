@@ -21,6 +21,13 @@ ODDS_API_KEY = os.environ.get("ODDS_API_KEY", "")
 _PLAYER_MAP:    dict = {}
 _PITCHER_CACHE: dict = {}
 
+# Populated by _fetch_hits_lines: normalized player name -> Over price on the 0.5 hits line
+# (i.e. the standard "to record a hit" prop). Read by pipeline.py to enrich top9 picks.
+import unicodedata as _ud
+def _norm_name(s: str) -> str:
+    return "".join(c for c in _ud.normalize("NFKD", s or "") if not _ud.combining(c)).lower().strip()
+HIT_ODDS: dict = {}
+
 
 def _log(emit, msg, type_="log"):
     if emit:
@@ -168,6 +175,9 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
                     pairs.setdefault(key, {})
                     pairs[key][side] = price
                 for (player, pt), sides in pairs.items():
+                    # Capture "to record a hit" prop (0.5 line, Over side) for pipeline enrichment
+                    if pt == 0.5 and sides.get("Over") is not None:
+                        HIT_ODDS[_norm_name(player)] = sides.get("Over")
                     if pt != 1.5 or player in seen: continue
                     seen[player] = {"name": player, "line": pt,
                                     "home_team": home_team, "away_team": away_team,
