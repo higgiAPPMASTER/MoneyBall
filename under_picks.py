@@ -149,7 +149,7 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
             away_team = ev.get("away_team", "")
             r2 = requests.get(
                 f"https://api.the-odds-api.com/v4/sports/baseball_mlb/events/{ev['id']}/odds",
-                params={"apiKey": ODDS_API_KEY, "regions": "us,us2",
+                params={"apiKey": ODDS_API_KEY, "regions": "us",
                         "markets": "batter_hits", "oddsFormat": "american"}, timeout=15)
             if r2.status_code != 200: continue
             bms = r2.json().get("bookmakers", [])
