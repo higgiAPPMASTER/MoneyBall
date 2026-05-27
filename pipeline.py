@@ -11,33 +11,42 @@ from fic_cache        import get_step1_players_or_scrape
 from mlb_roster       import build_player_roster
 from mlb_stats_splits import fetch_step2_ba, fetch_step3_ba, prefetch_game_logs
 # ── Step 4: L10 H/A hit-consistency (added) ──────────────────────────────
-def fetch_step4_consistency(player_id, side: str, max_games: int = 10) -> dict:
-    """Returns {hits_games, games, display, score} — # of last N H/A games
-       in the current season with 1+ hit. Used as a ranking factor."""
+def fetch_step4_consistency(player_id, side: str, opp_name: str = "",
+                            max_games: int = 10) -> dict:
+    """S4 — Last 10 career H/A games vs THIS opponent (5 seasons back),
+       counting games with 1+ hit. Used as ranking tiebreaker."""
     if not player_id:
         return {"hits_games": 0, "games": 0, "display": "N/A", "score": 0}
     try:
-        from mlb_stats_splits import _get_game_logs
+        from mlb_stats_splits import _get_game_logs, _team_name_match
         from datetime import date as _dt
-        splits = _get_game_logs(player_id, _dt.today().year)
+        current_year = _dt.today().year
+        seasons = list(range(current_year, current_year - 5, -1))
         matching = []
-        for sp in reversed(splits):
-            is_home = sp.get("isHome", False)
-            if (side.upper() == "HOME") != is_home:
-                continue
-            stat = sp.get("stat", {})
-            ab = int(stat.get("atBats", 0) or 0)
-            h  = int(stat.get("hits",   0) or 0)
-            if ab < 1:
-                continue
-            matching.append(1 if h >= 1 else 0)
+        for season in seasons:
+            splits = _get_game_logs(player_id, season)
+            for sp in reversed(splits):
+                is_home = sp.get("isHome", False)
+                if (side.upper() == "HOME") != is_home:
+                    continue
+                if opp_name:
+                    opp = sp.get("opponent", {}).get("name", "")
+                    if not _team_name_match(opp, opp_name):
+                        continue
+                stat = sp.get("stat", {})
+                ab = int(stat.get("atBats", 0) or 0)
+                h  = int(stat.get("hits",   0) or 0)
+                if ab < 1:
+                    continue
+                matching.append(1 if h >= 1 else 0)
+                if len(matching) >= max_games:
+                    break
             if len(matching) >= max_games:
                 break
         games = len(matching)
         hits_games = sum(matching)
         if games == 0:
             return {"hits_games": 0, "games": 0, "display": "N/A", "score": 0}
-        # Score scaled to 0-100 range (like a BA × 1000) so it's comparable to S1/S2/S3
         score = round(hits_games / games * 100)
         return {"hits_games": hits_games, "games": games,
                 "display": f"{hits_games}/{games}", "score": score}
@@ -289,7 +298,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     for r in lineup_qualified:
         info       = roster.get(r["name"], {})
         player_id  = info.get("player_id")
-        s4         = fetch_step4_consistency(player_id, r["side"])
+        s4         = fetch_step4_consistency(player_id, r["side"], r.get("opp", ""))
         r["s4"]    = s4
         dn_ba      = (r.get("dn", {}) or {}).get("ba")
         s5_score   = round(dn_ba * 1000) if dn_ba else 0
