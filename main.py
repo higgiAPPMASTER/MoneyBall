@@ -14,6 +14,7 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Form
 from fastapi.responses import StreamingResponse, FileResponse, HTMLResponse
+from replit_push import push_picks_to_replit  # pushes daily picks to Replit DB
 
 
 app = FastAPI(title="MoneyBall", docs_url=None, redoc_url=None)
@@ -69,6 +70,7 @@ async def start_run(date_str: str):
             task["status"] = "done"
             task["result"] = result
             _cache[date_str] = result
+            push_picks_to_replit("mlb", {**result, "date": date_str})  # push to Replit DB
         except Exception as exc:
             import traceback
             emit({"type": "error", "msg": f"{exc}\n{traceback.format_exc()}"})
