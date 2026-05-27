@@ -284,8 +284,9 @@ _HTML = """
           <strong>S1</strong> Lifetime BA vs today's pitcher (FIC) &nbsp;|&nbsp;
           <strong>S2</strong> Lifetime H/A BA vs today's opponent &nbsp;|&nbsp;
           <strong>S3</strong> 2026 season H/A BA vs all teams &nbsp;|&nbsp;
+          <strong>S4</strong> Last 10 H/A games vs THIS opponent — games with 1+ hit &nbsp;|&nbsp;
           <strong>Hit Odds</strong> Sportsbook price "to record a hit" (0.5 line) &nbsp;|&nbsp;
-          <strong>Score</strong> = S1+S2+S3 × 1000
+          <strong>Score</strong> = (S1+S2+S3+D/N)×1000 + S4 hit rate ×10
         </p>
       </div>
       <div class="card p-6 hidden" id="also-ran-card">
