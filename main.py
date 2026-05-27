@@ -273,10 +273,10 @@ _HTML = """
         <div id="player-search-result" class="mt-3"></div>
       </div>
       <div class="card p-6">
-        <div class="section-hdr">🏆 Top Picks</div>
+        <div class="section-hdr">🏆 Top Picks — To Record a Hit</div>
         <div class="overflow-x-auto">
           <table class="results-table" id="picks-table">
-            <thead><tr><th>#</th><th>Player</th><th>H/A</th><th>Opponent</th><th class="admin-only">S1 BA</th><th class="admin-only">S2 BA</th><th class="admin-only">S3 BA</th><th class="admin-only">S4 L10</th><th class="admin-only">D/N</th><th>Lineup</th><th class="admin-only">Score</th></tr></thead>
+            <thead><tr><th>#</th><th>Player</th><th>H/A</th><th>Opponent</th><th class="admin-only">S1 BA</th><th class="admin-only">S2 BA</th><th class="admin-only">S3 BA</th><th class="admin-only">S4 L10</th><th class="admin-only">D/N</th><th>Lineup</th><th>Hit Odds</th><th class="admin-only">Score</th></tr></thead>
             <tbody id="picks-body"></tbody>
           </table>
         </div>
@@ -284,6 +284,7 @@ _HTML = """
           <strong>S1</strong> Lifetime BA vs today's pitcher (FIC) &nbsp;|&nbsp;
           <strong>S2</strong> Lifetime H/A BA vs today's opponent &nbsp;|&nbsp;
           <strong>S3</strong> 2026 season H/A BA vs all teams &nbsp;|&nbsp;
+          <strong>Hit Odds</strong> Sportsbook price "to record a hit" (0.5 line) &nbsp;|&nbsp;
           <strong>Score</strong> = S1+S2+S3 × 1000
         </p>
       </div>
@@ -292,7 +293,7 @@ _HTML = """
         <p class="text-xs text-slate-400 mb-3" style="margin-top:-8px">Solid plays the model still likes.</p>
         <div class="overflow-x-auto">
           <table class="results-table" id="also-ran-table">
-            <thead><tr><th>#</th><th>Player</th><th>H/A</th><th>Opponent</th><th class="admin-only">S1 BA</th><th class="admin-only">S2 BA</th><th class="admin-only">S3 BA</th><th class="admin-only">S4 L10</th><th class="admin-only">D/N</th><th>Lineup</th><th class="admin-only">Score</th></tr></thead>
+            <thead><tr><th>#</th><th>Player</th><th>H/A</th><th>Opponent</th><th class="admin-only">S1 BA</th><th class="admin-only">S2 BA</th><th class="admin-only">S3 BA</th><th class="admin-only">S4 L10</th><th class="admin-only">D/N</th><th>Lineup</th><th>Hit Odds</th><th class="admin-only">Score</th></tr></thead>
             <tbody id="also-ran-body"></tbody>
           </table>
         </div>
@@ -472,6 +473,7 @@ function showResults(result) {
       <td class="admin-only stat-cell text-slate-300 text-xs">${p.s4?.display||'—'}</td>
       <td class="admin-only"><span class="badge ${dnCls} text-xs">${dnLabel}</span> <span class="stat-cell text-slate-300 text-xs">${dnDisp}</span></td>
       <td>${lineupBadge(p.lineup_status)}</td>
+      <td style="font-family:monospace;color:#fbbf24;font-weight:700">${p.hit_odds!=null?(p.hit_odds>0?'+':'')+p.hit_odds:'—'}</td>
       <td class="admin-only"><span class="score-big">${p.total}</span></td>
     </tr>`;
   }).join('');
@@ -492,6 +494,7 @@ function showResults(result) {
         <td class="admin-only stat-cell text-slate-300 text-xs">${p.s4?.display||'—'}</td>
         <td class="admin-only"><span class="badge ${dnCls} text-xs">${dnLabel}</span> <span class="stat-cell text-slate-300 text-xs">${dnDisp}</span></td>
         <td>${lineupBadge(p.lineup_status)}</td>
+        <td style="font-family:monospace;color:#fbbf24;font-weight:700">${p.hit_odds!=null?(p.hit_odds>0?'+':'')+p.hit_odds:'—'}</td>
         <td class="admin-only"><span style="color:#94a3b8;font-weight:700">${p.total}</span></td>
       </tr>`;
     }).join('');
