@@ -323,6 +323,15 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     except Exception as exc:
         emit({"type": "log", "msg": f"⚠️ Under Picks skipped: {exc}"})
         under_picks_list = []
+
+    # ── Enrich top9 + also_ran with hit odds (0.5 line "to record a hit") ──
+    try:
+        from under_picks import HIT_ODDS as _HIT_ODDS, _norm_name as _nn
+        for _p in top9 + also_ran:
+            _p["hit_odds"] = _HIT_ODDS.get(_nn(_p.get("name", "")))
+        emit({"type": "log", "msg": f"  ✅ Hit odds matched for {sum(1 for p in top9+also_ran if p.get('hit_odds') is not None)}/{len(top9)+len(also_ran)} picks"})
+    except Exception as _exc:
+        emit({"type": "log", "msg": f"⚠️ Hit odds enrichment skipped: {_exc}"})
     # Inject team into each under pick (reverse-lookup from team_schedule)
     for _up in under_picks_list:
         _side, _opp = _up.get("side", ""), _up.get("opp", "")
