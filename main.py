@@ -70,7 +70,16 @@ async def start_run(date_str: str):
             task["result"] = result
             _cache[date_str] = result
             try:
-                push_picks_to_replit("mlb", {**result, "date": date_str})
+                # Bake the picks into the page HTML so the Replit hub can serve
+                # an instant, no-cold-start snapshot at moneypicksarena.com.
+                baked = {**result, "date": date_str}
+                inject = (
+                    '<script>window.__INITIAL_PICKS__ = '
+                    + json.dumps(baked).replace('</', '<\\/')
+                    + ';</script></head>'
+                )
+                snapshot_html = _HTML.replace('</head>', inject, 1)
+                push_picks_to_replit("mlb", baked, html=snapshot_html)
             except Exception as _e:
                 print(f"[replit_push] mlb push failed: {_e}")
         except Exception as exc:
@@ -351,6 +360,18 @@ let username = localStorage.getItem('mlb_user') || '';
 let es = null;
 
 window.onload = () => {
+  // Snapshot mode: the Replit hub serves this page with picks already baked in
+  // as window.__INITIAL_PICKS__ (set just before </head>). When present, skip
+  // the login + /api/run flow entirely and render straight from the snapshot.
+  if (window.__INITIAL_PICKS__) {
+    hide('login-screen'); show('dashboard');
+    hide('progress-card');
+    const r = window.__INITIAL_PICKS__;
+    const dp = document.getElementById('date-picker');
+    if (dp && r.date) dp.value = r.date;
+    showResults(r);
+    return;
+  }
   const KEY = '__mpa_token';
   const params = new URLSearchParams(window.location.search);
   const urlTok = params.get('token');
