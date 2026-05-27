@@ -264,6 +264,14 @@ _HTML = """
     </div>
     <div id="results-card" class="hidden space-y-6">
       <div id="stats-row" class="chips"></div>
+      <div class="card p-6" id="player-search-card">
+        <div class="section-hdr">🔍 Player Lookup</div>
+        <p class="text-xs text-slate-400 mb-3">Type a hitter or pitcher's name — see where they rank and why.</p>
+        <input id="player-search-input" type="text" placeholder="e.g. Aaron Judge, Gerrit Cole..."
+               style="width:100%;padding:12px 16px;background:#0f0f0f;border:1px solid #262626;border-radius:10px;color:#fff;font-size:.95rem;outline:none"
+               oninput="runPlayerSearch(this.value)">
+        <div id="player-search-result" class="mt-3"></div>
+      </div>
       <div class="card p-6">
         <div class="section-hdr">🏆 Top Picks</div>
         <div class="overflow-x-auto">
@@ -280,7 +288,8 @@ _HTML = """
         </p>
       </div>
       <div class="card p-6 hidden" id="also-ran-card">
-        <div class="section-hdr">⏳ Also Ran — Passed All Steps, Just Missed Top 9</div>
+        <div class="section-hdr">⚾ Money Ball Picks</div>
+        <p class="text-xs text-slate-400 mb-3" style="margin-top:-8px">Solid plays the model still likes.</p>
         <div class="overflow-x-auto">
           <table class="results-table" id="also-ran-table">
             <thead><tr><th>#</th><th>Player</th><th>H/A</th><th>Opponent</th><th class="admin-only">S1 BA</th><th class="admin-only">S2 BA</th><th class="admin-only">S3 BA</th><th class="admin-only">D/N</th><th>Lineup</th><th class="admin-only">Score</th></tr></thead>
@@ -325,17 +334,10 @@ _HTML = """
           <strong>Pick</strong> = OVER if avg &gt; line, UNDER if avg &lt; line (min 2 starts).
         </p>
       </div>
-      <div class="card p-6" id="dq-card">
-        <details>
-          <summary>
-            <div class="section-hdr cursor-pointer select-none">
-              <span>❌ Disqualified Players</span>
-              <span id="dq-count-badge" class="badge badge-dq" style="margin-left:8px"></span>
-              <span style="margin-left:auto;font-size:.75rem;color:#64748b">click to expand ▾</span>
-            </div>
-          </summary>
-          <div id="dq-body" class="mt-2 rounded-lg overflow-hidden" style="border:1px solid rgba(255,255,255,.05)"></div>
-        </details>
+      <div class="card p-6" id="by-game-card">
+        <div class="section-hdr" style="color:#f59e0b">🏟️ Picks by Game</div>
+        <p class="text-xs text-slate-500 mb-3">Pick your team's game to see all picks for that matchup.</p>
+        <div id="by-game-body"></div>
       </div>
     </div>
   </main>
@@ -442,7 +444,8 @@ function handleEvent(ev) {
 }
 
 function showResults(result) {
-  const { top9, dq_s1_s3, dq_step4, stats, pitcher_k } = result;
+  window._lastResult = result;
+  const { top9, stats, pitcher_k } = result;
   hide('also-ran-card'); hide('under-picks-card'); hide('pitcher-k-card');
 
   document.getElementById('stats-row').innerHTML = [
@@ -559,20 +562,181 @@ function showResults(result) {
     }
   }
 
-  const allDQ=[...(dq_s1_s3||[]),...(dq_step4||[]),...(result.dq_lineup||[])];
-  document.getElementById('dq-count-badge').textContent=allDQ.length+' players';
-  document.getElementById('dq-body').innerHTML=allDQ.length===0
-    ? '<div class="dq-row text-slate-500">None — all qualified!</div>'
-    : allDQ.map(p=>`<div class="dq-row">
-        <span class="font-semibold" style="min-width:144px">${p.name}</span>
-        <span class="badge badge-pos">${p.pos||'—'}</span>
-        <span class="text-slate-400 text-xs">S1: ${p.s1?.toFixed(3)||'—'}</span>
-        <span class="text-slate-400 text-xs">S2: ${p.s2?.display||'—'}</span>
-        <span class="text-slate-400 text-xs">S3: ${p.s3?.display||'—'}</span>
-        <span class="badge badge-dq" style="margin-left:auto">${p.dq_reason||'DQ'}</span>
-      </div>`).join('');
-
+  renderByGame(result);
   show('results-card');
+}
+
+function _fmtBA(v){return (v==null)?'—':(typeof v==='number'?v.toFixed(3):v);}
+function _lineupTxt(s){
+  if(s==='IN_LINEUP') return 'In Lineup ✅';
+  if(s==='NOT_IN_LINEUP') return 'Not in Lineup ❌';
+  return s||'TBD';
+}
+function _matchName(p, q){
+  var n=((p.full_name||p.name||'')+'').toLowerCase();
+  return n.indexOf(q)>=0;
+}
+
+window._lastResult = null;
+
+function runPlayerSearch(raw){
+  var box = document.getElementById('player-search-result');
+  var q = (raw||'').trim().toLowerCase();
+  if(!q){ box.innerHTML=''; return; }
+  if(q.length < 2){ box.innerHTML='<div class="text-slate-500 text-sm">Keep typing…</div>'; return; }
+  var r = window._lastResult;
+  if(!r){ box.innerHTML='<div class="text-slate-500 text-sm">Run a date first.</div>'; return; }
+
+  var hits = [];
+  // 1) Top 9
+  (r.top9||[]).forEach(function(p,i){
+    if(_matchName(p,q)) hits.push({bucket:'Top Picks', rank:'#'+(i+1), kind:'HITTER', p:p});
+  });
+  // 2) Money Ball (also_ran)
+  (r.also_ran||[]).forEach(function(p,i){
+    if(_matchName(p,q)) hits.push({bucket:'Money Ball Picks', rank:'#'+(i+10), kind:'HITTER', p:p});
+  });
+  // 3) Under Picks
+  (r.under_picks||[]).forEach(function(p,i){
+    if(_matchName(p,q)) hits.push({bucket:'Under Picks', rank:'#'+(i+1), kind:'UNDER', p:p});
+  });
+  // 4) Pitcher K Picks
+  var pk = r.pitcher_k||{};
+  (pk.picks||[]).forEach(function(p,i){
+    if(_matchName(p,q)) hits.push({bucket:'Pitcher K Picks', rank:'#'+(i+1), kind:'PITCHER', p:p});
+  });
+  (pk.all||[]).forEach(function(p){
+    if(_matchName(p,q) && !(pk.picks||[]).some(function(x){return (x.name||'')===(p.name||'');})){
+      hits.push({bucket:'Pitchers (no pick)', rank:'—', kind:'PITCHER', p:p});
+    }
+  });
+  // 5) DQ'd hitters
+  var dqAll = [].concat(r.dq_s1_s3||[], r.dq_step4||[], r.dq_step5||[], r.dq_lineup||[]);
+  dqAll.forEach(function(p){
+    if(_matchName(p,q)) hits.push({bucket:'Did Not Qualify', rank:'—', kind:'HITTER-DQ', p:p});
+  });
+
+  if(!hits.length){
+    box.innerHTML='<div class="text-slate-500 text-sm">No match for "<strong>'+raw+'</strong>". They may not be playing today or weren\'t in the analyzed pool.</div>';
+    return;
+  }
+
+  box.innerHTML = hits.map(function(h){
+    var p=h.p, kind=h.kind;
+    var color = h.bucket==='Top Picks'?'#fbbf24':
+                h.bucket==='Money Ball Picks'?'#94a3b8':
+                h.bucket==='Under Picks'?'#ef4444':
+                h.bucket==='Pitcher K Picks'?'#63cab7':
+                h.bucket==='Did Not Qualify'?'#6b7280':'#9ca3af';
+    var html='<div style="background:#0f0f0f;border:1px solid #262626;border-left:4px solid '+color+';border-radius:10px;padding:14px 18px;margin-bottom:10px">';
+    html+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+    html+='<div><span style="color:#fff;font-weight:700;font-size:1.05rem">'+(p.full_name||p.name||'')+'</span>';
+    html+=' <span style="color:'+color+';font-weight:700;margin-left:8px">'+h.bucket+' '+h.rank+'</span></div>';
+    if(p.side) html+='<span class="badge '+(p.side==='HOME'?'badge-home':'badge-away')+'">'+p.side+' vs '+(p.opp||'')+'</span>';
+    html+='</div>';
+
+    if(kind==='HITTER' || kind==='HITTER-DQ'){
+      html+='<div style="display:flex;flex-wrap:wrap;gap:14px;font-size:.82rem;color:#cbd5e1">';
+      if(p.s1!=null) html+='<span><strong style="color:#94a3b8">S1</strong> '+_fmtBA(p.s1)+'</span>';
+      if(p.s2) html+='<span><strong style="color:#94a3b8">S2</strong> '+(p.s2.display||'—')+'</span>';
+      if(p.s3) html+='<span><strong style="color:#94a3b8">S3</strong> '+(p.s3.display||'—')+'</span>';
+      if(p.s4) html+='<span><strong style="color:#94a3b8">S4 L10 H/A</strong> '+(p.s4.display||'—')+'</span>';
+      if(p.s5) html+='<span><strong style="color:#94a3b8">S5 D/N</strong> '+(p.s5.display||'—')+'</span>';
+      if(p.total!=null) html+='<span><strong style="color:#fbbf24">Total</strong> '+p.total+'</span>';
+      if(p.pitcher) html+='<span><strong style="color:#94a3b8">vs Pitcher</strong> '+p.pitcher+'</span>';
+      if(p.lineup_status) html+='<span><strong style="color:#94a3b8">Lineup</strong> '+_lineupTxt(p.lineup_status)+'</span>';
+      html+='</div>';
+      if(kind==='HITTER-DQ' && p.dq_reason){
+        html+='<div style="margin-top:8px;color:#fca5a5;font-size:.82rem"><strong>Why DQ\'d:</strong> '+p.dq_reason+'</div>';
+      } else if(h.bucket==='Top Picks'){
+        html+='<div style="margin-top:8px;color:#cbd5e1;font-size:.82rem">Cleared every filter and ranks in the top 9 by total score.</div>';
+      } else if(h.bucket==='Money Ball Picks'){
+        html+='<div style="margin-top:8px;color:#cbd5e1;font-size:.82rem">Passed all 5 filters — solid play just outside the Top 9.</div>';
+      } else if(h.bucket==='Under Picks'){
+        html+='<div style="margin-top:8px;color:#cbd5e1;font-size:.82rem">Cold bat vs today\'s pitcher — model likes the UNDER.</div>';
+      }
+    } else if(kind==='PITCHER'){
+      html+='<div style="display:flex;flex-wrap:wrap;gap:14px;font-size:.82rem;color:#cbd5e1">';
+      if(p.line!=null) html+='<span><strong style="color:#94a3b8">K Line</strong> '+p.line+'</span>';
+      if(p.avg_k_vs_opp!=null) html+='<span><strong style="color:#94a3b8">Avg K vs Opp</strong> '+p.avg_k_vs_opp+'</span>';
+      if(p.avg_ip_vs_opp!=null) html+='<span><strong style="color:#94a3b8">Avg IP</strong> '+p.avg_ip_vs_opp+'</span>';
+      if(p.era_vs_opp!=null) html+='<span><strong style="color:#94a3b8">ERA</strong> '+p.era_vs_opp+'</span>';
+      if(p.gap!=null) html+='<span><strong style="color:#94a3b8">Gap</strong> '+p.gap+'</span>';
+      if(p.starts!=null) html+='<span><strong style="color:#94a3b8">Starts</strong> '+p.starts+'</span>';
+      if(p.pick) html+='<span><strong style="color:#63cab7">Pick</strong> '+p.pick+'</span>';
+      html+='</div>';
+      if(p.pick_note) html+='<div style="margin-top:8px;color:#cbd5e1;font-size:.82rem">'+p.pick_note+'</div>';
+    }
+    html+='</div>';
+    return html;
+  }).join('');
+}
+
+function toggleGameMLB(n){
+  var el=document.getElementById('mlb_game_'+n);
+  var btn=document.getElementById('mlb_game_btn_'+n);
+  if(!el) return;
+  var hidden=el.style.display==='none';
+  el.style.display=hidden?'block':'none';
+  if(btn) btn.textContent=hidden?'Collapse':'Expand';
+}
+
+function gameKey(p){
+  var t=(p.team||'').trim(), o=(p.opp||'').trim();
+  if(!t||!o) return o||t||'Unknown';
+  return p.side==='HOME' ? (o+' @ '+t) : (t+' @ '+o);
+}
+
+function renderByGame(result){
+  var body=document.getElementById('by-game-body');
+  if(!body) return;
+  var hitters=(result.top9||[]).map(function(p){return Object.assign({_kind:'HITTER'},p);});
+  var unders=(result.under_picks||[]).map(function(p){return Object.assign({_kind:'UNDER'},p);});
+  var ks=((result.pitcher_k||{}).picks||[]).map(function(p){return Object.assign({_kind:'PITCHER K'},p);});
+  var all=hitters.concat(unders, ks);
+  if(!all.length){body.innerHTML='<div class="text-slate-500 text-sm">No picks yet.</div>';return;}
+  var games={}, order=[];
+  all.forEach(function(p){
+    var k=gameKey(p);
+    if(!games[k]){games[k]=[];order.push(k);}
+    games[k].push(p);
+  });
+  order.sort();
+  var html='';
+  order.forEach(function(g,gi){
+    var rows=games[g];
+    var cnt=rows.length;
+    html+='<div style="margin-bottom:10px">';
+    html+='<div onclick="toggleGameMLB('+gi+')" style="background:#161616;border:1px solid #262626;border-radius:12px;padding:12px 18px;cursor:pointer;display:flex;align-items:center;justify-content:space-between">';
+    html+='<span style="font-weight:700;color:#fff;font-size:.92rem">'+g+'</span>';
+    html+='<div style="display:flex;align-items:center;gap:10px">';
+    html+='<span style="background:rgba(245,158,11,.1);color:#f59e0b;padding:3px 12px;border-radius:999px;font-size:.75rem;font-weight:700">'+cnt+' pick'+(cnt===1?'':'s')+'</span>';
+    html+='<button id="mlb_game_btn_'+gi+'" onclick="event.stopPropagation();toggleGameMLB('+gi+')" style="background:none;border:1px solid #374151;color:#9ca3af;border-radius:6px;padding:3px 12px;font-size:.72rem;cursor:pointer">Expand</button>';
+    html+='</div></div>';
+    html+='<div id="mlb_game_'+gi+'" style="display:none;margin-top:6px;border-radius:12px;overflow:hidden;border:1px solid #262626;background:#0f0f0f">';
+    html+='<table class="results-table" style="width:100%"><thead><tr><th>Type</th><th>Player</th><th>H/A</th><th>Pick / Note</th><th>Lineup</th></tr></thead><tbody>';
+    rows.forEach(function(p){
+      var kind=p._kind;
+      var kindCls=kind==='HITTER'?'badge-home':(kind==='UNDER'?'badge-out':'badge-tbd');
+      var sideBadge='<span class="badge '+(p.side==='HOME'?'badge-home':'badge-away')+'">'+(p.side||'')+'</span>';
+      var note='';
+      if(kind==='HITTER') note='Top hitter pick';
+      else if(kind==='UNDER') note='UNDER — vs '+(p.pitcher||'TBD');
+      else if(kind==='PITCHER K') note=(p.pick||'')+' '+(p.line||'')+' Ks';
+      var lineup=p.lineup_status==='IN_LINEUP'?'<span class="badge badge-in">✅ IN</span>'
+        :p.lineup_status==='NOT_IN_LINEUP'?'<span class="badge badge-out">❌ OUT</span>'
+        :'<span class="badge badge-tbd">⏳ TBD</span>';
+      html+='<tr>';
+      html+='<td><span class="badge '+kindCls+' text-xs">'+kind+'</span></td>';
+      html+='<td class="font-semibold">'+(p.name||'')+'</td>';
+      html+='<td>'+sideBadge+'</td>';
+      html+='<td class="text-slate-300 text-sm">'+note+'</td>';
+      html+='<td>'+(kind==='PITCHER K'?'<span class="text-slate-500 text-xs">—</span>':lineup)+'</td>';
+      html+='</tr>';
+    });
+    html+='</tbody></table></div></div>';
+  });
+  body.innerHTML=html;
 }
 
 function statCard(icon,label,value) {
