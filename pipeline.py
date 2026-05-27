@@ -304,15 +304,14 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         s5_score   = round(dn_ba * 1000) if dn_ba else 0
         r["s5"]    = {"ba": dn_ba, "score": s5_score,
                       "display": f"{dn_ba:.3f}" if dn_ba else "N/A"}
-        # Total = S1+S2+S3+S5  (S4 is tiebreaker only — see sort below)
-        r["total"] = (r.get("total", 0) or 0) + s5_score
+        # Total = S1+S2+S3+S5+S4   (S4 hit rate % scaled ×10 to match BA ×1000 scale)
+        s4_pts = (s4.get("score", 0) or 0) * 10
+        r["total"] = (r.get("total", 0) or 0) + s5_score + s4_pts
         emit({"type": "log",
-              "msg": f"  {r['name']}: S4 {s4['display']} (+{s4['score']}) | "
+              "msg": f"  {r['name']}: S4 {s4['display']} (+{s4_pts}) | "
                      f"S5 {r['s5']['display']} (+{s5_score}) → total {r['total']}"})
 
-    all_ranked = sorted(lineup_qualified,
-                        key=lambda x: (x["total"], x.get("s4", {}).get("score", 0)),
-                        reverse=True)
+    all_ranked = sorted(lineup_qualified, key=lambda x: x["total"], reverse=True)
     top9     = all_ranked[:9]
     also_ran = all_ranked[9:]
 
