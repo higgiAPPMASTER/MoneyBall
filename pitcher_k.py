@@ -199,22 +199,32 @@ def career_ha_ks_vs_opp(pitcher_id: int, side: str, opp_name: str) -> dict:
     time.sleep(0.1)
     if not opp_id: return None
     is_home = (side == "HOME")
-    k_list  = []
+    k_list   = []
+    ip_list  = []
+    era_list = []
     for season in reversed(K_SEASONS):
         splits = _get_pitching_logs(pitcher_id, season)
         time.sleep(0.08)
         for sp in reversed(splits):
             if sp.get("opponent", {}).get("id") != opp_id: continue
             if sp.get("isHome") != is_home: continue
-            ip = _ip_to_float(sp.get("stat", {}).get("inningsPitched", "0"))
+            stat = sp.get("stat", {})
+            ip = _ip_to_float(stat.get("inningsPitched", "0"))
             if ip < MIN_IP_START: continue
-            k_list.append(sp.get("stat", {}).get("strikeOuts", 0))
+            k_list.append(stat.get("strikeOuts", 0))
+            ip_list.append(ip)
+            er = int(stat.get("earnedRuns", 0) or 0)
+            if ip > 0:
+                era_list.append(round(er / ip * 9, 2))
     if len(k_list) < MIN_STARTS:
         return {"avg_k": None, "starts": len(k_list), "k_list": k_list,
-                "min_k": None, "max_k": None}
-    avg_k = round(sum(k_list) / len(k_list), 1)
+                "min_k": None, "max_k": None, "avg_ip": None, "era": None}
+    avg_k  = round(sum(k_list) / len(k_list), 1)
+    avg_ip = round(sum(ip_list) / len(ip_list), 1) if ip_list else None
+    era    = round(sum(era_list) / len(era_list), 2) if era_list else None
     return {"avg_k": avg_k, "starts": len(k_list), "k_list": k_list,
-            "min_k": min(k_list), "max_k": max(k_list)}
+            "min_k": min(k_list), "max_k": max(k_list),
+            "avg_ip": avg_ip, "era": era}
 
 
 def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
@@ -277,11 +287,16 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
         else:
             pick, pick_note = None, f"avg {avg_k} exactly on line"
 
+        hits_over = sum(1 for k in k_list if k > line) if k_list else 0
+        k_hit_rate = f"{hits_over}/{starts}" if starts else "—"
         all_results.append({"name": name, "team": pitcher_team, "opp": opp, "side": side,
                              "line": line, "over_odds": pl.get("over_odds"),
                              "under_odds": pl.get("under_odds"), "avg_k": avg_k,
                              "starts": starts, "min_k": hist["min_k"] if hist else None,
                              "max_k": hist["max_k"] if hist else None,
+                             "avg_ip": hist["avg_ip"] if hist else None,
+                             "era":    hist["era"]    if hist else None,
+                             "k_hit_rate": k_hit_rate,
                              "k_history": ", ".join(str(k) for k in k_list) if k_list else "—",
                              "pick": pick, "pick_note": pick_note})
 
