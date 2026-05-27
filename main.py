@@ -276,7 +276,7 @@ _HTML = """
         <div class="section-hdr">🏆 Top Picks</div>
         <div class="overflow-x-auto">
           <table class="results-table" id="picks-table">
-            <thead><tr><th>#</th><th>Player</th><th>H/A</th><th>Opponent</th><th class="admin-only">S1 BA</th><th class="admin-only">S2 BA</th><th class="admin-only">S3 BA</th><th class="admin-only">D/N</th><th>Lineup</th><th class="admin-only">Score</th></tr></thead>
+            <thead><tr><th>#</th><th>Player</th><th>H/A</th><th>Opponent</th><th class="admin-only">S1 BA</th><th class="admin-only">S2 BA</th><th class="admin-only">S3 BA</th><th class="admin-only">S4 L10</th><th class="admin-only">D/N</th><th>Lineup</th><th class="admin-only">Score</th></tr></thead>
             <tbody id="picks-body"></tbody>
           </table>
         </div>
@@ -292,7 +292,7 @@ _HTML = """
         <p class="text-xs text-slate-400 mb-3" style="margin-top:-8px">Solid plays the model still likes.</p>
         <div class="overflow-x-auto">
           <table class="results-table" id="also-ran-table">
-            <thead><tr><th>#</th><th>Player</th><th>H/A</th><th>Opponent</th><th class="admin-only">S1 BA</th><th class="admin-only">S2 BA</th><th class="admin-only">S3 BA</th><th class="admin-only">D/N</th><th>Lineup</th><th class="admin-only">Score</th></tr></thead>
+            <thead><tr><th>#</th><th>Player</th><th>H/A</th><th>Opponent</th><th class="admin-only">S1 BA</th><th class="admin-only">S2 BA</th><th class="admin-only">S3 BA</th><th class="admin-only">S4 L10</th><th class="admin-only">D/N</th><th>Lineup</th><th class="admin-only">Score</th></tr></thead>
             <tbody id="also-ran-body"></tbody>
           </table>
         </div>
@@ -469,6 +469,7 @@ function showResults(result) {
       <td class="admin-only stat-cell ${statColor(p.s1)}">${p.s1?.toFixed(3)||'—'}</td>
       <td class="admin-only stat-cell ${statColorStr(p.s2?.display)}">${p.s2?.display||'—'}</td>
       <td class="admin-only stat-cell ${statColorStr(p.s3?.display)}">${p.s3?.display||'—'}</td>
+      <td class="admin-only stat-cell text-slate-300 text-xs">${p.s4?.display||'—'}</td>
       <td class="admin-only"><span class="badge ${dnCls} text-xs">${dnLabel}</span> <span class="stat-cell text-slate-300 text-xs">${dnDisp}</span></td>
       <td>${lineupBadge(p.lineup_status)}</td>
       <td class="admin-only"><span class="score-big">${p.total}</span></td>
@@ -488,6 +489,7 @@ function showResults(result) {
         <td class="admin-only stat-cell ${statColor(p.s1)}">${p.s1?.toFixed(3)||'—'}</td>
         <td class="admin-only stat-cell ${statColorStr(p.s2?.display)}">${p.s2?.display||'—'}</td>
         <td class="admin-only stat-cell ${statColorStr(p.s3?.display)}">${p.s3?.display||'—'}</td>
+        <td class="admin-only stat-cell text-slate-300 text-xs">${p.s4?.display||'—'}</td>
         <td class="admin-only"><span class="badge ${dnCls} text-xs">${dnLabel}</span> <span class="stat-cell text-slate-300 text-xs">${dnDisp}</span></td>
         <td>${lineupBadge(p.lineup_status)}</td>
         <td class="admin-only"><span style="color:#94a3b8;font-weight:700">${p.total}</span></td>
@@ -617,7 +619,7 @@ function runPlayerSearch(raw){
   });
 
   if(!hits.length){
-    box.innerHTML='<div class="text-slate-500 text-sm">No match for "<strong>'+raw+'</strong>". They may not be playing today or weren\'t in the analyzed pool.</div>';
+    box.innerHTML='<div class="text-slate-500 text-sm">No match for "<strong>'+raw+'</strong>". They may not be playing today or weren\\'t in the analyzed pool.</div>';
     return;
   }
 
@@ -647,13 +649,13 @@ function runPlayerSearch(raw){
       if(p.lineup_status) html+='<span><strong style="color:#94a3b8">Lineup</strong> '+_lineupTxt(p.lineup_status)+'</span>';
       html+='</div>';
       if(kind==='HITTER-DQ' && p.dq_reason){
-        html+='<div style="margin-top:8px;color:#fca5a5;font-size:.82rem"><strong>Why DQ\'d:</strong> '+p.dq_reason+'</div>';
+        html+='<div style="margin-top:8px;color:#fca5a5;font-size:.82rem"><strong>Why DQ\\'d:</strong> '+p.dq_reason+'</div>';
       } else if(h.bucket==='Top Picks'){
         html+='<div style="margin-top:8px;color:#cbd5e1;font-size:.82rem">Cleared every filter and ranks in the top 9 by total score.</div>';
       } else if(h.bucket==='Money Ball Picks'){
         html+='<div style="margin-top:8px;color:#cbd5e1;font-size:.82rem">Passed all 5 filters — solid play just outside the Top 9.</div>';
       } else if(h.bucket==='Under Picks'){
-        html+='<div style="margin-top:8px;color:#cbd5e1;font-size:.82rem">Cold bat vs today\'s pitcher — model likes the UNDER.</div>';
+        html+='<div style="margin-top:8px;color:#cbd5e1;font-size:.82rem">Cold bat vs today\\'s pitcher — model likes the UNDER.</div>';
       }
     } else if(kind==='PITCHER'){
       html+='<div style="display:flex;flex-wrap:wrap;gap:14px;font-size:.82rem;color:#cbd5e1">';
@@ -791,7 +793,7 @@ async def serve_spa(admin: str = ""):
     is_admin = bool(admin) and admin == _os.environ.get("INTERNAL_API_TOKEN", "__none__")
     body_cls = "is-admin" if is_admin else ""
     js_flag = "true" if is_admin else "false"
-    html = _HTML.replace("<body>", f'<body class="{body_cls}">').replace(
+    html = _HTML.replace('<body class="min-h-screen">', f'<body class="min-h-screen {body_cls}">').replace(
         "</head>",
         f'<script>window.IS_ADMIN = {js_flag};</script></head>', 1)
     return HTMLResponse(html)
