@@ -105,7 +105,7 @@ def _fetch_k_lines(run_date: str, emit=None) -> list:
             for market in MARKETS:
                 r2 = requests.get(
                     f"{ODDS_BASE}/sports/baseball_mlb/events/{ev['id']}/odds",
-                    params={"apiKey": ODDS_API_KEY, "regions": "us,us2",
+                    params={"apiKey": ODDS_API_KEY, "regions": "us",
                             "markets": market, "bookmakers": ",".join(PREFERRED),
                             "oddsFormat": "american"}, timeout=15)
                 if not r2.ok: continue
