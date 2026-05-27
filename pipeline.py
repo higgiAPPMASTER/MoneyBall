@@ -10,6 +10,42 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fic_cache        import get_step1_players_or_scrape
 from mlb_roster       import build_player_roster
 from mlb_stats_splits import fetch_step2_ba, fetch_step3_ba, prefetch_game_logs
+# ── Step 4: L10 H/A hit-consistency (added) ──────────────────────────────
+def fetch_step4_consistency(player_id, side: str, max_games: int = 10) -> dict:
+    """Returns {hits_games, games, display, score} — # of last N H/A games
+       in the current season with 1+ hit. Used as a ranking factor."""
+    if not player_id:
+        return {"hits_games": 0, "games": 0, "display": "N/A", "score": 0}
+    try:
+        from mlb_stats_splits import _get_game_logs
+        from datetime import date as _dt
+        splits = _get_game_logs(player_id, _dt.today().year)
+        matching = []
+        for sp in reversed(splits):
+            is_home = sp.get("isHome", False)
+            if (side.upper() == "HOME") != is_home:
+                continue
+            stat = sp.get("stat", {})
+            ab = int(stat.get("atBats", 0) or 0)
+            h  = int(stat.get("hits",   0) or 0)
+            if ab < 1:
+                continue
+            matching.append(1 if h >= 1 else 0)
+            if len(matching) >= max_games:
+                break
+        games = len(matching)
+        hits_games = sum(matching)
+        if games == 0:
+            return {"hits_games": 0, "games": 0, "display": "N/A", "score": 0}
+        # Score scaled to 0-100 range (like a BA × 1000) so it's comparable to S1/S2/S3
+        score = round(hits_games / games * 100)
+        return {"hits_games": hits_games, "games": games,
+                "display": f"{hits_games}/{games}", "score": score}
+    except Exception:
+        return {"hits_games": 0, "games": 0, "display": "ERR", "score": 0}
+
+
+
 from day_night_check  import get_game_time_type, find_espn_player_id, fetch_day_night_ba
 
 TOP_N_ERA_PITCHERS = 10
@@ -248,7 +284,26 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         for r in lineup_qualified:
             r.setdefault("lineup_status", "TBD")
 
-    all_ranked = sorted(lineup_qualified, key=lambda x: x["total"], reverse=True)
+    # ── S4 (L10 H/A consistency) + S5 (D/N BA) ranking factors ───────
+    emit({"type": "section", "msg": "S4 (L10 H/A consistency) + S5 (D/N BA) — re-ranking"})
+    for r in lineup_qualified:
+        info       = roster.get(r["name"], {})
+        player_id  = info.get("player_id")
+        s4         = fetch_step4_consistency(player_id, r["side"])
+        r["s4"]    = s4
+        dn_ba      = (r.get("dn", {}) or {}).get("ba")
+        s5_score   = round(dn_ba * 1000) if dn_ba else 0
+        r["s5"]    = {"ba": dn_ba, "score": s5_score,
+                      "display": f"{dn_ba:.3f}" if dn_ba else "N/A"}
+        # Total = S1+S2+S3+S5  (S4 is tiebreaker only — see sort below)
+        r["total"] = (r.get("total", 0) or 0) + s5_score
+        emit({"type": "log",
+              "msg": f"  {r['name']}: S4 {s4['display']} (+{s4['score']}) | "
+                     f"S5 {r['s5']['display']} (+{s5_score}) → total {r['total']}"})
+
+    all_ranked = sorted(lineup_qualified,
+                        key=lambda x: (x["total"], x.get("s4", {}).get("score", 0)),
+                        reverse=True)
     top9     = all_ranked[:9]
     also_ran = all_ranked[9:]
 
