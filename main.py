@@ -70,7 +70,10 @@ async def start_run(date_str: str):
             task["status"] = "done"
             task["result"] = result
             _cache[date_str] = result
-            push_picks_to_replit("mlb", {**result, "date": date_str})  # push to Replit DB
+            try:
+                push_picks_to_replit("mlb", {**result, "date": date_str})
+            except Exception as _e:
+                print(f"[replit_push] mlb push failed: {_e}")
         except Exception as exc:
             import traceback
             emit({"type": "error", "msg": f"{exc}\n{traceback.format_exc()}"})
