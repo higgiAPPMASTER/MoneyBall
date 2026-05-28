@@ -247,6 +247,13 @@ _HTML = """
     .chip{background:#111;border-top:3px solid #FDB827;border-radius:8px;padding:16px 10px;text-align:center}
     .chip .val{font-size:1.9rem;font-weight:900;color:#FDB827}
     .chip .lbl{font-size:.65rem;color:#555;text-transform:uppercase;letter-spacing:1px;margin-top:4px}
+    .mlb-picks-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px}
+    .mlb-pick-card{border-radius:14px;overflow:hidden;background:linear-gradient(180deg,#161616 0%,#0f0f0f 100%);border:1px solid #262626;display:flex;flex-direction:column}
+    .mlb-pick-card:hover{border-color:rgba(245,158,11,.35)}
+    .mlb-card-header{padding:10px 14px;display:flex;align-items:center;justify-content:space-between;border-bottom:2px solid #f59e0b}
+    .mlb-card-photo{position:relative;height:140px;overflow:hidden;background:radial-gradient(ellipse at center top,rgba(245,158,11,.15),transparent 70%),linear-gradient(180deg,#1a2a1a 0%,#0a1a0a 100%)}
+    .mlb-card-name{background:#f59e0b;color:#000;text-align:center;padding:8px 10px;font-weight:900;font-size:1rem;letter-spacing:.01em}
+    .mlb-card-body{padding:10px 12px 12px;flex:1;display:flex;flex-direction:column;gap:6px}
   </style>
 </head>
 <body class="min-h-screen">
@@ -317,12 +324,7 @@ _HTML = """
       </div>
       <div class="card p-6">
         <div class="section-hdr">🏆 Top Picks — To Record a Hit</div>
-        <div class="overflow-x-auto">
-          <table class="results-table" id="picks-table">
-            <thead><tr><th>#</th><th>Player</th><th>H/A</th><th>Opponent</th><th class="admin-only">S1 BA</th><th class="admin-only">S2 BA</th><th class="admin-only">S3 BA</th><th class="admin-only">S4 L10</th><th class="admin-only">D/N</th><th>Lineup</th><th>Hit Odds</th><th class="admin-only">Score</th></tr></thead>
-            <tbody id="picks-body"></tbody>
-          </table>
-        </div>
+        <div id="picks-body" class="mlb-picks-grid"></div>
         <p class="text-xs text-slate-500 mt-4 admin-only">
           <strong>S1</strong> Lifetime BA vs today's pitcher (FIC) &nbsp;|&nbsp;
           <strong>S2</strong> Lifetime H/A BA vs today's opponent &nbsp;|&nbsp;
@@ -335,12 +337,7 @@ _HTML = """
       <div class="card p-6 hidden" id="also-ran-card">
         <div class="section-hdr">⚾ Money Ball Picks</div>
         <p class="text-xs text-slate-400 mb-3" style="margin-top:-8px">Solid plays the model still likes.</p>
-        <div class="overflow-x-auto">
-          <table class="results-table" id="also-ran-table">
-            <thead><tr><th>#</th><th>Player</th><th>H/A</th><th>Opponent</th><th class="admin-only">S1 BA</th><th class="admin-only">S2 BA</th><th class="admin-only">S3 BA</th><th class="admin-only">S4 L10</th><th class="admin-only">D/N</th><th>Lineup</th><th>Hit Odds</th><th class="admin-only">Score</th></tr></thead>
-            <tbody id="also-ran-body"></tbody>
-          </table>
-        </div>
+        <div id="also-ran-body" class="mlb-picks-grid"></div>
         <p class="text-xs text-slate-500 mt-3 admin-only">These players passed all 5 steps — ranked by score.</p>
       </div>
       <div class="card p-6 hidden" id="under-picks-card" style="border-color:rgba(255,107,107,.25)">
@@ -514,46 +511,12 @@ function showResults(result) {
     statCard('⏱️','Time (s)',stats.elapsed),
   ].join('');
 
-  document.getElementById('picks-body').innerHTML = top9.map((p,i) => {
-    const rank=i+1, rnk=rank<=3?`rank-${rank}`:'rank-n';
-    const dnLabel=p.dn_label||'—', dnDisp=p.dn?.display||'N/A';
-    const dnCls=dnLabel==='DAY'?'badge-day':'badge-night';
-    return `<tr>
-      <td><span class="rank-badge ${rnk}">${rank}</span></td>
-      <td class="font-semibold">${p.name}</td>
-      <td><span class="badge ${p.side==='HOME'?'badge-home':'badge-away'}">${p.side}</span></td>
-      <td class="text-slate-300 text-sm">${p.opp}</td>
-      <td class="admin-only stat-cell ${statColor(p.s1)}">${p.s1?.toFixed(3)||'—'}</td>
-      <td class="admin-only stat-cell ${statColorStr(p.s2?.display)}">${p.s2?.display||'—'}</td>
-      <td class="admin-only stat-cell ${statColorStr(p.s3?.display)}">${p.s3?.display||'—'}</td>
-      <td class="admin-only stat-cell text-slate-300 text-xs">${p.s4?.display||'—'}</td>
-      <td class="admin-only"><span class="badge ${dnCls} text-xs">${dnLabel}</span> <span class="stat-cell text-slate-300 text-xs">${dnDisp}</span></td>
-      <td>${lineupBadge(p.lineup_status)}</td>
-      <td style="font-family:monospace;color:#fbbf24;font-weight:700">${p.hit_odds!=null?(p.hit_odds>0?'+':'')+p.hit_odds:'—'}</td>
-      <td class="admin-only"><span class="score-big">${p.total}</span></td>
-    </tr>`;
-  }).join('');
+  document.getElementById('picks-body').innerHTML = top9.map((p,i) => _mlbCard(p, i+1)).join('');
 
   const alsoRan = result.also_ran || [];
   if (alsoRan.length > 0) {
     show('also-ran-card');
-    document.getElementById('also-ran-body').innerHTML = alsoRan.map((p,i) => {
-      const rank=i+10, dnLabel=p.dn_label||'—', dnDisp=p.dn?.display||'N/A', dnCls=dnLabel==='DAY'?'badge-day':'badge-night';
-      return `<tr style="opacity:0.8">
-        <td><span class="rank-badge rank-n" style="background:#2a2a2a;color:#f59e0b">${rank}</span></td>
-        <td class="font-semibold">${p.name}</td>
-          <td><span class="badge ${p.side==='HOME'?'badge-home':'badge-away'}">${p.side}</span></td>
-        <td class="text-slate-300 text-sm">${p.opp}</td>
-        <td class="admin-only stat-cell ${statColor(p.s1)}">${p.s1?.toFixed(3)||'—'}</td>
-        <td class="admin-only stat-cell ${statColorStr(p.s2?.display)}">${p.s2?.display||'—'}</td>
-        <td class="admin-only stat-cell ${statColorStr(p.s3?.display)}">${p.s3?.display||'—'}</td>
-        <td class="admin-only stat-cell text-slate-300 text-xs">${p.s4?.display||'—'}</td>
-        <td class="admin-only"><span class="badge ${dnCls} text-xs">${dnLabel}</span> <span class="stat-cell text-slate-300 text-xs">${dnDisp}</span></td>
-        <td>${lineupBadge(p.lineup_status)}</td>
-        <td style="font-family:monospace;color:#fbbf24;font-weight:700">${p.hit_odds!=null?(p.hit_odds>0?'+':'')+p.hit_odds:'—'}</td>
-        <td class="admin-only"><span style="color:#94a3b8;font-weight:700">${p.total}</span></td>
-      </tr>`;
-    }).join('');
+    document.getElementById('also-ran-body').innerHTML = alsoRan.map((p,i) => _mlbCard(p, i+10, true)).join('');
   }
 
   const underPicks = result.under_picks || [];
@@ -784,6 +747,68 @@ function renderByGame(result){
     html+='</tbody></table></div></div>';
   });
   body.innerHTML=html;
+}
+
+const _MLB_ABBR = {
+  'arizona diamondbacks':'ari','atlanta braves':'atl','baltimore orioles':'bal',
+  'boston red sox':'bos','chicago cubs':'chc','chicago white sox':'chw',
+  'cincinnati reds':'cin','cleveland guardians':'cle','colorado rockies':'col',
+  'detroit tigers':'det','houston astros':'hou','kansas city royals':'kc',
+  'los angeles angels':'laa','los angeles dodgers':'lad','miami marlins':'mia',
+  'milwaukee brewers':'mil','minnesota twins':'min','new york mets':'nym',
+  'new york yankees':'nyy','oakland athletics':'oak','philadelphia phillies':'phi',
+  'pittsburgh pirates':'pit','san diego padres':'sd','san francisco giants':'sf',
+  'seattle mariners':'sea','st. louis cardinals':'stl','st louis cardinals':'stl',
+  'tampa bay rays':'tb','texas rangers':'tex','toronto blue jays':'tor',
+  'washington nationals':'wsh','athletics':'oak'
+};
+function _mlbTeamAbbr(teamName) {
+  return _MLB_ABBR[(teamName||'').toLowerCase()] || '';
+}
+function _mlbCard(p, rank, dim) {
+  const abbr = _mlbTeamAbbr(p.team);
+  const teamLogo = abbr ? `https://a.espncdn.com/i/teamlogos/mlb/500/${abbr}.png` : '';
+  const headshot = p.player_id ? `https://a.espncdn.com/i/headshots/mlb/players/full/${p.player_id}.png` : '';
+  const rnkColors = rank===1?['#f59e0b','#000']:rank===2?['#c0c0c0','#000']:rank===3?['#cd7f32','#fff']:['#1e1e1e','#f59e0b'];
+  const sideCls = p.side==='HOME'?'badge-home':'badge-away';
+  const odds = p.hit_odds!=null?(p.hit_odds>0?'+':'')+p.hit_odds:'—';
+  const s1Disp = p.s1!=null?p.s1.toFixed(3):'—';
+  const s4Disp = p.s4?.display||'—';
+  const adminStats = `<div class="admin-only" style="display:none;font-size:.72rem;color:#64748b;margin-top:4px;line-height:1.7">
+    <span>S1 <strong style="color:#94a3b8">${s1Disp}</strong></span> &nbsp;
+    <span>S2 <strong style="color:#94a3b8">${p.s2?.display||'—'}</strong></span> &nbsp;
+    <span>S3 <strong style="color:#94a3b8">${p.s3?.display||'—'}</strong></span><br>
+    <span>S4 <strong style="color:#94a3b8">${s4Disp}</strong></span> &nbsp;
+    <span>Score <strong style="color:#f59e0b">${p.total||'—'}</strong></span>
+  </div>`;
+  return `<div class="mlb-pick-card" style="${dim?'opacity:0.85':''}">
+    <div class="mlb-card-header" style="background:linear-gradient(135deg,#1a2a1a 0%,#0a1a0a 100%)">
+      <div style="display:flex;align-items:center;gap:8px">
+        <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
+        <span style="font-size:.72rem;letter-spacing:.12em;color:#f59e0b;font-weight:800">MLB · ${p.pos||''}</span>
+      </div>
+      ${teamLogo?`<img src="${teamLogo}" alt="${p.team}" style="height:34px;width:34px;object-fit:contain" onerror="this.style.display='none'"/>`:''}
+    </div>
+    <div class="mlb-card-photo">
+      ${headshot?`<img src="${headshot}" alt="${p.full_name||p.name}" style="position:absolute;bottom:-6px;left:50%;transform:translateX(-50%);height:155px;object-fit:contain" onerror="this.style.display='none'"/>`:''}
+    </div>
+    <div class="mlb-card-name">${p.full_name||p.name}</div>
+    <div class="mlb-card-body">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <span style="font-size:.82rem;color:#94a3b8">vs <strong style="color:#fff">${p.opp||'—'}</strong></span>
+        <span class="badge ${sideCls}">${p.side}</span>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:2px">
+        <span style="font-size:.78rem;color:#64748b">${p.pitcher?'vs '+p.pitcher:''}</span>
+        ${lineupBadge(p.lineup_status)}
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
+        <span style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">Hit Odds</span>
+        <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odds}</span>
+      </div>
+      ${adminStats}
+    </div>
+  </div>`;
 }
 
 function statCard(icon,label,value) {
