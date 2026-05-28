@@ -201,7 +201,8 @@ def run_pipeline(run_date: str, emit=None) -> dict:
             "full_name": info.get("full_name", name),
             "pitcher": pitcher_map.get(name, ""),
             "s2": s2, "s3": s3, "total": total,
-            "dq": bool(dq), "dq_reason": " & ".join(dq)
+            "dq": bool(dq), "dq_reason": " & ".join(dq),
+            "player_id": player_id,
         }
         results.append(player_result)
 
