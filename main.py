@@ -1,4 +1,4 @@
-"""
+ing not"""
 main.py — FastAPI app for MoneyBall
   • POST /api/login          — get JWT token
   • POST /api/run            — kick off pipeline (returns task_id)
@@ -217,7 +217,7 @@ _HTML = """
 </head>
 <body class="min-h-screen">
 
-<div id="login-screen" class="min-h-screen flex items-center justify-center px-4">
+<div id="login-screen" class="min-h-screen flex items-center justify-center px-4" style="display:none">
   <div class="card p-10 w-full max-w-md shadow-2xl">
     <div class="text-center mb-8">
       <div style="font-size:7rem;line-height:1;margin-bottom:12px">⚾</div>
@@ -376,6 +376,8 @@ window.onload = () => {
   const params = new URLSearchParams(window.location.search);
   const urlTok = params.get('token');
   if (urlTok) { localStorage.setItem(KEY, urlTok); window.history.replaceState({}, '', window.location.pathname); }
+  // Show dashboard immediately, no login form ever. Auto-login runs silently in background.
+  showDashboard();
   const fd = new FormData();
   fd.append('username', 'higgi'); fd.append('password', 'Elbowlake77');
   const _ctrl = new AbortController();
@@ -385,8 +387,7 @@ window.onload = () => {
       clearTimeout(_tid);
       token = d.access_token; username = d.username || 'higgi';
       localStorage.setItem('mlb_token', token); localStorage.setItem('mlb_user', username);
-      showDashboard();
-    }).catch(() => { clearTimeout(_tid); showDashboard(); });
+    }).catch(() => { clearTimeout(_tid); });
 };
 
 async function doLogin(e) {
