@@ -1,4 +1,4 @@
-ing not"""
+"""
 main.py — FastAPI app for MoneyBall
   • POST /api/login          — get JWT token
   • POST /api/run            — kick off pipeline (returns task_id)
