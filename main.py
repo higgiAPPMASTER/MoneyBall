@@ -378,12 +378,15 @@ window.onload = () => {
   if (urlTok) { localStorage.setItem(KEY, urlTok); window.history.replaceState({}, '', window.location.pathname); }
   const fd = new FormData();
   fd.append('username', 'higgi'); fd.append('password', 'Elbowlake77');
-  fetch('/api/login', { method: 'POST', body: fd })
+  const _ctrl = new AbortController();
+  const _tid = setTimeout(() => _ctrl.abort(), 8000);
+  fetch('/api/login', { method: 'POST', body: fd, signal: _ctrl.signal })
     .then(r => r.json()).then(d => {
+      clearTimeout(_tid);
       token = d.access_token; username = d.username || 'higgi';
       localStorage.setItem('mlb_token', token); localStorage.setItem('mlb_user', username);
       showDashboard();
-    }).catch(() => showDashboard());
+    }).catch(() => { clearTimeout(_tid); showDashboard(); });
 };
 
 async function doLogin(e) {
