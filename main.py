@@ -289,7 +289,7 @@ _HTML = """
             <tbody id="picks-body"></tbody>
           </table>
         </div>
-        <p class="text-xs text-slate-500 mt-4">
+        <p class="text-xs text-slate-500 mt-4 admin-only">
           <strong>S1</strong> Lifetime BA vs today's pitcher (FIC) &nbsp;|&nbsp;
           <strong>S2</strong> Lifetime H/A BA vs today's opponent &nbsp;|&nbsp;
           <strong>S3</strong> 2026 season H/A BA vs all teams &nbsp;|&nbsp;
@@ -307,7 +307,7 @@ _HTML = """
             <tbody id="also-ran-body"></tbody>
           </table>
         </div>
-        <p class="text-xs text-slate-500 mt-3">These players passed all 5 steps — ranked by score.</p>
+        <p class="text-xs text-slate-500 mt-3 admin-only">These players passed all 5 steps — ranked by score.</p>
       </div>
       <div class="card p-6 hidden" id="under-picks-card" style="border-color:rgba(255,107,107,.25)">
         <div class="section-hdr" style="color:#ff8a65">⬇️ Under Picks — Bet Under 1.5 Hits</div>
@@ -317,7 +317,7 @@ _HTML = """
             <tbody id="under-picks-body"></tbody>
           </table>
         </div>
-        <p class="text-xs text-slate-500 mt-4">
+        <p class="text-xs text-slate-500 mt-4 admin-only">
           <strong>Source</strong>: The Odds API — players with 1.5 hits O/U line &nbsp;|&nbsp;
           <strong>S1</strong> Career BA vs today's pitcher (under &lt; .250, N/A passes) &nbsp;|&nbsp;
           <strong>S2</strong> Lifetime H/A BA vs today's opponent (under &lt; .225) &nbsp;|&nbsp;
@@ -340,7 +340,7 @@ _HTML = """
             <tbody id="pitcher-k-nopick-body"></tbody>
           </table>
         </details>
-        <p class="text-xs text-slate-500 mt-4">
+        <p class="text-xs text-slate-500 mt-4 admin-only">
           <strong>K History</strong> = H/A starts vs today's opponent only &nbsp;|&nbsp;
           <strong>Pick</strong> = OVER if avg &gt; line, UNDER if avg &lt; line (min 2 starts).
         </p>
