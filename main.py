@@ -65,12 +65,13 @@ async def test_statmuse():
     return {"ok": True, "message": "✅ MLB Stats API active"}
 
 @app.post("/api/run")
-async def start_run(date_str: str):
-    if date_str not in _cache:
-        disk = _load_disk_cache(date_str)
-        if disk:
-            _cache[date_str] = disk
-    if date_str in _cache:
+async def start_run(date_str: str, force: bool = False):
+    if not force:
+        if date_str not in _cache:
+            disk = _load_disk_cache(date_str)
+            if disk:
+                _cache[date_str] = disk
+    if not force and date_str in _cache:
         task_id = str(uuid.uuid4())
         notify  = asyncio.Event()
         _tasks[task_id] = {
@@ -456,7 +457,8 @@ async function startRun() {
   show('progress-card'); setProgress(0, '');
   show('run-spinner'); disableRunBtn(true);
   try {
-    const r = await fetch(`/api/run?date_str=${dateStr}`, { method: 'POST' });
+    const forceParam = new URLSearchParams(window.location.search).get('force') === 'true' ? '&force=true' : '';
+    const r = await fetch(`/api/run?date_str=${dateStr}${forceParam}`, { method: 'POST' });
     if (!r.ok) { const e = await r.json(); throw new Error(e.detail || 'Run failed'); }
     const { task_id } = await r.json();
     openSSE(task_id);
