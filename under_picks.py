@@ -157,13 +157,28 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
             r2 = requests.get(
                 f"https://api.the-odds-api.com/v4/sports/baseball_mlb/events/{ev['id']}/odds",
                 params={"apiKey": ODDS_API_KEY, "regions": "us",
-                        "markets": "batter_hits", "oddsFormat": "american"}, timeout=15)
+                        "markets": "batter_hits,batter_hits_alternate",
+                        "oddsFormat": "american"}, timeout=15)
             if r2.status_code != 200: continue
-            bms = r2.json().get("bookmakers", [])
-            bm  = next((b for b in bms if b.get("key") in PREFERRED), bms[0] if bms else None)
+            all_bms = r2.json().get("bookmakers", [])
+            # Use preferred book for 1.5-line under picks; scan ALL books for 0.5 hit odds
+            bm = next((b for b in all_bms if b.get("key") in PREFERRED), all_bms[0] if all_bms else None)
+            # Collect 0.5-line Over odds from every bookmaker (first seen per player)
+            for bm_any in all_bms:
+                for mkt in bm_any.get("markets", []):
+                    if mkt.get("key") not in ("batter_hits", "batter_hits_alternate"): continue
+                    for oc in mkt.get("outcomes", []):
+                        player = oc.get("description", "").strip()
+                        pt     = oc.get("point")
+                        side   = oc.get("name", "")
+                        price  = oc.get("price")
+                        if not player or pt is None or side != "Over": continue
+                        nk = _norm_name(player)
+                        if pt == 0.5 and nk not in HIT_ODDS and price is not None:
+                            HIT_ODDS[nk] = price
             if not bm: continue
             for mkt in bm.get("markets", []):
-                if mkt.get("key") != "batter_hits": continue
+                if mkt.get("key") not in ("batter_hits", "batter_hits_alternate"): continue
                 pairs: dict = {}
                 for oc in mkt.get("outcomes", []):
                     player = oc.get("description", "").strip()
@@ -175,16 +190,13 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
                     pairs.setdefault(key, {})
                     pairs[key][side] = price
                 for (player, pt), sides in pairs.items():
-                    # Capture "to record a hit" prop (0.5 line, Over side) for pipeline enrichment
-                    if pt == 0.5 and sides.get("Over") is not None:
-                        HIT_ODDS[_norm_name(player)] = sides.get("Over")
                     if pt != 1.5 or player in seen: continue
                     seen[player] = {"name": player, "line": pt,
                                     "home_team": home_team, "away_team": away_team,
                                     "over_odds": sides.get("Over"),
                                     "under_odds": sides.get("Under")}
 
-        _log(emit, f"  ✅ {len(seen)} players on 1.5 hits line")
+        _log(emit, f"  ✅ {len(seen)} players on 1.5 hits line | {len(HIT_ODDS)} players with 0.5 hit odds")
         return list(seen.values())
     except Exception as exc:
         _log(emit, f"⚠️  Odds API error: {exc}")
