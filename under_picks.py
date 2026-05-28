@@ -12,7 +12,7 @@ Algorithm per candidate:
 import os
 import requests
 import time
-from datetime import date
+from datetime import date, datetime, timezone
 
 from mlb_stats_splits import fetch_step2_ba, fetch_step3_ba
 
@@ -151,7 +151,16 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
         _log(emit, f"  Odds API: {len(events)} games for {run_date}")
         seen: dict = {}
 
+        now_utc = datetime.now(timezone.utc)
         for ev in events:
+            ct = ev.get("commence_time", "")
+            if ct:
+                try:
+                    game_start = datetime.fromisoformat(ct.replace("Z", "+00:00"))
+                    if game_start < now_utc:
+                        continue  # game already started — skip live odds
+                except Exception:
+                    pass
             home_team = ev.get("home_team", "")
             away_team = ev.get("away_team", "")
             r2 = requests.get(
