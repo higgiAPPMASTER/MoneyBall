@@ -227,6 +227,36 @@ def career_ha_ks_vs_opp(pitcher_id: int, side: str, opp_name: str) -> dict:
             "avg_ip": avg_ip, "era": era}
 
 
+def _fetch_probable_starters(run_date: str) -> list:
+    """Fetch today's probable starting pitchers from MLB schedule API."""
+    try:
+        r = requests.get(
+            f"{MLB_API}/schedule",
+            params={"sportId": 1, "date": run_date,
+                    "hydrate": "probablePitcher,team", "gameType": "R"},
+            timeout=12)
+        starters = []
+        for d in r.json().get("dates", []):
+            for game in d.get("games", []):
+                home_team = game.get("teams", {}).get("home", {}).get("team", {}).get("name", "")
+                away_team = game.get("teams", {}).get("away", {}).get("team", {}).get("name", "")
+                for side_key, side_val in [("home", "HOME"), ("away", "AWAY")]:
+                    t = game.get("teams", {}).get(side_key, {})
+                    pitcher = t.get("probablePitcher", {})
+                    if pitcher and pitcher.get("fullName"):
+                        opp = away_team if side_val == "HOME" else home_team
+                        starters.append({
+                            "name": pitcher.get("fullName", "TBD"),
+                            "mlb_id": pitcher.get("id"),
+                            "side": side_val,
+                            "team": home_team if side_val == "HOME" else away_team,
+                            "opp": opp,
+                        })
+        return starters
+    except Exception:
+        return []
+
+
 def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
     if emit is None: emit = lambda _: None
 
@@ -300,7 +330,36 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                              "k_history": ", ".join(str(k) for k in k_list) if k_list else "—",
                              "pick": pick, "pick_note": pick_note})
 
+    # Add today's probable starters who have no K line posted
+    try:
+        starters = _fetch_probable_starters(run_date)
+        seen_names = {_normalize(r["name"]) for r in all_results}
+        for st in starters:
+            if _normalize(st["name"]) not in seen_names:
+                pid2 = _get_pitcher_id(st["name"])
+                hist2 = career_ha_ks_vs_opp(pid2, st["side"], st["opp"]) if pid2 else None
+                avg_k2 = hist2["avg_k"] if hist2 else None
+                starts2 = hist2["starts"] if hist2 else 0
+                k_list2 = hist2["k_list"] if hist2 else []
+                k_history2 = ", ".join(str(k) for k in k_list2) if k_list2 else "—"
+                all_results.append({
+                    "name": st["name"], "team": st["team"], "opp": st["opp"],
+                    "side": st["side"], "line": None,
+                    "over_odds": None, "under_odds": None,
+                    "avg_k": avg_k2, "starts": starts2,
+                    "min_k": min(k_list2) if k_list2 else None,
+                    "max_k": max(k_list2) if k_list2 else None,
+                    "avg_ip": hist2["avg_ip"] if hist2 else None,
+                    "era": hist2["era"] if hist2 else None,
+                    "k_hit_rate": "—", "k_history": k_history2,
+                    "pick": None, "pick_note": "No K line posted today",
+                })
+        emit({"type": "log", "msg": f"  ✅ {len(starters)} probable starters fetched — "
+              f"{len([r for r in all_results if r.get('pick_note')=='No K line posted today'])} added (no line)"})
+    except Exception as exc:
+        emit({"type": "log", "msg": f"  ⚠️ Probable starters fetch failed: {exc}"})
+
     confirmed = sorted([r for r in all_results if r["pick"]],
                        key=lambda r: abs((r["avg_k"] or 0) - r["line"]), reverse=True)
-    emit({"type": "log", "msg": f"✅ Pitcher K done — {len(confirmed)} picks"})
+    emit({"type": "log", "msg": f"✅ Pitcher K done — {len(confirmed)} picks, {len(all_results)} total pitchers"})
     return {"picks": confirmed, "all": all_results}
