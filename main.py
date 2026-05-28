@@ -12,7 +12,7 @@ from datetime import date
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Form
-from fastapi.responses import StreamingResponse, FileResponse, HTMLResponseening
+from fastapi.responses import StreamingResponse, FileResponse, HTMLResponse
 from replit_push import push_picks_to_replit  # pushes daily picks to Replit DB
 
 
@@ -275,7 +275,7 @@ _HTML = """
       <div id="stats-row" class="chips"></div>
       <div class="card p-6" id="player-search-card">
         <div class="section-hdr">🔍 Player Lookup</div>
-        <p class="text-xs text-slate-400 mb-3">Type any hitter or pitcher — see their rank, stats, and why they qualified or didn't.</p>
+        <p class="text-xs text-slate-400 mb-3">Type a hitter or pitcher's name — see where they rank and why.</p>
         <input id="player-search-input" type="text" placeholder="e.g. Aaron Judge, Gerrit Cole..."
                style="width:100%;padding:12px 16px;background:#0f0f0f;border:1px solid #262626;border-radius:10px;color:#fff;font-size:.95rem;outline:none"
                oninput="runPlayerSearch(this.value)">
@@ -376,18 +376,14 @@ window.onload = () => {
   const params = new URLSearchParams(window.location.search);
   const urlTok = params.get('token');
   if (urlTok) { localStorage.setItem(KEY, urlTok); window.history.replaceState({}, '', window.location.pathname); }
-  // Show dashboard immediately, no login form ever. Auto-login runs silently in background.
-  showDashboard();
   const fd = new FormData();
   fd.append('username', 'higgi'); fd.append('password', 'Elbowlake77');
-  const _ctrl = new AbortController();
-  const _tid = setTimeout(() => _ctrl.abort(), 8000);
-  fetch('/api/login', { method: 'POST', body: fd, signal: _ctrl.signal })
+  fetch('/api/login', { method: 'POST', body: fd })
     .then(r => r.json()).then(d => {
-      clearTimeout(_tid);
       token = d.access_token; username = d.username || 'higgi';
       localStorage.setItem('mlb_token', token); localStorage.setItem('mlb_user', username);
-    }).catch(() => { clearTimeout(_tid); });
+      showDashboard();
+    }).catch(() => showDashboard());
 };
 
 async function doLogin(e) {
@@ -554,31 +550,39 @@ function showResults(result) {
     document.getElementById('pitcher-k-body').innerHTML = pkPicks.length > 0
       ? pkPicks.map((p,i) => {
           const isOver=p.pick==='OVER', pickClr=isOver?'#63cab7':'#ff8a65';
+          const gap=p.avg_k!=null?(p.avg_k-p.line).toFixed(1):'—';
+          const gapDisp=p.avg_k!=null?(isOver?'+':'')+gap:'—';
           const odds=isOver?(p.over_odds!=null?(p.over_odds>0?'+':'')+p.over_odds:''):(p.under_odds!=null?(p.under_odds>0?'+':'')+p.under_odds:'');
           const sideCls=p.side==='HOME'?'badge-home':'badge-away';
           return `<tr>
-            <td class="font-semibold">${p.name}<span class="text-slate-500" style="font-size:.72rem;display:block">${p.team||''}</span></td>
-            <td><span class="badge ${sideCls}">${p.side}</span><span class="text-slate-400 text-xs" style="display:block;margin-top:3px">${p.opp}</span></td>
+            <td><span class="rank-badge rank-n" style="background:#0d2e2e;color:#63cab7">${i+1}</span></td>
+            <td class="font-semibold">${p.name}</td>
+            <td><span class="badge ${sideCls}">${p.side}</span></td>
+            <td class="text-slate-300 text-sm">${p.opp}</td>
             <td style="font-family:monospace;font-weight:700;color:#fff">${p.line} Ks</td>
             <td style="font-family:monospace;font-weight:700;color:${pickClr};font-size:1.05rem">${p.avg_k!=null?p.avg_k+' K':'—'}</td>
+            <td style="font-family:monospace;color:#93c5fd;font-weight:600">${p.avg_ip!=null?p.avg_ip+' IP':'—'}</td>
+            <td style="font-family:monospace;color:#fbbf24;font-weight:600">${p.era||'—'}</td>
+            <td style="font-family:monospace;font-size:.82rem">${p.k_hit_rate||'—'}</td>
+            <td style="font-family:monospace;color:${pickClr};font-weight:700">${gapDisp}</td>
             <td class="text-slate-400 text-sm">${p.starts}</td>
             <td style="font-family:monospace;font-size:.75rem;color:#94a3b8">${p.k_history||'—'}</td>
             <td><span style="color:${pickClr};font-weight:900;font-size:1rem">${p.pick}</span>
                 <span class="text-slate-500" style="font-size:.68rem;display:block">${odds}</span></td>
           </tr>`;
         }).join('')
-      : '<tr><td colspan="7" class="text-slate-500 text-center" style="padding:16px">No picks today</td></tr>';
+      : '<tr><td colspan="13" class="text-slate-500 text-center" style="padding:16px">No picks today</td></tr>';
     const noPick=pkAll.filter(p=>!p.pick);
     const npDet=document.getElementById('pitcher-k-nopick-details');
     if (npDet) {
       if (noPick.length>0) {
         npDet.style.display='';
-        document.getElementById('pitcher-k-nopick-body').innerHTML=noPick.map(p=>`<tr style="opacity:0.65">
-          <td class="font-semibold">${p.name}<span class="text-slate-500" style="font-size:.72rem;display:block">${p.team||''}</span></td>
-          <td><span class="badge ${p.side==='HOME'?'badge-home':'badge-away'}">${p.side||'—'}</span><span class="text-slate-400 text-xs" style="display:block;margin-top:3px">${p.opp||'—'}</span></td>
-          <td style="font-family:monospace">${p.line!=null?p.line+' Ks':'No line'}</td>
-          <td style="font-family:monospace;color:#94a3b8">${p.avg_k!=null?p.avg_k+' K':'—'}</td>
-          <td class="text-slate-400 text-sm">${p.starts||0}</td>
+        document.getElementById('pitcher-k-nopick-body').innerHTML=noPick.map(p=>`<tr style="opacity:0.6">
+          <td class="font-semibold">${p.name}</td>
+          <td><span class="badge ${p.side==='HOME'?'badge-home':'badge-away'}">${p.side}</span></td>
+          <td class="text-slate-400 text-sm">${p.opp}</td>
+          <td style="font-family:monospace">${p.line} Ks</td>
+          <td class="text-slate-400 text-sm">${p.starts}</td>
           <td class="text-slate-500 text-xs">${p.pick_note||'—'}</td>
         </tr>`).join('');
       } else { npDet.style.display='none'; }
@@ -633,16 +637,16 @@ function runPlayerSearch(raw){
       hits.push({bucket:'Pitchers (no pick)', rank:'—', kind:'PITCHER', p:p});
     }
   });
-  // 5) DQ'd hitters (all buckets including S4 <50% filter)
+  // 5) DQ'd hitters
   var dqAll = [].concat(r.dq_s1_s3||[], r.dq_step4||[], r.dq_step5||[], r.dq_lineup||[], r.dq_s4||[]);
   dqAll.forEach(function(p){
     if(_matchName(p,q)) hits.push({bucket:'Did Not Qualify', rank:'—', kind:'HITTER-DQ', p:p});
   });
 
   if(!hits.length){
-    box.innerHTML='<div class="text-slate-500 text-sm">No match for "<strong>'+raw+'</strong>". '
-      +'If searching a pitcher, expand "All today\'s pitchers" below the K Picks table. '
-      +'Hitters not in the FIC pre-screen pool won\'t appear.</div>';
+    box.innerHTML='<div class="text-slate-500 text-sm">No match for "<strong>'+raw+'</strong>". They may not be playing today or weren\\'t in the analyzed pool. '
+      +'If searching a pitcher, expand "All today\\'s pitchers" below the K Picks table. '
+      +'Hitters DQ\\'d before S1 (no FIC matchup or no lineup yet) won\\'t appear in the DQ list either.</div>';
     return;
   }
 
