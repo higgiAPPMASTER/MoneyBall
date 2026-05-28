@@ -217,7 +217,7 @@ _HTML = """
 </head>
 <body class="min-h-screen">
 
-<div id="login-screen" class="min-h-screen flex items-center justify-center px-4" style="display:none">
+<div id="login-screen" class="min-h-screen flex items-center justify-center px-4">
   <div class="card p-10 w-full max-w-md shadow-2xl">
     <div class="text-center mb-8">
       <div style="font-size:7rem;line-height:1;margin-bottom:12px">⚾</div>
