@@ -12,7 +12,7 @@ from datetime import date
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Form
-from fastapi.responses import StreamingResponse, FileResponse, HTMLResponse
+from fastapi.responses import StreamingResponse, FileResponse, HTMLResponseening
 from replit_push import push_picks_to_replit  # pushes daily picks to Replit DB
 
 
