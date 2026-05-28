@@ -10,6 +10,40 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fic_cache        import get_step1_players_or_scrape
 from mlb_roster       import build_player_roster
 from mlb_stats_splits import fetch_step2_ba, fetch_step3_ba, prefetch_game_logs
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # ── Step 4: L10 H/A hit-consistency (added) ──────────────────────────────
 def fetch_step4_consistency(player_id, side: str, opp_name: str = "",
                             max_games: int = 10) -> dict:
@@ -340,8 +374,8 @@ def run_pipeline(run_date: str, emit=None) -> dict:
 
     emit({"type": "log", "msg": f"S4 filter: {len(s4_qualified)} pass, {len(s4_dq)} DQ'd (<50%)"})
     all_ranked = sorted(s4_qualified, key=lambda x: x["total"], reverse=True)
-    top9     = all_ranked[:9]
-    also_ran = all_ranked[9:]
+    top9     = all_ranked[:10]
+    also_ran = all_ranked[10:]
 
     # ── Under Picks ───────────────────────────────────────────────────
     try:
