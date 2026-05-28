@@ -544,49 +544,41 @@ function showResults(result) {
     }).join('');
   }
 
-  const pkData=result.pitcher_k||{}, pkPicks=pkData.picks||[], pkAll=pkData.all||[];
+  const pkData=result.pitcher_k||{}, pkAll=pkData.all||[];
   if (pkAll.length > 0) {
     show('pitcher-k-card');
-    document.getElementById('pitcher-k-body').innerHTML = pkPicks.length > 0
-      ? pkPicks.map((p,i) => {
-          const isOver=p.pick==='OVER', pickClr=isOver?'#63cab7':'#ff8a65';
-          const gap=p.avg_k!=null?(p.avg_k-p.line).toFixed(1):'—';
-          const gapDisp=p.avg_k!=null?(isOver?'+':'')+gap:'—';
-          const odds=isOver?(p.over_odds!=null?(p.over_odds>0?'+':'')+p.over_odds:''):(p.under_odds!=null?(p.under_odds>0?'+':'')+p.under_odds:'');
-          const sideCls=p.side==='HOME'?'badge-home':'badge-away';
-          return `<tr>
-            <td><span class="rank-badge rank-n" style="background:#0d2e2e;color:#63cab7">${i+1}</span></td>
-            <td class="font-semibold">${p.name}</td>
-            <td><span class="badge ${sideCls}">${p.side}</span></td>
-            <td class="text-slate-300 text-sm">${p.opp}</td>
-            <td style="font-family:monospace;font-weight:700;color:#fff">${p.line} Ks</td>
-            <td style="font-family:monospace;font-weight:700;color:${pickClr};font-size:1.05rem">${p.avg_k!=null?p.avg_k+' K':'—'}</td>
-            <td style="font-family:monospace;color:#93c5fd;font-weight:600">${p.avg_ip!=null?p.avg_ip+' IP':'—'}</td>
-            <td style="font-family:monospace;color:#fbbf24;font-weight:600">${p.era||'—'}</td>
-            <td style="font-family:monospace;font-size:.82rem">${p.k_hit_rate||'—'}</td>
-            <td style="font-family:monospace;color:${pickClr};font-weight:700">${gapDisp}</td>
-            <td class="text-slate-400 text-sm">${p.starts}</td>
-            <td style="font-family:monospace;font-size:.75rem;color:#94a3b8">${p.k_history||'—'}</td>
-            <td><span style="color:${pickClr};font-weight:900;font-size:1rem">${p.pick}</span>
-                <span class="text-slate-500" style="font-size:.68rem;display:block">${odds}</span></td>
-          </tr>`;
-        }).join('')
-      : '<tr><td colspan="13" class="text-slate-500 text-center" style="padding:16px">No picks today</td></tr>';
-    const noPick=pkAll.filter(p=>!p.pick);
+    const pkSorted = pkAll.slice().sort((a,b)=>{
+      const aHas=a.pick?1:0, bHas=b.pick?1:0;
+      if (aHas!==bHas) return bHas-aHas;
+      if (aHas) {
+        const ga=Math.abs((a.avg_k||0)-(a.line||0)), gb=Math.abs((b.avg_k||0)-(b.line||0));
+        return gb-ga;
+      }
+      return (a.name||'').localeCompare(b.name||'');
+    });
+    document.getElementById('pitcher-k-body').innerHTML = pkSorted.map(p => {
+      const hasPick=!!p.pick, isOver=p.pick==='OVER';
+      const pickClr=hasPick?(isOver?'#63cab7':'#ff8a65'):'#64748b';
+      const sideCls=p.side==='HOME'?'badge-home':'badge-away';
+      const lineDisp=p.line!=null?(p.line+' Ks'):'<span class="text-slate-500">no line</span>';
+      const avgDisp=p.avg_k!=null?(p.avg_k+' K'):'—';
+      const odds=hasPick?(isOver?(p.over_odds!=null?(p.over_odds>0?'+':'')+p.over_odds:''):(p.under_odds!=null?(p.under_odds>0?'+':'')+p.under_odds:'')):'';
+      const pickCell=hasPick
+        ? `<span style="color:${pickClr};font-weight:900;font-size:1rem">${p.pick}</span><span class="text-slate-500" style="font-size:.68rem;display:block">${odds}</span>`
+        : `<span class="text-slate-500 text-xs">${p.pick_note||'—'}</span>`;
+      const rowStyle=hasPick?'':'opacity:0.65';
+      return `<tr style="${rowStyle}">
+        <td class="font-semibold">${p.name}</td>
+        <td><span class="badge ${sideCls}">${p.side}</span> <span class="text-slate-400 text-xs">${p.opp||''}</span></td>
+        <td style="font-family:monospace;font-weight:700;color:#fff">${lineDisp}</td>
+        <td style="font-family:monospace;font-weight:700;color:${pickClr}">${avgDisp}</td>
+        <td class="text-slate-400 text-sm">${p.starts!=null?p.starts:'—'}</td>
+        <td style="font-family:monospace;font-size:.75rem;color:#94a3b8">${p.k_history||'—'}</td>
+        <td>${pickCell}</td>
+      </tr>`;
+    }).join('');
     const npDet=document.getElementById('pitcher-k-nopick-details');
-    if (npDet) {
-      if (noPick.length>0) {
-        npDet.style.display='';
-        document.getElementById('pitcher-k-nopick-body').innerHTML=noPick.map(p=>`<tr style="opacity:0.6">
-          <td class="font-semibold">${p.name}</td>
-          <td><span class="badge ${p.side==='HOME'?'badge-home':'badge-away'}">${p.side}</span></td>
-          <td class="text-slate-400 text-sm">${p.opp}</td>
-          <td style="font-family:monospace">${p.line} Ks</td>
-          <td class="text-slate-400 text-sm">${p.starts}</td>
-          <td class="text-slate-500 text-xs">${p.pick_note||'—'}</td>
-        </tr>`).join('');
-      } else { npDet.style.display='none'; }
-    }
+    if (npDet) npDet.style.display='none';
   }
 
   renderByGame(result);
