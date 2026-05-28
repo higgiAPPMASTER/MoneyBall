@@ -789,9 +789,9 @@ function _mlbCard(p, rank, dim) {
       </div>
       ${teamLogo?`<img src="${teamLogo}" alt="${p.team}" style="height:34px;width:34px;object-fit:contain" onerror="this.style.display='none'"/>`:''}
     </div>
-    <div class="mlb-card-photo">
-      ${headshot?`<img src="${headshot}" alt="${p.full_name||p.name}" style="position:absolute;bottom:-6px;left:50%;transform:translateX(-50%);height:155px;object-fit:contain" onerror="this.style.display='none'"/>`:''}
-    </div>
+    ${!dim?`<div class="mlb-card-photo">
+      ${headshot?`<img src="${headshot}" alt="${p.full_name||p.name}" style="position:absolute;bottom:-6px;left:50%;transform:translateX(-50%);height:155px;object-fit:contain" onerror="this.style.display='none'"/>`:``}
+    </div>`:``}
     <div class="mlb-card-name">${p.full_name||p.name}</div>
     <div class="mlb-card-body">
       <div style="display:flex;align-items:center;justify-content:space-between">
