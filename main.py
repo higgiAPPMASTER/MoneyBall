@@ -6,10 +6,39 @@ main.py — FastAPI app for MoneyBall
   • GET  /api/results/{date} — fetch cached results
   • GET  /                   — serves the frontend SPA
 """
-import asyncio, json, os, uuid
+import asyncio, json, os, uuid, glob as _glob
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from typing import Optional
+
+_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".pick_cache")
+os.makedirs(_CACHE_DIR, exist_ok=True)
+
+def _disk_cache_path(date_str: str) -> str:
+    return os.path.join(_CACHE_DIR, f"{date_str}.json")
+
+def _save_disk_cache(date_str: str, result: dict):
+    try:
+        with open(_disk_cache_path(date_str), "w") as f:
+            json.dump(result, f)
+        # Remove cache files older than 3 days
+        for old in _glob.glob(os.path.join(_CACHE_DIR, "*.json")):
+            bn = os.path.basename(old).replace(".json", "")
+            if bn < str(date.today().isoformat()[:8] + "00")[:10] and bn != date_str:
+                try: os.remove(old)
+                except: pass
+    except Exception as e:
+        print(f"[disk_cache] save failed: {e}")
+
+def _load_disk_cache(date_str: str):
+    p = _disk_cache_path(date_str)
+    if os.path.exists(p):
+        try:
+            with open(p) as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"[disk_cache] load failed: {e}")
+    return None
 
 from fastapi import FastAPI, HTTPException, Form
 from fastapi.responses import StreamingResponse, FileResponse, HTMLResponse
@@ -37,6 +66,10 @@ async def test_statmuse():
 
 @app.post("/api/run")
 async def start_run(date_str: str):
+    if date_str not in _cache:
+        disk = _load_disk_cache(date_str)
+        if disk:
+            _cache[date_str] = disk
     if date_str in _cache:
         task_id = str(uuid.uuid4())
         notify  = asyncio.Event()
@@ -69,6 +102,7 @@ async def start_run(date_str: str):
             task["status"] = "done"
             task["result"] = result
             _cache[date_str] = result
+            _save_disk_cache(date_str, result)
             try:
                 # Bake the picks into the page HTML so the Replit hub can serve
                 # an instant, no-cold-start snapshot at moneypicksarena.com.
