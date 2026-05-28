@@ -146,8 +146,20 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
             _log(emit, f"⚠️  Odds API events returned {r.status_code}")
             return []
 
-        events = [e for e in r.json()
-                  if e.get("commence_time", "")[:10] in (run_date, tomorrow)]
+        def _is_run_date_game(ct: str) -> bool:
+            """True if this game belongs to run_date (handles UTC rollover for late PT games)."""
+            if not ct: return False
+            day = ct[:10]
+            if day == run_date: return True
+            # Late-night PT games (10pm PT = 1am UTC next day) — cap at 09:00 UTC
+            if day == tomorrow:
+                try:
+                    hour = int(ct[11:13])
+                    return hour < 9
+                except Exception:
+                    return False
+            return False
+        events = [e for e in r.json() if _is_run_date_game(e.get("commence_time", ""))]
         _log(emit, f"  Odds API: {len(events)} games for {run_date}")
         seen: dict = {}
 
