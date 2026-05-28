@@ -516,7 +516,7 @@ function showResults(result) {
   const alsoRan = result.also_ran || [];
   if (alsoRan.length > 0) {
     show('also-ran-card');
-    document.getElementById('also-ran-body').innerHTML = alsoRan.map((p,i) => _mlbCard(p, i+10, true)).join('');
+    document.getElementById('also-ran-body').innerHTML = alsoRan.map((p,i) => _mlbCard(p, i+11, true)).join('');
   }
 
   const underPicks = result.under_picks || [];
