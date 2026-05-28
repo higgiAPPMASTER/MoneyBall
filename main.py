@@ -363,7 +363,7 @@ _HTML = """
         <div class="section-hdr" style="color:#63cab7">⚾ Pitcher K Picks — Over / Under Strikeout Line</div>
         <div class="overflow-x-auto">
           <table class="results-table" id="pitcher-k-table">
-            <thead><tr><th>Pitcher</th><th>vs (H/A)</th><th>K Line</th><th>Avg K</th><th>Starts</th><th>K History (H/A)</th><th>Pick</th></tr></thead>
+            <thead><tr><th>Pitcher</th><th>vs (H/A)</th><th>K Line</th><th>Avg K</th><th>Avg IP</th><th>ERA</th><th>K History (H/A)</th><th>Pick</th></tr></thead>
             <tbody id="pitcher-k-body"></tbody>
           </table>
         </div>
@@ -581,36 +581,28 @@ function showResults(result) {
   const pkData=result.pitcher_k||{}, pkAll=pkData.all||[];
   if (pkAll.length > 0) {
     show('pitcher-k-card');
-    const pkSorted = pkAll.slice().sort((a,b)=>{
-      const aHas=a.pick?1:0, bHas=b.pick?1:0;
-      if (aHas!==bHas) return bHas-aHas;
-      if (aHas) {
-        const ga=Math.abs((a.avg_k||0)-(a.line||0)), gb=Math.abs((b.avg_k||0)-(b.line||0));
-        return gb-ga;
-      }
-      return (a.name||'').localeCompare(b.name||'');
+    const pkSorted = pkAll.filter(p=>p.pick).sort((a,b)=>{
+      const ga=Math.abs((a.avg_k||0)-(a.line||0)), gb=Math.abs((b.avg_k||0)-(b.line||0));
+      return gb-ga;
     });
-    document.getElementById('pitcher-k-body').innerHTML = pkSorted.map(p => {
-      const hasPick=!!p.pick, isOver=p.pick==='OVER';
-      const pickClr=hasPick?(isOver?'#63cab7':'#ff8a65'):'#64748b';
-      const sideCls=p.side==='HOME'?'badge-home':'badge-away';
-      const lineDisp=p.line!=null?(p.line+' Ks'):'<span class="text-slate-500">no line</span>';
-      const avgDisp=p.avg_k!=null?(p.avg_k+' K'):'—';
-      const odds=hasPick?(isOver?(p.over_odds!=null?(p.over_odds>0?'+':'')+p.over_odds:''):(p.under_odds!=null?(p.under_odds>0?'+':'')+p.under_odds:'')):'';
-      const pickCell=hasPick
-        ? `<span style="color:${pickClr};font-weight:900;font-size:1rem">${p.pick}</span><span class="text-slate-500" style="font-size:.68rem;display:block">${odds}</span>`
-        : `<span class="text-slate-500 text-xs">${p.pick_note||'—'}</span>`;
-      const rowStyle=hasPick?'':'opacity:0.65';
-      return `<tr style="${rowStyle}">
-        <td class="font-semibold">${p.name}</td>
-        <td><span class="badge ${sideCls}">${p.side}</span> <span class="text-slate-400 text-xs">${p.opp||''}</span></td>
-        <td style="font-family:monospace;font-weight:700;color:#fff">${lineDisp}</td>
-        <td style="font-family:monospace;font-weight:700;color:${pickClr}">${avgDisp}</td>
-        <td class="text-slate-400 text-sm">${p.starts!=null?p.starts:'—'}</td>
-        <td style="font-family:monospace;font-size:.75rem;color:#94a3b8">${p.k_history||'—'}</td>
-        <td>${pickCell}</td>
-      </tr>`;
-    }).join('');
+    document.getElementById('pitcher-k-body').innerHTML = pkSorted.length > 0
+      ? pkSorted.map(p => {
+          const isOver=p.pick==='OVER';
+          const pickClr=isOver?'#63cab7':'#ff8a65';
+          const sideCls=p.side==='HOME'?'badge-home':'badge-away';
+          const odds=isOver?(p.over_odds!=null?(p.over_odds>0?'+':'')+p.over_odds:''):(p.under_odds!=null?(p.under_odds>0?'+':'')+p.under_odds:'');
+          return `<tr>
+            <td class="font-semibold">${p.name}</td>
+            <td><span class="badge ${sideCls}">${p.side}</span> <span class="text-slate-400 text-xs">${p.opp||''}</span></td>
+            <td style="font-family:monospace;font-weight:700;color:#fff">${p.line!=null?p.line+' Ks':'—'}</td>
+            <td style="font-family:monospace;font-weight:700;color:${pickClr}">${p.avg_k!=null?p.avg_k+' K':'—'}</td>
+            <td style="font-family:monospace;color:#93c5fd;font-weight:600">${p.avg_ip!=null?p.avg_ip+' IP':'—'}</td>
+            <td style="font-family:monospace;color:#fbbf24;font-weight:600">${p.era||'—'}</td>
+            <td style="font-family:monospace;font-size:.75rem;color:#94a3b8">${p.k_history||'—'}</td>
+            <td><span style="color:${pickClr};font-weight:900;font-size:1rem">${p.pick}</span><span class="text-slate-500" style="font-size:.68rem;display:block">${odds}</span></td>
+          </tr>`;
+        }).join('')
+      : '<tr><td colspan="8" class="text-slate-500 text-center" style="padding:16px">No qualifying picks today</td></tr>';
     const npDet=document.getElementById('pitcher-k-nopick-details');
     if (npDet) npDet.style.display='none';
   }
