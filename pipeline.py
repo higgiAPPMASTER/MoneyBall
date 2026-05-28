@@ -388,10 +388,44 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     # ── Enrich top9 + also_ran with hit odds (0.5 line "to record a hit") ──
     try:
         from under_picks import HIT_ODDS as _HIT_ODDS, _norm_name as _nn
+        # Build last-name index for fallback (only use when unambiguous)
+        _last_idx: dict = {}
+        for _k, _v in _HIT_ODDS.items():
+            _parts = _k.split()
+            if _parts:
+                _last = _parts[-1]
+                _last_idx[_last] = (_last_idx[_last] + [(_k, _v)]) if _last in _last_idx else [(_k, _v)]
+
+        def _lookup_odds(p):
+            name      = _nn(p.get("name", ""))
+            full_name = _nn(p.get("full_name", ""))
+            # 1. exact match on full name or short name
+            if full_name and full_name in _HIT_ODDS: return _HIT_ODDS[full_name]
+            if name and name in _HIT_ODDS:           return _HIT_ODDS[name]
+            # 2. first-initial + last match  (e.g. "e. clement" vs "ernie clement")
+            for candidate in (full_name, name):
+                if not candidate: continue
+                parts = candidate.split()
+                if len(parts) >= 2:
+                    last  = parts[-1]
+                    first = parts[0]
+                    # try "X. Last" format in HIT_ODDS
+                    short = f"{first[0]}. {last}"
+                    if short in _HIT_ODDS: return _HIT_ODDS[short]
+                    # try matching "First Last" in HIT_ODDS when we have "F. Last"
+                    if len(first) == 1 or (len(first) == 2 and first[1] == '.'):
+                        matches = _last_idx.get(last, [])
+                        if len(matches) == 1: return matches[0][1]
+            # 3. unambiguous last-name fallback
+            for candidate in (full_name, name):
+                if not candidate: continue
+                last = candidate.split()[-1]
+                matches = _last_idx.get(last, [])
+                if len(matches) == 1: return matches[0][1]
+            return None
+
         for _p in top9 + also_ran:
-            # Try short name first, then full_name as fallback
-            _p["hit_odds"] = (_HIT_ODDS.get(_nn(_p.get("name", "")))
-                              or _HIT_ODDS.get(_nn(_p.get("full_name", ""))))
+            _p["hit_odds"] = _lookup_odds(_p)
         emit({"type": "log", "msg": f"  ✅ Hit odds matched for {sum(1 for p in top9+also_ran if p.get('hit_odds') is not None)}/{len(top9)+len(also_ran)} picks"})
     except Exception as _exc:
         emit({"type": "log", "msg": f"⚠️ Hit odds enrichment skipped: {_exc}"})
