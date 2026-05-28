@@ -241,19 +241,37 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     emit({"type": "section", "msg": f"Step 5 — Pitcher ERA filter (top {TOP_N_ERA_PITCHERS} lowest ERA)"})
     era_qualified, era_dq = [], []
     top_era_lastnames, top_era_list = _get_top_era_starters(run_date[:4])
+    # Fetch MLB schedule probable pitchers as fallback when FIC pitcher data is missing
+    try:
+        from under_picks import _get_probable_pitchers as _mlb_probs
+        mlb_probable = _mlb_probs(run_date)  # team_name -> {"name": ..., "id": ...}
+    except Exception:
+        mlb_probable = {}
     if top_era_lastnames:
         emit({"type": "log", "msg": f"✅ Top {TOP_N_ERA_PITCHERS} ERA: " +
               ", ".join(f"{p['name']} ({p['era']:.2f})" for p in top_era_list)})
         for r in qualified:
-            pitcher_last = _pitcher_last_name(r.get("pitcher", ""))
+            pitcher_raw = r.get("pitcher", "")
+            # Fallback: if FIC has no pitcher, look up from MLB schedule by opponent team
+            if not pitcher_raw or pitcher_raw.strip().lower() in ("", "tbd", "unknown"):
+                opp = r.get("opp", "").lower()
+                stop = {"the", "of", "los", "san", "new", "de"}
+                o_words = set(opp.split()) - stop
+                for t, pinfo in mlb_probable.items():
+                    t_words = set(t.lower().split()) - stop
+                    if t_words & o_words:
+                        pitcher_raw = pinfo.get("name", "")
+                        r["pitcher"] = pitcher_raw
+                        break
+            pitcher_last = _pitcher_last_name(pitcher_raw)
             if pitcher_last and pitcher_last in top_era_lastnames:
                 matched_era = next((p["era"] for p in top_era_list
                                     if p["name"].lower().endswith(pitcher_last)), None)
                 era_str = f" ERA {matched_era:.2f}" if matched_era else ""
                 r["dq"] = True
-                r["dq_reason"] = f"Facing top-ERA pitcher {r.get('pitcher','')}{era_str}"
+                r["dq_reason"] = f"Facing top-ERA pitcher {pitcher_raw}{era_str}"
                 era_dq.append(r)
-                emit({"type": "log", "msg": f"  ❌ {r['name']} — facing {r.get('pitcher','')}{era_str}"})
+                emit({"type": "log", "msg": f"  ❌ {r['name']} — facing {pitcher_raw}{era_str}"})
             else:
                 era_qualified.append(r)
     else:
@@ -293,25 +311,34 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         for r in lineup_qualified:
             r.setdefault("lineup_status", "TBD")
 
-    # ── S4 (L10 H/A consistency) + S5 (D/N BA) ranking factors ───────
-    emit({"type": "section", "msg": "S4 (L10 H/A consistency) + S5 (D/N BA) — re-ranking"})
+    # ── S4 (L10 H/A consistency ≥50%) — filter then re-rank ──────────
+    emit({"type": "section", "msg": "S4 (L10 H/A consistency ≥50%) + S5 (D/N BA) — filter & re-rank"})
+    s4_qualified, s4_dq = [], []
     for r in lineup_qualified:
         info       = roster.get(r["name"], {})
         player_id  = info.get("player_id")
         s4         = fetch_step4_consistency(player_id, r["side"], r.get("opp", ""))
         r["s4"]    = s4
+        # DQ if S4 has qualifying games but hit rate < 50%
+        if s4["games"] > 0 and s4["score"] < 50:
+            r["dq"] = True
+            r["dq_reason"] = f"S4 {s4['display']} ({s4['score']}%) < 50% H/A hit rate vs opp"
+            s4_dq.append(r)
+            emit({"type": "log", "msg": f"  ❌ {r['name']}: S4 {s4['display']} ({s4['score']}%) < 50% — DQ"})
+            continue
         dn_ba      = (r.get("dn", {}) or {}).get("ba")
         s5_score   = round(dn_ba * 1000) if dn_ba else 0
         r["s5"]    = {"ba": dn_ba, "score": s5_score,
                       "display": f"{dn_ba:.3f}" if dn_ba else "N/A"}
-        # Total = S1+S2+S3+S5+S4   (S4 hit rate % scaled ×10 to match BA ×1000 scale)
         s4_pts = (s4.get("score", 0) or 0) * 10
         r["total"] = (r.get("total", 0) or 0) + s5_score + s4_pts
         emit({"type": "log",
-              "msg": f"  {r['name']}: S4 {s4['display']} (+{s4_pts}) | "
+              "msg": f"  ✅ {r['name']}: S4 {s4['display']} (+{s4_pts}) | "
                      f"S5 {r['s5']['display']} (+{s5_score}) → total {r['total']}"})
+        s4_qualified.append(r)
 
-    all_ranked = sorted(lineup_qualified, key=lambda x: x["total"], reverse=True)
+    emit({"type": "log", "msg": f"S4 filter: {len(s4_qualified)} pass, {len(s4_dq)} DQ'd (<50%)"})
+    all_ranked = sorted(s4_qualified, key=lambda x: x["total"], reverse=True)
     top9     = all_ranked[:9]
     also_ran = all_ranked[9:]
 
@@ -327,7 +354,9 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     try:
         from under_picks import HIT_ODDS as _HIT_ODDS, _norm_name as _nn
         for _p in top9 + also_ran:
-            _p["hit_odds"] = _HIT_ODDS.get(_nn(_p.get("name", "")))
+            # Try short name first, then full_name as fallback
+            _p["hit_odds"] = (_HIT_ODDS.get(_nn(_p.get("name", "")))
+                              or _HIT_ODDS.get(_nn(_p.get("full_name", ""))))
         emit({"type": "log", "msg": f"  ✅ Hit odds matched for {sum(1 for p in top9+also_ran if p.get('hit_odds') is not None)}/{len(top9)+len(also_ran)} picks"})
     except Exception as _exc:
         emit({"type": "log", "msg": f"⚠️ Hit odds enrichment skipped: {_exc}"})
@@ -352,8 +381,8 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     result = {
         "date": run_date, "top9": top9, "also_ran": also_ran,
         "under_picks": under_picks_list, "all_qualified": era_qualified,
-        "dq_s1_s3": [x for x in results if x["dq"] and x not in dn_dq and x not in era_dq and x not in dq_lineup],
-        "dq_step4": dn_dq, "dq_step5": era_dq, "dq_lineup": dq_lineup, "pitcher_k": pitcher_k_result,
+        "dq_s1_s3": [x for x in results if x["dq"] and x not in dn_dq and x not in era_dq and x not in dq_lineup and x not in s4_dq],
+        "dq_step4": dn_dq, "dq_step5": era_dq, "dq_lineup": dq_lineup, "dq_s4": s4_dq, "pitcher_k": pitcher_k_result,
         "stats": {"step1_count": len(top30), "games": len(team_schedule) // 2,
                   "elapsed": elapsed, "picks": len(top9),
                   "under_count": len(under_picks_list),
