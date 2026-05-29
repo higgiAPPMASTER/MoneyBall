@@ -345,7 +345,7 @@ _HTML = """
         <div class="section-hdr" style="color:#ff8a65">⬇️ Under Picks — Bet Under 1.5 Hits</div>
         <div class="overflow-x-auto">
           <table class="results-table" id="under-picks-table">
-            <thead><tr><th>#</th><th>Player</th><th>H/A</th><th>Opponent</th><th>Pitcher</th><th>S1 vs Pitcher</th><th>S2 H/A</th><th>S3 2026</th><th>Lineup</th><th>Line</th><th>Odds</th></tr></thead>
+            <thead><tr><th>#</th><th>Player</th><th>H/A</th><th>Opponent</th><th>Pitcher</th><th>S1 vs Pitcher</th><th>S2 H/A</th><th>S3 2026</th><th>L7</th><th>Lineup</th><th>Line</th><th>Odds</th></tr></thead>
             <tbody id="under-picks-body"></tbody>
           </table>
         </div>
@@ -354,7 +354,8 @@ _HTML = """
           <strong>S1</strong> Career BA vs today's pitcher (under &lt; .250, N/A passes) &nbsp;|&nbsp;
           <strong>S2</strong> Lifetime H/A BA vs today's opponent (under &lt; .225) &nbsp;|&nbsp;
           <strong>S3</strong> 2026 H/A BA (under &lt; .250) &nbsp;|&nbsp;
-          <strong>Ranked #1 → coldest bat</strong>
+          <strong>L7</strong> Last 7 games BA (all locations) &nbsp;|&nbsp;
+          <strong>Ranked #1 → coldest bat (S2 + S3 + L7)</strong>
         </p>
       </div>
       <div class="card p-6 hidden" id="pitcher-k-card" style="border-color:rgba(99,202,183,.25)">
@@ -537,6 +538,7 @@ function showResults(result) {
         <td class="stat-cell stat-under">${p.s1_disp||'—'} <span class="text-slate-500" style="font-size:.7rem">(${p.s1_ab}AB)</span></td>
         <td class="stat-cell stat-under">${p.s2?.display||'—'}</td>
         <td class="stat-cell stat-under">${p.s3?.display||'—'}</td>
+        <td class="stat-cell stat-under">${p.l7?.display||'—'}</td>
         <td>${lineupBadge(p.lineup_status)}</td>
         <td><span style="color:#ff8a65;font-weight:800;font-size:1rem">U 1.5</span>
             <span class="text-slate-500" style="font-size:.68rem;display:block">score ${p.under_score}</span></td>
