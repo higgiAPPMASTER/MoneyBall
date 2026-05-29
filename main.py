@@ -473,7 +473,7 @@ window.onload = () => {
     showResults(r);
     return;
   }
-  if (!token) { window.location.href = 'https://www.moneypicksarena.com'; return; }
+  if (!token) { window.location.href = 'https://moneypicksarena.com'; return; }
   showDashboard();
 };
 
