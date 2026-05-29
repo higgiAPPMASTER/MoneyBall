@@ -445,8 +445,10 @@ function showDashboard() {
   hide('login-screen'); show('dashboard');
   const d = new Date();
   const today = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  const tom = new Date(d); tom.setDate(tom.getDate()+1);
+  const tomorrow = tom.getFullYear()+'-'+String(tom.getMonth()+1).padStart(2,'0')+'-'+String(tom.getDate()).padStart(2,'0');
   const dp = document.getElementById('date-picker');
-  if (dp) dp.value = today;
+  if (dp) { dp.value = today; dp.min = today; dp.max = tomorrow; }
   hide('progress-card'); hide('results-card');
 }
 
