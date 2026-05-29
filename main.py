@@ -365,7 +365,7 @@ _HTML = """
         <div class="section-hdr" style="color:#ff8a65">⬇️ Under Picks — Bet Under 1.5 Hits</div>
         <div class="overflow-x-auto">
           <table class="results-table" id="under-picks-table">
-            <thead><tr><th>#</th><th>Player</th><th>H/A</th><th>Opponent</th><th>Pitcher</th><th>S1 vs Pitcher</th><th>S2 H/A</th><th>S3 2026</th><th>L7</th><th>Lineup</th><th>Line</th><th>Odds</th></tr></thead>
+            <thead><tr><th>#</th><th>Player</th><th>H/A</th><th>Opponent</th><th>Pitcher</th><th>S1 vs Pitcher</th><th>S2 H/A</th><th>S3 2026</th><th>L7</th><th>Lineup</th><th>Line</th><th>U1.5 Hits</th><th>U1.5 TB</th></tr></thead>
             <tbody id="under-picks-body"></tbody>
           </table>
         </div>
@@ -558,6 +558,7 @@ function showResults(result) {
         <td><span style="color:#ff8a65;font-weight:800;font-size:1rem">U 1.5</span>
             <span class="text-slate-500" style="font-size:.68rem;display:block">score ${p.under_score}</span></td>
         <td style="font-family:monospace;color:#fbbf24;font-weight:700">${p.under_odds!=null?(p.under_odds>0?'+':'')+p.under_odds:'—'}</td>
+        <td style="font-family:monospace;color:#63cab7;font-weight:700">${p.tb_under_odds!=null?(p.tb_under_odds>0?'+':'')+p.tb_under_odds:'—'}</td>
       </tr>`;
     }).join('');
   }
@@ -574,7 +575,11 @@ function showResults(result) {
           const isOver=p.pick==='OVER';
           const pickClr=isOver?'#63cab7':'#ff8a65';
           const sideCls=p.side==='HOME'?'badge-home':'badge-away';
-          const odds=isOver?(p.over_odds!=null?(p.over_odds>0?'+':'')+p.over_odds:''):(p.under_odds!=null?(p.under_odds>0?'+':'')+p.under_odds:'');
+          const hasSugg=p.sugg_line!=null;
+          const pickLabel=hasSugg?('OVER '+p.sugg_line):p.pick;
+          const odds=hasSugg
+            ?(p.sugg_odds!=null?(p.sugg_odds>0?'+':'')+p.sugg_odds:'')
+            :(isOver?(p.over_odds!=null?(p.over_odds>0?'+':'')+p.over_odds:''):(p.under_odds!=null?(p.under_odds>0?'+':'')+p.under_odds:''));
           return `<tr>
             <td class="font-semibold">${p.name}</td>
             <td><span class="badge ${sideCls}">${p.side}</span> <span class="text-slate-400 text-xs">${p.opp||''}</span></td>
@@ -583,7 +588,7 @@ function showResults(result) {
             <td style="font-family:monospace;color:#93c5fd;font-weight:600">${p.avg_ip!=null?p.avg_ip+' IP':'—'}</td>
             <td style="font-family:monospace;color:#fbbf24;font-weight:600">${p.era||'—'}</td>
             <td style="font-family:monospace;font-size:.75rem;color:#94a3b8">${p.k_history||'—'}</td>
-            <td><span style="color:${pickClr};font-weight:900;font-size:1rem">${p.pick}</span><span class="text-slate-500" style="font-size:.68rem;display:block">${odds}</span></td>
+            <td><span style="color:${pickClr};font-weight:900;font-size:1rem">${pickLabel}</span><span class="text-slate-500" style="font-size:.68rem;display:block">${odds}</span></td>
           </tr>`;
         }).join('')
       : '<tr><td colspan="8" class="text-slate-500 text-center" style="padding:16px">No qualifying picks today</td></tr>';
@@ -753,7 +758,7 @@ function renderByGame(result){
       var note='';
       if(kind==='HITTER') note='Top hitter pick';
       else if(kind==='UNDER') note='UNDER — vs '+(p.pitcher||'TBD');
-      else if(kind==='PITCHER K') note=(p.pick||'')+' '+(p.line||'')+' Ks';
+      else if(kind==='PITCHER K') note=(p.sugg_line!=null?('OVER '+p.sugg_line+' Ks (line '+(p.line||'')+')'):((p.pick||'')+' '+(p.line||'')+' Ks'));
       var lineup=p.lineup_status==='IN_LINEUP'?'<span class="badge badge-in">✅ IN</span>'
         :p.lineup_status==='NOT_IN_LINEUP'?'<span class="badge badge-out">❌ OUT</span>'
         :'<span class="badge badge-tbd">⏳ TBD</span>';
