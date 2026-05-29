@@ -119,8 +119,11 @@ async def start_run(request: Request, date_str: str, force: bool = False, token:
             result = run_pipeline(date_str, emit=emit)
             task["status"] = "done"
             task["result"] = result
-            _cache[date_str] = result
-            _save_disk_cache(date_str, result)
+            # Don't freeze the cache while any starter is still TBD — let the
+            # next load rebuild so a late-named starter gets picked up.
+            if not result.get("stats", {}).get("has_tbd"):
+                _cache[date_str] = result
+                _save_disk_cache(date_str, result)
             try:
                 # Bake the picks into the page HTML so the Replit hub can serve
                 # an instant, no-cold-start snapshot at moneypicksarena.com.
