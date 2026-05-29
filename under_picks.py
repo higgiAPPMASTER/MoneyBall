@@ -138,6 +138,26 @@ def _get_s1_vs_pitcher(batter_id, pitcher_id) -> dict:
         return {"ba": None, "display": "N/A", "ab": 0}
 
 
+def _get_last7_ba(batter_id) -> dict:
+    if not batter_id:
+        return {"ba": None, "display": "N/A", "ab": 0}
+    try:
+        r = requests.get(
+            f"https://statsapi.mlb.com/api/v1/people/{batter_id}/stats",
+            params={"stats": "lastXGames", "group": "hitting",
+                    "gameType": "R", "limit": 7}, timeout=10)
+        splits = r.json().get("stats", [{}])[0].get("splits", [])
+        if not splits: return {"ba": None, "display": "N/A", "ab": 0}
+        stat = splits[0].get("stat", {})
+        ab = int(stat.get("atBats", 0) or 0)
+        h  = int(stat.get("hits",   0) or 0)
+        if ab == 0: return {"ba": None, "display": "0H/0AB", "ab": 0}
+        ba = h / ab
+        return {"ba": ba, "display": f".{int(ba*1000):03d} ({h}H/{ab}AB)", "ab": ab}
+    except Exception:
+        return {"ba": None, "display": "N/A", "ab": 0}
+
+
 def _fetch_hits_lines(run_date: str, emit=None) -> list:
     if not ODDS_API_KEY:
         _log(emit, "⚠️  ODDS_API_KEY not set — Under Picks skipped")
@@ -284,10 +304,12 @@ def run_under_picks(run_date: str, team_schedule: dict, emit=None) -> list:
         if s2["ba"] is None or s2["ba"] >= 0.225: continue
         s3 = fetch_step3_ba(batter_id, side, season)
         if s3["ba"] is None or s3["ba"] >= 0.250: continue
-        under_score = round((s2["ba"] + s3["ba"]) * 1000)
+        l7 = _get_last7_ba(batter_id)
+        l7_ba = l7["ba"] if l7["ba"] is not None else s3["ba"]
+        under_score = round((s2["ba"] + s3["ba"] + l7_ba) * 1000)
         picks.append({"name": name, "pos": "—", "side": side, "opp": opp_name,
                       "pitcher": pitcher_name, "s1_disp": s1["display"],
-                      "s1_ab": s1["ab"], "s2": s2, "s3": s3,
+                      "s1_ab": s1["ab"], "s2": s2, "s3": s3, "l7": l7,
                       "lineup_status": "TBD", "under_score": under_score})
         _log(emit, f"  ✅ UNDER: {name:<22}  S1:{s1['display']:<14}  S2:{s2['display']}  S3:{s3['display']}")
 
