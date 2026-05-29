@@ -24,8 +24,16 @@ _PITCHER_CACHE: dict = {}
 # Populated by _fetch_hits_lines: normalized player name -> Over price on the 0.5 hits line
 # (i.e. the standard "to record a hit" prop). Read by pipeline.py to enrich top9 picks.
 import unicodedata as _ud
+import re as _re
 def _norm_name(s: str) -> str:
-    return "".join(c for c in _ud.normalize("NFKD", s or "") if not _ud.combining(c)).lower().strip()
+    s = "".join(c for c in _ud.normalize("NFKD", s or "") if not _ud.combining(c)).lower().strip()
+    # strip suffixes: jr, sr, ii, iii, iv
+    s = _re.sub(r'\b(jr\.?|sr\.?|ii|iii|iv)$', '', s).strip().rstrip(',').strip()
+    # normalize hyphens to space (ha-seong → ha seong)
+    s = s.replace('-', ' ')
+    # collapse multiple spaces
+    s = _re.sub(r'\s+', ' ', s).strip()
+    return s
 HIT_ODDS: dict = {}
 
 
