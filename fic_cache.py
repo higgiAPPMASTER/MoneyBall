@@ -2,7 +2,7 @@
 fic_cache.py — Step 1: Player pool builder.
 
 SOURCE 1 (PRIMARY): MLB Stats API — career BA vs today's probable pitcher.
-        Filter: min 4 AB, min .250 BA. Parallelised (8 threads, fast).
+        Filter: min 4 AB, min .250 BA. Parallelised (4 threads, fast).
 
 SOURCE 2: MLB Stats API — active hitting streaks (full team scan).
         Scans every hitter on a team playing today, computes current
@@ -168,9 +168,9 @@ def _get_mlb_api_players(run_date: str, min_ab: int, min_ba: float,
         except Exception:
             pass
 
-    log(f"   Checking {len(tasks)} batter-pitcher combos (8 threads)...")
+    log(f"   Checking {len(tasks)} batter-pitcher combos (4 threads)...")
     results = []
-    with ThreadPoolExecutor(max_workers=8) as ex:
+    with ThreadPoolExecutor(max_workers=4) as ex:
         futs = {
             ex.submit(_check_batter, bid, name, pos, pid, pshort, min_ab, min_ba): None
             for bid, name, pos, pid, pshort in tasks
@@ -265,9 +265,9 @@ def _get_streak_players(run_date: str, emit=None, min_streak=MIN_STREAK) -> list
         except Exception:
             pass
 
-    log(f"   Scanning {len(tasks)} hitters for active streaks (8 threads)...")
+    log(f"   Scanning {len(tasks)} hitters for active streaks (4 threads)...")
     results = []
-    with ThreadPoolExecutor(max_workers=8) as ex:
+    with ThreadPoolExecutor(max_workers=4) as ex:
         futs = {
             ex.submit(_check_streak, bid, name, pos, pshort, season, min_streak): None
             for bid, name, pos, pshort in tasks
