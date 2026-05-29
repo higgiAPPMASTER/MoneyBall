@@ -71,6 +71,40 @@ def _get_schedule_with_pitchers(run_date: str) -> list:
         return []
 
 
+def _get_all_games(run_date: str) -> list:
+    """All games today with team ids + probable pitcher (None if TBD)."""
+    try:
+        r = requests.get(f"{MLB_API}/schedule",
+            params={"date": run_date, "sportId": 1, "hydrate": "probablePitcher"},
+            timeout=15)
+        out = []
+        for dd in r.json().get("dates", []):
+            for g in dd.get("games", []):
+                ht = g["teams"]["home"]; at = g["teams"]["away"]
+                hp = ht.get("probablePitcher", {}); ap = at.get("probablePitcher", {})
+                out.append({
+                    "home_id": ht.get("team", {}).get("id"),
+                    "away_id": at.get("team", {}).get("id"),
+                    "home_pitcher_id": hp.get("id"),
+                    "away_pitcher_id": ap.get("id"),
+                    "home_pitcher_short": _short_name(hp["fullName"]) if hp.get("fullName") else None,
+                    "away_pitcher_short": _short_name(ap["fullName"]) if ap.get("fullName") else None,
+                })
+        return out
+    except Exception:
+        return []
+
+
+def slate_has_tbd(run_date=None) -> bool:
+    """True if any game today is still missing a probable pitcher (TBD)."""
+    if run_date is None:
+        run_date = _date.today().strftime("%Y-%m-%d")
+    games = _get_all_games(run_date)
+    if not games:
+        return False
+    return any((not g["home_pitcher_id"]) or (not g["away_pitcher_id"]) for g in games)
+
+
 def _check_batter(batter_id, batter_name, pos, pitcher_id, pitcher_short,
                   min_ab, min_ba) -> dict | None:
     """Check one batter vs one pitcher. Returns player dict or None."""
@@ -106,7 +140,7 @@ def _get_mlb_api_players(run_date: str, min_ab: int, min_ba: float,
 
     log("⬇️  Source 1: MLB Stats API — career BA vs today's pitchers (parallel)...")
     matchups = _get_schedule_with_pitchers(run_date)
-    games    = len(matchups) // 2
+    games    = len(_get_all_games(run_date))
     log(f"   {games} games today")
 
     # Build all (batter, pitcher) tasks from active rosters
@@ -198,14 +232,22 @@ def _get_streak_players(run_date: str, emit=None, min_streak=MIN_STREAK) -> list
         if emit: emit({"type": "log", "msg": msg})
 
     log("⬇️  Source 2: MLB Stats API — active hitting streaks (full team scan)...")
-    matchups = _get_schedule_with_pitchers(run_date)
-    season   = run_date[:4]
+    season = run_date[:4]
+
+    # Every team playing today, regardless of whether the opposing pitcher is
+    # announced — streaks don't depend on the pitcher.
+    team_opp = []
+    for g in _get_all_games(run_date):
+        if g["home_id"]:
+            team_opp.append((g["home_id"], g["away_pitcher_short"] or ""))
+        if g["away_id"]:
+            team_opp.append((g["away_id"], g["home_pitcher_short"] or ""))
 
     tasks = []
     seen  = set()
-    for m in matchups:
+    for team_id, opp_pitcher in team_opp:
         try:
-            r = requests.get(f"{MLB_API}/teams/{m['team_id']}/roster",
+            r = requests.get(f"{MLB_API}/teams/{team_id}/roster",
                 params={"rosterType": "active"}, timeout=10)
             for pl in r.json().get("roster", []):
                 if pl.get("position", {}).get("code") == "1":
@@ -218,7 +260,7 @@ def _get_streak_players(run_date: str, emit=None, min_streak=MIN_STREAK) -> list
                     bid,
                     pl["person"]["fullName"],
                     pl.get("position", {}).get("abbreviation", ""),
-                    m["pitcher_short"],
+                    opp_pitcher,
                 ))
         except Exception:
             pass
@@ -348,7 +390,12 @@ def get_step1_players_or_scrape(run_date=None, min_ab=4, min_ba=0.250, emit=None
     log(f"✅ Step 1 pool: {len(combined)} players "
         f"(career vs pitcher: {len(s1)} + streaks: {len(s2)} + last 7d hot: {len(s3)}, deduped)")
 
-    with open(path, "w") as f:
-        json.dump(combined, f)
+    # Don't freeze the pool while any starter is still TBD — let it rebuild so
+    # a late-named starter gets picked up automatically on the next run.
+    if slate_has_tbd(run_date):
+        log("   ⏳ Some starters still TBD — pool not cached, will rebuild next run")
+    else:
+        with open(path, "w") as f:
+            json.dump(combined, f)
 
     return combined
