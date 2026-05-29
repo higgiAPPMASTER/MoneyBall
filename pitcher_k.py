@@ -298,7 +298,7 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
     emit({"type": "section", "msg": "⚾ Pitcher K Picks — Pulling career H/A K history"})
     all_results = []
 
-    # Pull each pitcher's H/A K history in parallel (≤4 threads). Each worker is
+    # Pull each pitcher's H/A K history in parallel (≤8 threads). Each worker is
     # independent (3 MLB Stats API calls); the id/team caches are GIL-safe. Each
     # worker returns (result, logs) and the main thread emits logs as futures
     # complete so the live progress feed stays intact. Sequential time.sleep
@@ -373,7 +373,7 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                  "sugg_line": sugg_line, "sugg_odds": sugg_odds,
                  "pick": pick, "pick_note": pick_note}), logs
 
-    with ThreadPoolExecutor(max_workers=4) as _ex:
+    with ThreadPoolExecutor(max_workers=8) as _ex:
         _futs = [_ex.submit(_eval_pitcher, pl) for pl in all_lines]
         for _fut in as_completed(_futs):
             try:
@@ -411,7 +411,7 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                 "pick": None, "pick_note": "No K line posted today",
             }
 
-        with ThreadPoolExecutor(max_workers=4) as _ex:
+        with ThreadPoolExecutor(max_workers=8) as _ex:
             for _r in _ex.map(_eval_starter, new_starters):
                 all_results.append(_r)
         emit({"type": "log", "msg": f"  ✅ {len(starters)} probable starters fetched — "
