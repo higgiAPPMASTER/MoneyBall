@@ -367,6 +367,12 @@ _HTML = """
     </div>
     <div id="results-card" class="hidden space-y-6">
       <div id="stats-row" class="chips"></div>
+      <div style="display:flex;justify-content:flex-end;margin-top:-4px">
+        <button type="button" onclick="downloadPicksCSV()"
+          style="background:#1e1e1e;border:1px solid #f59e0b;color:#f59e0b;font-weight:700;font-size:.82rem;padding:8px 16px;border-radius:8px;cursor:pointer">
+          &#11015; Download CSV
+        </button>
+      </div>
       <div class="card p-6" id="player-search-card">
         <div class="section-hdr">🔍 Player Lookup</div>
         <p class="text-xs text-slate-400 mb-3">Type a hitter or pitcher's name — see where they rank and why.</p>
@@ -641,6 +647,65 @@ function showResults(result) {
 
   renderByGame(result);
   show('results-card');
+}
+
+// ── CSV export (all picks → spreadsheet/betting tools) ──────────────────
+// Runs entirely in the browser off picks already loaded — no server call,
+// no Render memory, no Odds API cost.
+function _csvCell(v){
+  if(v==null) return '';
+  var s=String(v);
+  if(/[",\n\r]/.test(s)) s='"'+s.replace(/"/g,'""')+'"';
+  return s;
+}
+function _csvOdds(v){ return v==null?'':((v>0?'+':'')+v); }
+function _csvLineup(s){
+  if(s==='IN_LINEUP') return 'In Lineup';
+  if(s==='NOT_IN_LINEUP') return 'Not in Lineup';
+  return s||'TBD';
+}
+function downloadPicksCSV(){
+  var r=window._lastResult;
+  if(!r){ alert('Run picks first, then download.'); return; }
+  var date=r.date||'';
+  var rows=[['Category','Rank','Player','Team','Pos','Side','Opponent','Pitcher','Pick','Line','Odds','Lineup','Detail']];
+  (r.top9||[]).forEach(function(p,i){
+    rows.push(['Top Pick', i+1, p.full_name||p.name||'', p.team||'', p.pos||'', p.side||'', p.opp||'', p.pitcher||'',
+      'To Record a Hit (Over 0.5)', '0.5', _csvOdds(p.hit_odds), _csvLineup(p.lineup_status),
+      p.total!=null?('Score '+p.total):'']);
+  });
+  (r.also_ran||[]).forEach(function(p,i){
+    rows.push(['Money Ball', i+1, p.full_name||p.name||'', p.team||'', p.pos||'', p.side||'', p.opp||'', p.pitcher||'',
+      'To Record a Hit (Over 0.5)', '0.5', _csvOdds(p.hit_odds), _csvLineup(p.lineup_status),
+      p.total!=null?('Score '+p.total):'']);
+  });
+  (r.under_picks||[]).forEach(function(p,i){
+    var detail=(p.under_score!=null?('Under score '+p.under_score):'');
+    if(p.tb_under_odds!=null) detail+=(detail?' | ':'')+'TB U1.5 '+_csvOdds(p.tb_under_odds);
+    rows.push(['Under Pick', i+1, p.name||'', '', '', p.side||'', p.opp||'', p.pitcher||'',
+      'Under 1.5 Hits', '1.5', _csvOdds(p.under_odds), _csvLineup(p.lineup_status), detail]);
+  });
+  var pk=(r.pitcher_k&&r.pitcher_k.all)||[];
+  pk.filter(function(p){return p.pick;}).sort(function(a,b){
+    var ga=Math.abs((a.avg_k||0)-(a.line||0)), gb=Math.abs((b.avg_k||0)-(b.line||0));
+    return gb-ga;
+  }).forEach(function(p,i){
+    var hasSugg=p.sugg_line!=null;
+    var line=hasSugg?p.sugg_line:p.line;
+    var pick=hasSugg?('OVER '+p.sugg_line+' Ks'):(p.pick+' '+(p.line!=null?p.line:'')+' Ks');
+    var odds=hasSugg?p.sugg_odds:(p.pick==='OVER'?p.over_odds:p.under_odds);
+    var detail='Avg '+(p.avg_k!=null?p.avg_k+'K':'—')+(p.era?(', ERA '+p.era):'');
+    rows.push(['Pitcher K', i+1, p.name||'', '', 'P', p.side||'', p.opp||'', '',
+      pick, (line!=null?line:''), _csvOdds(odds), '', detail]);
+  });
+  if(rows.length<=1){ alert('No picks to download yet.'); return; }
+  var csv=rows.map(function(row){return row.map(_csvCell).join(',');}).join('\r\n');
+  var blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8;'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');
+  a.href=url; a.download='mlb-picks-'+(date||'today')+'.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 function _fmtBA(v){return (v==null)?'—':(typeof v==='number'?v.toFixed(3):v);}
