@@ -366,10 +366,12 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         r["s5"]    = {"ba": dn_ba, "score": s5_score,
                       "display": f"{dn_ba:.3f}" if dn_ba else "N/A"}
         s4_pts = (s4.get("score", 0) or 0) * 10
-        r["total"] = (r.get("total", 0) or 0) + s5_score + s4_pts
+        # S5 (day/night BA) is a FILTER ONLY — used to DQ below the cutoff, never
+        # added to the score. Keep s5_score on r["s5"] for display, not in total.
+        r["total"] = (r.get("total", 0) or 0) + s4_pts
         emit({"type": "log",
               "msg": f"  ✅ {r['name']}: S4 {s4['display']} (+{s4_pts}) | "
-                     f"S5 {r['s5']['display']} (+{s5_score}) → total {r['total']}"})
+                     f"S5 {r['s5']['display']} (filter only) → total {r['total']}"})
         s4_qualified.append(r)
 
     emit({"type": "log", "msg": f"S4 filter: {len(s4_qualified)} pass, {len(s4_dq)} DQ'd (<50%)"})
