@@ -347,7 +347,7 @@ def run_under_picks(run_date: str, team_schedule: dict, emit=None) -> list:
         if l7["ba"] is not None and l7["ba"] > 0.250: return None
         l7_ba = l7["ba"] if l7["ba"] is not None else s3["ba"]
         under_score = round((s2["ba"] + s3["ba"] + l7_ba) * 1000)
-        return {"name": name, "pos": "—", "side": side, "opp": opp_name,
+        return {"name": name, "team": player_team, "pos": "—", "side": side, "opp": opp_name,
                 "pitcher": pitcher_name, "s1_disp": s1["display"],
                 "s1_ab": s1["ab"], "s2": s2, "s3": s3, "l7": l7,
                 "lineup_status": "TBD", "under_score": under_score,
