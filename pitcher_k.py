@@ -98,6 +98,7 @@ def _fetch_k_lines(run_date: str, emit=None) -> list:
                   if e.get("commence_time", "")[:10] in (run_date, tomorrow)]
         log(f"  Odds API: {len(events)} games for {run_date}")
         seen: dict = {}
+        ladder: dict = {}
 
         for ev in events:
             home_team = ev.get("home_team", "")
@@ -119,6 +120,8 @@ def _fetch_k_lines(run_date: str, emit=None) -> list:
                             price = oc.get("price")
                             if not name or pt is None: continue
                             key = _normalize(name)
+                            if side == "Over" and price is not None:
+                                ladder.setdefault(key, {}).setdefault(float(pt), price)
                             pairs.setdefault(key, {"name": name, "point": float(pt)})
                             if side == "Over":    pairs[key]["over_odds"]  = price
                             elif side == "Under": pairs[key]["under_odds"] = price
@@ -129,6 +132,8 @@ def _fetch_k_lines(run_date: str, emit=None) -> list:
                                              "over_odds": p.get("over_odds"),
                                              "under_odds": p.get("under_odds")}
                     break
+        for key, entry in seen.items():
+            entry["over_ladder"] = ladder.get(key, {})
         return list(seen.values())
     except Exception as exc:
         log(f"  ⚠️  Odds API error: {exc}")
@@ -306,6 +311,7 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
         starts = hist["starts"] if hist else 0
         k_list = hist["k_list"] if hist else []
 
+        sugg_line, sugg_odds = None, None
         if avg_k is None:
             pick, pick_note = None, f"N/A — {starts} starts vs {opp}"
         elif avg_k > line:
@@ -315,7 +321,22 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
             pick, pick_note = "UNDER", f"avg {avg_k} K < line {line}"
             emit({"type": "log", "msg": f"    ✅ UNDER — avg {avg_k} < {line} ({starts} starts)"})
         else:
-            pick, pick_note = None, f"avg {avg_k} exactly on line"
+            # avg lands exactly on the book line → no edge on that number.
+            # Step down to the highest half-line the pitcher cleared in EVERY
+            # H/A start vs this opp (min_k - 0.5) and recommend the Over there,
+            # priced off the alternate-line ladder.
+            sugg_line = (min(k_list) - 0.5) if k_list else None
+            k_ladder  = pl.get("over_ladder") or {}
+            sugg_odds = k_ladder.get(sugg_line) if sugg_line is not None else None
+            if sugg_line is not None and sugg_line < line:
+                pick = "OVER"
+                pick_note = (f"avg {avg_k} on line {line} → history floor, "
+                             f"OVER {sugg_line} (went {', '.join(str(k) for k in k_list)})")
+                emit({"type": "log", "msg": f"    ✅ OVER {sugg_line} (alt) — "
+                      f"avg {avg_k} on line {line}, cleared by {k_list} ({starts} starts)"})
+            else:
+                pick, pick_note = None, f"avg {avg_k} exactly on line"
+                sugg_line, sugg_odds = None, None
 
         hits_over = sum(1 for k in k_list if k > line) if k_list else 0
         k_hit_rate = f"{hits_over}/{starts}" if starts else "—"
@@ -328,6 +349,7 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                              "era":    hist["era"]    if hist else None,
                              "k_hit_rate": k_hit_rate,
                              "k_history": ", ".join(str(k) for k in k_list) if k_list else "—",
+                             "sugg_line": sugg_line, "sugg_odds": sugg_odds,
                              "pick": pick, "pick_note": pick_note})
 
     # Add today's probable starters who have no K line posted
