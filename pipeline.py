@@ -396,30 +396,43 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                 _last = _parts[-1]
                 _last_idx[_last] = (_last_idx[_last] + [(_k, _v)]) if _last in _last_idx else [(_k, _v)]
 
+        def _name_variants(raw: str):
+            """Generate all name variants to try against HIT_ODDS."""
+            s = _nn(raw)
+            if not s: return []
+            variants = [s]
+            parts = s.split()
+            if len(parts) >= 2:
+                last  = parts[-1]
+                first_parts = parts[:-1]  # everything before last name
+                # single initial: "J. Last"
+                variants.append(f"{first_parts[0][0]}. {last}")
+                # multi-word first: "Jung Hoo Lee" → "J.H. Lee"
+                if len(first_parts) >= 2:
+                    initials = ".".join(p[0] for p in first_parts) + "."
+                    variants.append(f"{initials} {last}")
+                # hyphen variant: "ha seong kim" → "ha-seong kim"
+                if len(first_parts) >= 2:
+                    variants.append(f"{'-'.join(first_parts)} {last}")
+                # no-space variant: "junghoo lee"
+                if len(first_parts) >= 2:
+                    variants.append(f"{''.join(first_parts)} {last}")
+            return variants
+
         def _lookup_odds(p):
-            name      = _nn(p.get("name", ""))
-            full_name = _nn(p.get("full_name", ""))
-            # 1. exact match on full name or short name
-            if full_name and full_name in _HIT_ODDS: return _HIT_ODDS[full_name]
-            if name and name in _HIT_ODDS:           return _HIT_ODDS[name]
-            # 2. first-initial + last match  (e.g. "e. clement" vs "ernie clement")
-            for candidate in (full_name, name):
-                if not candidate: continue
-                parts = candidate.split()
-                if len(parts) >= 2:
-                    last  = parts[-1]
-                    first = parts[0]
-                    # try "X. Last" format in HIT_ODDS
-                    short = f"{first[0]}. {last}"
-                    if short in _HIT_ODDS: return _HIT_ODDS[short]
-                    # try matching "First Last" in HIT_ODDS when we have "F. Last"
-                    if len(first) == 1 or (len(first) == 2 and first[1] == '.'):
-                        matches = _last_idx.get(last, [])
-                        if len(matches) == 1: return matches[0][1]
-            # 3. unambiguous last-name fallback
-            for candidate in (full_name, name):
-                if not candidate: continue
-                last = candidate.split()[-1]
+            candidates = []
+            for field in ("full_name", "name"):
+                candidates.extend(_name_variants(p.get(field, "")))
+            # 1. exact match on any variant
+            for v in candidates:
+                if v in _HIT_ODDS: return _HIT_ODDS[v]
+            # 2. unambiguous last-name fallback (skip common last names)
+            seen_last = set()
+            for v in candidates:
+                parts = v.split()
+                last = parts[-1] if parts else ""
+                if not last or last in seen_last: continue
+                seen_last.add(last)
                 matches = _last_idx.get(last, [])
                 if len(matches) == 1: return matches[0][1]
             return None
