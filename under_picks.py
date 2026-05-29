@@ -210,11 +210,8 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
                         "oddsFormat": "american"}, timeout=15)
             if r2.status_code != 200: continue
             all_bms = r2.json().get("bookmakers", [])
-            # Use preferred book for 1.5-line under picks; scan ALL books for 0.5 hit odds.
-            # Honor PREFERRED *order* (not API order) so a two-way book that posts the
-            # Under side on the 1.5 line (e.g. DraftKings) wins over one that only posts Over.
+            # Scan ALL books for both the 0.5 hit odds and the 1.5-line candidates.
             _bm_map = {b.get("key"): b for b in all_bms}
-            bm = next((_bm_map[k] for k in PREFERRED if k in _bm_map), all_bms[0] if all_bms else None)
             # Collect 0.5-line Over odds from every bookmaker (first seen per player)
             for bm_any in all_bms:
                 for mkt in bm_any.get("markets", []):
@@ -228,25 +225,42 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
                         nk = _norm_name(player)
                         if pt == 0.5 and nk not in HIT_ODDS and price is not None:
                             HIT_ODDS[nk] = price
-            if not bm: continue
-            for mkt in bm.get("markets", []):
-                if mkt.get("key") not in ("batter_hits", "batter_hits_alternate"): continue
-                pairs: dict = {}
-                for oc in mkt.get("outcomes", []):
-                    player = oc.get("description", "").strip()
-                    pt     = oc.get("point")
-                    side   = oc.get("name", "")
-                    price  = oc.get("price")
-                    if not player or pt is None: continue
-                    key = (player, pt)
-                    pairs.setdefault(key, {})
-                    pairs[key][side] = price
-                for (player, pt), sides in pairs.items():
-                    if pt != 1.5 or player in seen: continue
-                    seen[player] = {"name": player, "line": pt,
-                                    "home_team": home_team, "away_team": away_team,
-                                    "over_odds": sides.get("Over"),
-                                    "under_odds": sides.get("Under")}
+            # Build 1.5-line candidates from ALL books — a player qualifies if ANY
+            # book posts his 1.5 line (stops part-time players from blinking in/out
+            # based on a single book's coverage). Honor PREFERRED order for the
+            # displayed price, and backfill the Under side from a lower-priority
+            # book when the preferred book only posts an Over.
+            #
+            # Aggregation is scoped to THIS event and keyed by normalized name so:
+            #   • name-variant spellings across books merge into one candidate, and
+            #   • a name appearing in another game can't backfill odds/teams here.
+            # Cross-event dedup keeps the first game seen (matches prior behavior).
+            ordered_books = ([_bm_map[k] for k in PREFERRED if k in _bm_map]
+                             + [b for b in all_bms if b.get("key") not in PREFERRED])
+            event_entries: dict = {}
+            for book in ordered_books:
+                for mkt in book.get("markets", []):
+                    if mkt.get("key") not in ("batter_hits", "batter_hits_alternate"): continue
+                    for oc in mkt.get("outcomes", []):
+                        player = oc.get("description", "").strip()
+                        pt     = oc.get("point")
+                        side   = oc.get("name", "")
+                        price  = oc.get("price")
+                        if not player or pt != 1.5 or price is None: continue
+                        nk = _norm_name(player)
+                        if nk in seen: continue  # already locked to an earlier game
+                        entry = event_entries.get(nk)
+                        if entry is None:
+                            entry = {"name": player, "line": 1.5,
+                                     "home_team": home_team, "away_team": away_team,
+                                     "over_odds": None, "under_odds": None}
+                            event_entries[nk] = entry
+                        if side == "Over" and entry["over_odds"] is None:
+                            entry["over_odds"] = price
+                        elif side == "Under" and entry["under_odds"] is None:
+                            entry["under_odds"] = price
+            for nk, entry in event_entries.items():
+                seen.setdefault(nk, entry)
 
         _log(emit, f"  ✅ {len(seen)} players on 1.5 hits line | {len(HIT_ODDS)} players with 0.5 hit odds")
         return list(seen.values())
