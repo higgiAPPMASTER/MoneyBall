@@ -20,7 +20,7 @@ MIN_STARTS       = 2
 MIN_IP_START     = 3.0
 K_SEASONS        = [2021, 2022, 2023, 2024, 2025, 2026]
 SEASON           = "2026"
-BOTTOM_K_TEAMS_N = 5
+BOTTOM_K_TEAMS_N = 0  # disabled — show all teams
 
 _pitcher_id_cache = {}
 _team_id_cache    = {}
