@@ -361,7 +361,7 @@ _HTML = """
         <div class="section-hdr" style="color:#63cab7">⚾ Pitcher K Picks — Over / Under Strikeout Line</div>
         <div class="overflow-x-auto">
           <table class="results-table" id="pitcher-k-table">
-            <thead><tr><th>Pitcher</th><th>vs (H/A)</th><th>K Line</th><th>Avg K</th><th>Avg IP</th><th>ERA</th><th>K History (H/A)</th><th>Pick</th></tr></thead>
+            <thead><tr><th>Pitcher</th><th>vs (H/A)</th><th>K Line</th><th>Avg K</th><th>Avg IP</th><th>ERA</th><th>K History vs Opp (H/A)</th><th>Pick</th></tr></thead>
             <tbody id="pitcher-k-body"></tbody>
           </table>
         </div>
