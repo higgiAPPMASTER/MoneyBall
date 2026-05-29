@@ -148,7 +148,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         emit({"type": type_, "msg": msg})
 
     # ── STEP 1 ────────────────────────────────────────────────────────
-    emit({"type": "section", "msg": "Step 1 — Loading player list from Fantasy Info Central"})
+    emit({"type": "section", "msg": "Step 1 — Loading player list from MLB Stats API"})
     step1 = get_step1_players_or_scrape(run_date, emit=emit)
     top30 = step1
     pitcher_map = {p["batter"]: p["pitcher"] for p in top30}
