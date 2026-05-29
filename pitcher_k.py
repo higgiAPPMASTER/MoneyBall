@@ -86,7 +86,11 @@ def _fetch_k_lines(run_date: str, emit=None) -> list:
 
     PREFERRED = ["draftkings", "fanduel", "betmgm", "caesars", "pointsbetus"]
     MARKETS   = ["pitcher_strikeouts", "pitcher_strikeouts_alternate"]
-    tomorrow  = (date.today() + __import__('datetime').timedelta(days=1)).isoformat()
+    # Tomorrow's UTC date derived from run_date (matches under_picks). Used only
+    # to keep tonight's late games that roll past midnight UTC — NOT to pull
+    # tomorrow's actual slate.
+    tomorrow  = (time.strftime("%Y-%m-%d",
+                  time.gmtime(time.mktime(time.strptime(run_date, "%Y-%m-%d")) + 86400)))
 
     try:
         r = requests.get(f"{ODDS_BASE}/sports/baseball_mlb/events",
@@ -95,8 +99,21 @@ def _fetch_k_lines(run_date: str, emit=None) -> list:
             log(f"  ⚠️  Odds API events returned {r.status_code}")
             return []
 
+        def _is_run_date_game(ct: str) -> bool:
+            """True only for run_date games, plus tonight's late games that roll
+            into tomorrow's UTC date before 09:00 UTC. Tomorrow's real slate is
+            excluded."""
+            if not ct: return False
+            day = ct[:10]
+            if day == run_date: return True
+            if day == tomorrow:
+                try:
+                    return int(ct[11:13]) < 9
+                except Exception:
+                    return False
+            return False
         events = [e for e in r.json()
-                  if e.get("commence_time", "")[:10] in (run_date, tomorrow)]
+                  if _is_run_date_game(e.get("commence_time", ""))]
         log(f"  Odds API: {len(events)} games for {run_date}")
         seen: dict = {}
         ladder: dict = {}
