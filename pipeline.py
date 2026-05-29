@@ -354,12 +354,12 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         player_id  = info.get("player_id")
         s4         = fetch_step4_consistency(player_id, r["side"], r.get("opp", ""))
         r["s4"]    = s4
-        # DQ if S4 has qualifying games but hit rate < 50%
-        if s4["games"] > 0 and s4["score"] < 50:
+        # DQ if S4 has qualifying games but hit rate < 60%
+        if s4["games"] > 0 and s4["score"] < 60:
             r["dq"] = True
-            r["dq_reason"] = f"S4 {s4['display']} ({s4['score']}%) < 50% H/A hit rate vs opp"
+            r["dq_reason"] = f"S4 {s4['display']} ({s4['score']}%) < 60% H/A hit rate vs opp"
             s4_dq.append(r)
-            emit({"type": "log", "msg": f"  ❌ {r['name']}: S4 {s4['display']} ({s4['score']}%) < 50% — DQ"})
+            emit({"type": "log", "msg": f"  ❌ {r['name']}: S4 {s4['display']} ({s4['score']}%) < 60% — DQ"})
             continue
         dn_ba      = (r.get("dn", {}) or {}).get("ba")
         s5_score   = round(dn_ba * 1000) if dn_ba else 0
