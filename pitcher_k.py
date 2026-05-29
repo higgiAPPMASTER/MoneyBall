@@ -11,6 +11,7 @@ Algorithm:
 """
 import os, time, requests
 from datetime import date
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 ODDS_API_KEY  = os.environ.get("ODDS_API_KEY", "")
 ODDS_BASE     = "https://api.the-odds-api.com/v4"
@@ -280,32 +281,35 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
     emit({"type": "section", "msg": "⚾ Pitcher K Picks — Pulling career H/A K history"})
     all_results = []
 
-    for pl in all_lines:
+    # Pull each pitcher's H/A K history in parallel (≤8 threads). Each worker is
+    # independent (3 MLB Stats API calls); the id/team caches are GIL-safe. Each
+    # worker returns (result, logs) and the main thread emits logs as futures
+    # complete so the live progress feed stays intact. Sequential time.sleep
+    # pacing is no longer needed — the bounded pool throttles concurrency.
+    def _eval_pitcher(pl):
+        logs = []
         name = pl["name"]
         line = pl["line"]
         pid  = _get_pitcher_id(name)
-        time.sleep(0.15)
         if not pid:
-            emit({"type": "log", "msg": f"  ⚠️ {name} — not found, skipping"})
-            continue
+            logs.append(f"  ⚠️ {name} — not found, skipping")
+            return None, logs
 
         pitcher_team = _get_pitcher_team(pid)
-        time.sleep(0.1)
         side = "HOME" if _teams_match(pitcher_team, pl["home_team"]) else "AWAY"
         opp  = pl["away_team"] if side == "HOME" else pl["home_team"]
 
         opp_k_info = next((t for t in bottom_k_list if _teams_match(t["name"], opp)), None)
         if bottom_k_set and opp_k_info:
             dq_note = f"Opp {opp} is bottom {BOTTOM_K_TEAMS_N} K team ({opp_k_info['k_per_g']} K/G)"
-            emit({"type": "log", "msg": f"  ❌ {name} — {dq_note}"})
-            all_results.append({"name": name, "team": pitcher_team, "opp": opp, "side": side,
-                                 "line": line, "over_odds": pl.get("over_odds"),
-                                 "under_odds": pl.get("under_odds"), "avg_k": None, "starts": 0,
-                                 "min_k": None, "max_k": None, "k_history": "—",
-                                 "pick": None, "pick_note": dq_note})
-            continue
+            logs.append(f"  ❌ {name} — {dq_note}")
+            return ({"name": name, "team": pitcher_team, "opp": opp, "side": side,
+                     "line": line, "over_odds": pl.get("over_odds"),
+                     "under_odds": pl.get("under_odds"), "avg_k": None, "starts": 0,
+                     "min_k": None, "max_k": None, "k_history": "—",
+                     "pick": None, "pick_note": dq_note}), logs
 
-        emit({"type": "log", "msg": f"  {name}  K line:{line}  {side} vs {opp}..."})
+        logs.append(f"  {name}  K line:{line}  {side} vs {opp}...")
         hist   = career_ha_ks_vs_opp(pid, side, opp)
         avg_k  = hist["avg_k"]  if hist else None
         starts = hist["starts"] if hist else 0
@@ -316,10 +320,10 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
             pick, pick_note = None, f"N/A — {starts} starts vs {opp}"
         elif avg_k > line:
             pick, pick_note = "OVER",  f"avg {avg_k} K > line {line}"
-            emit({"type": "log", "msg": f"    ✅ OVER — avg {avg_k} > {line} ({starts} starts)"})
+            logs.append(f"    ✅ OVER — avg {avg_k} > {line} ({starts} starts)")
         elif avg_k < line:
             pick, pick_note = "UNDER", f"avg {avg_k} K < line {line}"
-            emit({"type": "log", "msg": f"    ✅ UNDER — avg {avg_k} < {line} ({starts} starts)"})
+            logs.append(f"    ✅ UNDER — avg {avg_k} < {line} ({starts} starts)")
         else:
             # avg lands exactly on the book line → no edge on that number.
             # Step down to the highest half-line the pitcher cleared in EVERY
@@ -332,56 +336,76 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                 pick = "OVER"
                 pick_note = (f"avg {avg_k} on line {line} → history floor, "
                              f"OVER {sugg_line} (went {', '.join(str(k) for k in k_list)})")
-                emit({"type": "log", "msg": f"    ✅ OVER {sugg_line} (alt) — "
-                      f"avg {avg_k} on line {line}, cleared by {k_list} ({starts} starts)"})
+                logs.append(f"    ✅ OVER {sugg_line} (alt) — "
+                      f"avg {avg_k} on line {line}, cleared by {k_list} ({starts} starts)")
             else:
                 pick, pick_note = None, f"avg {avg_k} exactly on line"
                 sugg_line, sugg_odds = None, None
 
         hits_over = sum(1 for k in k_list if k > line) if k_list else 0
         k_hit_rate = f"{hits_over}/{starts}" if starts else "—"
-        all_results.append({"name": name, "team": pitcher_team, "opp": opp, "side": side,
-                             "line": line, "over_odds": pl.get("over_odds"),
-                             "under_odds": pl.get("under_odds"), "avg_k": avg_k,
-                             "starts": starts, "min_k": hist["min_k"] if hist else None,
-                             "max_k": hist["max_k"] if hist else None,
-                             "avg_ip": hist["avg_ip"] if hist else None,
-                             "era":    hist["era"]    if hist else None,
-                             "k_hit_rate": k_hit_rate,
-                             "k_history": ", ".join(str(k) for k in k_list) if k_list else "—",
-                             "sugg_line": sugg_line, "sugg_odds": sugg_odds,
-                             "pick": pick, "pick_note": pick_note})
+        return ({"name": name, "team": pitcher_team, "opp": opp, "side": side,
+                 "line": line, "over_odds": pl.get("over_odds"),
+                 "under_odds": pl.get("under_odds"), "avg_k": avg_k,
+                 "starts": starts, "min_k": hist["min_k"] if hist else None,
+                 "max_k": hist["max_k"] if hist else None,
+                 "avg_ip": hist["avg_ip"] if hist else None,
+                 "era":    hist["era"]    if hist else None,
+                 "k_hit_rate": k_hit_rate,
+                 "k_history": ", ".join(str(k) for k in k_list) if k_list else "—",
+                 "sugg_line": sugg_line, "sugg_odds": sugg_odds,
+                 "pick": pick, "pick_note": pick_note}), logs
+
+    with ThreadPoolExecutor(max_workers=8) as _ex:
+        _futs = [_ex.submit(_eval_pitcher, pl) for pl in all_lines]
+        for _fut in as_completed(_futs):
+            try:
+                _res, _logs = _fut.result()
+            except Exception as _exc:
+                _res, _logs = None, [f"  ⚠️ pitcher eval failed: {_exc}"]
+            for _m in _logs:
+                emit({"type": "log", "msg": _m})
+            if _res:
+                all_results.append(_res)
 
     # Add today's probable starters who have no K line posted
     try:
         starters = _fetch_probable_starters(run_date)
         seen_names = {_normalize(r["name"]) for r in all_results}
-        for st in starters:
-            if _normalize(st["name"]) not in seen_names:
-                pid2 = _get_pitcher_id(st["name"])
-                hist2 = career_ha_ks_vs_opp(pid2, st["side"], st["opp"]) if pid2 else None
-                avg_k2 = hist2["avg_k"] if hist2 else None
-                starts2 = hist2["starts"] if hist2 else 0
-                k_list2 = hist2["k_list"] if hist2 else []
-                k_history2 = ", ".join(str(k) for k in k_list2) if k_list2 else "—"
-                all_results.append({
-                    "name": st["name"], "team": st["team"], "opp": st["opp"],
-                    "side": st["side"], "line": None,
-                    "over_odds": None, "under_odds": None,
-                    "avg_k": avg_k2, "starts": starts2,
-                    "min_k": min(k_list2) if k_list2 else None,
-                    "max_k": max(k_list2) if k_list2 else None,
-                    "avg_ip": hist2["avg_ip"] if hist2 else None,
-                    "era": hist2["era"] if hist2 else None,
-                    "k_hit_rate": "—", "k_history": k_history2,
-                    "pick": None, "pick_note": "No K line posted today",
-                })
+        new_starters = [st for st in starters if _normalize(st["name"]) not in seen_names]
+
+        def _eval_starter(st):
+            pid2 = _get_pitcher_id(st["name"])
+            hist2 = career_ha_ks_vs_opp(pid2, st["side"], st["opp"]) if pid2 else None
+            avg_k2 = hist2["avg_k"] if hist2 else None
+            starts2 = hist2["starts"] if hist2 else 0
+            k_list2 = hist2["k_list"] if hist2 else []
+            k_history2 = ", ".join(str(k) for k in k_list2) if k_list2 else "—"
+            return {
+                "name": st["name"], "team": st["team"], "opp": st["opp"],
+                "side": st["side"], "line": None,
+                "over_odds": None, "under_odds": None,
+                "avg_k": avg_k2, "starts": starts2,
+                "min_k": min(k_list2) if k_list2 else None,
+                "max_k": max(k_list2) if k_list2 else None,
+                "avg_ip": hist2["avg_ip"] if hist2 else None,
+                "era": hist2["era"] if hist2 else None,
+                "k_hit_rate": "—", "k_history": k_history2,
+                "pick": None, "pick_note": "No K line posted today",
+            }
+
+        with ThreadPoolExecutor(max_workers=8) as _ex:
+            for _r in _ex.map(_eval_starter, new_starters):
+                all_results.append(_r)
         emit({"type": "log", "msg": f"  ✅ {len(starters)} probable starters fetched — "
               f"{len([r for r in all_results if r.get('pick_note')=='No K line posted today'])} added (no line)"})
     except Exception as exc:
         emit({"type": "log", "msg": f"  ⚠️ Probable starters fetch failed: {exc}"})
 
-    confirmed = sorted([r for r in all_results if r["pick"]],
+    # name as a deterministic tie-breaker (workers finish out of order); stable
+    # sort keeps name order within equal edge sizes.
+    confirmed = sorted([r for r in all_results if r["pick"]], key=lambda r: r["name"])
+    confirmed = sorted(confirmed,
                        key=lambda r: abs((r["avg_k"] or 0) - r["line"]), reverse=True)
     emit({"type": "log", "msg": f"✅ Pitcher K done — {len(confirmed)} picks, {len(all_results)} total pitchers"})
     return {"picks": confirmed, "all": all_results}
