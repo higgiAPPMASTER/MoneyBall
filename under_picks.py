@@ -313,7 +313,7 @@ def run_under_picks(run_date: str, team_schedule: dict, emit=None) -> list:
     _log(emit, "  ✅ Teams resolved")
     _log(emit, f"  Evaluating {len(candidates)} candidates…")
 
-    # Evaluate candidates in parallel (≤8 threads). Each worker is independent —
+    # Evaluate candidates in parallel (≤4 threads). Each worker is independent —
     # it does up to 4 MLB Stats API calls with short-circuit filters — and the
     # shared splits _CACHE / id maps are GIL-safe (worst case = harmless dup
     # fetch). Logs are emitted from the main thread as futures complete so the
@@ -355,7 +355,7 @@ def run_under_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 "tb_under_odds": c.get("tb_under_odds")}
 
     picks = []
-    with ThreadPoolExecutor(max_workers=8) as _ex:
+    with ThreadPoolExecutor(max_workers=4) as _ex:
         _futs = {_ex.submit(_eval_candidate, c): c for c in candidates}
         for _fut in as_completed(_futs):
             try:
