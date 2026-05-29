@@ -256,7 +256,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         team      = roster.get(r["name"], {}).get("team_name", "")
         full_name = r.get("full_name", r["name"])
         gtype     = get_game_time_type(team, date_espn)
-        eid       = find_espn_player_id(full_name)
+        eid       = find_espn_player_id(full_name) or r.get("player_id")
         dn = (fetch_day_night_ba(eid, gtype)
               if eid and gtype != "unknown"
               else {"display": "N/A", "flag": "❌ skip", "dq": False, "ba": None, "ab": None})
