@@ -40,8 +40,22 @@ def _load_disk_cache(date_str: str):
             print(f"[disk_cache] load failed: {e}")
     return None
 
-from fastapi import FastAPI, HTTPException, Form
+from fastapi import FastAPI, HTTPException, Form, Request
 from fastapi.responses import StreamingResponse, FileResponse, HTMLResponse
+import os as _os
+from jose import jwt as _jose_jwt
+_JWT_SECRET = _os.environ.get("JWT_SECRET", "")
+
+def _verify_hub_token(token: str) -> bool:
+    if not token or len(token.split(".")) != 3:
+        return False
+    if not _JWT_SECRET:
+        return False
+    try:
+        _jose_jwt.decode(token, _JWT_SECRET, algorithms=["HS256"])
+        return True
+    except Exception:
+        return False
 from replit_push import push_picks_to_replit  # pushes daily picks to Replit DB
 
 
@@ -65,7 +79,10 @@ async def test_statmuse():
     return {"ok": True, "message": "✅ MLB Stats API active"}
 
 @app.post("/api/run")
-async def start_run(date_str: str, force: bool = False):
+async def start_run(request: Request, date_str: str, force: bool = False, token: str = ""):
+    tok = token or request.headers.get("Authorization", "").replace("Bearer ", "").strip()
+    if not _verify_hub_token(tok):
+        raise HTTPException(status_code=401, detail="Subscription required — please log in via moneypicksarena.com")
     if not force:
         if date_str not in _cache:
             disk = _load_disk_cache(date_str)
@@ -354,7 +371,7 @@ _HTML = """
           <strong>S1</strong> Career BA vs today's pitcher (under &lt; .250, N/A passes) &nbsp;|&nbsp;
           <strong>S2</strong> Lifetime H/A BA vs today's opponent (under &lt; .225) &nbsp;|&nbsp;
           <strong>S3</strong> 2026 H/A BA (under &lt; .250) &nbsp;|&nbsp;
-          <strong>L7</strong> Last 7 games BA (all locations) &nbsp;|&nbsp;
+          <strong>L7</strong> Last 7 games BA — must be under .250 &nbsp;|&nbsp;
           <strong>Ranked #1 → coldest bat (S2 + S3 + L7)</strong>
         </p>
       </div>
@@ -409,14 +426,9 @@ window.onload = () => {
   const params = new URLSearchParams(window.location.search);
   const urlTok = params.get('token');
   if (urlTok) { localStorage.setItem(KEY, urlTok); window.history.replaceState({}, '', window.location.pathname); }
-  const fd = new FormData();
-  fd.append('username', 'higgi'); fd.append('password', 'Elbowlake77');
-  fetch('/api/login', { method: 'POST', body: fd })
-    .then(r => r.json()).then(d => {
-      token = d.access_token; username = d.username || 'higgi';
-      localStorage.setItem('mlb_token', token); localStorage.setItem('mlb_user', username);
-      showDashboard();
-    }).catch(() => showDashboard());
+  token = localStorage.getItem(KEY) || '';
+  if (!token) { window.location.href = 'https://www.moneypicksarena.com'; return; }
+  showDashboard();
 };
 
 async function doLogin(e) {
@@ -461,7 +473,7 @@ async function startRun() {
   show('run-spinner'); disableRunBtn(true);
   try {
     const forceParam = new URLSearchParams(window.location.search).get('force') === 'true' ? '&force=true' : '';
-    const r = await fetch(`/api/run?date_str=${dateStr}${forceParam}`, { method: 'POST' });
+    const r = await fetch(`/api/run?date_str=${dateStr}${forceParam}&token=${encodeURIComponent(token)}`, { method: 'POST' });
     if (!r.ok) { const e = await r.json(); throw new Error(e.detail || 'Run failed'); }
     const { task_id } = await r.json();
     openSSE(task_id);
