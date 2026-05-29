@@ -655,7 +655,7 @@ function showResults(result) {
 function _csvCell(v){
   if(v==null) return '';
   var s=String(v);
-  if(/[",\n\r]/.test(s)) s='"'+s.replace(/"/g,'""')+'"';
+  if(/[",]/.test(s)||s.indexOf(String.fromCharCode(10))>=0||s.indexOf(String.fromCharCode(13))>=0) s='"'+s.replace(/"/g,'""')+'"';
   return s;
 }
 function _csvOdds(v){ return v==null?'':((v>0?'+':'')+v); }
@@ -699,8 +699,8 @@ function downloadPicksCSV(){
       pick, (line!=null?line:''), _csvOdds(odds), '', detail]);
   });
   if(rows.length<=1){ alert('No picks to download yet.'); return; }
-  var csv=rows.map(function(row){return row.map(_csvCell).join(',');}).join('\r\n');
-  var blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8;'});
+  var csv=rows.map(function(row){return row.map(_csvCell).join(',');}).join(String.fromCharCode(13)+String.fromCharCode(10));
+  var blob=new Blob([String.fromCharCode(65279)+csv],{type:'text/csv;charset=utf-8;'});
   var url=URL.createObjectURL(blob);
   var a=document.createElement('a');
   a.href=url; a.download='mlb-picks-'+(date||'today')+'.csv';
