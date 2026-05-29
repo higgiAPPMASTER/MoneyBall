@@ -671,18 +671,15 @@ function downloadPicksCSV(){
   var rows=[['Category','Rank','Player','Team','Pos','Side','Opponent','Pitcher','Pick','Line','Odds','Lineup','Detail']];
   (r.top9||[]).forEach(function(p,i){
     rows.push(['Top Pick', i+1, p.full_name||p.name||'', p.team||'', p.pos||'', p.side||'', p.opp||'', p.pitcher||'',
-      'To Record a Hit (Over 0.5)', '0.5', _csvOdds(p.hit_odds), _csvLineup(p.lineup_status),
-      p.total!=null?('Score '+p.total):'']);
+      'To Record a Hit (Over 0.5)', '0.5', _csvOdds(p.hit_odds), _csvLineup(p.lineup_status), '']);
   });
   (r.also_ran||[]).forEach(function(p,i){
     rows.push(['Money Ball', i+1, p.full_name||p.name||'', p.team||'', p.pos||'', p.side||'', p.opp||'', p.pitcher||'',
-      'To Record a Hit (Over 0.5)', '0.5', _csvOdds(p.hit_odds), _csvLineup(p.lineup_status),
-      p.total!=null?('Score '+p.total):'']);
+      'To Record a Hit (Over 0.5)', '0.5', _csvOdds(p.hit_odds), _csvLineup(p.lineup_status), '']);
   });
   (r.under_picks||[]).forEach(function(p,i){
-    var detail=(p.under_score!=null?('Under score '+p.under_score):'');
-    if(p.tb_under_odds!=null) detail+=(detail?' | ':'')+'TB U1.5 '+_csvOdds(p.tb_under_odds);
-    rows.push(['Under Pick', i+1, p.name||'', '', '', p.side||'', p.opp||'', p.pitcher||'',
+    var detail=(p.tb_under_odds!=null?('TB U1.5 '+_csvOdds(p.tb_under_odds)):'');
+    rows.push(['Under Pick', i+1, p.name||'', p.team||'', '', p.side||'', p.opp||'', p.pitcher||'',
       'Under 1.5 Hits', '1.5', _csvOdds(p.under_odds), _csvLineup(p.lineup_status), detail]);
   });
   var pk=(r.pitcher_k&&r.pitcher_k.all)||[];
