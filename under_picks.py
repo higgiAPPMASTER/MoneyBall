@@ -305,6 +305,7 @@ def run_under_picks(run_date: str, team_schedule: dict, emit=None) -> list:
         s3 = fetch_step3_ba(batter_id, side, season)
         if s3["ba"] is None or s3["ba"] >= 0.250: continue
         l7 = _get_last7_ba(batter_id)
+        if l7["ba"] is not None and l7["ba"] > 0.250: continue
         l7_ba = l7["ba"] if l7["ba"] is not None else s3["ba"]
         under_score = round((s2["ba"] + s3["ba"] + l7_ba) * 1000)
         picks.append({"name": name, "pos": "—", "side": side, "opp": opp_name,
