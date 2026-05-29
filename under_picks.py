@@ -206,7 +206,7 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
             r2 = requests.get(
                 f"https://api.the-odds-api.com/v4/sports/baseball_mlb/events/{ev['id']}/odds",
                 params={"apiKey": ODDS_API_KEY, "regions": "us",
-                        "markets": "batter_hits,batter_hits_alternate",
+                        "markets": "batter_hits,batter_hits_alternate,batter_total_bases,batter_total_bases_alternate",
                         "oddsFormat": "american"}, timeout=15)
             if r2.status_code != 200: continue
             all_bms = r2.json().get("bookmakers", [])
@@ -259,7 +259,24 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
                             entry["over_odds"] = price
                         elif side == "Under" and entry["under_odds"] is None:
                             entry["under_odds"] = price
+            # Under 1.5 TOTAL BASES odds for the same players, shown alongside the
+            # hits line (pays more because a double/HR busts it even on one hit).
+            # Same all-books union + PREFERRED order; first Under price seen wins.
+            tb_under: dict = {}
+            for book in ordered_books:
+                for mkt in book.get("markets", []):
+                    if mkt.get("key") not in ("batter_total_bases", "batter_total_bases_alternate"): continue
+                    for oc in mkt.get("outcomes", []):
+                        player = oc.get("description", "").strip()
+                        pt     = oc.get("point")
+                        side   = oc.get("name", "")
+                        price  = oc.get("price")
+                        if not player or pt != 1.5 or side != "Under" or price is None: continue
+                        nk = _norm_name(player)
+                        if nk not in tb_under:
+                            tb_under[nk] = price
             for nk, entry in event_entries.items():
+                entry["tb_under_odds"] = tb_under.get(nk)
                 seen.setdefault(nk, entry)
 
         _log(emit, f"  ✅ {len(seen)} players on 1.5 hits line | {len(HIT_ODDS)} players with 0.5 hit odds")
@@ -329,7 +346,8 @@ def run_under_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                       "pitcher": pitcher_name, "s1_disp": s1["display"],
                       "s1_ab": s1["ab"], "s2": s2, "s3": s3, "l7": l7,
                       "lineup_status": "TBD", "under_score": under_score,
-                      "under_odds": c.get("under_odds"), "over_odds": c.get("over_odds")})
+                      "under_odds": c.get("under_odds"), "over_odds": c.get("over_odds"),
+                      "tb_under_odds": c.get("tb_under_odds")})
         _log(emit, f"  ✅ UNDER: {name:<22}  S1:{s1['display']:<14}  S2:{s2['display']}  S3:{s3['display']}")
 
     picks.sort(key=lambda x: x["under_score"])
