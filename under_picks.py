@@ -15,6 +15,7 @@ import time
 from datetime import date, datetime, timezone
 
 from mlb_stats_splits import fetch_step2_ba, fetch_step3_ba
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 ODDS_API_KEY = os.environ.get("ODDS_API_KEY", "")
 
@@ -312,20 +313,24 @@ def run_under_picks(run_date: str, team_schedule: dict, emit=None) -> list:
     _log(emit, "  ✅ Teams resolved")
     _log(emit, f"  Evaluating {len(candidates)} candidates…")
 
-    picks = []
-    for c in candidates:
+    # Evaluate candidates in parallel (≤8 threads). Each worker is independent —
+    # it does up to 4 MLB Stats API calls with short-circuit filters — and the
+    # shared splits _CACHE / id maps are GIL-safe (worst case = harmless dup
+    # fetch). Logs are emitted from the main thread as futures complete so the
+    # live progress feed stays intact.
+    def _eval_candidate(c):
         name      = c["name"]
         home_team = c["home_team"]
         away_team = c["away_team"]
         batter_id   = id_map.get(name)
         player_team = team_map.get(batter_id, "") if batter_id else ""
-        if not batter_id or not player_team: continue
+        if not batter_id or not player_team: return None
         if _team_match(player_team, home_team):
             side, opp_name = "HOME", away_team
         elif _team_match(player_team, away_team):
             side, opp_name = "AWAY", home_team
         else:
-            continue
+            return None
         pitcher_name, pitcher_id = "TBD", None
         for pteam, pinfo in pitchers.items():
             if _team_match(pteam, opp_name):
@@ -333,23 +338,37 @@ def run_under_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 pitcher_id   = pinfo.get("id")
                 break
         s1 = _get_s1_vs_pitcher(batter_id, pitcher_id)
-        if s1["ba"] is not None and s1["ab"] > 0 and s1["ba"] >= 0.250: continue
+        if s1["ba"] is not None and s1["ab"] > 0 and s1["ba"] >= 0.250: return None
         s2 = fetch_step2_ba(batter_id, side, opp_name)
-        if s2["ba"] is None or s2["ba"] >= 0.225: continue
+        if s2["ba"] is None or s2["ba"] >= 0.225: return None
         s3 = fetch_step3_ba(batter_id, side, season)
-        if s3["ba"] is None or s3["ba"] >= 0.250: continue
+        if s3["ba"] is None or s3["ba"] >= 0.250: return None
         l7 = _get_last7_ba(batter_id)
-        if l7["ba"] is not None and l7["ba"] > 0.250: continue
+        if l7["ba"] is not None and l7["ba"] > 0.250: return None
         l7_ba = l7["ba"] if l7["ba"] is not None else s3["ba"]
         under_score = round((s2["ba"] + s3["ba"] + l7_ba) * 1000)
-        picks.append({"name": name, "pos": "—", "side": side, "opp": opp_name,
-                      "pitcher": pitcher_name, "s1_disp": s1["display"],
-                      "s1_ab": s1["ab"], "s2": s2, "s3": s3, "l7": l7,
-                      "lineup_status": "TBD", "under_score": under_score,
-                      "under_odds": c.get("under_odds"), "over_odds": c.get("over_odds"),
-                      "tb_under_odds": c.get("tb_under_odds")})
-        _log(emit, f"  ✅ UNDER: {name:<22}  S1:{s1['display']:<14}  S2:{s2['display']}  S3:{s3['display']}")
+        return {"name": name, "pos": "—", "side": side, "opp": opp_name,
+                "pitcher": pitcher_name, "s1_disp": s1["display"],
+                "s1_ab": s1["ab"], "s2": s2, "s3": s3, "l7": l7,
+                "lineup_status": "TBD", "under_score": under_score,
+                "under_odds": c.get("under_odds"), "over_odds": c.get("over_odds"),
+                "tb_under_odds": c.get("tb_under_odds")}
 
-    picks.sort(key=lambda x: x["under_score"])
+    picks = []
+    with ThreadPoolExecutor(max_workers=8) as _ex:
+        _futs = {_ex.submit(_eval_candidate, c): c for c in candidates}
+        for _fut in as_completed(_futs):
+            try:
+                pick = _fut.result()
+            except Exception as _exc:
+                pick = None
+                _log(emit, f"  ⚠️ {_futs[_fut].get('name', '?')} — eval failed: {_exc}")
+            if pick:
+                picks.append(pick)
+                _log(emit, f"  ✅ UNDER: {pick['name']:<22}  S1:{pick['s1_disp']:<14}  S2:{pick['s2']['display']}  S3:{pick['s3']['display']}")
+
+    # Sort coldest first; name as a deterministic tie-breaker since workers now
+    # finish out of order.
+    picks.sort(key=lambda x: (x["under_score"], x["name"]))
     _log(emit, f"✅ Under Picks: {len(picks)} picks found")
     return picks
