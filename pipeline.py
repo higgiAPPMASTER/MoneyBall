@@ -7,7 +7,7 @@ import os, sys, time, json, requests
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from fic_cache        import get_step1_players_or_scrape
+from fic_cache        import get_step1_players_or_scrape, slate_has_tbd
 from mlb_roster       import build_player_roster
 from mlb_stats_splits import fetch_step2_ba, fetch_step3_ba, prefetch_game_logs
 
@@ -468,7 +468,8 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         "stats": {"step1_count": len(top30), "games": len(team_schedule) // 2,
                   "elapsed": elapsed, "picks": len(top9),
                   "under_count": len(under_picks_list),
-                  "pitcher_k_count": len(pitcher_k_result.get("picks", []))},
+                  "pitcher_k_count": len(pitcher_k_result.get("picks", [])),
+                  "has_tbd": slate_has_tbd(run_date)},
     }
     emit({"type": "done", "result": result})
     return result
