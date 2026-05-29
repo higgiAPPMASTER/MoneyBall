@@ -19,8 +19,11 @@ def _disk_cache_path(date_str: str) -> str:
 
 def _save_disk_cache(date_str: str, result: dict):
     try:
-        with open(_disk_cache_path(date_str), "w") as f:
+        p = _disk_cache_path(date_str)
+        tmp = f"{p}.{os.getpid()}.tmp"
+        with open(tmp, "w") as f:
             json.dump(result, f)
+        os.replace(tmp, p)  # atomic swap — readers never see a half-written file
         # Remove cache files older than 3 days
         for old in _glob.glob(os.path.join(_CACHE_DIR, "*.json")):
             bn = os.path.basename(old).replace(".json", "")
@@ -890,3 +893,104 @@ async def serve_spa(admin: str = ""):
         "</head>",
         f'<script>window.IS_ADMIN = {js_flag};</script></head>', 1)
     return HTMLResponse(html)
+
+
+# ── Daily auto-run scheduler ────────────────────────────────────────────────
+# Runs the pipeline automatically twice a day so today's cache is warm before
+# anyone opens the app — no cold pipeline wait for users (or the admin). Needs
+# the always-on (paid) Render plan; on a sleeping free instance the thread is
+# paused while the app is asleep. Runs at 11:00 and 14:00 ET — the 14:00 pass
+# catches starters that were still TBD at 11:00.
+import threading as _threading
+import time as _time
+from datetime import datetime as _datetime
+
+try:
+    from zoneinfo import ZoneInfo as _ZoneInfo
+    _ET = _ZoneInfo("America/New_York")
+except Exception:
+    _ET = None  # fall back to server local time if zoneinfo unavailable
+
+_AUTO_RUN_SLOTS = [(11, 0), (14, 0)]   # (hour, minute) in ET
+_AUTO_RUN_WINDOW_MIN = 180             # catch-up window after a slot (minutes)
+_AUTO_RUN_RETRY_SEC = 300              # wait between retries after a failure
+_auto_run_done: set = set()            # slot keys that completed (e.g. "2026-05-29-11-0")
+_auto_run_next: dict = {}              # slot key -> monotonic time of next allowed retry
+
+
+def _auto_run_pipeline(date_str: str, label: str):
+    """Run the pipeline for date_str and cache it — same path as a manual run,
+    minus the SSE task plumbing. Safe to call from the scheduler thread."""
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from pipeline import run_pipeline
+    try:
+        print(f"[auto-run] {label} — running pipeline for {date_str}")
+        result = run_pipeline(date_str, emit=lambda ev: None)
+        # Don't freeze the cache while any starter is still TBD — let the next
+        # load (or the next slot) rebuild so a late-named starter gets picked up.
+        if not result.get("stats", {}).get("has_tbd"):
+            _cache[date_str] = result
+            _save_disk_cache(date_str, result)
+            print(f"[auto-run] {label} — cached {date_str}")
+        else:
+            print(f"[auto-run] {label} — {date_str} still has TBD starters; not frozen")
+        try:
+            baked = {**result, "date": date_str}
+            inject = (
+                '<script>window.__INITIAL_PICKS__ = '
+                + json.dumps(baked).replace('</', '<\\/')
+                + ';</script></head>'
+            )
+            snapshot_html = _HTML.replace('</head>', inject, 1)
+            push_picks_to_replit("mlb", baked, html=snapshot_html)
+        except Exception as _e:
+            print(f"[auto-run] replit push failed: {_e}")
+        return True  # pipeline completed (cache may be deferred if starters TBD)
+    except Exception as exc:
+        import traceback
+        print(f"[auto-run] {label} failed: {exc}\n{traceback.format_exc()}")
+        return False  # real failure — let the loop retry within the window
+
+
+def _scheduler_loop():
+    while True:
+        try:
+            now = _datetime.now(_ET) if _ET else _datetime.now()
+            ds = now.strftime("%Y-%m-%d")
+            now_min = now.hour * 60 + now.minute
+            mono = _time.monotonic()
+            for (h, m) in _AUTO_RUN_SLOTS:
+                key = f"{ds}-{h}-{m}"
+                if key in _auto_run_done:
+                    continue
+                # Catch-up window: fire any time from the slot until N minutes
+                # later, so a deploy/restart/delay near the slot minute doesn't
+                # skip the day's run entirely.
+                elapsed = now_min - (h * 60 + m)
+                if not (0 <= elapsed <= _AUTO_RUN_WINDOW_MIN):
+                    continue
+                # After a failure we back off before retrying within the window.
+                if mono < _auto_run_next.get(key, 0):
+                    continue
+                if _auto_run_pipeline(ds, f"{h:02d}:{m:02d} ET"):
+                    _auto_run_done.add(key)       # done for the day (success)
+                else:
+                    _auto_run_next[key] = mono + _AUTO_RUN_RETRY_SEC  # retry soon
+            # keep the tracking sets from growing forever — drop anything not today
+            # (mutate in place — never rebind these module-level names here)
+            if len(_auto_run_done) > 50:
+                _auto_run_done.intersection_update({k for k in _auto_run_done if k.startswith(ds)})
+            if len(_auto_run_next) > 50:
+                for _k in [k for k in _auto_run_next if not k.startswith(ds)]:
+                    _auto_run_next.pop(_k, None)
+        except Exception as _e:
+            print(f"[scheduler] loop error: {_e}")
+        _time.sleep(30)
+
+
+@app.on_event("startup")
+def _start_auto_run_scheduler():
+    t = _threading.Thread(target=_scheduler_loop, name="mlb-autorun", daemon=True)
+    t.start()
+    print("[scheduler] auto-run thread started — slots 11:00 & 14:00 ET")
