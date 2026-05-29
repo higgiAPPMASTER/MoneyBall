@@ -350,6 +350,7 @@ _HTML = """
       </div>
       <div style="text-align:center;margin-bottom:12px">
         <button class="btn-primary" id="run-btn" onclick="startRun()">Run Picks</button>
+        <button class="btn-primary admin-only" id="force-btn" onclick="startRun(true)" style="margin-left:10px;background:#dc2626;color:#fff" title="Bypass cache and rebuild today's picks from scratch">Force Refresh</button>
       </div>
       <div id="run-spinner" class="hidden" style="margin-top:12px;color:#6b7280;font-size:13px">
         <span class="spinner"></span> Analyzing player histories…
@@ -517,14 +518,16 @@ function showDashboard() {
   hide('progress-card'); hide('results-card');
 }
 
-async function startRun() {
+async function startRun(force=false) {
   const dateStr = document.getElementById('date-picker').value;
   if (!dateStr) { alert('Please select a date.'); return; }
+  if (force && !window.IS_ADMIN) { return; }
   clearLog(); hide('results-card');
   show('progress-card'); setProgress(0, '');
   show('run-spinner'); disableRunBtn(true);
   try {
-    const forceParam = new URLSearchParams(window.location.search).get('force') === 'true' ? '&force=true' : '';
+    const urlForce = new URLSearchParams(window.location.search).get('force') === 'true';
+    const forceParam = (force || urlForce) ? '&force=true' : '';
     const r = await fetch(`/api/run?date_str=${dateStr}${forceParam}&token=${encodeURIComponent(token)}`, { method: 'POST' });
     if (!r.ok) { const e = await r.json(); throw new Error(e.detail || 'Run failed'); }
     const { task_id } = await r.json();
@@ -974,6 +977,8 @@ function hide(id){document.getElementById(id)?.classList.add('hidden');}
 function disableRunBtn(d){
   const b=document.getElementById('run-btn');
   b.disabled=d; b.textContent=d?"Running...":"Run Picks";
+  const fb=document.getElementById('force-btn');
+  if(fb) fb.disabled=d;
 }
 </script>
 <footer style="text-align:center;padding:32px 24px;color:#4b5563;font-size:.78rem;border-top:1px solid #1c1c1c;margin-top:24px;font-family:'Source Sans Pro',sans-serif">
@@ -1000,11 +1005,12 @@ async def serve_spa(admin: str = "", token: str = ""):
 
 
 # ── Daily auto-run scheduler ────────────────────────────────────────────────
-# Runs the pipeline automatically twice a day so today's cache is warm before
-# anyone opens the app — no cold pipeline wait for users (or the admin). Needs
-# the always-on (paid) Render plan; on a sleeping free instance the thread is
-# paused while the app is asleep. Runs at 11:00 and 14:00 ET — the 14:00 pass
-# catches starters that were still TBD at 11:00.
+# Runs the pipeline automatically three times a day so today's cache is warm
+# before anyone opens the app — no cold pipeline wait for users (or the admin).
+# Needs the always-on (paid) Render plan; on a sleeping free instance the thread
+# is paused while the app is asleep. Runs at 11:00, 14:00 and 17:40 ET — the
+# 14:00 pass catches starters still TBD at 11:00; the 17:40 pass refreshes odds
+# (under-hit & total-bases lines) that books post closer to game time.
 import threading as _threading
 import time as _time
 from datetime import datetime as _datetime
@@ -1015,7 +1021,7 @@ try:
 except Exception:
     _ET = None  # fall back to server local time if zoneinfo unavailable
 
-_AUTO_RUN_SLOTS = [(11, 0), (14, 0)]   # (hour, minute) in ET
+_AUTO_RUN_SLOTS = [(11, 0), (14, 0), (17, 40)]   # (hour, minute) in ET
 _AUTO_RUN_WINDOW_MIN = 180             # catch-up window after a slot (minutes)
 _AUTO_RUN_RETRY_SEC = 300              # wait between retries after a failure
 _auto_run_done: set = set()            # slot keys that completed (e.g. "2026-05-29-11-0")
@@ -1097,4 +1103,4 @@ def _scheduler_loop():
 def _start_auto_run_scheduler():
     t = _threading.Thread(target=_scheduler_loop, name="mlb-autorun", daemon=True)
     t.start()
-    print("[scheduler] auto-run thread started — slots 11:00 & 14:00 ET")
+    print("[scheduler] auto-run thread started — slots 11:00, 14:00 & 17:40 ET")
