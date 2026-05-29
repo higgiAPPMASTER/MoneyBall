@@ -4,26 +4,22 @@ fic_cache.py — Step 1: Player pool builder.
 SOURCE 1 (PRIMARY): MLB Stats API — career BA vs today's probable pitcher.
         Filter: min 4 AB, min .250 BA. Parallelised (8 threads, fast).
 
-SOURCE 2: Baseball Musings hot streaks — adds players on active hit streaks.
+SOURCE 2: MLB Stats API — active hitting streaks (full team scan).
+        Scans every hitter on a team playing today, computes current
+        hit streak from the official game log. Filter: MIN_STREAK+ games.
+        No website scraping.
 
 SOURCE 3: MLB Stats API last-7-day hot hitters — .300+ BA, 5+ AB, always works.
 
 All sources merged + deduplicated, sorted by BA descending.
 """
-import json, os, time, requests
+import json, os, requests
 from datetime import date as _date, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from bs4 import BeautifulSoup
 
-CACHE_DIR = os.environ.get("CACHE_DIR", "/tmp")
-MLB_API   = "https://statsapi.mlb.com/api/v1"
-BM_URL    = "https://www.baseballmusings.com/cgi-bin/CurStreak.py"
-
-_BROWSER_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/124.0.0.0 Safari/537.36"
-)
+CACHE_DIR  = os.environ.get("CACHE_DIR", "/tmp")
+MLB_API    = "https://statsapi.mlb.com/api/v1"
+MIN_STREAK = 5   # minimum current hit-streak length to qualify (Source 2)
 
 
 def _cache_path(run_date: str) -> str:
@@ -157,83 +153,92 @@ def _get_mlb_api_players(run_date: str, min_ab: int, min_ba: float,
     return results
 
 
-# ── SOURCE 2: Baseball Musings hot streaks ────────────────────────────
+# ── SOURCE 2: MLB Stats API — active hitting streaks (full team scan) ──
 
-def _get_bm_players(run_date: str, emit=None) -> list:
+def _check_streak(batter_id, batter_name, pos, pitcher_short,
+                  season, min_streak) -> dict | None:
+    """Compute current hit streak from the game log. Returns dict or None."""
+    try:
+        r = requests.get(f"{MLB_API}/people/{batter_id}/stats",
+            params={"stats": "gameLog", "group": "hitting",
+                    "season": season, "sportId": 1}, timeout=8)
+        splits = r.json().get("stats", [{}])[0].get("splits", [])
+        streak = 0
+        s_h = 0
+        s_ab = 0
+        for sp in reversed(splits):          # most recent game first
+            st = sp.get("stat", {})
+            ab = int(st.get("atBats", 0) or 0)
+            h  = int(st.get("hits", 0) or 0)
+            if ab == 0:
+                continue                     # no AB (pinch run / DNP) — skip, don't break
+            if h >= 1:
+                streak += 1
+                s_h    += h
+                s_ab   += ab
+            else:
+                break
+        if streak >= min_streak:
+            ba = round(s_h / s_ab, 3) if s_ab else 0.0
+            return {
+                "batter":  _short_name(batter_name),
+                "pos":     pos,
+                "pitcher": pitcher_short,
+                "ab": s_ab, "h": s_h, "hr": 0, "ba": ba,
+                "streak": streak,
+                "source": "mlb_streak",
+            }
+    except Exception:
+        pass
+    return None
+
+
+def _get_streak_players(run_date: str, emit=None, min_streak=MIN_STREAK) -> list:
     def log(msg):
         if emit: emit({"type": "log", "msg": msg})
 
-    log("⬇️  Source 2: Baseball Musings hot streaks...")
-    matchups_by_team = {}
-    try:
-        r = requests.get(f"{MLB_API}/schedule",
-            params={"date": run_date, "sportId": 1, "hydrate": "probablePitcher"},
-            timeout=15)
-        for dd in r.json().get("dates", []):
-            for g in dd.get("games", []):
-                ht = g["teams"]["home"]; at = g["teams"]["away"]
-                hp = ht.get("probablePitcher", {}); ap = at.get("probablePitcher", {})
-                if hp: matchups_by_team[at["team"]["id"]] = _short_name(hp.get("fullName",""))
-                if ap: matchups_by_team[ht["team"]["id"]] = _short_name(ap.get("fullName",""))
-    except Exception:
-        pass
+    log("⬇️  Source 2: MLB Stats API — active hitting streaks (full team scan)...")
+    matchups = _get_schedule_with_pitchers(run_date)
+    season   = run_date[:4]
 
-    try:
-        r = requests.get(BM_URL, headers={"User-Agent": _BROWSER_UA}, timeout=12)
-        soup   = BeautifulSoup(r.text, "lxml")
-        tables = soup.find_all("table")
-        table  = tables[1] if len(tables) > 1 else (tables[0] if tables else None)
-        if not table:
-            raise ValueError("no table")
-    except Exception as exc:
-        log(f"   ⚠️ Baseball Musings unavailable ({exc})")
-        return []
-
-    bm = []
-    for row in table.find_all("tr")[1:]:
-        cols = [td.get_text(strip=True) for td in row.find_all("td")]
-        if len(cols) < 10:
-            continue
+    tasks = []
+    seen  = set()
+    for m in matchups:
         try:
-            ba = _parse_avg(cols[9])
-            ab = int(cols[2])
-        except (ValueError, IndexError):
-            continue
-        if ba >= 0.250:
-            bm.append({"full_name": cols[0], "ab": ab, "ba": ba})
-
-    results = []
-    for p in bm:
-        try:
-            r = requests.get(f"{MLB_API}/people/search",
-                params={"names": p["full_name"], "sportId": 1}, timeout=8)
-            people = r.json().get("people", [])
-            active = [x for x in people if x.get("active")]
-            if not active:
-                continue
-            pid = active[0]["id"]
-            r2  = requests.get(f"{MLB_API}/people/{pid}",
-                params={"hydrate": "currentTeam"}, timeout=8)
-            info    = r2.json()["people"][0]
-            team_id = info.get("currentTeam", {}).get("id")
-            pos     = info.get("primaryPosition", {}).get("abbreviation", "")
-            if not team_id or team_id not in matchups_by_team:
-                continue
-            results.append({
-                "batter":  _short_name(p["full_name"]),
-                "pos":     pos,
-                "pitcher": matchups_by_team[team_id],
-                "ab":      p["ab"],
-                "h":       int(p["ab"] * p["ba"]),
-                "hr":      0,
-                "ba":      p["ba"],
-                "source":  "baseball_musings",
-            })
+            r = requests.get(f"{MLB_API}/teams/{m['team_id']}/roster",
+                params={"rosterType": "active"}, timeout=10)
+            for pl in r.json().get("roster", []):
+                if pl.get("position", {}).get("code") == "1":
+                    continue   # skip pitchers
+                bid = pl["person"]["id"]
+                if bid in seen:
+                    continue
+                seen.add(bid)
+                tasks.append((
+                    bid,
+                    pl["person"]["fullName"],
+                    pl.get("position", {}).get("abbreviation", ""),
+                    m["pitcher_short"],
+                ))
         except Exception:
             pass
-        time.sleep(0.1)
 
-    log(f"✅ Source 2: {len(results)} hot streak players playing today")
+    log(f"   Scanning {len(tasks)} hitters for active streaks (8 threads)...")
+    results = []
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futs = {
+            ex.submit(_check_streak, bid, name, pos, pshort, season, min_streak): None
+            for bid, name, pos, pshort in tasks
+        }
+        for fut in as_completed(futs, timeout=120):
+            try:
+                r = fut.result()
+                if r:
+                    results.append(r)
+            except Exception:
+                pass
+
+    log(f"✅ Source 2: {len(results)} players on {min_streak}+ game hitting streaks")
     return results
 
 
@@ -336,7 +341,7 @@ def get_step1_players_or_scrape(run_date=None, min_ab=4, min_ba=0.250, emit=None
     log("🔍 Building Step 1 player pool...")
 
     s1 = _get_mlb_api_players(run_date, min_ab, min_ba, emit)
-    s2 = _get_bm_players(run_date, emit)
+    s2 = _get_streak_players(run_date, emit)
     s3 = _get_recent_hot_hitters(run_date, emit)
 
     combined = _merge(s1, s2, s3)
