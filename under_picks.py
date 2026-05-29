@@ -163,7 +163,7 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
         _log(emit, "⚠️  ODDS_API_KEY not set — Under Picks skipped")
         return []
 
-    PREFERRED = ["draftkings", "fanduel", "betmgm", "williamhill_us", "pointsbetus"]
+    PREFERRED = ["draftkings", "betmgm", "espnbet", "hardrockbet", "fanduel", "williamhill_us", "pointsbetus"]
     tomorrow  = (time.strftime("%Y-%m-%d",
                   time.gmtime(time.mktime(time.strptime(run_date, "%Y-%m-%d")) + 86400)))
     try:
@@ -210,8 +210,11 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
                         "oddsFormat": "american"}, timeout=15)
             if r2.status_code != 200: continue
             all_bms = r2.json().get("bookmakers", [])
-            # Use preferred book for 1.5-line under picks; scan ALL books for 0.5 hit odds
-            bm = next((b for b in all_bms if b.get("key") in PREFERRED), all_bms[0] if all_bms else None)
+            # Use preferred book for 1.5-line under picks; scan ALL books for 0.5 hit odds.
+            # Honor PREFERRED *order* (not API order) so a two-way book that posts the
+            # Under side on the 1.5 line (e.g. DraftKings) wins over one that only posts Over.
+            _bm_map = {b.get("key"): b for b in all_bms}
+            bm = next((_bm_map[k] for k in PREFERRED if k in _bm_map), all_bms[0] if all_bms else None)
             # Collect 0.5-line Over odds from every bookmaker (first seen per player)
             for bm_any in all_bms:
                 for mkt in bm_any.get("markets", []):
@@ -311,7 +314,8 @@ def run_under_picks(run_date: str, team_schedule: dict, emit=None) -> list:
         picks.append({"name": name, "pos": "—", "side": side, "opp": opp_name,
                       "pitcher": pitcher_name, "s1_disp": s1["display"],
                       "s1_ab": s1["ab"], "s2": s2, "s3": s3, "l7": l7,
-                      "lineup_status": "TBD", "under_score": under_score})
+                      "lineup_status": "TBD", "under_score": under_score,
+                      "under_odds": c.get("under_odds"), "over_odds": c.get("over_odds")})
         _log(emit, f"  ✅ UNDER: {name:<22}  S1:{s1['display']:<14}  S2:{s2['display']}  S3:{s3['display']}")
 
     picks.sort(key=lambda x: x["under_score"])
