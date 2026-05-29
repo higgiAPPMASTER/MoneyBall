@@ -91,7 +91,7 @@ def fetch_step4_consistency(player_id, side: str, opp_name: str = "",
 
 from day_night_check  import get_game_time_type, find_espn_player_id, fetch_day_night_ba
 
-TOP_N_ERA_PITCHERS = 10
+TOP_N_ERA_PITCHERS = 20
 MIN_IP_STARTER     = 20.0
 
 
