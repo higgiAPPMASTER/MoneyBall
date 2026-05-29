@@ -59,6 +59,30 @@ def _verify_hub_token(token: str) -> bool:
         return True
     except Exception:
         return False
+
+
+# Admin auto-detect: the hub stamps the logged-in user's email into the token
+# as "sub". If that email matches the admin email, the picks page turns on the
+# admin view automatically — on any device, no key needed. Defaults to the
+# owner's email; can be overridden with an ADMIN_EMAIL env var.
+_ADMIN_EMAIL = _os.environ.get("ADMIN_EMAIL", "higgi117711@gmail.com").strip().lower()
+
+
+def _token_email(token: str) -> str:
+    """Return the email (sub) from a valid hub token, else ''."""
+    if not token or len(token.split(".")) != 3 or not _JWT_SECRET:
+        return ""
+    try:
+        payload = _jose_jwt.decode(token, _JWT_SECRET, algorithms=["HS256"])
+        return str(payload.get("sub", "")).strip().lower()
+    except Exception:
+        return ""
+
+
+def _is_admin_token(token: str) -> bool:
+    return bool(_ADMIN_EMAIL) and _token_email(token) == _ADMIN_EMAIL
+
+
 from replit_push import push_picks_to_replit  # pushes daily picks to Replit DB
 
 
@@ -179,6 +203,11 @@ async def get_results(date_str: str):
     if date_str in _cache:
         return _cache[date_str]
     raise HTTPException(status_code=404, detail="No results for this date.")
+
+@app.get("/api/whoami")
+async def whoami(request: Request, token: str = ""):
+    tok = token or request.headers.get("Authorization", "").replace("Bearer ", "").strip()
+    return {"is_admin": _is_admin_token(tok)}
 
 _HTML = """
 <!DOCTYPE html>
@@ -416,6 +445,22 @@ let username = localStorage.getItem('mlb_user') || '';
 let es = null;
 
 window.onload = () => {
+  // Parse the hub login token first (URL or stored) so admin detection runs in
+  // BOTH snapshot mode and the normal flow — never skipped by an early return.
+  const KEY = '__mpa_token';
+  const params = new URLSearchParams(window.location.search);
+  const urlTok = params.get('token');
+  if (urlTok) { localStorage.setItem(KEY, urlTok); window.history.replaceState({}, '', window.location.pathname); }
+  token = localStorage.getItem(KEY) || '';
+  // Auto-enable the admin view if this logged-in user is the admin — works on
+  // any device with no key. (Cosmetic toggle; the underlying data is the same.)
+  // Silently no-ops if there is no token or the endpoint isn't reachable.
+  if (!window.IS_ADMIN && token) {
+    fetch('/api/whoami?token=' + encodeURIComponent(token))
+      .then(r => r.json())
+      .then(d => { if (d && d.is_admin) { window.IS_ADMIN = true; document.body.classList.add('is-admin'); } })
+      .catch(() => {});
+  }
   // Snapshot mode: the Replit hub serves this page with picks already baked in
   // as window.__INITIAL_PICKS__ (set just before </head>). When present, skip
   // the login + /api/run flow entirely and render straight from the snapshot.
@@ -428,11 +473,6 @@ window.onload = () => {
     showResults(r);
     return;
   }
-  const KEY = '__mpa_token';
-  const params = new URLSearchParams(window.location.search);
-  const urlTok = params.get('token');
-  if (urlTok) { localStorage.setItem(KEY, urlTok); window.history.replaceState({}, '', window.location.pathname); }
-  token = localStorage.getItem(KEY) || '';
   if (!token) { window.location.href = 'https://www.moneypicksarena.com'; return; }
   showDashboard();
 };
@@ -884,9 +924,11 @@ function disableRunBtn(d){
 """
 
 @app.get("/")
-async def serve_spa(admin: str = ""):
+async def serve_spa(admin: str = "", token: str = ""):
     import os as _os
-    is_admin = bool(admin) and admin == _os.environ.get("INTERNAL_API_TOKEN", "__none__")
+    # Admin turns on via EITHER the legacy ?admin=KEY link OR a hub login token
+    # whose email matches the admin (so it just works when the owner logs in).
+    is_admin = (bool(admin) and admin == _os.environ.get("INTERNAL_API_TOKEN", "__none__")) or _is_admin_token(token)
     body_cls = "is-admin" if is_admin else ""
     js_flag = "true" if is_admin else "false"
     html = _HTML.replace('<body class="min-h-screen">', f'<body class="min-h-screen {body_cls}">').replace(
