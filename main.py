@@ -199,7 +199,18 @@ async def stream_task(task_id: str):
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"})
 
 @app.get("/api/results/{date_str}")
-async def get_results(date_str: str):
+async def get_results(date_str: str, request: Request, token: str = ""):
+    # Read-only: serve saved picks from memory or disk. Never triggers a pipeline
+    # run, so any member can load the picks we already have on file. Loading from
+    # disk first keeps it working after a Render cold start wipes the in-memory cache.
+    # Subscriber-only: enforce the hub token like /api/run so picks aren't scrapeable.
+    tok = token or request.headers.get("Authorization", "").replace("Bearer ", "").strip()
+    if not _verify_hub_token(tok):
+        raise HTTPException(status_code=401, detail="Subscription required — please log in via moneypicksarena.com")
+    if date_str not in _cache:
+        disk = _load_disk_cache(date_str)
+        if disk is not None:
+            _cache[date_str] = disk
     if date_str in _cache:
         return _cache[date_str]
     raise HTTPException(status_code=404, detail="No results for this date.")
@@ -507,7 +518,8 @@ _HTML = """
         <input type="date" id="date-picker" max=""/>
       </div>
       <div style="text-align:center;margin-bottom:12px">
-        <button class="btn-primary admin-only" id="run-btn" onclick="startRun()">Run Picks</button>
+        <button class="btn-primary" id="get-btn" onclick="getPicks()">🎯 Get Picks</button>
+        <button class="btn-primary admin-only" id="run-btn" onclick="startRun()" style="margin-left:10px">Run Picks</button>
         <button class="btn-primary admin-only" id="force-btn" onclick="startRun(true)" style="margin-left:10px;background:#dc2626;color:#fff" title="Bypass cache and rebuild today's picks from scratch">Force Refresh</button>
       </div>
       <div id="run-spinner" class="hidden" style="margin-top:12px;color:#6b7280;font-size:13px">
@@ -688,6 +700,32 @@ function showDashboard() {
   const dp = document.getElementById('date-picker');
   if (dp) { dp.value = today; dp.min = today; dp.max = tomorrow; }
   hide('progress-card'); hide('results-card');
+}
+
+// Get Picks: load the picks already saved on file for the chosen date and show
+// them. Read-only — never starts a pipeline run, so any member can use it.
+async function getPicks() {
+  const dateStr = document.getElementById('date-picker').value;
+  if (!dateStr) { alert('Please select a date.'); return; }
+  const btn = document.getElementById('get-btn');
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Loading…';
+  hide('results-card');
+  try {
+    const _mlbTok = localStorage.getItem('__mpa_token') || '';
+    const r = await fetch(`/api/results/${dateStr}?token=${encodeURIComponent(_mlbTok)}`);
+    if (r.status === 404) {
+      alert("Today's picks aren't ready yet — check back a little later.");
+      return;
+    }
+    if (!r.ok) throw new Error('Could not load picks. Please try again.');
+    const data = await r.json();
+    showResults(data);
+  } catch (err) {
+    alert(err.message || 'Could not load picks. Please try again.');
+  } finally {
+    btn.disabled = false; btn.textContent = orig;
+  }
 }
 
 async function startRun(force=false) {
