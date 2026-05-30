@@ -532,6 +532,19 @@ _HTML = """
           &#11015; Download CSV
         </button>
       </div>
+      <div class="card p-6 admin-only" id="parlayCard">
+        <div class="section-hdr" style="color:#f59e0b">🎰 Auto Parlay Builder <span style="font-size:.7rem;color:#777;font-weight:400">admin only</span></div>
+        <p class="text-xs text-slate-400 mb-3" style="margin-top:-4px">Pulls from any play today — hits, Under 1.5's, Pitcher K's — best available odds priced in.</p>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <label class="text-slate-300" style="font-weight:700">Legs</label>
+          <select id="parlayLegs" style="background:#0f0f0f;border:1px solid #262626;border-radius:8px;color:#fff;padding:8px 10px">
+            <option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option><option>9</option><option>10</option>
+          </select>
+          <button class="btn-primary" onclick="buildParlay()">Build Best Parlay</button>
+          <button class="btn-primary" onclick="generateParlay()" style="background:#1f2937;color:#fff">🎲 Generate New</button>
+        </div>
+        <div id="parlayResult" style="margin-top:16px"></div>
+      </div>
       <div class="card p-6" id="player-search-card">
         <div class="section-hdr">🔍 Player Lookup</div>
         <p class="text-xs text-slate-400 mb-3">Type a hitter or pitcher's name — see where they rank and why.</p>
@@ -864,6 +877,77 @@ function downloadPicksCSV(){
   a.href=url; a.download='mlb-picks-'+(date||'today')+'.csv';
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+// ── Auto Parlay Builder (admin) — pulls from hits, Under 1.5's, Pitcher K's ──
+function _amToDec(am){ if(am==null||am==='') return null; var a=parseFloat(am); if(isNaN(a)||a===0) return null; return a>0 ? 1+a/100 : 1+100/Math.abs(a); }
+function _decToAm(d){ if(!d||d<=1) return null; return d>=2 ? '+'+Math.round((d-1)*100) : '-'+Math.round(100/(d-1)); }
+function _fmtOdds(o){ if(o==null||o==='') return null; var a=parseFloat(o); if(isNaN(a)) return null; return (a>0?'+':'')+a; }
+function _shuffleP(a){ for(var i=a.length-1;i>0;i--){var j=Math.floor(Math.random()*(i+1));var t=a[i];a[i]=a[j];a[j]=t;} return a; }
+function _legScoreP(c){ return (c.hasOdds?1:0)*1e9 + (c.conf||0)*1e4 + (c.dec?Math.min(c.dec,11)*100:0); }
+function _mlbPool(){
+  var r=window._lastResult; if(!r) return [];
+  function clampConf(base,idx){ var c=base-idx*3; return c<40?40:c; }
+  var cands=[];
+  (r.top9||[]).forEach(function(p,i){
+    cands.push({type:'HIT',dir:'OVER',player:(p.full_name||p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'Hits',line:0.5,odds:(p.hit_odds!=null?p.hit_odds:''),conf:clampConf(95,i),reason:'🎯 To record a hit vs '+(p.opp||'')});
+  });
+  (r.also_ran||[]).forEach(function(p,i){
+    cands.push({type:'HIT',dir:'OVER',player:(p.full_name||p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'Hits',line:0.5,odds:(p.hit_odds!=null?p.hit_odds:''),conf:clampConf(82,i),reason:'🎯 To record a hit vs '+(p.opp||'')});
+  });
+  (r.under_picks||[]).forEach(function(p,i){
+    var useTB=(p.under_odds==null && p.tb_under_odds!=null);
+    cands.push({type:'UNDER',dir:'UNDER',player:(p.name||''),team:(p.team||''),opp:(p.opp||''),stat:(useTB?'Total Bases':'Hits'),line:1.5,odds:(useTB?p.tb_under_odds:(p.under_odds!=null?p.under_odds:'')),conf:clampConf(90,i),reason:'⬇️ Under 1.5 '+(useTB?'total bases':'hits')+(p.under_score!=null?(' · score '+p.under_score):'')+' vs '+(p.opp||'')});
+  });
+  var pk=(r.pitcher_k&&r.pitcher_k.all)||[];
+  pk.filter(function(p){return p.pick;}).sort(function(a,b){var ga=Math.abs((a.avg_k||0)-(a.line||0)),gb=Math.abs((b.avg_k||0)-(b.line||0));return gb-ga;}).forEach(function(p,i){
+    var hasSugg=(p.sugg_line!=null);
+    var dir=hasSugg?'OVER':p.pick;
+    var line=hasSugg?p.sugg_line:p.line;
+    var odds=hasSugg?p.sugg_odds:(p.pick==='OVER'?p.over_odds:p.under_odds);
+    cands.push({type:'K',dir:dir,player:(p.name||''),team:'',opp:(p.opp||''),stat:'Ks',line:line,odds:(odds!=null?odds:''),conf:clampConf(90,i),reason:'⚾ '+dir+' '+(line!=null?line:'')+' Ks · avg '+(p.avg_k!=null?p.avg_k+'K':'—')+(p.era?(' · ERA '+p.era):'')});
+  });
+  cands.forEach(function(c){ c.dec=_amToDec(c.odds); c.hasOdds=!!c.dec; });
+  var byPlayer={};
+  cands.forEach(function(c){ if(!c.player) return; var cur=byPlayer[c.player]; if(!cur||_legScoreP(c)>_legScoreP(cur)) byPlayer[c.player]=c; });
+  return Object.keys(byPlayer).map(function(k){return byPlayer[k];}).sort(function(a,b){return _legScoreP(b)-_legScoreP(a);});
+}
+function closeParlay(){ var o=document.getElementById('parlayResult'); if(o) o.innerHTML=''; }
+function buildParlay(){ _renderParlay(false); }
+function generateParlay(){ _renderParlay(true); }
+function _renderParlay(randomize){
+  var sel=document.getElementById('parlayLegs');
+  var n=parseInt(sel?sel.value:'3',10)||3;
+  var out=document.getElementById('parlayResult'); if(!out) return;
+  if(!window._lastResult){ out.innerHTML='<div style="color:#888;padding:10px">Run picks first, then build a parlay.</div>'; return; }
+  var cands=_mlbPool();
+  if(cands.length<n){ out.innerHTML='<div style="color:#f87171;padding:10px">Only '+cands.length+' qualifying play'+(cands.length!==1?'s':'')+' on the board. Pick a smaller parlay.</div>'; return; }
+  var legs = randomize ? _shuffleP(cands.slice()).slice(0,n).sort(function(a,b){return _legScoreP(b)-_legScoreP(a);}) : cands.slice(0,n);
+  var dec=1, priced=0, missing=0;
+  legs.forEach(function(l){ if(l.dec){dec*=l.dec;priced++;}else{missing++;} });
+  var am = priced? _decToAm(dec) : null;
+  var payout = priced? (100*dec) : null;
+  var dirColor=function(d){return d==='OVER'?'#63cab7':d==='UNDER'?'#ff8a65':'#9ca3af';};
+  var tagBg={HIT:'rgba(245,158,11,.16)',UNDER:'rgba(255,138,101,.16)',K:'rgba(99,202,183,.16)'};
+  var tagFg={HIT:'#f59e0b',UNDER:'#ff8a65',K:'#63cab7'};
+  var tagLbl={HIT:'HIT',UNDER:'UNDER 1.5',K:'PITCHER K'};
+  var rows=legs.map(function(l,idx){var fo=_fmtOdds(l.odds);return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #1a1a1a">'
+    +'<div style="min-width:0">'
+    +'<div style="font-weight:800;color:#fff;font-size:.85rem">'+(idx+1)+'. '+l.player+' <span style="color:#777;font-size:.7rem">'+(l.team?l.team+' ':'')+'vs '+l.opp+'</span> <span style="background:'+(tagBg[l.type]||'#222')+';color:'+(tagFg[l.type]||'#aaa')+';padding:1px 6px;border-radius:4px;font-size:.6rem;font-weight:800">'+(tagLbl[l.type]||l.type)+'</span></div>'
+    +'<div style="color:#999;font-size:.72rem;margin-top:2px">'+l.reason+'</div>'
+    +'</div>'
+    +'<div style="text-align:right;white-space:nowrap">'
+    +'<div style="color:'+dirColor(l.dir)+';font-weight:900;font-size:.8rem">'+l.dir+' '+l.stat+'</div>'
+    +'<div style="color:#fbbf24;font-size:.72rem;font-weight:800">'+(fo||'odds N/A')+'</div>'
+    +'</div></div>';}).join('');
+  var header='<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid #262626;background:#121212">'
+    +'<span style="font-weight:800;color:#ccc;font-size:.74rem">'+(randomize?'RANDOM MIX':'TOP PLAYS')+'</span>'
+    +'<span onclick="closeParlay()" title="Close" style="cursor:pointer;color:#888;font-weight:900;font-size:1.15rem;line-height:1;padding:0 6px">×</span></div>';
+  var summary='<div style="display:flex;justify-content:space-between;align-items:center;padding:12px;background:linear-gradient(135deg,rgba(245,158,11,.12),rgba(245,158,11,.02));border-top:1px solid #262626">'
+    +'<div style="font-weight:900;color:#f59e0b">'+n+'-LEG PARLAY</div>'
+    +'<div style="text-align:right">'+(am?('<div style="font-weight:900;color:#63cab7;font-size:1.05rem">'+am+'</div><div style="color:#999;font-size:.7rem">$100 → $'+payout.toFixed(2)+(missing?(' · '+priced+'/'+n+' legs priced'):'')+'</div>'):('<div style="color:#888;font-size:.78rem">No book odds available for these legs</div>'))+'</div>'
+    +'</div>';
+  out.innerHTML='<div style="background:#0e0e0e;border:1px solid #262626;border-radius:12px;overflow:hidden">'+header+rows+summary+'</div>';
 }
 
 function _fmtBA(v){return (v==null)?'—':(typeof v==='number'?v.toFixed(3):v);}
