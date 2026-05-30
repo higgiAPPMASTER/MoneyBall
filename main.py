@@ -204,6 +204,152 @@ async def get_results(date_str: str):
         return _cache[date_str]
     raise HTTPException(status_code=404, detail="No results for this date.")
 
+
+# ── Any-player lookup ────────────────────────────────────────────────
+# Lets the search bar grade ANY hitter in today's games (not just the
+# analyzed pool). Quick verdict from career BA vs today's pitcher (S1)
+# + recent H/A hit rate vs opponent (S4). On-demand: no run-time cost.
+_LOOKUP_PLAYERS: dict = {}   # season -> {name_lower: {"id","team_id","full"}}
+_LOOKUP_TEAMS: dict = {}     # season -> {team_id: name}
+
+
+def _load_lookup_index(season: str):
+    import requests as _rq
+    MLB = "https://statsapi.mlb.com/api/v1"
+    if season not in _LOOKUP_TEAMS:
+        try:
+            tr = _rq.get(f"{MLB}/teams", params={"sportId": 1, "season": season},
+                         timeout=15).json()
+            _LOOKUP_TEAMS[season] = {t["id"]: t.get("name", "") for t in tr.get("teams", [])}
+        except Exception:
+            _LOOKUP_TEAMS[season] = {}
+    if season not in _LOOKUP_PLAYERS:
+        idx = {}
+        try:
+            pr = _rq.get(f"{MLB}/sports/1/players", params={"season": season},
+                         timeout=20).json()
+            for p in pr.get("people", []):
+                nm  = (p.get("fullName") or "").strip()
+                tid = (p.get("currentTeam") or {}).get("id")
+                if nm and tid:
+                    idx[nm.lower()] = {"id": p["id"], "team_id": tid, "full": nm}
+        except Exception:
+            pass
+        _LOOKUP_PLAYERS[season] = idx
+    return _LOOKUP_PLAYERS[season], _LOOKUP_TEAMS[season]
+
+
+@app.get("/api/lookup")
+def api_lookup(name: str, date_str: str):
+    # Sync def → Starlette runs this in a threadpool, so the blocking MLB
+    # API calls below never stall the event loop / SSE progress stream.
+    import requests as _rq
+    MLB = "https://statsapi.mlb.com/api/v1"
+    q = (name or "").strip().lower()
+    if len(q) < 3:
+        return {"found": False, "msg": "Type at least 3 letters of a name."}
+
+    season = (date_str or "")[:4] or "2026"
+    players, teams = _load_lookup_index(season)
+
+    # Resolve: exact full name → unambiguous substring → unambiguous last name
+    match = players.get(q)
+    if not match:
+        cands = [v for k, v in players.items() if q in k]
+        if len(cands) == 1:
+            match = cands[0]
+        elif len(cands) > 1:
+            ln = [v for k, v in players.items() if k.split() and k.split()[-1] == q]
+            if len(ln) == 1:
+                match = ln[0]
+            else:
+                names = sorted({v["full"] for v in cands})[:6]
+                return {"found": False,
+                        "msg": "Multiple players match — try a full name: " + ", ".join(names)}
+    if not match:
+        return {"found": False, "msg": f'No MLB player found for "{name}".'}
+
+    pid = match["id"]; team_id = match["team_id"]; full = match["full"]
+
+    from fic_cache import _get_all_games
+    side = opp_id = opp_pid = opp_pname = None
+    for g in _get_all_games(date_str):
+        if g["home_id"] == team_id:
+            side, opp_id, opp_pid, opp_pname = "HOME", g["away_id"], g["away_pitcher_id"], g.get("away_pitcher_short"); break
+        if g["away_id"] == team_id:
+            side, opp_id, opp_pid, opp_pname = "AWAY", g["home_id"], g["home_pitcher_id"], g.get("home_pitcher_short"); break
+    if not side:
+        return {"found": True, "verdict": "NOT_PLAYING", "full_name": full,
+                "team": teams.get(team_id, ""),
+                "msg": f"{full} isn't in a game on {date_str}."}
+
+    opp_name = teams.get(opp_id, "the opponent")
+
+    # S1 — career BA vs today's opposing pitcher
+    s1_ba = s1_ab = None
+    if opp_pid:
+        try:
+            r = _rq.get(f"{MLB}/people/{pid}/stats",
+                params={"stats": "vsPlayerTotal", "group": "hitting",
+                        "opposingPlayerId": opp_pid}, timeout=8).json()
+            for sg in r.get("stats", []):
+                if "vsPlayer" in sg.get("type", {}).get("displayName", ""):
+                    for sp in sg.get("splits", []):
+                        st = sp.get("stat", {})
+                        ab = int(st.get("atBats", 0) or 0)
+                        if ab:
+                            s1_ab = ab
+                            av = str(st.get("avg", ""))
+                            if av.startswith("."):
+                                s1_ba = float(f"0{av}")
+                            elif av not in ("", "-", ".---"):
+                                try: s1_ba = float(av)
+                                except ValueError: s1_ba = None
+        except Exception:
+            pass
+
+    # S4 — recent H/A hit rate vs opponent
+    s4 = {"games": 0, "score": 0, "display": "N/A"}
+    try:
+        from pipeline import fetch_step4_consistency
+        s4 = fetch_step4_consistency(pid, side, opp_name) or s4
+    except Exception:
+        pass
+
+    games_n = int(s4.get("games", 0) or 0)
+    rate    = int(s4.get("score", 0) or 0)
+    pname   = opp_pname or "today's starter"
+    parts, signal = [], 0
+    if s1_ba is not None and s1_ab:
+        parts.append(f"career {s1_ba:.3f} ({s1_ab} AB) vs {pname}")
+        if   s1_ba >= 0.300: signal += 2
+        elif s1_ba >= 0.250: signal += 1
+        elif s1_ba <  0.200: signal -= 1
+    if games_n > 0:
+        side_word = "home" if side == "HOME" else "away"
+        parts.append(f"{s4.get('display')} {side_word} games with a hit vs {opp_name} ({rate}%)")
+        if   rate >= 70: signal += 2
+        elif rate >= 60: signal += 1
+        elif rate <  50: signal -= 1
+
+    if not parts:
+        verdict, headline = "UNKNOWN", "Not enough history to call it today"
+    elif signal >= 2:
+        verdict, headline = "GOOD", "Good choice for a hit today"
+    elif signal >= 1:
+        verdict, headline = "DECENT", "Decent shot at a hit today"
+    else:
+        verdict, headline = "WEAK", "Not a strong choice for a hit today"
+
+    return {
+        "found": True, "verdict": verdict, "headline": headline,
+        "full_name": full, "team": teams.get(team_id, ""),
+        "side": side, "opp": opp_name, "pitcher": pname,
+        "s1": (round(s1_ba, 3) if s1_ba is not None else None), "s1_ab": s1_ab,
+        "s4_display": s4.get("display"), "s4_pct": rate, "s4_games": games_n,
+        "blurb": " · ".join(parts) if parts else "No matchup history available yet.",
+    }
+
 @app.get("/api/whoami")
 async def whoami(request: Request, token: str = ""):
     tok = token or request.headers.get("Authorization", "").replace("Bearer ", "").strip()
@@ -759,9 +905,10 @@ function runPlayerSearch(raw){
   });
 
   if(!hits.length){
-    box.innerHTML='<div class="text-slate-500 text-sm">No match for "<strong>'+raw+'</strong>". They may not be playing today or weren\\'t in the analyzed pool. '
-      +'If searching a pitcher, expand "All today\\'s pitchers" below the K Picks table. '
-      +'Hitters DQ\\'d before S1 (no FIC matchup or no lineup yet) won\\'t appear in the DQ list either.</div>';
+    box.innerHTML='<div class="text-slate-500 text-sm" style="margin-bottom:10px">"<strong>'+raw+'</strong>" isn\\'t in today\\'s analyzed picks. Check any hitter in today\\'s games for a quick hit verdict:</div>'
+      +'<button onclick="lookupAnyPlayer()" style="background:#fbbf24;color:#111;border:none;border-radius:8px;padding:8px 16px;font-weight:700;cursor:pointer">Look up this player →</button>'
+      +'<div class="text-slate-600 text-xs" style="margin-top:8px">Searching a pitcher? Expand "All today\\'s pitchers" below the K Picks table.</div>'
+      +'<div id="lookup-any-result" style="margin-top:12px"></div>';
     return;
   }
 
@@ -814,6 +961,33 @@ function runPlayerSearch(raw){
     html+='</div>';
     return html;
   }).join('');
+}
+
+async function lookupAnyPlayer(){
+  var inp=document.getElementById('player-search-input');
+  var name=(inp?inp.value:'').trim();
+  var out=document.getElementById('lookup-any-result');
+  if(!out) return;
+  if(name.length<3){ out.innerHTML='<div class="text-slate-500 text-sm">Type at least 3 letters.</div>'; return; }
+  var date=(window._lastResult&&window._lastResult.date)||'';
+  out.innerHTML='<div class="text-slate-500 text-sm">Checking '+name+' across today\\'s games…</div>';
+  try{
+    var r=await fetch('/api/lookup?name='+encodeURIComponent(name)+'&date_str='+encodeURIComponent(date));
+    var d=await r.json();
+    if(!d.found){ out.innerHTML='<div class="text-slate-400 text-sm">'+(d.msg||'No match.')+'</div>'; return; }
+    if(d.verdict==='NOT_PLAYING'){ out.innerHTML='<div class="text-slate-400 text-sm">'+(d.msg||'')+'</div>'; return; }
+    var color=d.verdict==='GOOD'?'#22c55e':d.verdict==='DECENT'?'#fbbf24':d.verdict==='UNKNOWN'?'#9ca3af':'#ef4444';
+    var html='<div style="background:#0f0f0f;border:1px solid #262626;border-left:4px solid '+color+';border-radius:10px;padding:14px 18px">';
+    html+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+    html+='<span style="color:#fff;font-weight:700;font-size:1.05rem">'+(d.full_name||name)+'</span>';
+    if(d.side) html+='<span class="badge '+(d.side==='HOME'?'badge-home':'badge-away')+'">'+d.side+' vs '+(d.opp||'')+'</span>';
+    html+='</div>';
+    html+='<div style="color:'+color+';font-weight:700;font-size:1rem;margin-bottom:6px">'+(d.headline||'')+'</div>';
+    html+='<div style="color:#cbd5e1;font-size:.85rem">'+(d.blurb||'')+'</div>';
+    if(d.pitcher) html+='<div style="color:#94a3b8;font-size:.8rem;margin-top:6px">Facing '+d.pitcher+'</div>';
+    html+='</div>';
+    out.innerHTML=html;
+  }catch(e){ out.innerHTML='<div class="text-red-400 text-sm">Lookup failed. Try again.</div>'; }
 }
 
 function toggleGameMLB(n){
@@ -933,6 +1107,7 @@ function _mlbCard(p, rank, dim) {
         <span style="font-size:.78rem;color:#64748b">${p.pitcher?'vs '+p.pitcher:''}</span>
         ${lineupBadge(p.lineup_status)}
       </div>
+      ${p.blurb ? `<div style="margin-top:5px;font-size:.72rem;color:#94a3b8;line-height:1.5;font-style:italic">${p.blurb}</div>` : ''}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
         <span style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">Hit Odds</span>
         <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odds}</span>
