@@ -442,18 +442,27 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         s5_score   = round(dn_ba * 1000) if dn_ba else 0
         r["s5"]    = {"ba": dn_ba, "score": s5_score,
                       "display": f"{dn_ba:.3f}" if dn_ba else "N/A"}
-        s4_pts = (s4.get("score", 0) or 0) * 10
-        # S5 (day/night BA) is a FILTER ONLY — used to DQ below the cutoff, never
-        # added to the score. Keep s5_score on r["s5"] for display, not in total.
-        r["total"] = (r.get("total", 0) or 0) + s4_pts
+        # S5 (day/night BA) IS added to the total — total = (S1+S2+S3+S5)×1000 — and
+        # also filters (DQ below the cutoff). S4 (H/A hit rate vs opp) is NOT in the
+        # total; it drives the final HIT-list order (see sort below).
+        r["total"] = (r.get("total", 0) or 0) + s5_score
         emit({"type": "log",
-              "msg": f"  ✅ {r['name']}: S4 {s4['display']} (+{s4_pts}) | "
-                     f"S5 {r['s5']['display']} (filter only) → total {r['total']}"})
+              "msg": f"  ✅ {r['name']}: S4 {s4['display']} ({s4['score']}%) ranking signal | "
+                     f"S5 {r['s5']['display']} (+{s5_score}) → total {r['total']}"})
         r["blurb"] = _build_blurb(r)
         s4_qualified.append(r)
 
     emit({"type": "log", "msg": f"S4 filter: {len(s4_qualified)} pass, {len(s4_dq)} DQ'd (<50%)"})
-    all_ranked = sorted(s4_qualified, key=lambda x: x["total"], reverse=True)
+    # Final HIT-list order is driven by S4 (H/A hit rate vs THIS opponent): higher hit
+    # rate ranks first (10/10 & 9/9 above 4/6 & 5/7). Ties broken by game count (10/10
+    # above 4/4 — more proven), then by the model total (S1+S2+S3) as a final tiebreak.
+    all_ranked = sorted(
+        s4_qualified,
+        key=lambda x: ((x.get("s4") or {}).get("score", 0),
+                       (x.get("s4") or {}).get("games", 0),
+                       x.get("total", 0)),
+        reverse=True,
+    )
     top9     = all_ranked[:10]
     also_ran = all_ranked[10:]
 
