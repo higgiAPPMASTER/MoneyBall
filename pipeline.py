@@ -91,32 +91,82 @@ def fetch_step4_consistency(player_id, side: str, opp_name: str = "",
 
 from day_night_check  import get_game_time_type, find_espn_player_id, fetch_day_night_ba
 
-TOP_N_ERA_PITCHERS = 20
-MIN_IP_STARTER     = 20.0
+TOP_N_ERA_PITCHERS = 30
+MIN_IP_STARTER     = 30.0
+MIN_GS_STARTER     = 5
 
 
-def _get_top_era_starters(season: str, n: int = TOP_N_ERA_PITCHERS, min_ip: float = MIN_IP_STARTER):
+def _get_active_player_ids(season: str) -> set:
+    """IDs on every team's CURRENT active roster.
+       A player on the IL (or optioned to the minors) is dropped from the
+       active roster, so this set is used to exclude injured pitchers."""
     try:
+        from concurrent.futures import ThreadPoolExecutor
+        teams = requests.get(
+            "https://statsapi.mlb.com/api/v1/teams",
+            params={"sportId": 1, "season": season}, timeout=14,
+        ).json().get("teams", [])
+        team_ids = [t["id"] for t in teams if t.get("sport", {}).get("id") == 1]
+
+        def _roster(tid):
+            try:
+                r = requests.get(
+                    f"https://statsapi.mlb.com/api/v1/teams/{tid}/roster",
+                    params={"rosterType": "active"}, timeout=10,
+                ).json()
+                return {p["person"]["id"] for p in r.get("roster", [])}
+            except Exception:
+                return set()
+
+        ids = set()
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            for s in ex.map(_roster, team_ids):
+                ids |= s
+        return ids
+    except Exception:
+        return set()
+
+
+def _get_top_era_starters(season: str, n: int = TOP_N_ERA_PITCHERS,
+                          min_ip: float = MIN_IP_STARTER, min_gs: int = MIN_GS_STARTER):
+    """Top-N lowest-ERA active STARTING pitchers.
+       Scans ALL pitchers (playerPool=All), keeps only starters (started the
+       majority of their appearances, >= min_gs starts and >= min_ip IP),
+       drops anyone not on a current active roster (i.e. on the IL / optioned),
+       then sorts by ERA ascending and returns the top N. This includes elite
+       arms (e.g. Wheeler) who fall below MLB's innings qualifier, while
+       excluding relievers, small samples, and injured pitchers."""
+    try:
+        active_ids = _get_active_player_ids(season)
         r = requests.get(
             "https://statsapi.mlb.com/api/v1/stats",
             params={"stats": "season", "group": "pitching", "gameType": "R",
-                    "season": season, "sportId": 1, "limit": 300,
-                    "sortStat": "earnedRunAverage", "order": "asc"},
+                    "season": season, "sportId": 1, "limit": 800,
+                    "sortStat": "earnedRunAverage", "order": "asc",
+                    "playerPool": "All"},
             timeout=14,
         )
         splits = r.json().get("stats", [{}])[0].get("splits", [])
-        qualified = []
+        starters = []
         for sp in splits:
             stat = sp.get("stat", {})
+            pl   = sp.get("player", {})
             try:
                 ip  = float(stat.get("inningsPitched", 0))
                 era = float(stat.get("era", 99.0))
             except (ValueError, TypeError):
                 continue
-            if ip >= min_ip:
-                qualified.append({"name": sp.get("player", {}).get("fullName", ""),
-                                   "era": era, "ip": ip})
-        top_n = qualified[:n]
+            gs = int(stat.get("gamesStarted", 0) or 0)
+            g  = int(stat.get("gamesPlayed", 0) or 0)
+            if gs < min_gs or ip < min_ip:          # small sample → skip
+                continue
+            if gs < g * 0.5:                         # mostly reliever → skip
+                continue
+            if active_ids and pl.get("id") not in active_ids:  # on IL → skip
+                continue
+            starters.append({"name": pl.get("fullName", ""), "era": era, "ip": ip})
+        starters.sort(key=lambda p: p["era"])
+        top_n = starters[:n]
         last_name_set = set()
         for p in top_n:
             parts = p["name"].lower().split()
