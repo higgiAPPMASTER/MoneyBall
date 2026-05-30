@@ -137,6 +137,28 @@ def _pitcher_last_name(pitcher_raw: str) -> str:
     return last.lower()
 
 
+def _build_blurb(r):
+    parts = []
+    side_str = "home" if r.get("side") == "HOME" else "away"
+    pitcher  = (r.get("pitcher") or "").strip()
+    opp      = (r.get("opp") or "").strip()
+    s1 = r.get("s1")
+    if s1 and s1 > 0:
+        label = f"vs {pitcher}" if pitcher else "vs today's pitcher"
+        parts.append(f"Career .{round(s1 * 1000):03d} {label}")
+    s4 = r.get("s4") or {}
+    if s4.get("games", 0) >= 1:
+        hits_g = s4.get("hits_games", 0)
+        games  = s4.get("games", 0)
+        opp_str = f" vs {opp}" if opp else ""
+        parts.append(f"{hits_g} out of {games} {side_str} games with a hit{opp_str}")
+    s3 = r.get("s3") or {}
+    s3_ba = s3.get("ba")
+    if s3_ba and s3_ba > 0 and "✅" in (s3.get("flag") or ""):
+        parts.append(f".{round(s3_ba * 1000):03d} BA last 10 {side_str} games")
+    return " · ".join(parts)
+
+
 def run_pipeline(run_date: str, emit=None) -> dict:
     if emit is None:
         emit = lambda _: None
@@ -372,6 +394,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         emit({"type": "log",
               "msg": f"  ✅ {r['name']}: S4 {s4['display']} (+{s4_pts}) | "
                      f"S5 {r['s5']['display']} (filter only) → total {r['total']}"})
+        r["blurb"] = _build_blurb(r)
         s4_qualified.append(r)
 
     emit({"type": "log", "msg": f"S4 filter: {len(s4_qualified)} pass, {len(s4_dq)} DQ'd (<50%)"})
