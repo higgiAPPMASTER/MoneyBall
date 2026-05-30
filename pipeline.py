@@ -234,6 +234,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     team_schedule = {}
     for event in espn_r.get("events", []):
         comps = event.get("competitions", [{}])[0]
+        g_start = event.get("date", "")   # ISO UTC first-pitch time (e.g. 2026-05-30T23:05Z)
         home = away = None
         for t in comps.get("competitors", []):
             if t["homeAway"] == "home": home = t["team"]
@@ -241,10 +242,12 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         if home and away:
             team_schedule[home["displayName"]] = {
                 "side": "HOME", "opponent": away["displayName"],
-                "opp_slug": away["displayName"].lower().replace(" ", "-")}
+                "opp_slug": away["displayName"].lower().replace(" ", "-"),
+                "game_start": g_start}
             team_schedule[away["displayName"]] = {
                 "side": "AWAY", "opponent": home["displayName"],
-                "opp_slug": home["displayName"].lower().replace(" ", "-")}
+                "opp_slug": home["displayName"].lower().replace(" ", "-"),
+                "game_start": g_start}
     log(f"✅ {len(team_schedule) // 2} games found today")
 
     # ── Roster Lookup ─────────────────────────────────────────────────
@@ -276,6 +279,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                     break
         side     = sched.get("side", "")
         opp_name = sched.get("opponent", "")
+        game_start = sched.get("game_start", "")
 
         emit({"type": "progress", "current": i + 1, "total": len(top30), "name": name})
 
@@ -309,6 +313,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
             "s2": s2, "s3": s3, "total": total,
             "dq": bool(dq), "dq_reason": " & ".join(dq),
             "player_id": player_id,
+            "game_start": game_start,
         }
         results.append(player_result)
 
@@ -517,14 +522,16 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         emit({"type": "log", "msg": f"  ✅ Hit odds matched for {sum(1 for p in top9+also_ran if p.get('hit_odds') is not None)}/{len(top9)+len(also_ran)} picks"})
     except Exception as _exc:
         emit({"type": "log", "msg": f"⚠️ Hit odds enrichment skipped: {_exc}"})
-    # Inject team into each under pick (reverse-lookup from team_schedule)
+    # Inject team + first-pitch time into each under pick (reverse-lookup from team_schedule)
     for _up in under_picks_list:
         _side, _opp = _up.get("side", ""), _up.get("opp", "")
         for _t, _sched in team_schedule.items():
             if _sched.get("side") == _side and _sched.get("opponent") == _opp:
                 _up["team"] = _t
+                _up["game_start"] = _sched.get("game_start", "")
                 break
         _up.setdefault("team", "")
+        _up.setdefault("game_start", "")
 
     # ── Pitcher K Picks ───────────────────────────────────────────────
     try:
@@ -533,6 +540,23 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     except Exception as exc:
         emit({"type": "log", "msg": f"⚠️ Pitcher K Picks skipped: {exc}"})
         pitcher_k_result = {"picks": [], "all": []}
+
+    # Stamp first-pitch time on pitcher K picks so the frontend can hide started games.
+    # Pitcher team names come from the MLB Stats API; match them to the ESPN schedule
+    # (exact key first, else substring) to pull that game's start time.
+    def _game_start_for(team_name):
+        if not team_name:
+            return ""
+        s = team_schedule.get(team_name)
+        if s:
+            return s.get("game_start", "")
+        tl = team_name.lower()
+        for _k, _v in team_schedule.items():
+            if tl in _k.lower() or _k.lower() in tl:
+                return _v.get("game_start", "")
+        return ""
+    for _pk in (pitcher_k_result.get("picks", []) + pitcher_k_result.get("all", [])):
+        _pk["game_start"] = _game_start_for(_pk.get("team", ""))
 
     elapsed = round(time.time() - t_start, 1)
     result = {
