@@ -917,6 +917,10 @@ function _mlbPool(){
     cands.push({type:'K',dir:dir,player:(p.name||''),team:'',opp:(p.opp||''),stat:'Ks',line:line,odds:(odds!=null?odds:''),conf:clampConf(90,i),reason:'⚾ '+dir+' '+(line!=null?line:'')+' Ks · avg '+(p.avg_k!=null?p.avg_k+'K':'—')+(p.era?(' · ERA '+p.era):'')});
   });
   cands.forEach(function(c){ c.dec=_amToDec(c.odds); c.hasOdds=!!c.dec; });
+  // NO N/A LEGS: every parlay leg must be priced. Drops any leg with missing odds
+  // (HIT legs with no hit_odds, K legs with no odds). Under legs already required odds.
+  // To convert back, remove this filter line.
+  cands=cands.filter(function(c){ return c.hasOdds; });
   var byPlayer={};
   cands.forEach(function(c){ if(!c.player) return; var cur=byPlayer[c.player]; if(!cur||_legScoreP(c)>_legScoreP(cur)) byPlayer[c.player]=c; });
   return Object.keys(byPlayer).map(function(k){return byPlayer[k];}).sort(function(a,b){return _legScoreP(b)-_legScoreP(a);});
