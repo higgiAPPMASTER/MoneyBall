@@ -740,15 +740,41 @@ function handleEvent(ev) {
   }
 }
 
+// ── Live "game already started" filter ──────────────────────────────────────
+// A player is dropped once their game's first pitch (game_start, ISO UTC) is in the
+// past. Picks with no game_start (older cache from before this was deployed) are kept.
+function _started(p){
+  if(!p||!p.game_start) return false;
+  var t=Date.parse(p.game_start);
+  return !isNaN(t) && t<=Date.now();
+}
+// Returns a shallow copy of the result with started-game players removed from every
+// list the board renders from (cards, under, pitcher K). The original payload is left
+// untouched so re-filtering later (e.g. in the parlay pool) stays accurate.
+function _filterStarted(result){
+  if(!result) return result;
+  var r=Object.assign({},result);
+  function f(a){return (a||[]).filter(function(p){return !_started(p);});}
+  r.top9=f(r.top9); r.also_ran=f(r.also_ran); r.under_picks=f(r.under_picks);
+  if(r.pitcher_k){
+    r.pitcher_k=Object.assign({},r.pitcher_k);
+    r.pitcher_k.picks=f(r.pitcher_k.picks);
+    r.pitcher_k.all=f(r.pitcher_k.all);
+  }
+  return r;
+}
 function showResults(result) {
+  // Hide players whose game has already started so the cards, parlay, all-by-game view
+  // and CSV only show bettable plays. Re-run picks after deploy to populate game_start.
+  result = _filterStarted(result);
   window._lastResult = result;
   const { top9, stats, pitcher_k } = result;
   hide('also-ran-card'); hide('under-picks-card'); hide('pitcher-k-card');
 
   document.getElementById('stats-row').innerHTML = [
     statCard('🎯','Top Picks',top9.length),
-    statCard('⬇️','Under Picks',stats.under_count??0),
-    statCard('⚾','Pitcher K',stats.pitcher_k_count??0),
+    statCard('⬇️','Under Picks',(result.under_picks||[]).length),
+    statCard('⚾','Pitcher K',((result.pitcher_k||{}).picks||[]).length),
     statCard('⚾','Games Today',stats.games),
     statCard('🔍','Players Run',stats.step1_count),
     statCard('⏱️','Time (s)',stats.elapsed),
@@ -890,6 +916,8 @@ function _legScoreP(c){ return (c.hasOdds?1:0)*1e9 + (c.conf||0)*1e4 + (c.dec?Ma
 function _underOk(am){ if(am==null||am==='') return false; var a=parseFloat(am); if(isNaN(a)||a===0) return false; return a>=-500; }
 function _mlbPool(){
   var r=window._lastResult; if(!r) return [];
+  r=_filterStarted(r);  // re-check the clock on every build so games that started after
+                        // the page loaded also fall out of the parlay pool.
   function clampConf(base,idx){ var c=base-idx*3; return c<40?40:c; }
   var cands=[];
   (r.top9||[]).forEach(function(p,i){
