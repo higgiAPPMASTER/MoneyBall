@@ -105,6 +105,32 @@ async def health():
 async def test_statmuse():
     return {"ok": True, "message": "✅ MLB Stats API active"}
 
+_CRON_BUSY = False
+
+@app.api_route("/api/cron-run", methods=["GET", "POST"])
+async def cron_run(request: Request, date_str: str = ""):
+    # Cron-friendly trigger: authed by the static INTERNAL_API_TOKEN secret sent
+    # as a header (kept out of the URL so it isn't logged). No expiring hub login
+    # needed. Runs the pipeline + caches it so members can pull the picks, and
+    # wakes the free-tier app on Render. An in-flight guard blocks overlapping runs.
+    global _CRON_BUSY
+    import hmac
+    secret = os.environ.get("INTERNAL_API_TOKEN", "")
+    tok = request.headers.get("X-Internal-Token", "") or request.headers.get("Authorization", "").replace("Bearer ", "").strip()
+    if not secret or not hmac.compare_digest(tok or "", secret):
+        raise HTTPException(status_code=401, detail="Invalid cron token")
+    ds = date_str or date.today().isoformat()
+    if _CRON_BUSY:
+        return {"ran": False, "cached": ds in _cache, "date": ds, "reason": "already running"}
+    _CRON_BUSY = True
+    try:
+        await asyncio.to_thread(_auto_run_pipeline, ds, "cron")
+    finally:
+        _CRON_BUSY = False
+    cached = (ds in _cache) or bool(_load_disk_cache(ds))
+    return {"ran": True, "cached": cached, "date": ds}
+
+
 @app.post("/api/run")
 async def start_run(request: Request, date_str: str, force: bool = False, token: str = ""):
     tok = token or request.headers.get("Authorization", "").replace("Bearer ", "").strip()
