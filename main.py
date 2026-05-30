@@ -507,7 +507,7 @@ _HTML = """
         <input type="date" id="date-picker" max=""/>
       </div>
       <div style="text-align:center;margin-bottom:12px">
-        <button class="btn-primary" id="run-btn" onclick="startRun()">Run Picks</button>
+        <button class="btn-primary admin-only" id="run-btn" onclick="startRun()">Run Picks</button>
         <button class="btn-primary admin-only" id="force-btn" onclick="startRun(true)" style="margin-left:10px;background:#dc2626;color:#fff" title="Bypass cache and rebuild today's picks from scratch">Force Refresh</button>
       </div>
       <div id="run-spinner" class="hidden" style="margin-top:12px;color:#6b7280;font-size:13px">
