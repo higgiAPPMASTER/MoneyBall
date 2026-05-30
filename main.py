@@ -332,14 +332,26 @@ def api_lookup(name: str, date_str: str):
         elif rate >= 60: signal += 1
         elif rate <  50: signal -= 1
 
-    if not parts:
-        verdict, headline = "UNKNOWN", "Not enough history to call it today"
-    elif signal >= 2:
-        verdict, headline = "GOOD", "Good choice for a hit today"
-    elif signal >= 1:
-        verdict, headline = "DECENT", "Decent shot at a hit today"
+    # Data-sufficiency gate: a verdict needs a real sample behind it.
+    # "Enough" = 10+ career AB vs this pitcher, OR 3+ recent H/A games vs opp.
+    # Thin samples (e.g. 3 AB / 1 game) get a no-call instead of false confidence.
+    enough = (s1_ab or 0) >= 10 or games_n >= 3
+
+    if not parts or not enough:
+        verdict  = "INSUFFICIENT"
+        headline = "Not enough data to recommend this player today"
+        if parts:
+            blurb = " · ".join(parts) + " — too small a sample to call"
+        else:
+            blurb = "No matchup history available yet — can't call it today."
     else:
-        verdict, headline = "WEAK", "Not a strong choice for a hit today"
+        blurb = " · ".join(parts)
+        if signal >= 2:
+            verdict, headline = "GOOD", "Good choice for a hit today"
+        elif signal >= 1:
+            verdict, headline = "DECENT", "Decent shot at a hit today"
+        else:
+            verdict, headline = "WEAK", "Not a strong choice for a hit today"
 
     return {
         "found": True, "verdict": verdict, "headline": headline,
@@ -347,7 +359,7 @@ def api_lookup(name: str, date_str: str):
         "side": side, "opp": opp_name, "pitcher": pname,
         "s1": (round(s1_ba, 3) if s1_ba is not None else None), "s1_ab": s1_ab,
         "s4_display": s4.get("display"), "s4_pct": rate, "s4_games": games_n,
-        "blurb": " · ".join(parts) if parts else "No matchup history available yet.",
+        "blurb": blurb,
     }
 
 @app.get("/api/whoami")
@@ -976,7 +988,7 @@ async function lookupAnyPlayer(){
     var d=await r.json();
     if(!d.found){ out.innerHTML='<div class="text-slate-400 text-sm">'+(d.msg||'No match.')+'</div>'; return; }
     if(d.verdict==='NOT_PLAYING'){ out.innerHTML='<div class="text-slate-400 text-sm">'+(d.msg||'')+'</div>'; return; }
-    var color=d.verdict==='GOOD'?'#22c55e':d.verdict==='DECENT'?'#fbbf24':d.verdict==='UNKNOWN'?'#9ca3af':'#ef4444';
+    var color=d.verdict==='GOOD'?'#22c55e':d.verdict==='DECENT'?'#fbbf24':(d.verdict==='UNKNOWN'||d.verdict==='INSUFFICIENT')?'#9ca3af':'#ef4444';
     var html='<div style="background:#0f0f0f;border:1px solid #262626;border-left:4px solid '+color+';border-radius:10px;padding:14px 18px">';
     html+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
     html+='<span style="color:#fff;font-weight:700;font-size:1.05rem">'+(d.full_name||name)+'</span>';
