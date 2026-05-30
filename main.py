@@ -935,7 +935,23 @@ function _renderParlay(randomize){
   if(!window._lastResult){ out.innerHTML='<div style="color:#888;padding:10px">Run picks first, then build a parlay.</div>'; return; }
   var cands=_mlbPool();
   if(cands.length<n){ out.innerHTML='<div style="color:#f87171;padding:10px">Only '+cands.length+' qualifying play'+(cands.length!==1?'s':'')+' on the board. Pick a smaller parlay.</div>'; return; }
-  var legs = randomize ? _shuffleP(cands.slice()).slice(0,n).sort(function(a,b){return _legScoreP(b)-_legScoreP(a);}) : cands.slice(0,n);
+  var legs;
+  if(randomize){
+    var pool=cands.slice();
+    // FRESH LIST: for parlays of 5 legs or fewer, exclude the players from the parlay
+    // currently shown so back-to-back "Generate New" draws don't repeat players. Parlays
+    // of 6+ are exempt (pool too small). Falls back to the full pool if excluding would
+    // leave too few to fill the parlay. To revert, delete this block.
+    if(n<=5 && window._lastParlayPlayers && window._lastParlayPlayers.length){
+      var avoid=window._lastParlayPlayers;
+      var fresh=pool.filter(function(c){return avoid.indexOf(c.player)===-1;});
+      if(fresh.length>=n) pool=fresh;
+    }
+    legs=_shuffleP(pool).slice(0,n).sort(function(a,b){return _legScoreP(b)-_legScoreP(a);});
+  } else {
+    legs=cands.slice(0,n);
+  }
+  window._lastParlayPlayers=legs.map(function(l){return l.player;});
   var dec=1, priced=0, missing=0;
   legs.forEach(function(l){ if(l.dec){dec*=l.dec;priced++;}else{missing++;} });
   var am = priced? _decToAm(dec) : null;
