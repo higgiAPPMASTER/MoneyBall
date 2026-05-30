@@ -885,6 +885,9 @@ function _decToAm(d){ if(!d||d<=1) return null; return d>=2 ? '+'+Math.round((d-
 function _fmtOdds(o){ if(o==null||o==='') return null; var a=parseFloat(o); if(isNaN(a)) return null; return (a>0?'+':'')+a; }
 function _shuffleP(a){ for(var i=a.length-1;i>0;i--){var j=Math.floor(Math.random()*(i+1));var t=a[i];a[i]=a[j];a[j]=t;} return a; }
 function _legScoreP(c){ return (c.hasOdds?1:0)*1e9 + (c.conf||0)*1e4 + (c.dec?Math.min(c.dec,11)*100:0); }
+// Under 1.5 legs only qualify for the parlay at -500 or better (no -1000-type juice).
+// Applies to Under 1.5 legs ONLY — hit-to-record and Pitcher K legs are unfiltered.
+function _underOk(am){ if(am==null||am==='') return false; var a=parseFloat(am); if(isNaN(a)||a===0) return false; return a>=-500; }
 function _mlbPool(){
   var r=window._lastResult; if(!r) return [];
   function clampConf(base,idx){ var c=base-idx*3; return c<40?40:c; }
@@ -896,8 +899,14 @@ function _mlbPool(){
     cands.push({type:'HIT',dir:'OVER',player:(p.full_name||p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'Hits',line:0.5,odds:(p.hit_odds!=null?p.hit_odds:''),conf:clampConf(82,i),reason:'🎯 To record a hit vs '+(p.opp||'')});
   });
   (r.under_picks||[]).forEach(function(p,i){
-    var useTB=(p.under_odds==null && p.tb_under_odds!=null);
-    cands.push({type:'UNDER',dir:'UNDER',player:(p.name||''),team:(p.team||''),opp:(p.opp||''),stat:(useTB?'Total Bases':'Hits'),line:1.5,odds:(useTB?p.tb_under_odds:(p.under_odds!=null?p.under_odds:'')),conf:clampConf(90,i),reason:'⬇️ Under 1.5 '+(useTB?'total bases':'hits')+(p.under_score!=null?(' · score '+p.under_score):'')+' vs '+(p.opp||'')});
+    // Under 1.5 HITS leg — only when priced at -500 or better (drops -1000-type juice).
+    if(_underOk(p.under_odds)){
+      cands.push({type:'UNDER',dir:'UNDER',player:(p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'Hits',line:1.5,odds:p.under_odds,conf:clampConf(90,i),reason:'⬇️ Under 1.5 hits'+(p.under_score!=null?(' · score '+p.under_score):'')+' vs '+(p.opp||'')});
+    }
+    // Under 1.5 TOTAL BASES leg — its own candidate now that odds are posted, same -500 floor.
+    if(_underOk(p.tb_under_odds)){
+      cands.push({type:'UNDER',dir:'UNDER',player:(p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'Total Bases',line:1.5,odds:p.tb_under_odds,conf:clampConf(90,i),reason:'⬇️ Under 1.5 total bases'+(p.under_score!=null?(' · score '+p.under_score):'')+' vs '+(p.opp||'')});
+    }
   });
   var pk=(r.pitcher_k&&r.pitcher_k.all)||[];
   pk.filter(function(p){return p.pick;}).sort(function(a,b){var ga=Math.abs((a.avg_k||0)-(a.line||0)),gb=Math.abs((b.avg_k||0)-(b.line||0));return gb-ga;}).forEach(function(p,i){
