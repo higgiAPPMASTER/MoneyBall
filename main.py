@@ -552,7 +552,6 @@ _HTML = """
         <button class="btn-primary" id="get-btn" onclick="getPicks()">🎯 Get Picks</button>
         <button class="btn-primary admin-only" id="run-btn" onclick="startRun()" style="margin-left:10px">Run Picks</button>
         <button class="btn-primary admin-only" id="force-btn" onclick="startRun(true)" style="margin-left:10px;background:#dc2626;color:#fff" title="Bypass cache and rebuild today's picks from scratch">Force Refresh</button>
-        <button class="btn-primary admin-only" id="unders-btn" onclick="toggleUndersOnly()" style="margin-left:10px;background:#1f2937;color:#fff" title="Show only UNDER plays — hitter Under 1.5 and pitcher K Unders">&#11015; Unders Only</button>
       </div>
       <div id="run-spinner" class="hidden" style="margin-top:12px;color:#6b7280;font-size:13px">
         <span class="spinner"></span> Analyzing player histories…
