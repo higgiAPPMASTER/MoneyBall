@@ -636,20 +636,20 @@ _HTML = """
         <div class="section-hdr" style="color:#63cab7">⚾ Pitcher K Picks — Over / Under Strikeout Line</div>
         <div class="overflow-x-auto">
           <table class="results-table" id="pitcher-k-table">
-            <thead><tr><th>Pitcher</th><th>vs (H/A)</th><th>K Line</th><th>Avg K vs Opp</th><th>Avg IP vs Opp</th><th>ERA vs Opp</th><th>K History vs Opp (H/A)</th><th>Pick</th></tr></thead>
+            <thead><tr><th>Pitcher</th><th>vs (H/A)</th><th>K Line</th><th>Opp Avg K</th><th>Last 5 Ks</th><th>Blend</th><th>Avg IP</th><th>ERA</th><th>K History vs Opp</th><th>Pick</th></tr></thead>
             <tbody id="pitcher-k-body"></tbody>
           </table>
         </div>
         <details class="mt-4" id="pitcher-k-nopick-details">
           <summary class="cursor-pointer text-xs text-slate-500 select-none">▸ All today's pitchers (no qualifying pick)</summary>
           <table class="results-table mt-2" id="pitcher-k-nopick-table">
-            <thead><tr><th>Pitcher</th><th>vs (H/A)</th><th>K Line</th><th>Avg K (H/A)</th><th>Starts</th><th>Note</th></tr></thead>
+            <thead><tr><th>Pitcher</th><th>vs (H/A)</th><th>K Line</th><th>Opp Avg K</th><th>Last 5 Ks</th><th>Note</th></tr></thead>
             <tbody id="pitcher-k-nopick-body"></tbody>
           </table>
         </details>
         <p class="text-xs text-slate-500 mt-4 admin-only">
           <strong>K History</strong> = H/A starts vs today's opponent only &nbsp;|&nbsp;
-          <strong>Pick</strong> = OVER if avg &gt; line, UNDER if avg &lt; line (min 2 starts).
+          <strong>Pick</strong> = OVER/UNDER based on blended avg (50% career H/A vs opp + 50% last 5 starts). ⚠️ = signals conflict. Min 1 career start vs opp.
         </p>
       </div>
       <div class="card p-6" id="by-game-card">
@@ -886,7 +886,8 @@ function showResults(result) {
   if (pkAll.length > 0) {
     show('pitcher-k-card');
     const pkSorted = pkAll.filter(p=>p.pick).sort((a,b)=>{
-      const ga=Math.abs((a.avg_k||0)-(a.line||0)), gb=Math.abs((b.avg_k||0)-(b.line||0));
+      const ga=Math.abs((a.blended_avg_k!=null?a.blended_avg_k:(a.avg_k||0))-(a.line||0));
+      const gb=Math.abs((b.blended_avg_k!=null?b.blended_avg_k:(b.avg_k||0))-(b.line||0));
       return gb-ga;
     });
     document.getElementById('pitcher-k-body').innerHTML = pkSorted.length > 0
@@ -899,20 +900,45 @@ function showResults(result) {
           const odds=hasSugg
             ?(p.sugg_odds!=null?(p.sugg_odds>0?'+':'')+p.sugg_odds:'')
             :(isOver?(p.over_odds!=null?(p.over_odds>0?'+':'')+p.over_odds:''):(p.under_odds!=null?(p.under_odds>0?'+':'')+p.under_odds:''));
+          const oppClr=p.avg_k!=null?(p.avg_k>(p.line||0)?'#63cab7':'#ff8a65'):'#94a3b8';
+          const l5Clr=p.recent_avg_k!=null?(p.recent_avg_k>(p.line||0)?'#63cab7':'#ff8a65'):'#94a3b8';
+          const blClr=p.blended_avg_k!=null?(p.blended_avg_k>(p.line||0)?'#63cab7':'#ff8a65'):'#94a3b8';
+          const conflict=p.avg_k!=null&&p.recent_avg_k!=null&&p.line!=null&&((p.avg_k>p.line)!==(p.recent_avg_k>p.line));
+          const l5Disp=p.recent_avg_k!=null?p.recent_avg_k+' K (L'+p.recent_starts+')':'—';
+          const blDisp=p.blended_avg_k!=null?p.blended_avg_k+'K'+(conflict?' ⚠️':''):'—';
           return `<tr>
             <td class="font-semibold">${p.name}</td>
             <td><span class="badge ${sideCls}">${p.side}</span> <span class="text-slate-400 text-xs">${p.opp||''}</span></td>
             <td style="font-family:monospace;font-weight:700;color:#fff">${p.line!=null?p.line+' Ks':'—'}</td>
-            <td style="font-family:monospace;font-weight:700;color:${pickClr}">${p.avg_k!=null?p.avg_k+' K':'—'}</td>
+            <td style="font-family:monospace;font-weight:700;color:${oppClr}">${p.avg_k!=null?p.avg_k+' K':'—'}</td>
+            <td style="font-family:monospace;font-weight:700;color:${l5Clr}">${l5Disp}</td>
+            <td style="font-family:monospace;font-weight:700;color:${blClr}">${blDisp}</td>
             <td style="font-family:monospace;color:#93c5fd;font-weight:600">${p.avg_ip!=null?p.avg_ip+' IP':'—'}</td>
             <td style="font-family:monospace;color:#fbbf24;font-weight:600">${p.era||'—'}</td>
             <td style="font-family:monospace;font-size:.75rem;color:#94a3b8">${p.k_history||'—'}</td>
             <td><span style="color:${pickClr};font-weight:900;font-size:1rem">${pickLabel}</span><span class="text-slate-500" style="font-size:.68rem;display:block">${odds}</span></td>
           </tr>`;
         }).join('')
-      : '<tr><td colspan="8" class="text-slate-500 text-center" style="padding:16px">No qualifying picks today</td></tr>';
+      : '<tr><td colspan="10" class="text-slate-500 text-center" style="padding:16px">No qualifying picks today</td></tr>';
+    const pkNoPick=pkAll.filter(p=>!p.pick);
     const npDet=document.getElementById('pitcher-k-nopick-details');
-    if (npDet) npDet.style.display='none';
+    if (npDet) {
+      if (pkNoPick.length>0) {
+        npDet.style.display='';
+        document.getElementById('pitcher-k-nopick-body').innerHTML=pkNoPick.map(p=>{
+          const sideCls2=p.side==='HOME'?'badge-home':'badge-away';
+          const l5Disp2=p.recent_avg_k!=null?p.recent_avg_k+' K (L'+p.recent_starts+')':'—';
+          return `<tr>
+            <td class="font-semibold">${p.name}</td>
+            <td><span class="badge ${sideCls2}">${p.side}</span> <span class="text-slate-400 text-xs">${p.opp||''}</span></td>
+            <td style="font-family:monospace;font-weight:700;color:#fff">${p.line!=null?p.line+' Ks':'—'}</td>
+            <td style="font-family:monospace;color:#94a3b8">${p.avg_k!=null?p.avg_k+' K':'—'}</td>
+            <td style="font-family:monospace;color:#94a3b8">${l5Disp2}</td>
+            <td style="color:#94a3b8;font-size:.78rem">${p.pick_note||'—'}</td>
+          </tr>`;
+        }).join('');
+      } else { npDet.style.display='none'; }
+    }
   }
 
   renderByGame(result);
