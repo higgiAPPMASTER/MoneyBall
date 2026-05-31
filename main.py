@@ -963,7 +963,7 @@ function showResults(result) {
 
 // ── Pitcher recent-form popup (click a pitcher row) ────────────────────
 function _pkForm(key){
-  var p=(window.__PK_REG__||{})[key]; if(!p) return;
+  var p=(key&&typeof key==='object')?key:(window.__PK_REG__||{})[key]; if(!p) return;
   var ov=document.getElementById('pk-modal');
   if(!ov){
     ov=document.createElement('div');
@@ -1017,7 +1017,7 @@ function _pkForm(key){
 // Works for both "to record a hit" cards (over 0.5) and Under 1.5 picks.
 // Detect under picks via under_score; color each game green/red vs the goal.
 function _hitForm(key){
-  var p=(window.__HIT_REG__||{})[key]; if(!p) return;
+  var p=(key&&typeof key==='object')?key:(window.__HIT_REG__||{})[key]; if(!p) return;
   var ov=document.getElementById('hit-modal');
   if(!ov){
     ov=document.createElement('div');
@@ -1057,6 +1057,27 @@ function _hitForm(key){
     </div>
   </div>`;
   ov.style.display='flex';
+}
+
+// ── Universal clickable-name dispatcher ────────────────────────────────
+// Lets ANY player name on the page (parlay legs, player-search results,
+// all-plays-by-game) open the right recent-form popup — pitchers → _pkForm,
+// hitters/unders → _hitForm. Each name registers its source pick object
+// under a unique key; _playerForm routes by object shape (pitchers carry
+// recent_k_log / avg_k). Keys never collide so cross-surface clicks survive
+// independent re-renders. The pick sections themselves already use their own
+// __HIT_REG__/__PK_REG__ registries.
+window.__NAME_REG__=window.__NAME_REG__||{}; window.__NK__=window.__NK__||0;
+function _esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+function _nameReg(obj){ if(!obj) return ''; var k='nm'+(++window.__NK__); window.__NAME_REG__[k]=obj; return k; }
+function _nameSpan(obj,label){
+  var k=_nameReg(obj);
+  if(!k) return _esc(label);
+  return `<span onclick="event.stopPropagation();_playerForm('${k}')" style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px" title="Click for recent form">${_esc(label)}</span>`;
+}
+function _playerForm(key){
+  var p=(window.__NAME_REG__||{})[key]; if(!p) return;
+  if(p.recent_k_log!==undefined || p.avg_k!==undefined){ _pkForm(p); } else { _hitForm(p); }
 }
 
 // ── CSV export (all picks → spreadsheet/betting tools) ──────────────────
@@ -1131,19 +1152,19 @@ function _mlbPool(){
   function clampConf(base,idx){ var c=base-idx*3; return c<40?40:c; }
   var cands=[];
   (r.top9||[]).forEach(function(p,i){
-    cands.push({type:'HIT',dir:'OVER',player:(p.full_name||p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'Hits',line:0.5,odds:(p.hit_odds!=null?p.hit_odds:''),conf:clampConf(95,i),reason:'🎯 To record a hit vs '+(p.opp||'')});
+    cands.push({type:'HIT',dir:'OVER',player:(p.full_name||p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'Hits',line:0.5,odds:(p.hit_odds!=null?p.hit_odds:''),conf:clampConf(95,i),reason:'🎯 To record a hit vs '+(p.opp||''),src:p});
   });
   (r.also_ran||[]).forEach(function(p,i){
-    cands.push({type:'HIT',dir:'OVER',player:(p.full_name||p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'Hits',line:0.5,odds:(p.hit_odds!=null?p.hit_odds:''),conf:clampConf(82,i),reason:'🎯 To record a hit vs '+(p.opp||'')});
+    cands.push({type:'HIT',dir:'OVER',player:(p.full_name||p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'Hits',line:0.5,odds:(p.hit_odds!=null?p.hit_odds:''),conf:clampConf(82,i),reason:'🎯 To record a hit vs '+(p.opp||''),src:p});
   });
   (r.under_picks||[]).forEach(function(p,i){
     // Under 1.5 HITS leg — only when priced at -500 or better (drops -1000-type juice).
     if(_underOk(p.under_odds)){
-      cands.push({type:'UNDER',dir:'UNDER',player:(p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'Hits',line:1.5,odds:p.under_odds,conf:clampConf(90,i),reason:'⬇️ Under 1.5 hits'+(p.under_score!=null?(' · score '+p.under_score):'')+' vs '+(p.opp||'')});
+      cands.push({type:'UNDER',dir:'UNDER',player:(p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'Hits',line:1.5,odds:p.under_odds,conf:clampConf(90,i),reason:'⬇️ Under 1.5 hits'+(p.under_score!=null?(' · score '+p.under_score):'')+' vs '+(p.opp||''),src:p});
     }
     // Under 1.5 TOTAL BASES leg — its own candidate now that odds are posted, same -500 floor.
     if(_underOk(p.tb_under_odds)){
-      cands.push({type:'UNDER',dir:'UNDER',player:(p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'Total Bases',line:1.5,odds:p.tb_under_odds,conf:clampConf(90,i),reason:'⬇️ Under 1.5 total bases'+(p.under_score!=null?(' · score '+p.under_score):'')+' vs '+(p.opp||'')});
+      cands.push({type:'UNDER',dir:'UNDER',player:(p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'Total Bases',line:1.5,odds:p.tb_under_odds,conf:clampConf(90,i),reason:'⬇️ Under 1.5 total bases'+(p.under_score!=null?(' · score '+p.under_score):'')+' vs '+(p.opp||''),src:p});
     }
   });
   var pk=(r.pitcher_k&&r.pitcher_k.all)||[];
@@ -1152,7 +1173,7 @@ function _mlbPool(){
     var dir=hasSugg?'OVER':p.pick;
     var line=hasSugg?p.sugg_line:p.line;
     var odds=hasSugg?p.sugg_odds:(p.pick==='OVER'?p.over_odds:p.under_odds);
-    cands.push({type:'K',dir:dir,player:(p.name||''),team:'',opp:(p.opp||''),stat:'Ks',line:line,odds:(odds!=null?odds:''),conf:clampConf(90,i),reason:'⚾ '+dir+' '+(line!=null?line:'')+' Ks · avg '+(p.avg_k!=null?p.avg_k+'K':'—')+(p.era?(' · ERA '+p.era):'')});
+    cands.push({type:'K',dir:dir,player:(p.name||''),team:'',opp:(p.opp||''),stat:'Ks',line:line,odds:(odds!=null?odds:''),conf:clampConf(90,i),reason:'⚾ '+dir+' '+(line!=null?line:'')+' Ks · avg '+(p.avg_k!=null?p.avg_k+'K':'—')+(p.era?(' · ERA '+p.era):''),src:p});
   });
   cands.forEach(function(c){ c.dec=_amToDec(c.odds); c.hasOdds=!!c.dec; });
   // NO N/A LEGS: every parlay leg must be priced. Drops any leg with missing odds
@@ -1202,7 +1223,7 @@ function _renderParlay(randomize){
   var tagLbl={HIT:'HIT',UNDER:'UNDER 1.5',K:'PITCHER K'};
   var rows=legs.map(function(l,idx){var fo=_fmtOdds(l.odds);return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #1a1a1a">'
     +'<div style="min-width:0">'
-    +'<div style="font-weight:800;color:#fff;font-size:.85rem">'+(idx+1)+'. '+l.player+' <span style="color:#777;font-size:.7rem">'+(l.team?l.team+' ':'')+'vs '+l.opp+'</span> <span style="background:'+(tagBg[l.type]||'#222')+';color:'+(tagFg[l.type]||'#aaa')+';padding:1px 6px;border-radius:4px;font-size:.6rem;font-weight:800">'+(tagLbl[l.type]||l.type)+'</span></div>'
+    +'<div style="font-weight:800;color:#fff;font-size:.85rem">'+(idx+1)+'. '+_nameSpan(l.src,l.player)+' <span style="color:#777;font-size:.7rem">'+(l.team?l.team+' ':'')+'vs '+l.opp+'</span> <span style="background:'+(tagBg[l.type]||'#222')+';color:'+(tagFg[l.type]||'#aaa')+';padding:1px 6px;border-radius:4px;font-size:.6rem;font-weight:800">'+(tagLbl[l.type]||l.type)+'</span></div>'
     +'<div style="color:#999;font-size:.72rem;margin-top:2px">'+l.reason+'</div>'
     +'</div>'
     +'<div style="text-align:right;white-space:nowrap">'
@@ -1311,7 +1332,7 @@ function runPlayerSearch(raw){
                 h.bucket==='Did Not Qualify'?'#6b7280':'#9ca3af';
     var html='<div style="background:#0f0f0f;border:1px solid #262626;border-left:4px solid '+color+';border-radius:10px;padding:14px 18px;margin-bottom:10px">';
     html+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
-    html+='<div><span style="color:#fff;font-weight:700;font-size:1.05rem">'+(p.full_name||p.name||'')+'</span>';
+    html+='<div><span style="color:#fff;font-weight:700;font-size:1.05rem">'+_nameSpan(p,(p.full_name||p.name||''))+'</span>';
     html+=' <span style="color:'+color+';font-weight:700;margin-left:8px">'+h.bucket+' '+h.rank+'</span></div>';
     if(p.side) html+='<span class="badge '+(p.side==='HOME'?'badge-home':'badge-away')+'">'+p.side+' vs '+(p.opp||'')+'</span>';
     html+='</div>';
@@ -1436,7 +1457,7 @@ function renderByGame(result){
         :'<span class="badge badge-tbd">⏳ TBD</span>';
       html+='<tr>';
       html+='<td><span class="badge '+kindCls+' text-xs">'+kind+'</span></td>';
-      html+='<td class="font-semibold">'+(p.name||'')+'</td>';
+      html+='<td class="font-semibold">'+_nameSpan(p,(p.name||''))+'</td>';
       html+='<td>'+sideBadge+'</td>';
       html+='<td class="text-slate-300 text-sm">'+note+'</td>';
       html+='<td>'+(kind==='PITCHER K'?'<span class="text-slate-500 text-xs">—</span>':lineup)+'</td>';
