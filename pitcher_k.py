@@ -224,12 +224,19 @@ def _get_recent_k_form(pitcher_id: int, n: int = 5) -> dict:
               if _ip_to_float(sp.get("stat", {}).get("inningsPitched", "0")) >= MIN_IP_START]
     recent = starts[-n:]
     if not recent:
-        return {"recent_avg_k": None, "recent_k_list": [], "recent_starts": 0}
+        return {"recent_avg_k": None, "recent_k_list": [], "recent_starts": 0, "recent_k_log": []}
     k_list = [sp.get("stat", {}).get("strikeOuts", 0) for sp in recent]
+    k_log = [{
+        "d": (sp.get("date") or "")[5:],
+        "v": sp.get("stat", {}).get("strikeOuts", 0),
+        "ip": sp.get("stat", {}).get("inningsPitched", ""),
+        "opp": (sp.get("opponent", {}) or {}).get("name", ""),
+    } for sp in reversed(recent)]
     return {
         "recent_avg_k": round(sum(k_list) / len(k_list), 1),
         "recent_k_list": k_list,
         "recent_starts": len(k_list),
+        "recent_k_log": k_log,
     }
 
 
@@ -403,7 +410,8 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                  "k_history": ", ".join(str(k) for k in k_list) if k_list else "—",
                  "sugg_line": sugg_line, "sugg_odds": sugg_odds,
                  "recent_avg_k": recent_avg_k, "recent_k_list": recent_k_list,
-                 "recent_starts": recent_starts, "blended_avg_k": blended_avg,
+                 "recent_starts": recent_starts, "recent_k_log": rf["recent_k_log"],
+                 "blended_avg_k": blended_avg, "blend_src": blend_src,
                  "pick": pick, "pick_note": pick_note}), logs
 
     with ThreadPoolExecutor(max_workers=8) as _ex:
@@ -431,7 +439,7 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
             starts2 = hist2["starts"] if hist2 else 0
             k_list2 = hist2["k_list"] if hist2 else []
             k_history2 = ", ".join(str(k) for k in k_list2) if k_list2 else "—"
-            rf2 = _get_recent_k_form(pid2) if pid2 else {"recent_avg_k": None, "recent_k_list": [], "recent_starts": 0}
+            rf2 = _get_recent_k_form(pid2) if pid2 else {"recent_avg_k": None, "recent_k_list": [], "recent_starts": 0, "recent_k_log": []}
             return {
                 "name": st["name"], "team": st["team"], "opp": st["opp"],
                 "side": st["side"], "line": None,
@@ -443,7 +451,8 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                 "era": hist2["era"] if hist2 else None,
                 "k_hit_rate": "—", "k_history": k_history2,
                 "recent_avg_k": rf2["recent_avg_k"], "recent_k_list": rf2["recent_k_list"],
-                "recent_starts": rf2["recent_starts"], "blended_avg_k": None,
+                "recent_starts": rf2["recent_starts"], "recent_k_log": rf2["recent_k_log"],
+                "blended_avg_k": None, "blend_src": None,
                 "pick": None, "pick_note": "No K line posted today",
             }
 
