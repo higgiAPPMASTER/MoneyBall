@@ -866,6 +866,7 @@ function showResults(result) {
   ].join('');
 
   if (window.UNDERS_ONLY && window.IS_ADMIN) { hide('top-picks-card'); } else { show('top-picks-card'); }
+  window.__HIT_REG__={};
   document.getElementById('picks-body').innerHTML = top9.map((p,i) => _mlbCard(p, i+1)).join('');
 
   const alsoRan = view.also_ran || [];
@@ -879,7 +880,8 @@ function showResults(result) {
     show('under-picks-card');
     document.getElementById('under-picks-body').innerHTML = underPicks.map((p,i) => {
       const rank=i+1, rnkBg=rank===1?'#5a0a0a':rank===2?'#4a0a0a':'#3a1a1a';
-      return `<tr>
+      const _uk='u'+rank; window.__HIT_REG__=window.__HIT_REG__||{}; window.__HIT_REG__[_uk]=p;
+      return `<tr onclick="_hitForm('${_uk}')" style="cursor:pointer" title="Click for recent form">
         <td><span class="rank-badge" style="background:${rnkBg};color:#ff8a65;font-weight:900">${rank}</span></td>
         <td class="font-semibold">${p.name}</td>
           <td><span class="badge ${p.side==='HOME'?'badge-home':'badge-away'}">${p.side}</span></td>
@@ -1006,6 +1008,52 @@ function _pkForm(key){
         <div><span style="color:#64748b">Pick</span><br><span style="color:${pickClr};font-weight:800">${pickTxt}</span></div>
       </div>
       ${p.blend_src?('<div style="margin-top:10px;color:#64748b;font-size:.74rem">'+p.blend_src+'</div>'):''}
+    </div>
+  </div>`;
+  ov.style.display='flex';
+}
+
+// ── Hitter recent-form popup (last 5 games) — mirrors _pkForm ───────────
+// Works for both "to record a hit" cards (over 0.5) and Under 1.5 picks.
+// Detect under picks via under_score; color each game green/red vs the goal.
+function _hitForm(key){
+  var p=(window.__HIT_REG__||{})[key]; if(!p) return;
+  var ov=document.getElementById('hit-modal');
+  if(!ov){
+    ov=document.createElement('div');
+    ov.id='hit-modal';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; };
+    document.body.appendChild(ov);
+  }
+  var log=p.recent_hit_log||[];
+  var isUnder=(p.under_score!=null);
+  var goal=isUnder?'Under 1.5 hits':'To record a hit';
+  var rows=log.length?log.map(function(g){
+    var good=isUnder?(g.h<=1):(g.h>=1);
+    var clr=good?'#63cab7':'#ff8a65';
+    var oppTxt=g.opp?((g.ha==='H'?'vs ':'@ ')+g.opp):'';
+    return `<tr>
+      <td style="padding:6px 10px;color:#94a3b8;font-family:monospace">${g.d||'—'}</td>
+      <td style="padding:6px 10px;color:#cbd5e1;font-size:.8rem">${oppTxt}</td>
+      <td style="padding:6px 10px;text-align:right;font-family:monospace;font-size:.8rem;color:#93c5fd">${g.tb} TB</td>
+      <td style="padding:6px 10px;text-align:right;font-family:monospace;font-weight:800;color:${clr}">${g.h} H</td>
+    </tr>`;
+  }).join(''):'<tr><td colspan="4" style="padding:14px;color:#64748b;text-align:center">No recent games on record</td></tr>';
+  var name=p.full_name||p.name||'';
+  var pickClr=isUnder?'#ff8a65':'#63cab7';
+  ov.innerHTML=`<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:440px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid #1e293b">
+      <div>
+        <div style="font-weight:800;font-size:1.05rem;color:#fff">${name}</div>
+        <div style="color:#94a3b8;font-size:.78rem">${p.side||''} vs ${p.opp||''} · ${goal}</div>
+      </div>
+      <button onclick="document.getElementById('hit-modal').style.display='none'" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem">✕</button>
+    </div>
+    <div style="padding:14px 18px">
+      <div style="font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase;margin-bottom:8px">Last ${log.length||0} Games</div>
+      <table style="width:100%;border-collapse:collapse;font-size:.85rem"><tbody>${rows}</tbody></table>
+      <div style="margin-top:12px;border-top:1px solid #1e293b;padding-top:10px;color:${pickClr};font-weight:800;font-size:.85rem">Pick: ${goal}</div>
     </div>
   </div>`;
   ov.style.display='flex';
@@ -1431,7 +1479,8 @@ function _mlbCard(p, rank, dim) {
     <span>S4 <strong style="color:#94a3b8">${s4Disp}</strong></span> &nbsp;
     <span>Score <strong style="color:#f59e0b">${p.total||'—'}</strong></span>
   </div>`;
-  return `<div class="mlb-pick-card" style="${dim?'opacity:0.85':''}">
+  window.__HIT_REG__=window.__HIT_REG__||{}; window.__HIT_REG__['h'+rank]=p;
+  return `<div class="mlb-pick-card" onclick="_hitForm('h${rank}')" title="Click for recent form" style="cursor:pointer;${dim?'opacity:0.85':''}">
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#1a2a1a 0%,#0a1a0a 100%)">
       <div style="display:flex;align-items:center;gap:8px">
         <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
