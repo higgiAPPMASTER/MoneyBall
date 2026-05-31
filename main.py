@@ -1045,7 +1045,7 @@ function downloadPicksCSV(){
       'Under 1.5 Hits', '1.5', _csvOdds(p.under_odds), _csvLineup(p.lineup_status), detail]);
   });
   var pk=(r.pitcher_k&&r.pitcher_k.all)||[];
-  pk.filter(function(p){return p.pick;}).sort(function(a,b){
+  pk.filter(function(p){return p.pick && (p.starts||0)>0;}).sort(function(a,b){
     var ga=Math.abs((a.avg_k||0)-(a.line||0)), gb=Math.abs((b.avg_k||0)-(b.line||0));
     return gb-ga;
   }).forEach(function(p,i){
@@ -1099,7 +1099,7 @@ function _mlbPool(){
     }
   });
   var pk=(r.pitcher_k&&r.pitcher_k.all)||[];
-  pk.filter(function(p){return p.pick;}).sort(function(a,b){var ga=Math.abs((a.avg_k||0)-(a.line||0)),gb=Math.abs((b.avg_k||0)-(b.line||0));return gb-ga;}).forEach(function(p,i){
+  pk.filter(function(p){return p.pick && (p.starts||0)>0;}).sort(function(a,b){var ga=Math.abs((a.avg_k||0)-(a.line||0)),gb=Math.abs((b.avg_k||0)-(b.line||0));return gb-ga;}).forEach(function(p,i){
     var hasSugg=(p.sugg_line!=null);
     var dir=hasSugg?'OVER':p.pick;
     var line=hasSugg?p.sugg_line:p.line;
@@ -1352,7 +1352,7 @@ function renderByGame(result){
   if(!body) return;
   var hitters=(result.top9||[]).map(function(p){return Object.assign({_kind:'HITTER'},p);});
   var unders=(result.under_picks||[]).map(function(p){return Object.assign({_kind:'UNDER'},p);});
-  var ks=((result.pitcher_k||{}).picks||[]).map(function(p){return Object.assign({_kind:'PITCHER K'},p);});
+  var ks=((result.pitcher_k||{}).picks||[]).filter(function(p){return (p.starts||0)>0;}).map(function(p){return Object.assign({_kind:'PITCHER K'},p);});
   var all=hitters.concat(unders, ks);
   if(!all.length){body.innerHTML='<div class="text-slate-500 text-sm">No picks yet.</div>';return;}
   var games={}, order=[];
