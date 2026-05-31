@@ -17,7 +17,7 @@ ODDS_API_KEY  = os.environ.get("ODDS_API_KEY", "")
 ODDS_BASE     = "https://api.the-odds-api.com/v4"
 MLB_API       = "https://statsapi.mlb.com/api/v1"
 
-MIN_STARTS       = 2
+MIN_STARTS       = 1
 MIN_IP_START     = 3.0
 K_SEASONS        = [2021, 2022, 2023, 2024, 2025, 2026]
 SEASON           = "2026"
@@ -217,6 +217,22 @@ def _get_pitching_logs(pitcher_id: int, season: int) -> list:
         return []
 
 
+def _get_recent_k_form(pitcher_id: int, n: int = 5) -> dict:
+    """Last n actual starts (any opponent) from the current season."""
+    splits = _get_pitching_logs(pitcher_id, int(SEASON))
+    starts = [sp for sp in splits
+              if _ip_to_float(sp.get("stat", {}).get("inningsPitched", "0")) >= MIN_IP_START]
+    recent = starts[-n:]
+    if not recent:
+        return {"recent_avg_k": None, "recent_k_list": [], "recent_starts": 0}
+    k_list = [sp.get("stat", {}).get("strikeOuts", 0) for sp in recent]
+    return {
+        "recent_avg_k": round(sum(k_list) / len(k_list), 1),
+        "recent_k_list": k_list,
+        "recent_starts": len(k_list),
+    }
+
+
 def career_ha_ks_vs_opp(pitcher_id: int, side: str, opp_name: str) -> dict:
     opp_id = _get_team_id(opp_name)
     time.sleep(0.1)
@@ -332,31 +348,46 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
         starts = hist["starts"] if hist else 0
         k_list = hist["k_list"] if hist else []
 
-        sugg_line, sugg_odds = None, None
-        if avg_k is None:
-            pick, pick_note = None, f"N/A — {starts} starts vs {opp}"
-        elif avg_k > line:
-            pick, pick_note = "OVER",  f"avg {avg_k} K > line {line}"
-            logs.append(f"    ✅ OVER — avg {avg_k} > {line} ({starts} starts)")
-        elif avg_k < line:
-            pick, pick_note = "UNDER", f"avg {avg_k} K < line {line}"
-            logs.append(f"    ✅ UNDER — avg {avg_k} < {line} ({starts} starts)")
+        # Recent form: last 5 starts any opponent (current season)
+        rf = _get_recent_k_form(pid)
+        recent_avg_k  = rf["recent_avg_k"]
+        recent_k_list = rf["recent_k_list"]
+        recent_starts = rf["recent_starts"]
+
+        # Blended average: 50/50 career H/A vs opp + recent form
+        if avg_k is not None and recent_avg_k is not None:
+            blended_avg = round((avg_k + recent_avg_k) / 2, 1)
+            blend_src   = f"career {avg_k} · L{recent_starts} {recent_avg_k}"
+        elif avg_k is not None:
+            blended_avg = avg_k
+            blend_src   = f"career {avg_k} only"
+        elif recent_avg_k is not None:
+            blended_avg = recent_avg_k
+            blend_src   = f"L{recent_starts} {recent_avg_k} only (no career vs opp)"
         else:
-            # avg lands exactly on the book line → no edge on that number.
-            # Step down to the highest half-line the pitcher cleared in EVERY
-            # H/A start vs this opp (min_k - 0.5) and recommend the Over there,
-            # priced off the alternate-line ladder.
+            blended_avg = None
+            blend_src   = "no data"
+
+        sugg_line, sugg_odds = None, None
+        if blended_avg is None:
+            pick, pick_note = None, f"N/A — {starts} starts vs {opp}, no recent data"
+        elif blended_avg > line:
+            pick, pick_note = "OVER",  f"blend {blended_avg} > line {line} ({blend_src})"
+            logs.append(f"    ✅ OVER blend {blended_avg} > {line} ({blend_src})")
+        elif blended_avg < line:
+            pick, pick_note = "UNDER", f"blend {blended_avg} < line {line} ({blend_src})"
+            logs.append(f"    ✅ UNDER blend {blended_avg} < {line} ({blend_src})")
+        else:
+            # blended exactly on line → try alt line from career k_list floor
             sugg_line = (min(k_list) - 0.5) if k_list else None
             k_ladder  = pl.get("over_ladder") or {}
             sugg_odds = k_ladder.get(sugg_line) if sugg_line is not None else None
             if sugg_line is not None and sugg_line < line:
                 pick = "OVER"
-                pick_note = (f"avg {avg_k} on line {line} → history floor, "
-                             f"OVER {sugg_line} (went {', '.join(str(k) for k in k_list)})")
-                logs.append(f"    ✅ OVER {sugg_line} (alt) — "
-                      f"avg {avg_k} on line {line}, cleared by {k_list} ({starts} starts)")
+                pick_note = (f"blend {blended_avg} on line {line} → floor OVER {sugg_line} ({blend_src})")
+                logs.append(f"    ✅ OVER {sugg_line} (alt) blend on line")
             else:
-                pick, pick_note = None, f"avg {avg_k} exactly on line"
+                pick, pick_note = None, f"blend {blended_avg} exactly on line"
                 sugg_line, sugg_odds = None, None
 
         hits_over = sum(1 for k in k_list if k > line) if k_list else 0
@@ -371,6 +402,8 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                  "k_hit_rate": k_hit_rate,
                  "k_history": ", ".join(str(k) for k in k_list) if k_list else "—",
                  "sugg_line": sugg_line, "sugg_odds": sugg_odds,
+                 "recent_avg_k": recent_avg_k, "recent_k_list": recent_k_list,
+                 "recent_starts": recent_starts, "blended_avg_k": blended_avg,
                  "pick": pick, "pick_note": pick_note}), logs
 
     with ThreadPoolExecutor(max_workers=8) as _ex:
@@ -398,6 +431,7 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
             starts2 = hist2["starts"] if hist2 else 0
             k_list2 = hist2["k_list"] if hist2 else []
             k_history2 = ", ".join(str(k) for k in k_list2) if k_list2 else "—"
+            rf2 = _get_recent_k_form(pid2) if pid2 else {"recent_avg_k": None, "recent_k_list": [], "recent_starts": 0}
             return {
                 "name": st["name"], "team": st["team"], "opp": st["opp"],
                 "side": st["side"], "line": None,
@@ -408,6 +442,8 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                 "avg_ip": hist2["avg_ip"] if hist2 else None,
                 "era": hist2["era"] if hist2 else None,
                 "k_hit_rate": "—", "k_history": k_history2,
+                "recent_avg_k": rf2["recent_avg_k"], "recent_k_list": rf2["recent_k_list"],
+                "recent_starts": rf2["recent_starts"], "blended_avg_k": None,
                 "pick": None, "pick_note": "No K line posted today",
             }
 
@@ -423,6 +459,6 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
     # sort keeps name order within equal edge sizes.
     confirmed = sorted([r for r in all_results if r["pick"]], key=lambda r: r["name"])
     confirmed = sorted(confirmed,
-                       key=lambda r: abs((r["avg_k"] or 0) - r["line"]), reverse=True)
+                       key=lambda r: abs((r["blended_avg_k"] if r["blended_avg_k"] is not None else (r["avg_k"] or 0)) - (r["line"] or 0)), reverse=True)
     emit({"type": "log", "msg": f"✅ Pitcher K done — {len(confirmed)} picks, {len(all_results)} total pitchers"})
     return {"picks": confirmed, "all": all_results}
