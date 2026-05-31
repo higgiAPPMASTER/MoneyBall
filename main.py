@@ -586,6 +586,7 @@ _HTML = """
           </select>
           <button class="btn-primary" onclick="buildParlay()">Build Best Parlay</button>
           <button class="btn-primary" onclick="generateParlay()" style="background:#1f2937;color:#fff">🎲 Generate New</button>
+          <button class="btn-primary" id="parlay-unders-btn" onclick="toggleParlayUnders()" style="background:#1f2937;color:#fff">&#11015; Unders Only</button>
         </div>
         <div id="parlayResult" style="margin-top:16px"></div>
       </div>
@@ -1111,6 +1112,8 @@ function _mlbPool(){
   // (HIT legs with no hit_odds, K legs with no odds). Under legs already required odds.
   // To convert back, remove this filter line.
   cands=cands.filter(function(c){ return c.hasOdds; });
+  // Parlay-builder "Unders only" option — keep only UNDER legs (Under 1.5 hits/TB + pitcher K Unders)
+  if(window.PARLAY_UNDERS){ cands=cands.filter(function(c){ return c.dir==='UNDER'; }); }
   var byPlayer={};
   cands.forEach(function(c){ if(!c.player) return; var cur=byPlayer[c.player]; if(!cur||_legScoreP(c)>_legScoreP(cur)) byPlayer[c.player]=c; });
   return Object.keys(byPlayer).map(function(k){return byPlayer[k];}).sort(function(a,b){return _legScoreP(b)-_legScoreP(a);});
@@ -1182,6 +1185,17 @@ function _matchName(p, q){
 
 window._lastResult = null;
 window.UNDERS_ONLY = false;
+window.PARLAY_UNDERS = false;
+
+// Parlay-builder "Unders Only" toggle button — restricts the parlay candidate pool to
+// UNDER legs only (Under 1.5 hits/TB + pitcher K Unders). Independent of the global
+// toolbar Unders Only toggle. Re-builds the parlay if one is already on screen.
+function toggleParlayUnders(){
+  window.PARLAY_UNDERS = !window.PARLAY_UNDERS;
+  var b=document.getElementById('parlay-unders-btn');
+  if(b){ b.style.background=window.PARLAY_UNDERS?'#ff8a65':'#1f2937'; b.style.color=window.PARLAY_UNDERS?'#0e0e0e':'#fff'; }
+  if((document.getElementById('parlayResult').innerHTML||'').trim()) buildParlay();
+}
 
 // Admin-only client-side filter: re-renders the current picks showing only UNDER
 // plays (hitter Under 1.5 + pitcher K Unders). No re-run, no server call.
