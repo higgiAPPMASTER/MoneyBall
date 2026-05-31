@@ -552,6 +552,7 @@ _HTML = """
         <button class="btn-primary" id="get-btn" onclick="getPicks()">🎯 Get Picks</button>
         <button class="btn-primary admin-only" id="run-btn" onclick="startRun()" style="margin-left:10px">Run Picks</button>
         <button class="btn-primary admin-only" id="force-btn" onclick="startRun(true)" style="margin-left:10px;background:#dc2626;color:#fff" title="Bypass cache and rebuild today's picks from scratch">Force Refresh</button>
+        <button class="btn-primary admin-only" id="unders-btn" onclick="toggleUndersOnly()" style="margin-left:10px;background:#1f2937;color:#fff" title="Show only UNDER plays — hitter Under 1.5 and pitcher K Unders">&#11015; Unders Only</button>
       </div>
       <div id="run-spinner" class="hidden" style="margin-top:12px;color:#6b7280;font-size:13px">
         <span class="spinner"></span> Analyzing player histories…
@@ -596,7 +597,7 @@ _HTML = """
                oninput="runPlayerSearch(this.value)">
         <div id="player-search-result" class="mt-3"></div>
       </div>
-      <div class="card p-6">
+      <div class="card p-6" id="top-picks-card">
         <div class="section-hdr">🏆 Top Picks — To Record a Hit</div>
         <div id="picks-body" class="mlb-picks-grid"></div>
         <p class="text-xs text-slate-500 mt-4 admin-only">
@@ -636,14 +637,14 @@ _HTML = """
         <div class="section-hdr" style="color:#63cab7">⚾ Pitcher K Picks — Over / Under Strikeout Line</div>
         <div class="overflow-x-auto">
           <table class="results-table" id="pitcher-k-table">
-            <thead><tr><th>Pitcher</th><th>vs (H/A)</th><th>K Line</th><th>Opp Avg K</th><th>Last 5 Ks</th><th>Blend</th><th>Avg IP</th><th>ERA</th><th>K History vs Opp</th><th>Pick</th></tr></thead>
+            <thead><tr><th>Pitcher</th><th>vs (H/A)</th><th>K Line</th><th>Opp Avg K</th><th>Blend</th><th>Avg IP</th><th>ERA</th><th>K History vs Opp</th><th>Pick</th></tr></thead>
             <tbody id="pitcher-k-body"></tbody>
           </table>
         </div>
         <details class="mt-4" id="pitcher-k-nopick-details">
           <summary class="cursor-pointer text-xs text-slate-500 select-none">▸ All today's pitchers (no qualifying pick)</summary>
           <table class="results-table mt-2" id="pitcher-k-nopick-table">
-            <thead><tr><th>Pitcher</th><th>vs (H/A)</th><th>K Line</th><th>Opp Avg K</th><th>Last 5 Ks</th><th>Note</th></tr></thead>
+            <thead><tr><th>Pitcher</th><th>vs (H/A)</th><th>K Line</th><th>Opp Avg K</th><th>Note</th></tr></thead>
             <tbody id="pitcher-k-nopick-body"></tbody>
           </table>
         </details>
@@ -838,27 +839,42 @@ function showResults(result) {
   // and CSV only show bettable plays. Re-run picks after deploy to populate game_start.
   result = _filterStarted(result);
   window._lastResult = result;
-  const { top9, stats, pitcher_k } = result;
+  // Admin-only "Unders Only" view: hide every OVER-based pick (hitter Top Picks,
+  // Money Ball, pitcher K OVERs) and keep only UNDER plays. window._lastResult
+  // stays the FULL result so parlay/CSV/search are unaffected — we only filter a
+  // local render copy.
+  const view = (window.UNDERS_ONLY && window.IS_ADMIN)
+    ? Object.assign({}, result, {
+        top9: [],
+        also_ran: [],
+        pitcher_k: result.pitcher_k ? Object.assign({}, result.pitcher_k, {
+          all: (result.pitcher_k.all || []).filter(p => p.pick === 'UNDER'),
+          picks: (result.pitcher_k.picks || []).filter(p => p.pick === 'UNDER'),
+        }) : result.pitcher_k,
+      })
+    : result;
+  const { top9, stats, pitcher_k } = view;
   hide('also-ran-card'); hide('under-picks-card'); hide('pitcher-k-card');
 
   document.getElementById('stats-row').innerHTML = [
     statCard('🎯','Top Picks',top9.length),
-    statCard('⬇️','Under Picks',(result.under_picks||[]).length),
-    statCard('⚾','Pitcher K',((result.pitcher_k||{}).picks||[]).length),
+    statCard('⬇️','Under Picks',(view.under_picks||[]).length),
+    statCard('⚾','Pitcher K',((view.pitcher_k||{}).all||[]).filter(p=>p.pick&&(p.starts||0)>0).length),
     statCard('⚾','Games Today',stats.games),
     statCard('🔍','Players Run',stats.step1_count),
     statCard('⏱️','Time (s)',stats.elapsed),
   ].join('');
 
+  if (window.UNDERS_ONLY && window.IS_ADMIN) { hide('top-picks-card'); } else { show('top-picks-card'); }
   document.getElementById('picks-body').innerHTML = top9.map((p,i) => _mlbCard(p, i+1)).join('');
 
-  const alsoRan = result.also_ran || [];
+  const alsoRan = view.also_ran || [];
   if (alsoRan.length > 0) {
     show('also-ran-card');
     document.getElementById('also-ran-body').innerHTML = alsoRan.map((p,i) => _mlbCard(p, i+11, true)).join('');
   }
 
-  const underPicks = result.under_picks || [];
+  const underPicks = view.under_picks || [];
   if (underPicks.length > 0) {
     show('under-picks-card');
     document.getElementById('under-picks-body').innerHTML = underPicks.map((p,i) => {
@@ -882,16 +898,17 @@ function showResults(result) {
     }).join('');
   }
 
-  const pkData=result.pitcher_k||{}, pkAll=pkData.all||[];
+  const pkData=view.pitcher_k||{}, pkAll=pkData.all||[];
   if (pkAll.length > 0) {
     show('pitcher-k-card');
-    const pkSorted = pkAll.filter(p=>p.pick).sort((a,b)=>{
+    const pkSorted = pkAll.filter(p=>p.pick && (p.starts||0)>0).sort((a,b)=>{
       const ga=Math.abs((a.blended_avg_k!=null?a.blended_avg_k:(a.avg_k||0))-(a.line||0));
       const gb=Math.abs((b.blended_avg_k!=null?b.blended_avg_k:(b.avg_k||0))-(b.line||0));
       return gb-ga;
     });
+    window.__PK_REG__={};
     document.getElementById('pitcher-k-body').innerHTML = pkSorted.length > 0
-      ? pkSorted.map(p => {
+      ? pkSorted.map((p,_i) => {
           const isOver=p.pick==='OVER';
           const pickClr=isOver?'#63cab7':'#ff8a65';
           const sideCls=p.side==='HOME'?'badge-home':'badge-away';
@@ -901,17 +918,15 @@ function showResults(result) {
             ?(p.sugg_odds!=null?(p.sugg_odds>0?'+':'')+p.sugg_odds:'')
             :(isOver?(p.over_odds!=null?(p.over_odds>0?'+':'')+p.over_odds:''):(p.under_odds!=null?(p.under_odds>0?'+':'')+p.under_odds:''));
           const oppClr=p.avg_k!=null?(p.avg_k>(p.line||0)?'#63cab7':'#ff8a65'):'#94a3b8';
-          const l5Clr=p.recent_avg_k!=null?(p.recent_avg_k>(p.line||0)?'#63cab7':'#ff8a65'):'#94a3b8';
           const blClr=p.blended_avg_k!=null?(p.blended_avg_k>(p.line||0)?'#63cab7':'#ff8a65'):'#94a3b8';
           const conflict=p.avg_k!=null&&p.recent_avg_k!=null&&p.line!=null&&((p.avg_k>p.line)!==(p.recent_avg_k>p.line));
-          const l5Disp=p.recent_avg_k!=null?p.recent_avg_k+' K (L'+p.recent_starts+')':'—';
           const blDisp=p.blended_avg_k!=null?p.blended_avg_k+'K'+(conflict?' ⚠️':''):'—';
-          return `<tr>
-            <td class="font-semibold">${p.name}</td>
+          const _k='pk'+_i; window.__PK_REG__[_k]=p;
+          return `<tr onclick="_pkForm('${_k}')" style="cursor:pointer" title="Click for recent form">
+            <td class="font-semibold">${p.name} <span style="color:#64748b;font-size:.7rem">▾</span></td>
             <td><span class="badge ${sideCls}">${p.side}</span> <span class="text-slate-400 text-xs">${p.opp||''}</span></td>
             <td style="font-family:monospace;font-weight:700;color:#fff">${p.line!=null?p.line+' Ks':'—'}</td>
             <td style="font-family:monospace;font-weight:700;color:${oppClr}">${p.avg_k!=null?p.avg_k+' K':'—'}</td>
-            <td style="font-family:monospace;font-weight:700;color:${l5Clr}">${l5Disp}</td>
             <td style="font-family:monospace;font-weight:700;color:${blClr}">${blDisp}</td>
             <td style="font-family:monospace;color:#93c5fd;font-weight:600">${p.avg_ip!=null?p.avg_ip+' IP':'—'}</td>
             <td style="font-family:monospace;color:#fbbf24;font-weight:600">${p.era||'—'}</td>
@@ -919,21 +934,20 @@ function showResults(result) {
             <td><span style="color:${pickClr};font-weight:900;font-size:1rem">${pickLabel}</span><span class="text-slate-500" style="font-size:.68rem;display:block">${odds}</span></td>
           </tr>`;
         }).join('')
-      : '<tr><td colspan="10" class="text-slate-500 text-center" style="padding:16px">No qualifying picks today</td></tr>';
+      : '<tr><td colspan="9" class="text-slate-500 text-center" style="padding:16px">No qualifying picks today</td></tr>';
     const pkNoPick=pkAll.filter(p=>!p.pick);
     const npDet=document.getElementById('pitcher-k-nopick-details');
     if (npDet) {
       if (pkNoPick.length>0) {
         npDet.style.display='';
-        document.getElementById('pitcher-k-nopick-body').innerHTML=pkNoPick.map(p=>{
+        document.getElementById('pitcher-k-nopick-body').innerHTML=pkNoPick.map((p,_j)=>{
           const sideCls2=p.side==='HOME'?'badge-home':'badge-away';
-          const l5Disp2=p.recent_avg_k!=null?p.recent_avg_k+' K (L'+p.recent_starts+')':'—';
-          return `<tr>
-            <td class="font-semibold">${p.name}</td>
+          const _k2='pn'+_j; window.__PK_REG__[_k2]=p;
+          return `<tr onclick="_pkForm('${_k2}')" style="cursor:pointer" title="Click for recent form">
+            <td class="font-semibold">${p.name} <span style="color:#64748b;font-size:.7rem">▾</span></td>
             <td><span class="badge ${sideCls2}">${p.side}</span> <span class="text-slate-400 text-xs">${p.opp||''}</span></td>
             <td style="font-family:monospace;font-weight:700;color:#fff">${p.line!=null?p.line+' Ks':'—'}</td>
             <td style="font-family:monospace;color:#94a3b8">${p.avg_k!=null?p.avg_k+' K':'—'}</td>
-            <td style="font-family:monospace;color:#94a3b8">${l5Disp2}</td>
             <td style="color:#94a3b8;font-size:.78rem">${p.pick_note||'—'}</td>
           </tr>`;
         }).join('');
@@ -941,8 +955,60 @@ function showResults(result) {
     }
   }
 
-  renderByGame(result);
+  renderByGame(view);
   show('results-card');
+}
+
+// ── Pitcher recent-form popup (click a pitcher row) ────────────────────
+function _pkForm(key){
+  var p=(window.__PK_REG__||{})[key]; if(!p) return;
+  var ov=document.getElementById('pk-modal');
+  if(!ov){
+    ov=document.createElement('div');
+    ov.id='pk-modal';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; };
+    document.body.appendChild(ov);
+  }
+  var log=p.recent_k_log||[];
+  var line=p.line;
+  var rows=log.length?log.map(function(g){
+    var over=line!=null&&g.v>line;
+    var clr=line!=null?(over?'#63cab7':'#ff8a65'):'#e2e8f0';
+    return `<tr>
+      <td style="padding:6px 10px;color:#94a3b8;font-family:monospace">${g.d||'—'}</td>
+      <td style="padding:6px 10px;color:#cbd5e1;font-size:.8rem">${g.opp?('vs '+g.opp):''}</td>
+      <td style="padding:6px 10px;color:#93c5fd;font-family:monospace;font-size:.8rem">${g.ip?(g.ip+' IP'):''}</td>
+      <td style="padding:6px 10px;text-align:right;font-family:monospace;font-weight:800;color:${clr}">${g.v} K</td>
+    </tr>`;
+  }).join(''):'<tr><td colspan="4" style="padding:14px;color:#64748b;text-align:center">No recent starts on record</td></tr>';
+  var careerTxt=p.avg_k!=null?(p.avg_k+' K · '+(p.starts||0)+' starts vs '+(p.opp||'opp')):'no career vs opp';
+  var recentTxt=p.recent_avg_k!=null?(p.recent_avg_k+' K · last '+(p.recent_starts||0)):'no recent data';
+  var blendTxt=p.blended_avg_k!=null?(p.blended_avg_k+' K'):'—';
+  var lineTxt=line!=null?(line+' Ks'):'no line';
+  var pickClr=p.pick==='OVER'?'#63cab7':(p.pick==='UNDER'?'#ff8a65':'#94a3b8');
+  var pickTxt=p.pick?(p.sugg_line!=null?('OVER '+p.sugg_line):p.pick):'No pick';
+  ov.innerHTML=`<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:440px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid #1e293b">
+      <div>
+        <div style="font-weight:800;font-size:1.05rem;color:#fff">${p.name}</div>
+        <div style="color:#94a3b8;font-size:.78rem">${p.side||''} vs ${p.opp||''} · K Line ${lineTxt}</div>
+      </div>
+      <button onclick="document.getElementById('pk-modal').style.display='none'" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem">✕</button>
+    </div>
+    <div style="padding:14px 18px">
+      <div style="font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase;margin-bottom:8px">Last ${log.length||0} Starts</div>
+      <table style="width:100%;border-collapse:collapse;font-size:.85rem"><tbody>${rows}</tbody></table>
+      <div style="margin-top:16px;border-top:1px solid #1e293b;padding-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:.82rem">
+        <div><span style="color:#64748b">Career vs opp</span><br><span style="color:#e2e8f0;font-weight:600">${careerTxt}</span></div>
+        <div><span style="color:#64748b">Recent form</span><br><span style="color:#e2e8f0;font-weight:600">${recentTxt}</span></div>
+        <div><span style="color:#64748b">Blended (pick driver)</span><br><span style="color:#e2e8f0;font-weight:800">${blendTxt}</span></div>
+        <div><span style="color:#64748b">Pick</span><br><span style="color:${pickClr};font-weight:800">${pickTxt}</span></div>
+      </div>
+      ${p.blend_src?('<div style="margin-top:10px;color:#64748b;font-size:.74rem">'+p.blend_src+'</div>'):''}
+    </div>
+  </div>`;
+  ov.style.display='flex';
 }
 
 // ── CSV export (all picks → spreadsheet/betting tools) ──────────────────
@@ -1115,6 +1181,20 @@ function _matchName(p, q){
 }
 
 window._lastResult = null;
+window.UNDERS_ONLY = false;
+
+// Admin-only client-side filter: re-renders the current picks showing only UNDER
+// plays (hitter Under 1.5 + pitcher K Unders). No re-run, no server call.
+function toggleUndersOnly(){
+  if(!window.IS_ADMIN) return;
+  window.UNDERS_ONLY = !window.UNDERS_ONLY;
+  var b=document.getElementById('unders-btn');
+  if(b){
+    if(window.UNDERS_ONLY){ b.style.background='#ff8a65'; b.style.color='#1a1a1a'; b.innerHTML='&#11015; Unders Only: ON'; }
+    else { b.style.background='#1f2937'; b.style.color='#fff'; b.innerHTML='&#11015; Unders Only'; }
+  }
+  if(window._lastResult) showResults(window._lastResult);
+}
 
 function runPlayerSearch(raw){
   var box = document.getElementById('player-search-result');
