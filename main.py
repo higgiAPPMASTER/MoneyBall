@@ -413,6 +413,11 @@ _HTML = """
   <title>MLB MoneyBall &mdash; Money Picks Arena</title>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&family=Source+Sans+Pro:wght@300;400;600;700&display=swap" rel="stylesheet">
   <style>
+    /* responsive: phones & tablets (mobile fit) */
+    html,body{max-width:100%;overflow-x:hidden}
+    img{max-width:100%;height:auto}
+    @media (max-width:1200px){table{display:block;width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;white-space:nowrap}}
+    @media (max-width:560px){table{font-size:12px}table th,table td{padding:6px 8px}}
     :root {
       --navy:#0f0f0f;--navy2:#161616;--navy3:#1a1a1a;--green:#f59e0b;--red:#ff1744;
       --yellow:#f59e0b;--orange:#f59e0b;--gold:#f59e0b;--silver:#c0c0c0;--bronze:#cd7f32;
