@@ -3,7 +3,7 @@
 pipeline.py — MLB Daily Picks master pipeline (web-optimized).
 Runs all 4 steps with real-time progress via emit callback.
 """
-import os, sys, time, json, requests
+import os, sys, time, json, math, requests
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -86,6 +86,40 @@ def fetch_step4_consistency(player_id, side: str, opp_name: str = "",
                 "display": f"{hits_games}/{games}", "score": score}
     except Exception:
         return {"hits_games": 0, "games": 0, "display": "ERR", "score": 0}
+
+
+def _recent_hit_log(player_id, n: int = 5) -> list:
+    """Last n games (any opponent), newest-first: date, hits, total bases, opp, H/A.
+       Mirrors the pitcher recent-form log so hitter cards/under picks can show
+       a 'recent form' click-through popup."""
+    if not player_id:
+        return []
+    try:
+        from mlb_stats_splits import _get_game_logs
+        from datetime import date as _dt
+        cy = _dt.today().year
+        games = []
+        for season in range(cy, cy - 2, -1):        # current + prior season for recency
+            splits = _get_game_logs(player_id, season)
+            for sp in reversed(splits):             # splits oldest-first → iterate newest-first
+                stat = sp.get("stat", {})
+                ab = int(stat.get("atBats", 0) or 0)
+                if ab < 1:
+                    continue
+                games.append({
+                    "d":   (sp.get("date") or "")[5:],
+                    "h":   int(stat.get("hits", 0) or 0),
+                    "tb":  int(stat.get("totalBases", 0) or 0),
+                    "opp": (sp.get("opponent", {}) or {}).get("name", ""),
+                    "ha":  "H" if sp.get("isHome") else "A",
+                })
+                if len(games) >= n:
+                    break
+            if len(games) >= n:
+                break
+        return games
+    except Exception:
+        return []
 
 
 
@@ -207,6 +241,19 @@ def _build_blurb(r):
     if s3_ba and s3_ba > 0 and "✅" in (s3.get("flag") or ""):
         parts.append(f".{round(s3_ba * 1000):03d} BA last 10 {side_str} games")
     return " · ".join(parts)
+
+
+def _wilson_lb(hits: int, games: int, z: float = 1.96) -> float:
+    """Lower bound of a 95% Wilson confidence interval for the S4 hit rate.
+    Rewards sample size: a proven 9/10 outranks a lucky 4/4, while strong big
+    samples (10/10) stay on top. Drives the final HIT-list rank order."""
+    if not games:
+        return 0.0
+    p = hits / games
+    den = 1.0 + z * z / games
+    centre = p + z * z / (2 * games)
+    margin = z * math.sqrt(p * (1 - p) / games + z * z / (4 * games * games))
+    return (centre - margin) / den
 
 
 def run_pipeline(run_date: str, emit=None) -> dict:
@@ -453,18 +500,24 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         s4_qualified.append(r)
 
     emit({"type": "log", "msg": f"S4 filter: {len(s4_qualified)} pass, {len(s4_dq)} DQ'd (<50%)"})
-    # Final HIT-list order is driven by S4 (H/A hit rate vs THIS opponent): higher hit
-    # rate ranks first (10/10 & 9/9 above 4/6 & 5/7). Ties broken by game count (10/10
-    # above 4/4 — more proven), then by the model total (S1+S2+S3) as a final tiebreak.
+    # Final HIT-list order is driven by S4 (H/A hit rate vs THIS opponent), but
+    # confidence-adjusted so sample size matters: a proven 9/10 or 7/8 outranks a
+    # thin 4/4 or 5/5, while strong big samples (10/10) stay on top. We rank by the
+    # Wilson lower bound of the hit rate; ties broken by game count, then model total.
     all_ranked = sorted(
         s4_qualified,
-        key=lambda x: ((x.get("s4") or {}).get("score", 0),
+        key=lambda x: (_wilson_lb((x.get("s4") or {}).get("hits_games", 0),
+                                  (x.get("s4") or {}).get("games", 0)),
                        (x.get("s4") or {}).get("games", 0),
                        x.get("total", 0)),
         reverse=True,
     )
     top9     = all_ranked[:10]
     also_ran = all_ranked[10:]
+
+    # Recent form: last 5 games (date/opp/hits/total-bases) for the click-through popup
+    for _hp in top9 + also_ran:
+        _hp["recent_hit_log"] = _recent_hit_log(_hp.get("player_id"))
 
     # ── Under Picks ───────────────────────────────────────────────────
     try:
@@ -541,6 +594,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                 break
         _up.setdefault("team", "")
         _up.setdefault("game_start", "")
+        _up["recent_hit_log"] = _recent_hit_log(_up.get("batter_id"))
 
     # ── Pitcher K Picks ───────────────────────────────────────────────
     try:
