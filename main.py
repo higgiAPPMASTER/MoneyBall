@@ -597,7 +597,7 @@ _HTML = """
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
           <label class="text-slate-300" style="font-weight:700">Legs</label>
           <select id="parlayLegs" style="background:#0f0f0f;border:1px solid #262626;border-radius:8px;color:#fff;padding:8px 10px">
-            <option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option><option>9</option><option>10</option>
+            <option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option><option>9</option><option>10</option><option>11</option><option>12</option><option>13</option><option>14</option><option>15</option><option>16</option><option>17</option><option>18</option><option>19</option><option>20</option>
           </select>
           <button class="btn-primary" onclick="buildParlay()">Build Best Parlay</button>
           <button class="btn-primary" onclick="generateParlay()" style="background:#1f2937;color:#fff">🎲 Generate New</button>
@@ -622,6 +622,16 @@ _HTML = """
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="pitcher_outs" checked onchange="_catChanged()"> Outs</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="pitcher_earned_runs" checked onchange="_catChanged()"> Earned Runs</label>
               </div>
+            </div>
+          </div>
+          <div style="position:relative;display:inline-block">
+            <button class="btn-primary" id="parlay-games-btn" onclick="toggleGamesMenu(event)" style="background:#1f2937;color:#fff">&#9776; Games (0/0) &#9662;</button>
+            <div id="parlay-games-menu" style="display:none;position:absolute;z-index:60;top:calc(100% + 6px);left:0;background:#0e0e0e;border:1px solid #2a2a2a;border-radius:10px;padding:10px;min-width:240px;max-height:340px;overflow:auto;box-shadow:0 12px 34px rgba(0,0,0,.55)">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px">
+                <span style="font-size:.66rem;color:#888;font-weight:800;letter-spacing:.06em">PARLAY GAMES</span>
+                <span style="font-size:.66rem"><a onclick="_gameSetAll(true)" style="color:#63cab7;cursor:pointer;font-weight:800">All</a> <span style="color:#444">·</span> <a onclick="_gameSetAll(false)" style="color:#ff8a65;cursor:pointer;font-weight:800">None</a></span>
+              </div>
+              <div id="parlay-games-list"><div style="font-size:.72rem;color:#666;padding:4px 2px">Run picks first.</div></div>
             </div>
           </div>
         </div>
@@ -981,6 +991,7 @@ function showResults(result) {
 
   renderPitcherProps(view);
   renderByGame(view);
+  _buildGamesMenu();  // refresh the parlay "Games" filter list from today's full slate
   show('results-card');
 }
 
@@ -1461,6 +1472,10 @@ function _mlbPool(){
   if(window.PARLAY_PLUS){ cands=cands.filter(function(c){ return Number(c.odds)>0; }); }
   // Parlay-builder category checkboxes — keep only legs whose category is checked.
   if(window.PARLAY_CATS){ cands=cands.filter(function(c){ return window.PARLAY_CATS[_legCat(c)]!==false; }); }
+  // Parlay-builder game checkboxes — keep only legs whose game is checked. Uses the same
+  // gameKey() label as the "By Game" card so every leg type (hit/under/K/run/prop) maps
+  // consistently. A game is dropped only when explicitly unchecked (===false).
+  if(window.PARLAY_GAMES){ cands=cands.filter(function(c){ return window.PARLAY_GAMES[gameKey(c.src||c)]!==false; }); }
   // Dedupe per player+market (was per player only). One pitcher can now supply a
   // K leg AND separate Hits Allowed / Outs / Earned Runs legs — and a hitter can
   // supply a Hits leg + a Total Bases leg — so the new prop categories actually
@@ -1544,6 +1559,10 @@ window.PARLAY_MINUS = false;
 window.PARLAY_PLUS = false;
 // Parlay category checkboxes — which pick categories feed the parlay pool (all on by default).
 window.PARLAY_CATS = {HIT:true,UNDER_HITS:true,UNDER_TB:true,K:true,RUN:true,pitcher_hits_allowed:true,pitcher_outs:true,pitcher_earned_runs:true};
+// Parlay game filter — which games feed the parlay pool. Empty = all games allowed; a
+// game is excluded only when explicitly set false. Keyed by the same gameKey() label as
+// the "By Game" card. Repopulated each run from the day's slate (_buildGamesMenu).
+window.PARLAY_GAMES = {};
 
 // Paints both Overs Only / Unders Only buttons to match their toggle state.
 function _paintParlayDirBtns(){
@@ -1615,12 +1634,56 @@ function _catSetAll(v){
   for(var i=0;i<cbs.length;i++){ cbs[i].checked=v; }
   _catChanged();
 }
-// Close the categories dropdown when clicking anywhere outside it.
+// ── Parlay game filter (mirrors the category menu; list built from the day's slate) ──
+// Unique games on today's board, via the same gameKey() used by the "By Game" card.
+function _allGameKeys(){
+  var r=window._lastResult; if(!r) return [];
+  r=_filterStarted(r);
+  var all=[];
+  (r.top9||[]).forEach(function(p){all.push(p);});
+  (r.also_ran||[]).forEach(function(p){all.push(p);});
+  (r.under_picks||[]).forEach(function(p){all.push(p);});
+  ((((r.pitcher_k||{}).all)||[]).filter(function(p){return p.pick&&(p.starts||0)>0;})).forEach(function(p){all.push(p);});
+  (r.runs_picks||[]).forEach(function(p){all.push(p);});
+  var _pp=(r.pitcher_props)||{};
+  PROP_ORDER.forEach(function(mkt){ ((((_pp[mkt]||{}).picks))||[]).forEach(function(p){all.push(p);}); });
+  var seen={}, out=[];
+  all.forEach(function(p){ var g=gameKey(p); if(g&&g!=='Unknown'&&!seen[g]){seen[g]=1;out.push(g);} });
+  out.sort();
+  return out;
+}
+function _gameCount(){ var keys=_allGameKeys(); var n=0; for(var i=0;i<keys.length;i++){ if(window.PARLAY_GAMES[keys[i]]!==false) n++; } return n+'/'+keys.length; }
+function _paintGamesBtn(){ var b=document.getElementById('parlay-games-btn'); if(b) b.innerHTML='&#9776; Games ('+_gameCount()+') &#9662;'; }
+function _buildGamesMenu(){
+  var list=document.getElementById('parlay-games-list'); if(!list) return;
+  var keys=_allGameKeys();
+  if(!keys.length){ list.innerHTML='<div style="font-size:.72rem;color:#666;padding:4px 2px">Run picks first.</div>'; _paintGamesBtn(); return; }
+  list.innerHTML=keys.map(function(g){
+    var on=(window.PARLAY_GAMES[g]!==false);
+    return '<label class="parlay-cat-row"><input type="checkbox" class="parlay-game-cb" value="'+_esc(g)+'"'+(on?' checked':'')+' onchange="_gameChanged()"> '+_esc(g)+'</label>';
+  }).join('');
+  _paintGamesBtn();
+}
+function toggleGamesMenu(e){ if(e){ e.stopPropagation(); } var m=document.getElementById('parlay-games-menu'); if(!m) return; if(m.style.display==='block'){ m.style.display='none'; } else { _buildGamesMenu(); m.style.display='block'; } }
+function _gameChanged(){
+  var cbs=document.querySelectorAll('.parlay-game-cb');
+  for(var i=0;i<cbs.length;i++){ window.PARLAY_GAMES[cbs[i].value]=cbs[i].checked; }
+  _paintGamesBtn();
+  if((document.getElementById('parlayResult').innerHTML||'').trim()) buildParlay();
+}
+function _gameSetAll(v){
+  var cbs=document.querySelectorAll('.parlay-game-cb');
+  for(var i=0;i<cbs.length;i++){ cbs[i].checked=v; }
+  _gameChanged();
+}
+// Close the categories / games dropdowns when clicking anywhere outside them.
 document.addEventListener('click', function(e){
-  var m=document.getElementById('parlay-cats-menu'); if(!m||m.style.display!=='block') return;
-  var btn=document.getElementById('parlay-cats-btn');
-  if(m.contains(e.target) || (btn&&btn.contains(e.target))) return;
-  m.style.display='none';
+  [['parlay-cats-menu','parlay-cats-btn'],['parlay-games-menu','parlay-games-btn']].forEach(function(pair){
+    var m=document.getElementById(pair[0]); if(!m||m.style.display!=='block') return;
+    var btn=document.getElementById(pair[1]);
+    if(m.contains(e.target) || (btn&&btn.contains(e.target))) return;
+    m.style.display='none';
+  });
 });
 
 // Admin-only client-side filter: re-renders the current picks showing only UNDER
