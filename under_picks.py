@@ -537,8 +537,10 @@ def _recent_runs_log(player_id, n: int = 5) -> list:
 
 
 # Pick qualifies as OVER when the runs-scored rate is high, UNDER when low.
-RUNS_OVER_CUT  = 50   # >= this % → likely to score a run
-RUNS_UNDER_CUT = 20   # <= this % → likely NOT to score
+RUNS_OVER_CUT  = 70   # >= this % → likely to score a run (vs opp)
+RUNS_UNDER_CUT = 30   # <= this % → likely NOT to score (vs opp)
+RUNS_MIN_GAMES = 3    # minimum head-to-head games vs THIS opponent to qualify
+RUNS_TOP_N     = 20   # cap per side (top N overs / top N unders)
 
 
 def run_runs_picks(run_date: str, team_schedule: dict, emit=None) -> list:
@@ -575,7 +577,8 @@ def run_runs_picks(run_date: str, team_schedule: dict, emit=None) -> list:
         else:
             return None
         rate = _runs_rate(batter_id, side, opp_name)
-        if rate["games"] <= 0:
+        # Vs-opponent ONLY (no L10 any-opp fallback) and minimum head-to-head games.
+        if rate.get("basis") != "vs opp" or rate["games"] < RUNS_MIN_GAMES:
             return None
         score = rate["score"]
         if score >= RUNS_OVER_CUT:
@@ -610,6 +613,10 @@ def run_runs_picks(run_date: str, team_schedule: dict, emit=None) -> list:
         -p["wilson"] if p["pick"] == "OVER" else p["score"],
         -p["games"],
     ))
+    # Cap to the top RUNS_TOP_N on each side (overs / unders).
+    overs  = [p for p in picks if p["pick"] == "OVER"][:RUNS_TOP_N]
+    unders = [p for p in picks if p["pick"] == "UNDER"][:RUNS_TOP_N]
+    picks = overs + unders
     _log(emit, f"✅ Runs Picks: {len(picks)} "
                f"({sum(1 for p in picks if p['pick']=='OVER')} over / "
                f"{sum(1 for p in picks if p['pick']=='UNDER')} under)")
