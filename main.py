@@ -669,12 +669,7 @@ _HTML = """
       <div class="card p-6 hidden" id="runs-picks-card" style="border-color:rgba(96,165,250,.25)">
         <div class="section-hdr" style="color:#60a5fa">🏃 Runs Picks — Score a Run (Over / Under 0.5)</div>
         <p class="text-xs text-slate-400 mb-3" style="margin-top:-4px">Who's likely to cross the plate. Runs are lower-frequency than hits, so treat these as higher-variance plays.</p>
-        <div class="overflow-x-auto">
-          <table class="results-table" id="runs-picks-table">
-            <thead><tr><th>#</th><th>Player</th><th>vs (H/A)</th><th>Line</th><th>Runs Rate vr Opp</th><th>Recent</th><th>Odds</th><th>Pick</th></tr></thead>
-            <tbody id="runs-picks-body"></tbody>
-          </table>
-        </div>
+        <div id="runs-picks-body" class="mlb-picks-grid"></div>
         <p class="text-xs text-slate-500 mt-4 admin-only">
           <strong>Runs Rate vr Opp</strong> = last 10 H/A games vs THIS opponent with 1+ run (falls back to L10 H/A any opp when no head-to-head) &nbsp;|&nbsp;
           <strong>Pick</strong> = OVER when the rate is high, UNDER when low &nbsp;|&nbsp; ranked by Wilson lower-bound so proven samples beat thin lucky ones.
@@ -965,27 +960,7 @@ function showResults(result) {
   if (runsPicks.length > 0) {
     show('runs-picks-card');
     window.__RUNS_REG__={};
-    document.getElementById('runs-picks-body').innerHTML = runsPicks.map((p,i) => {
-      const rank=i+1;
-      const isOver=p.pick==='OVER';
-      const pickClr=isOver?'#63cab7':'#ff8a65';
-      const sideCls=p.side==='HOME'?'badge-home':'badge-away';
-      const od=isOver?p.over_odds:p.under_odds;
-      const scoreClr=p.score>=70?'#63cab7':p.score>=50?'#fbbf24':'#ff8a65';
-      const log=p.recent_runs_log||[];
-      const recCnt=log.filter(g=>g.r>=1).length;
-      const _rk='rn'+rank; window.__RUNS_REG__[_rk]=p;
-      return `<tr onclick="_runsForm('${_rk}')" style="cursor:pointer" title="Click for recent form">
-        <td><span class="rank-badge" style="background:#10243a;color:#60a5fa;font-weight:900">${rank}</span></td>
-        <td class="font-semibold">${p.name}</td>
-        <td><span class="badge ${sideCls}">${p.side}</span> <span class="text-slate-400 text-xs">${p.opp||''}</span></td>
-        <td style="font-family:monospace;font-weight:700;color:#fff">${p.line!=null?p.line:0.5}</td>
-        <td style="font-family:monospace;font-weight:700;color:${scoreClr}">${p.rate_disp||'—'} <span class="text-slate-500" style="font-size:.68rem">(${p.score}%${p.basis?' '+p.basis:''})</span></td>
-        <td class="text-slate-300 text-sm">${log.length?recCnt+'/'+log.length:'—'}</td>
-        <td style="font-family:monospace;color:#fbbf24;font-weight:700">${od!=null?(od>0?'+':'')+od:'—'}</td>
-        <td><span style="color:${pickClr};font-weight:900;font-size:1rem">${p.pick}</span></td>
-      </tr>`;
-    }).join('');
+    document.getElementById('runs-picks-body').innerHTML = runsPicks.map((p,i) => _runsCard(p, i+1)).join('');
   }
 
   renderPitcherProps(view);
@@ -1919,6 +1894,55 @@ function _underCard(p, rank) {
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
         <span style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">U 1.5 Total Bases</span>
         <span style="font-family:monospace;color:#63cab7;font-weight:700;font-size:.9rem">${tbOdds}</span>
+      </div>
+      ${adminStats}
+    </div>
+  </div>`;
+}
+
+function _runsCard(p, rank) {
+  const abbr = _mlbTeamAbbr(p.team);
+  const teamLogo = abbr ? `https://a.espncdn.com/i/teamlogos/mlb/500/${abbr}.png` : '';
+  const isOver = p.pick==='OVER';
+  const rnkColors = rank===1?['#60a5fa','#000']:rank===2?['#38bdf8','#000']:rank===3?['#818cf8','#000']:['#1e1e1e','#60a5fa'];
+  const sideCls = p.side==='HOME'?'badge-home':'badge-away';
+  const pickClr = isOver?'#63cab7':'#ff8a65';
+  const od = isOver?p.over_odds:p.under_odds;
+  const odDisp = od!=null?(od>0?'+':'')+od:'—';
+  const scoreClr = p.score>=70?'#63cab7':p.score>=50?'#fbbf24':'#ff8a65';
+  const log = p.recent_runs_log||[];
+  const recCnt = log.filter(g=>g.r>=1).length;
+  const adminStats = `<div class="admin-only" style="display:none;font-size:.72rem;color:#64748b;margin-top:4px;line-height:1.7">
+    <span>Score <strong style="color:#60a5fa">${p.score!=null?p.score+'%':'—'}</strong></span> &nbsp;
+    <span>Games <strong style="color:#94a3b8">${p.games||0}</strong></span> &nbsp;
+    <span>Wilson <strong style="color:#94a3b8">${p.wilson!=null?p.wilson:'—'}</strong></span>
+  </div>`;
+  window.__RUNS_REG__=window.__RUNS_REG__||{}; window.__RUNS_REG__['rn'+rank]=p;
+  return `<div class="mlb-pick-card" onclick="_runsForm('rn${rank}')" title="Click for recent form" style="cursor:pointer">
+    <div class="mlb-card-header" style="background:linear-gradient(135deg,#0e1f33 0%,#08111d 100%)">
+      <div style="display:flex;align-items:center;gap:8px">
+        <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
+        <span style="font-size:.72rem;letter-spacing:.12em;color:#60a5fa;font-weight:800">MLB · RUN</span>
+      </div>
+      ${teamLogo?`<img src="${teamLogo}" alt="${p.team}" style="height:34px;width:34px;object-fit:contain" onerror="this.style.display='none'"/>`:''}
+    </div>
+    <div class="mlb-card-name">${p.name}</div>
+    <div class="mlb-card-body">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <span style="font-size:.82rem;color:#94a3b8">vs <strong style="color:#fff">${p.opp||'—'}</strong></span>
+        <span class="badge ${sideCls}">${p.side}</span>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
+        <span style="font-size:.78rem;color:#94a3b8">Runs Rate vr Opp</span>
+        <span style="font-family:monospace;font-weight:700;color:${scoreClr}">${p.rate_disp||'—'} <span style="color:#64748b;font-size:.68rem">${p.basis||''}</span></span>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
+        <span style="font-size:.72rem;color:#64748b">Recent</span>
+        <span style="font-size:.78rem;color:#cbd5e1">${log.length?recCnt+'/'+log.length:'—'}</span>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
+        <span style="font-size:.8rem;color:${pickClr};font-weight:900">${p.pick} ${p.line!=null?p.line:0.5} Runs</span>
+        <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}</span>
       </div>
       ${adminStats}
     </div>
