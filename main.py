@@ -637,14 +637,14 @@ _HTML = """
         <div class="section-hdr" style="color:#63cab7">⚾ Pitcher K Picks — Over / Under Strikeout Line</div>
         <div class="overflow-x-auto">
           <table class="results-table" id="pitcher-k-table">
-            <thead><tr><th>Pitcher</th><th>vs (H/A)</th><th>K Line</th><th>Opp Avg K</th><th>Blend</th><th>Avg IP</th><th>ERA</th><th>K History vs Opp</th><th>Pick</th></tr></thead>
+            <thead><tr><th>Pitcher</th><th>vs (H/A)</th><th>K Line</th><th>Avg K vr OPP</th><th>Blend</th><th>Avg IP vr Opp</th><th>ERA vr Opp</th><th>Hits Allowed vr Opp</th><th>Pick</th></tr></thead>
             <tbody id="pitcher-k-body"></tbody>
           </table>
         </div>
         <details class="mt-4" id="pitcher-k-nopick-details">
           <summary class="cursor-pointer text-xs text-slate-500 select-none">▸ All today's pitchers (no qualifying pick)</summary>
           <table class="results-table mt-2" id="pitcher-k-nopick-table">
-            <thead><tr><th>Pitcher</th><th>vs (H/A)</th><th>K Line</th><th>Opp Avg K</th><th>Note</th></tr></thead>
+            <thead><tr><th>Pitcher</th><th>vs (H/A)</th><th>K Line</th><th>Avg K vr OPP</th><th>Note</th></tr></thead>
             <tbody id="pitcher-k-nopick-body"></tbody>
           </table>
         </details>
@@ -932,7 +932,7 @@ function showResults(result) {
             <td style="font-family:monospace;font-weight:700;color:${blClr}">${blDisp}</td>
             <td style="font-family:monospace;color:#93c5fd;font-weight:600">${p.avg_ip!=null?p.avg_ip+' IP':'—'}</td>
             <td style="font-family:monospace;color:#fbbf24;font-weight:600">${p.era||'—'}</td>
-            <td style="font-family:monospace;font-size:.75rem;color:#94a3b8">${p.k_history||'—'}</td>
+            <td style="font-family:monospace;font-weight:600;color:#fca5a5">${p.avg_hits!=null?p.avg_hits+' H':'—'}</td>
             <td><span style="color:${pickClr};font-weight:900;font-size:1rem">${pickLabel}</span><span class="text-slate-500" style="font-size:.68rem;display:block">${odds}</span></td>
           </tr>`;
         }).join('')
@@ -972,18 +972,25 @@ function _pkForm(key){
     ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; };
     document.body.appendChild(ov);
   }
-  var log=p.recent_k_log||[];
   var line=p.line;
+  var vlog=p.vs_opp_log||[];
+  var usingVs=vlog.length>0;
+  var log=usingVs?vlog:(p.recent_k_log||[]);
   var rows=log.length?log.map(function(g){
-    var over=line!=null&&g.v>line;
+    var kv=(g.k!=null?g.k:g.v);
+    var over=line!=null&&kv>line;
     var clr=line!=null?(over?'#63cab7':'#ff8a65'):'#e2e8f0';
+    var oppCell=usingVs?'':`<td style="padding:6px 10px;color:#cbd5e1;font-size:.8rem">${g.opp?('vs '+g.opp):''}</td>`;
+    var hCell=usingVs?`<td style="padding:6px 10px;text-align:right;font-family:monospace;font-weight:800;color:#fca5a5">${g.h!=null?g.h+' H':''}</td>`:'';
     return `<tr>
       <td style="padding:6px 10px;color:#94a3b8;font-family:monospace">${g.d||'—'}</td>
-      <td style="padding:6px 10px;color:#cbd5e1;font-size:.8rem">${g.opp?('vs '+g.opp):''}</td>
+      ${oppCell}
       <td style="padding:6px 10px;color:#93c5fd;font-family:monospace;font-size:.8rem">${g.ip?(g.ip+' IP'):''}</td>
-      <td style="padding:6px 10px;text-align:right;font-family:monospace;font-weight:800;color:${clr}">${g.v} K</td>
+      <td style="padding:6px 10px;text-align:right;font-family:monospace;font-weight:800;color:${clr}">${kv} K</td>
+      ${hCell}
     </tr>`;
-  }).join(''):'<tr><td colspan="4" style="padding:14px;color:#64748b;text-align:center">No recent starts on record</td></tr>';
+  }).join(''):'<tr><td colspan="4" style="padding:14px;color:#64748b;text-align:center">No starts on record</td></tr>';
+  var histTitle=usingVs?('Starts vs '+(p.opp||'opp')+' — Ks & Hits allowed'):('Last '+(log.length||0)+' Starts (any opp)');
   var careerTxt=p.avg_k!=null?(p.avg_k+' K · '+(p.starts||0)+' starts vs '+(p.opp||'opp')):'no career vs opp';
   var recentTxt=p.recent_avg_k!=null?(p.recent_avg_k+' K · last '+(p.recent_starts||0)):'no recent data';
   var blendTxt=p.blended_avg_k!=null?(p.blended_avg_k+' K'):'—';
@@ -999,10 +1006,11 @@ function _pkForm(key){
       <button onclick="document.getElementById('pk-modal').style.display='none'" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem">✕</button>
     </div>
     <div style="padding:14px 18px">
-      <div style="font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase;margin-bottom:8px">Last ${log.length||0} Starts</div>
-      <table style="width:100%;border-collapse:collapse;font-size:.85rem"><tbody>${rows}</tbody></table>
+      <div style="font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase;margin-bottom:8px">${histTitle}</div>
+      <table style="width:100%;border-collapse:collapse;font-size:.85rem">${usingVs?'<thead><tr><th style="text-align:left;padding:4px 10px;color:#64748b;font-size:.68rem;font-weight:600">Date</th><th style="text-align:left;padding:4px 10px;color:#64748b;font-size:.68rem;font-weight:600">IP</th><th style="text-align:right;padding:4px 10px;color:#64748b;font-size:.68rem;font-weight:600">K</th><th style="text-align:right;padding:4px 10px;color:#64748b;font-size:.68rem;font-weight:600">Hits</th></tr></thead>':''}<tbody>${rows}</tbody></table>
       <div style="margin-top:16px;border-top:1px solid #1e293b;padding-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:.82rem">
         <div><span style="color:#64748b">Career vs opp</span><br><span style="color:#e2e8f0;font-weight:600">${careerTxt}</span></div>
+        <div><span style="color:#64748b">Hits allowed vs opp</span><br><span style="color:#e2e8f0;font-weight:600">${p.avg_hits!=null?(p.avg_hits+' H avg'):'—'}</span></div>
         <div><span style="color:#64748b">Recent form</span><br><span style="color:#e2e8f0;font-weight:600">${recentTxt}</span></div>
         <div><span style="color:#64748b">Blended (pick driver)</span><br><span style="color:#e2e8f0;font-weight:800">${blendTxt}</span></div>
         <div><span style="color:#64748b">Pick</span><br><span style="color:${pickClr};font-weight:800">${pickTxt}</span></div>
