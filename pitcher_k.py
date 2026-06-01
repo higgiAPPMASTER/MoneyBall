@@ -545,7 +545,10 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
             logs.append(f"  ⚠️ {name} — not found, skipping")
             return None, logs
 
-        pitcher_team = _get_pitcher_team(pid)
+        # Prefer the big-league club from today's probable-starters schedule;
+        # _get_pitcher_team (currentTeam) can be a minor-league affiliate for
+        # optioned pitchers (e.g. "Toledo Mud Hens" instead of "Detroit Tigers").
+        pitcher_team = prob_team_map.get(_normalize(name)) or _get_pitcher_team(pid)
         side = "HOME" if _teams_match(pitcher_team, pl["home_team"]) else "AWAY"
         opp  = pl["away_team"] if side == "HOME" else pl["home_team"]
 
@@ -627,6 +630,12 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                  "props": _build_prop_picks(name, pitcher_team, opp, side, hist, rf),
                  "pick": pick, "pick_note": pick_note}), logs
 
+    # Today's probable starters — used to map each pitcher to his big-league club
+    # (so optioned pitchers don't show their minor-league affiliate) and reused
+    # below for no-K-line starters (avoids a second schedule API call).
+    prob_starters = _fetch_probable_starters(run_date)
+    prob_team_map = {_normalize(s["name"]): s["team"] for s in prob_starters if s.get("team")}
+
     with ThreadPoolExecutor(max_workers=8) as _ex:
         _futs = [_ex.submit(_eval_pitcher, pl) for pl in all_lines]
         for _fut in as_completed(_futs):
@@ -641,7 +650,7 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
 
     # Add today's probable starters who have no K line posted
     try:
-        starters = _fetch_probable_starters(run_date)
+        starters = prob_starters
         seen_names = {_normalize(r["name"]) for r in all_results}
         new_starters = [st for st in starters if _normalize(st["name"]) not in seen_names]
 
