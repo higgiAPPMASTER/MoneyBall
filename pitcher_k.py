@@ -23,6 +23,22 @@ K_SEASONS        = [2021, 2022, 2023, 2024, 2025, 2026]
 SEASON           = "2026"
 BOTTOM_K_TEAMS_N = 0  # disabled — show all teams
 
+# ── Pitcher prop O/U categories (real Odds API markets, parallel to K) ─────
+# Each is a true Over/Under betting line that feeds the parlay builder.
+# Data comes from the SAME pitching gameLog already pulled for K's:
+#   hits allowed = stat["hits"], outs = inningsPitched×3, earned runs = stat["earnedRuns"].
+PROP_MARKETS = ["pitcher_hits_allowed", "pitcher_outs", "pitcher_earned_runs"]
+# market -> (display label, per-start value field on the stat dicts, unit suffix)
+PROP_META = {
+    "pitcher_hits_allowed": ("Hits Allowed", "h",    "H"),
+    "pitcher_outs":         ("Outs",         "outs", " outs"),
+    "pitcher_earned_runs":  ("Earned Runs",  "er",   "ER"),
+}
+# Populated by _fetch_pitcher_props each run (cleared at the start so a warm
+# process / 3×-day scheduler never serves a stale matchup):
+#   {market: {norm_name: {name,line,over_odds,under_odds,home_team,away_team}}}
+PROP_ODDS = {}
+
 _pitcher_id_cache = {}
 _team_id_cache    = {}
 
@@ -158,6 +174,83 @@ def _fetch_k_lines(run_date: str, emit=None) -> list:
         return []
 
 
+def _fetch_pitcher_props(run_date: str, emit=None) -> None:
+    """Pull the 3 pitcher prop O/U lines (hits allowed / outs / earned runs) into
+    the module-global PROP_ODDS. ONE Odds API call per event (all 3 markets in a
+    single request) — separate from the K fetch so the proven K path is untouched.
+    First posted line per pitcher per market wins; captures Over AND Under odds."""
+    def log(m):
+        if emit: emit({"type": "log", "msg": m})
+
+    PROP_ODDS.clear()
+    for m in PROP_MARKETS:
+        PROP_ODDS[m] = {}
+    if not ODDS_API_KEY:
+        log("⚠️  ODDS_API_KEY not set — Pitcher prop picks skipped")
+        return
+
+    PREFERRED = ["draftkings", "fanduel", "betmgm", "caesars", "pointsbetus"]
+    tomorrow  = (time.strftime("%Y-%m-%d",
+                  time.gmtime(time.mktime(time.strptime(run_date, "%Y-%m-%d")) + 86400)))
+
+    def _is_run_date_game(ct: str) -> bool:
+        if not ct: return False
+        day = ct[:10]
+        if day == run_date: return True
+        if day == tomorrow:
+            try:
+                return int(ct[11:13]) < 9
+            except Exception:
+                return False
+        return False
+
+    try:
+        r = requests.get(f"{ODDS_BASE}/sports/baseball_mlb/events",
+            params={"apiKey": ODDS_API_KEY, "dateFormat": "iso"}, timeout=15)
+        if not r.ok:
+            log(f"  ⚠️  Odds API events returned {r.status_code} (props)")
+            return
+        events = [e for e in r.json()
+                  if _is_run_date_game(e.get("commence_time", ""))]
+        for ev in events:
+            home_team = ev.get("home_team", "")
+            away_team = ev.get("away_team", "")
+            r2 = requests.get(
+                f"{ODDS_BASE}/sports/baseball_mlb/events/{ev['id']}/odds",
+                params={"apiKey": ODDS_API_KEY, "regions": "us",
+                        "markets": ",".join(PROP_MARKETS),
+                        "bookmakers": ",".join(PREFERRED),
+                        "oddsFormat": "american"}, timeout=15)
+            if not r2.ok: continue
+            for bm in r2.json().get("bookmakers", []):
+                for mkt in bm.get("markets", []):
+                    mk = mkt.get("key")
+                    if mk not in PROP_ODDS: continue
+                    for oc in mkt.get("outcomes", []):
+                        name  = (oc.get("description") or oc.get("name", "")).strip()
+                        pt    = oc.get("point")
+                        side  = oc.get("name", "")
+                        price = oc.get("price")
+                        if not name or pt is None or price is None: continue
+                        key = _normalize(name)
+                        d = PROP_ODDS[mk].get(key)
+                        if d is None:
+                            d = {"name": name, "line": float(pt),
+                                 "home_team": home_team, "away_team": away_team,
+                                 "over_odds": None, "under_odds": None}
+                            PROP_ODDS[mk][key] = d
+                        if abs(float(pt) - d["line"]) > 1e-9:
+                            continue  # only the first-seen line for this pitcher
+                        if side == "Over" and d["over_odds"] is None:
+                            d["over_odds"] = price
+                        elif side == "Under" and d["under_odds"] is None:
+                            d["under_odds"] = price
+        log(f"  Pitcher props: " +
+            ", ".join(f"{PROP_META[m][0]} {len(PROP_ODDS[m])}" for m in PROP_MARKETS))
+    except Exception as exc:
+        log(f"  ⚠️  Odds API error (props): {exc}")
+
+
 def _get_pitcher_id(full_name: str):
     key = _normalize(full_name)
     if key in _pitcher_id_cache: return _pitcher_id_cache[key]
@@ -224,11 +317,20 @@ def _get_recent_k_form(pitcher_id: int, n: int = 5) -> dict:
               if _ip_to_float(sp.get("stat", {}).get("inningsPitched", "0")) >= MIN_IP_START]
     recent = starts[-n:]
     if not recent:
-        return {"recent_avg_k": None, "recent_k_list": [], "recent_starts": 0, "recent_k_log": []}
-    k_list = [sp.get("stat", {}).get("strikeOuts", 0) for sp in recent]
+        return {"recent_avg_k": None, "recent_k_list": [], "recent_starts": 0, "recent_k_log": [],
+                "recent_avg_hits": None, "recent_hits_list": [],
+                "recent_avg_er": None, "recent_er_list": [],
+                "recent_avg_outs": None, "recent_outs_list": []}
+    k_list    = [sp.get("stat", {}).get("strikeOuts", 0) for sp in recent]
+    h_list    = [int(sp.get("stat", {}).get("hits", 0) or 0) for sp in recent]
+    er_list   = [int(sp.get("stat", {}).get("earnedRuns", 0) or 0) for sp in recent]
+    outs_list = [round(_ip_to_float(sp.get("stat", {}).get("inningsPitched", "0")) * 3) for sp in recent]
     k_log = [{
         "d": (sp.get("date") or "")[5:],
         "v": sp.get("stat", {}).get("strikeOuts", 0),
+        "h": int(sp.get("stat", {}).get("hits", 0) or 0),
+        "er": int(sp.get("stat", {}).get("earnedRuns", 0) or 0),
+        "outs": round(_ip_to_float(sp.get("stat", {}).get("inningsPitched", "0")) * 3),
         "ip": sp.get("stat", {}).get("inningsPitched", ""),
         "opp": (sp.get("opponent", {}) or {}).get("name", ""),
     } for sp in reversed(recent)]
@@ -237,6 +339,12 @@ def _get_recent_k_form(pitcher_id: int, n: int = 5) -> dict:
         "recent_k_list": k_list,
         "recent_starts": len(k_list),
         "recent_k_log": k_log,
+        "recent_avg_hits": round(sum(h_list) / len(h_list), 1) if h_list else None,
+        "recent_hits_list": h_list,
+        "recent_avg_er": round(sum(er_list) / len(er_list), 1) if er_list else None,
+        "recent_er_list": er_list,
+        "recent_avg_outs": round(sum(outs_list) / len(outs_list), 1) if outs_list else None,
+        "recent_outs_list": outs_list,
     }
 
 
@@ -245,11 +353,13 @@ def career_ha_ks_vs_opp(pitcher_id: int, side: str, opp_name: str) -> dict:
     time.sleep(0.1)
     if not opp_id: return None
     is_home = (side == "HOME")
-    k_list   = []
-    ip_list  = []
-    era_list = []
-    h_list   = []          # hits allowed per start vs opp
-    vs_log   = []          # dated per-start log vs opp (K + hits allowed)
+    k_list    = []
+    ip_list   = []
+    era_list  = []
+    h_list    = []          # hits allowed per start vs opp
+    er_list   = []          # earned runs per start vs opp
+    outs_list = []          # outs recorded per start vs opp (IP×3)
+    vs_log    = []          # dated per-start log vs opp (K + hits + ER + outs)
     for season in reversed(K_SEASONS):
         splits = _get_pitching_logs(pitcher_id, season)
         time.sleep(0.08)
@@ -261,14 +371,17 @@ def career_ha_ks_vs_opp(pitcher_id: int, side: str, opp_name: str) -> dict:
             if ip < MIN_IP_START: continue
             k = stat.get("strikeOuts", 0)
             h = int(stat.get("hits", 0) or 0)   # "hits" in pitching gameLog = hits ALLOWED
+            er = int(stat.get("earnedRuns", 0) or 0)
+            outs = round(ip * 3)
             k_list.append(k)
             h_list.append(h)
+            er_list.append(er)
+            outs_list.append(outs)
             ip_list.append(ip)
-            er = int(stat.get("earnedRuns", 0) or 0)
             if ip > 0:
                 era_list.append(round(er / ip * 9, 2))
-            vs_log.append({"d": (sp.get("date") or ""), "k": k, "h": h,
-                           "ip": stat.get("inningsPitched", "")})
+            vs_log.append({"d": (sp.get("date") or ""), "k": k, "h": h, "er": er,
+                           "outs": outs, "ip": stat.get("inningsPitched", "")})
     # newest-first; compact the date to YY-MM-DD (vs-opp log spans seasons)
     vs_log.sort(key=lambda e: e["d"], reverse=True)
     for e in vs_log:
@@ -276,15 +389,20 @@ def career_ha_ks_vs_opp(pitcher_id: int, side: str, opp_name: str) -> dict:
     if len(k_list) < MIN_STARTS:
         return {"avg_k": None, "starts": len(k_list), "k_list": k_list,
                 "min_k": None, "max_k": None, "avg_ip": None, "era": None,
-                "avg_hits": None, "h_list": h_list, "vs_opp_log": vs_log}
+                "avg_hits": None, "h_list": h_list, "avg_er": None, "er_list": er_list,
+                "avg_outs": None, "outs_list": outs_list, "vs_opp_log": vs_log}
     avg_k    = round(sum(k_list) / len(k_list), 1)
     avg_ip   = round(sum(ip_list) / len(ip_list), 1) if ip_list else None
     era      = round(sum(era_list) / len(era_list), 2) if era_list else None
     avg_hits = round(sum(h_list) / len(h_list), 1) if h_list else None
+    avg_er   = round(sum(er_list) / len(er_list), 1) if er_list else None
+    avg_outs = round(sum(outs_list) / len(outs_list), 1) if outs_list else None
     return {"avg_k": avg_k, "starts": len(k_list), "k_list": k_list,
             "min_k": min(k_list), "max_k": max(k_list),
             "avg_ip": avg_ip, "era": era,
-            "avg_hits": avg_hits, "h_list": h_list, "vs_opp_log": vs_log}
+            "avg_hits": avg_hits, "h_list": h_list,
+            "avg_er": avg_er, "er_list": er_list,
+            "avg_outs": avg_outs, "outs_list": outs_list, "vs_opp_log": vs_log}
 
 
 def _fetch_probable_starters(run_date: str) -> list:
@@ -317,20 +435,98 @@ def _fetch_probable_starters(run_date: str) -> list:
         return []
 
 
+def _blend(career_avg, recent_avg, recent_n):
+    """50/50 blend of career-vs-opp avg + recent-form avg (mirrors the K logic)."""
+    if career_avg is not None and recent_avg is not None:
+        return round((career_avg + recent_avg) / 2, 1), f"career {career_avg} · L{recent_n} {recent_avg}"
+    if career_avg is not None:
+        return career_avg, f"career {career_avg} only"
+    if recent_avg is not None:
+        return recent_avg, f"L{recent_n} {recent_avg} only (no career vs opp)"
+    return None, "no data"
+
+
+# market -> (career avg field, career list field, recent avg field, recent list field)
+_PROP_SRC = {
+    "pitcher_hits_allowed": ("avg_hits", "h_list",    "recent_avg_hits", "recent_hits_list"),
+    "pitcher_outs":         ("avg_outs", "outs_list", "recent_avg_outs", "recent_outs_list"),
+    "pitcher_earned_runs":  ("avg_er",   "er_list",   "recent_avg_er",   "recent_er_list"),
+}
+
+
+def _build_prop_picks(name, team, opp, side, hist, rf) -> list:
+    """One Over/Under pick per prop market that has a posted line in PROP_ODDS.
+    Uniform dict so the frontend can render all 3 categories generically."""
+    props = []
+    nkey = _normalize(name)
+    for market in PROP_MARKETS:
+        odds = PROP_ODDS.get(market, {}).get(nkey)
+        if not odds:
+            continue
+        label, vfield, unit = PROP_META[market]
+        c_avg_f, c_list_f, r_avg_f, r_list_f = _PROP_SRC[market]
+        career_avg  = hist.get(c_avg_f) if hist else None
+        career_list = (hist.get(c_list_f) if hist else None) or []
+        recent_avg  = rf.get(r_avg_f) if rf else None
+        recent_n    = rf.get("recent_starts", 0) if rf else 0
+        line = odds["line"]
+        blended, blend_src = _blend(career_avg, recent_avg, recent_n)
+        if blended is None:
+            pick, pick_note = None, f"no data vs {opp}"
+        elif blended > line:
+            pick, pick_note = "OVER",  f"blend {blended} > line {line} ({blend_src})"
+        elif blended < line:
+            pick, pick_note = "UNDER", f"blend {blended} < line {line} ({blend_src})"
+        else:
+            pick, pick_note = None, f"blend {blended} exactly on line {line}"
+        starts = hist.get("starts", 0) if hist else 0
+        over_hits = sum(1 for v in career_list if v is not None and v > line)
+        hit_rate = f"{over_hits}/{len(career_list)}" if career_list else "—"
+        vs_opp_log = [{"d": e.get("d", ""), "v": e.get(vfield), "ip": e.get("ip", "")}
+                      for e in ((hist.get("vs_opp_log") if hist else None) or [])]
+        recent_log = [{"d": e.get("d", ""), "v": e.get(vfield), "ip": e.get("ip", ""),
+                       "opp": e.get("opp", "")}
+                      for e in ((rf.get("recent_k_log") if rf else None) or [])]
+        props.append({
+            "market": market, "label": label, "unit": unit, "_prop": True,
+            "name": name, "team": team, "opp": opp, "side": side,
+            "line": line, "over_odds": odds.get("over_odds"), "under_odds": odds.get("under_odds"),
+            "career_avg": career_avg, "recent_avg": recent_avg, "recent_starts": recent_n,
+            "blended": blended, "avg": blended, "blend_src": blend_src, "starts": starts,
+            "vs_opp_log": vs_opp_log, "recent_log": recent_log,
+            "hit_rate": hit_rate, "pick": pick, "pick_note": pick_note,
+        })
+    return props
+
+
 def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
     if emit is None: emit = lambda _: None
 
     emit({"type": "section", "msg": "⚾ Pitcher K Picks — Fetching lines from The Odds API"})
     all_lines = _fetch_k_lines(run_date, emit)
     if not all_lines:
-        emit({"type": "log", "msg": "⚠️ No pitcher K lines found"})
-        return {"picks": [], "all": []}
+        # No K lines today — but the 3 prop markets (hits/outs/ER) may still have
+        # lines posted. Do NOT bail; continue so probable starters get prop picks
+        # built (maximizes parlay depth even on no-K days).
+        emit({"type": "log", "msg": "⚠️ No pitcher K lines found — continuing for prop markets"})
+        all_lines = []
+    else:
+        emit({"type": "log", "msg": f"✅ {len(all_lines)} pitcher K lines found"})
 
-    emit({"type": "log", "msg": f"✅ {len(all_lines)} pitcher K lines found"})
     bottom_k_set, bottom_k_list = _get_bottom_k_teams(SEASON)
     if bottom_k_set:
         emit({"type": "log", "msg": f"✅ Bottom {BOTTOM_K_TEAMS_N} K teams (DQ): " +
               ", ".join(f"{t['name']} ({t['k_per_g']} K/G)" for t in bottom_k_list)})
+
+    # Fetch the 3 prop O/U lines (hits allowed / outs / earned runs) into PROP_ODDS
+    # BEFORE the eval loop so each worker can attach its prop picks. Separate fetch
+    # from K — never blocks the K path if props fail.
+    emit({"type": "section", "msg": "⚾ Pitcher Props — Fetching hits/outs/earned-runs lines"})
+    try:
+        _fetch_pitcher_props(run_date, emit)
+    except Exception as _pexc:
+        emit({"type": "log", "msg": f"  ⚠️ Pitcher props fetch failed: {_pexc}"})
+        PROP_ODDS.clear()
 
     emit({"type": "section", "msg": "⚾ Pitcher K Picks — Pulling career H/A K history"})
     all_results = []
@@ -428,6 +624,7 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                  "recent_avg_k": recent_avg_k, "recent_k_list": recent_k_list,
                  "recent_starts": recent_starts, "recent_k_log": rf["recent_k_log"],
                  "blended_avg_k": blended_avg, "blend_src": blend_src,
+                 "props": _build_prop_picks(name, pitcher_team, opp, side, hist, rf),
                  "pick": pick, "pick_note": pick_note}), logs
 
     with ThreadPoolExecutor(max_workers=8) as _ex:
@@ -471,6 +668,9 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                 "recent_avg_k": rf2["recent_avg_k"], "recent_k_list": rf2["recent_k_list"],
                 "recent_starts": rf2["recent_starts"], "recent_k_log": rf2["recent_k_log"],
                 "blended_avg_k": None, "blend_src": None,
+                # Pitchers with NO K line may still have hits/outs/ER lines posted —
+                # build their prop picks too so the parlay pool is as deep as possible.
+                "props": _build_prop_picks(st["name"], st["team"], st["opp"], st["side"], hist2, rf2),
                 "pick": None, "pick_note": "No K line posted today",
             }
 
@@ -488,4 +688,25 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
     confirmed = sorted(confirmed,
                        key=lambda r: abs((r["blended_avg_k"] if r["blended_avg_k"] is not None else (r["avg_k"] or 0)) - (r["line"] or 0)), reverse=True)
     emit({"type": "log", "msg": f"✅ Pitcher K done — {len(confirmed)} picks, {len(all_results)} total pitchers"})
-    return {"picks": confirmed, "all": all_results}
+
+    # Collect the 3 prop categories from every pitcher's embedded `props` list.
+    # picks = qualifying (has a pick), ranked by edge (|blend − line|) desc;
+    # all   = every pitcher with a posted line in that market (for the no-pick table).
+    prop_picks = {m: {"picks": [], "all": []} for m in PROP_MARKETS}
+    for r in all_results:
+        for pr in r.get("props", []):
+            m = pr.get("market")
+            if m not in prop_picks:
+                continue
+            prop_picks[m]["all"].append(pr)
+            if pr.get("pick"):
+                prop_picks[m]["picks"].append(pr)
+    for m in prop_picks:
+        prop_picks[m]["picks"].sort(
+            key=lambda x: abs((x["blended"] if x["blended"] is not None else 0) - (x["line"] or 0)),
+            reverse=True)
+        prop_picks[m]["all"].sort(key=lambda x: x.get("name", ""))
+    emit({"type": "log", "msg": "✅ Pitcher props — " +
+          ", ".join(f"{PROP_META[m][0]}: {len(prop_picks[m]['picks'])}" for m in PROP_MARKETS)})
+
+    return {"picks": confirmed, "all": all_results, "props": prop_picks}
