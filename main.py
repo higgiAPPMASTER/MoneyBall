@@ -653,6 +653,20 @@ _HTML = """
           <strong>Pick</strong> = OVER/UNDER based on blended avg (50% career H/A vs opp + 50% last 5 starts). ⚠️ = signals conflict. Min 1 career start vs opp.
         </p>
       </div>
+      <div class="card p-6 hidden" id="runs-picks-card" style="border-color:rgba(96,165,250,.25)">
+        <div class="section-hdr" style="color:#60a5fa">🏃 Runs Picks — Score a Run (Over / Under 0.5)</div>
+        <p class="text-xs text-slate-400 mb-3" style="margin-top:-4px">Who's likely to cross the plate. Runs are lower-frequency than hits, so treat these as higher-variance plays.</p>
+        <div class="overflow-x-auto">
+          <table class="results-table" id="runs-picks-table">
+            <thead><tr><th>#</th><th>Player</th><th>vs (H/A)</th><th>Line</th><th>Runs Rate vr Opp</th><th>Recent</th><th>Odds</th><th>Pick</th></tr></thead>
+            <tbody id="runs-picks-body"></tbody>
+          </table>
+        </div>
+        <p class="text-xs text-slate-500 mt-4 admin-only">
+          <strong>Runs Rate vr Opp</strong> = last 10 H/A games vs THIS opponent with 1+ run (falls back to L10 H/A any opp when no head-to-head) &nbsp;|&nbsp;
+          <strong>Pick</strong> = OVER when the rate is high, UNDER when low &nbsp;|&nbsp; ranked by Wilson lower-bound so proven samples beat thin lucky ones.
+        </p>
+      </div>
       <div class="card p-6" id="by-game-card">
         <div class="section-hdr" style="color:#f59e0b">🏟️ Picks by Game</div>
         <p class="text-xs text-slate-500 mb-3">Pick your team's game to see all picks for that matchup.</p>
@@ -826,7 +840,7 @@ function _filterStarted(result){
   if(!result) return result;
   var r=Object.assign({},result);
   function f(a){return (a||[]).filter(function(p){return !_started(p);});}
-  r.top9=f(r.top9); r.also_ran=f(r.also_ran); r.under_picks=f(r.under_picks);
+  r.top9=f(r.top9); r.also_ran=f(r.also_ran); r.under_picks=f(r.under_picks); r.runs_picks=f(r.runs_picks);
   if(r.pitcher_k){
     r.pitcher_k=Object.assign({},r.pitcher_k);
     r.pitcher_k.picks=f(r.pitcher_k.picks);
@@ -851,14 +865,16 @@ function showResults(result) {
           all: (result.pitcher_k.all || []).filter(p => p.pick === 'UNDER'),
           picks: (result.pitcher_k.picks || []).filter(p => p.pick === 'UNDER'),
         }) : result.pitcher_k,
+        runs_picks: (result.runs_picks || []).filter(p => p.pick === 'UNDER'),
       })
     : result;
   const { top9, stats, pitcher_k } = view;
-  hide('also-ran-card'); hide('under-picks-card'); hide('pitcher-k-card');
+  hide('also-ran-card'); hide('under-picks-card'); hide('pitcher-k-card'); hide('runs-picks-card');
 
   document.getElementById('stats-row').innerHTML = [
     statCard('🎯','Top Picks',top9.length),
     statCard('⬇️','Under Picks',(view.under_picks||[]).length),
+    statCard('🏃','Runs Picks',(view.runs_picks||[]).length),
     statCard('⚾','Pitcher K',((view.pitcher_k||{}).all||[]).filter(p=>p.pick&&(p.starts||0)>0).length),
     statCard('⚾','Games Today',stats.games),
     statCard('🔍','Players Run',stats.step1_count),
@@ -957,6 +973,33 @@ function showResults(result) {
     }
   }
 
+  const runsPicks = view.runs_picks || [];
+  if (runsPicks.length > 0) {
+    show('runs-picks-card');
+    window.__RUNS_REG__={};
+    document.getElementById('runs-picks-body').innerHTML = runsPicks.map((p,i) => {
+      const rank=i+1;
+      const isOver=p.pick==='OVER';
+      const pickClr=isOver?'#63cab7':'#ff8a65';
+      const sideCls=p.side==='HOME'?'badge-home':'badge-away';
+      const od=isOver?p.over_odds:p.under_odds;
+      const scoreClr=p.score>=70?'#63cab7':p.score>=50?'#fbbf24':'#ff8a65';
+      const log=p.recent_runs_log||[];
+      const recCnt=log.filter(g=>g.r>=1).length;
+      const _rk='rn'+rank; window.__RUNS_REG__[_rk]=p;
+      return `<tr onclick="_runsForm('${_rk}')" style="cursor:pointer" title="Click for recent form">
+        <td><span class="rank-badge" style="background:#10243a;color:#60a5fa;font-weight:900">${rank}</span></td>
+        <td class="font-semibold">${p.name}</td>
+        <td><span class="badge ${sideCls}">${p.side}</span> <span class="text-slate-400 text-xs">${p.opp||''}</span></td>
+        <td style="font-family:monospace;font-weight:700;color:#fff">${p.line!=null?p.line:0.5}</td>
+        <td style="font-family:monospace;font-weight:700;color:${scoreClr}">${p.rate_disp||'—'} <span class="text-slate-500" style="font-size:.68rem">(${p.score}%${p.basis?' '+p.basis:''})</span></td>
+        <td class="text-slate-300 text-sm">${log.length?recCnt+'/'+log.length:'—'}</td>
+        <td style="font-family:monospace;color:#fbbf24;font-weight:700">${od!=null?(od>0?'+':'')+od:'—'}</td>
+        <td><span style="color:${pickClr};font-weight:900;font-size:1rem">${p.pick}</span></td>
+      </tr>`;
+    }).join('');
+  }
+
   renderByGame(view);
   show('results-card');
 }
@@ -990,6 +1033,23 @@ function _pkForm(key){
       ${hCell}
     </tr>`;
   }).join(''):'<tr><td colspan="4" style="padding:14px;color:#64748b;text-align:center">No starts on record</td></tr>';
+  // Recent form (last N any-opp starts) — always shown as its own section when we
+  // also have a vs-opp table above (so user sees dated K's like 5, 7, 12).
+  var rlog=p.recent_k_log||[];
+  var recentRows=rlog.length?rlog.map(function(g){
+    var kv=(g.k!=null?g.k:g.v);
+    var over=line!=null&&kv>line;
+    var clr=line!=null?(over?'#63cab7':'#ff8a65'):'#e2e8f0';
+    return `<tr>
+      <td style="padding:6px 10px;color:#94a3b8;font-family:monospace">${g.d||'—'}</td>
+      <td style="padding:6px 10px;color:#cbd5e1;font-size:.8rem">${g.opp?('vs '+g.opp):''}</td>
+      <td style="padding:6px 10px;color:#93c5fd;font-family:monospace;font-size:.8rem">${g.ip?(g.ip+' IP'):''}</td>
+      <td style="padding:6px 10px;text-align:right;font-family:monospace;font-weight:800;color:${clr}">${kv} K</td>
+    </tr>`;
+  }).join(''):'';
+  var recentSection=(usingVs&&recentRows)?`
+    <div style="margin-top:18px;font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase;margin-bottom:8px">Last ${rlog.length} Starts (any opp)</div>
+    <table style="width:100%;border-collapse:collapse;font-size:.85rem"><thead><tr><th style="text-align:left;padding:4px 10px;color:#64748b;font-size:.68rem;font-weight:600">Date</th><th style="text-align:left;padding:4px 10px;color:#64748b;font-size:.68rem;font-weight:600">Opp</th><th style="text-align:left;padding:4px 10px;color:#64748b;font-size:.68rem;font-weight:600">IP</th><th style="text-align:right;padding:4px 10px;color:#64748b;font-size:.68rem;font-weight:600">K</th></tr></thead><tbody>${recentRows}</tbody></table>`:'';
   var histTitle=usingVs?('Starts vs '+(p.opp||'opp')+' — Ks & Hits allowed'):('Last '+(log.length||0)+' Starts (any opp)');
   var careerTxt=p.avg_k!=null?(p.avg_k+' K · '+(p.starts||0)+' starts vs '+(p.opp||'opp')):'no career vs opp';
   var recentTxt=p.recent_avg_k!=null?(p.recent_avg_k+' K · last '+(p.recent_starts||0)):'no recent data';
@@ -1008,6 +1068,7 @@ function _pkForm(key){
     <div style="padding:14px 18px">
       <div style="font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase;margin-bottom:8px">${histTitle}</div>
       <table style="width:100%;border-collapse:collapse;font-size:.85rem">${usingVs?'<thead><tr><th style="text-align:left;padding:4px 10px;color:#64748b;font-size:.68rem;font-weight:600">Date</th><th style="text-align:left;padding:4px 10px;color:#64748b;font-size:.68rem;font-weight:600">IP</th><th style="text-align:right;padding:4px 10px;color:#64748b;font-size:.68rem;font-weight:600">K</th><th style="text-align:right;padding:4px 10px;color:#64748b;font-size:.68rem;font-weight:600">Hits</th></tr></thead>':''}<tbody>${rows}</tbody></table>
+      ${recentSection}
       <div style="margin-top:16px;border-top:1px solid #1e293b;padding-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:.82rem">
         <div><span style="color:#64748b">Career vs opp</span><br><span style="color:#e2e8f0;font-weight:600">${careerTxt}</span></div>
         <div><span style="color:#64748b">Hits allowed vs opp</span><br><span style="color:#e2e8f0;font-weight:600">${p.avg_hits!=null?(p.avg_hits+' H avg'):'—'}</span></div>
@@ -1067,6 +1128,53 @@ function _hitForm(key){
   ov.style.display='flex';
 }
 
+// ── Runs recent-form popup (last 5 games) — mirrors _hitForm ───────────
+// Works for both OVER (score a run) and UNDER (no run) picks. Color each game
+// green/red vs the goal: scored→good for OVER, didn't score→good for UNDER.
+function _runsForm(key){
+  var p=(key&&typeof key==='object')?key:(window.__RUNS_REG__||{})[key]; if(!p) return;
+  var ov=document.getElementById('runs-modal');
+  if(!ov){
+    ov=document.createElement('div');
+    ov.id='runs-modal';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; };
+    document.body.appendChild(ov);
+  }
+  var log=p.recent_runs_log||[];
+  var isOver=(p.pick==='OVER');
+  var goal=isOver?'Over 0.5 runs (score a run)':'Under 0.5 runs (no run)';
+  var rows=log.length?log.map(function(g){
+    var scored=g.r>=1;
+    var good=isOver?scored:!scored;
+    var clr=good?'#63cab7':'#ff8a65';
+    var oppTxt=g.opp?((g.ha==='H'?'vs ':'@ ')+g.opp):'';
+    return `<tr>
+      <td style="padding:6px 10px;color:#94a3b8;font-family:monospace">${g.d||'—'}</td>
+      <td style="padding:6px 10px;color:#cbd5e1;font-size:.8rem">${oppTxt}</td>
+      <td style="padding:6px 10px;text-align:right;font-family:monospace;font-size:.8rem;color:#93c5fd">${g.h} H</td>
+      <td style="padding:6px 10px;text-align:right;font-family:monospace;font-weight:800;color:${clr}">${g.r} R</td>
+    </tr>`;
+  }).join(''):'<tr><td colspan="4" style="padding:14px;color:#64748b;text-align:center">No recent games on record</td></tr>';
+  var name=p.full_name||p.name||'';
+  var pickClr=isOver?'#63cab7':'#ff8a65';
+  ov.innerHTML=`<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:440px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid #1e293b">
+      <div>
+        <div style="font-weight:800;font-size:1.05rem;color:#fff">${name}</div>
+        <div style="color:#94a3b8;font-size:.78rem">${p.side||''} vs ${p.opp||''} · ${goal}</div>
+      </div>
+      <button onclick="document.getElementById('runs-modal').style.display='none'" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem">✕</button>
+    </div>
+    <div style="padding:14px 18px">
+      <div style="font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase;margin-bottom:8px">Runs Rate ${p.rate_disp||''} · Last ${log.length||0} Games</div>
+      <table style="width:100%;border-collapse:collapse;font-size:.85rem"><tbody>${rows}</tbody></table>
+      <div style="margin-top:12px;border-top:1px solid #1e293b;padding-top:10px;color:${pickClr};font-weight:800;font-size:.85rem">Pick: ${goal}</div>
+    </div>
+  </div>`;
+  ov.style.display='flex';
+}
+
 // ── Universal clickable-name dispatcher ────────────────────────────────
 // Lets ANY player name on the page (parlay legs, player-search results,
 // all-plays-by-game) open the right recent-form popup — pitchers → _pkForm,
@@ -1085,7 +1193,9 @@ function _nameSpan(obj,label){
 }
 function _playerForm(key){
   var p=(window.__NAME_REG__||{})[key]; if(!p) return;
-  if(p.recent_k_log!==undefined || p.avg_k!==undefined){ _pkForm(p); } else { _hitForm(p); }
+  if(p.recent_k_log!==undefined || p.avg_k!==undefined){ _pkForm(p); }
+  else if(p.recent_runs_log!==undefined && p.recent_hit_log===undefined){ _runsForm(p); }
+  else { _hitForm(p); }
 }
 
 // ── CSV export (all picks → spreadsheet/betting tools) ──────────────────
@@ -1120,6 +1230,12 @@ function downloadPicksCSV(){
     var detail=(p.tb_under_odds!=null?('TB U1.5 '+_csvOdds(p.tb_under_odds)):'');
     rows.push(['Under Pick', i+1, p.name||'', p.team||'', '', p.side||'', p.opp||'', p.pitcher||'',
       'Under 1.5 Hits', '1.5', _csvOdds(p.under_odds), _csvLineup(p.lineup_status), detail]);
+  });
+  (r.runs_picks||[]).forEach(function(p,i){
+    var isOver=p.pick==='OVER';
+    var od=isOver?p.over_odds:p.under_odds;
+    rows.push(['Runs Pick', i+1, p.name||'', p.team||'', '', p.side||'', p.opp||'', '',
+      (isOver?'Over':'Under')+' '+(p.line!=null?p.line:0.5)+' Runs', (p.line!=null?p.line:0.5), _csvOdds(od), '', (p.rate_disp||'')+(p.basis?(' '+p.basis):'')]);
   });
   var pk=(r.pitcher_k&&r.pitcher_k.all)||[];
   pk.filter(function(p){return p.pick && (p.starts||0)>0;}).sort(function(a,b){
@@ -1183,6 +1299,11 @@ function _mlbPool(){
     var odds=hasSugg?p.sugg_odds:(p.pick==='OVER'?p.over_odds:p.under_odds);
     cands.push({type:'K',dir:dir,player:(p.name||''),team:'',opp:(p.opp||''),stat:'Ks',line:line,odds:(odds!=null?odds:''),conf:clampConf(90,i),reason:'⚾ '+dir+' '+(line!=null?line:'')+' Ks · avg '+(p.avg_k!=null?p.avg_k+'K':'—')+(p.era?(' · ERA '+p.era):''),src:p});
   });
+  (r.runs_picks||[]).forEach(function(p,i){
+    var isOver=p.pick==='OVER';
+    var od=isOver?p.over_odds:p.under_odds;
+    cands.push({type:'RUN',dir:p.pick,player:(p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'Runs',line:(p.line!=null?p.line:0.5),odds:(od!=null?od:''),conf:clampConf(80,i),reason:'🏃 '+p.pick+' '+(p.line!=null?p.line:0.5)+' runs · '+(p.rate_disp||'')+' vs '+(p.opp||''),src:p});
+  });
   cands.forEach(function(c){ c.dec=_amToDec(c.odds); c.hasOdds=!!c.dec; });
   // NO N/A LEGS: every parlay leg must be priced. Drops any leg with missing odds
   // (HIT legs with no hit_odds, K legs with no odds). Under legs already required odds.
@@ -1226,9 +1347,9 @@ function _renderParlay(randomize){
   var am = priced? _decToAm(dec) : null;
   var payout = priced? (100*dec) : null;
   var dirColor=function(d){return d==='OVER'?'#63cab7':d==='UNDER'?'#ff8a65':'#9ca3af';};
-  var tagBg={HIT:'rgba(245,158,11,.16)',UNDER:'rgba(255,138,101,.16)',K:'rgba(99,202,183,.16)'};
-  var tagFg={HIT:'#f59e0b',UNDER:'#ff8a65',K:'#63cab7'};
-  var tagLbl={HIT:'HIT',UNDER:'UNDER 1.5',K:'PITCHER K'};
+  var tagBg={HIT:'rgba(245,158,11,.16)',UNDER:'rgba(255,138,101,.16)',K:'rgba(99,202,183,.16)',RUN:'rgba(96,165,250,.16)'};
+  var tagFg={HIT:'#f59e0b',UNDER:'#ff8a65',K:'#63cab7',RUN:'#60a5fa'};
+  var tagLbl={HIT:'HIT',UNDER:'UNDER 1.5',K:'PITCHER K',RUN:'RUNS'};
   var rows=legs.map(function(l,idx){var fo=_fmtOdds(l.odds);return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #1a1a1a">'
     +'<div style="min-width:0">'
     +'<div style="font-weight:800;color:#fff;font-size:.85rem">'+(idx+1)+'. '+_nameSpan(l.src,l.player)+' <span style="color:#777;font-size:.7rem">'+(l.team?l.team+' ':'')+'vs '+l.opp+'</span> <span style="background:'+(tagBg[l.type]||'#222')+';color:'+(tagFg[l.type]||'#aaa')+';padding:1px 6px;border-radius:4px;font-size:.6rem;font-weight:800">'+(tagLbl[l.type]||l.type)+'</span></div>'
@@ -1430,7 +1551,8 @@ function renderByGame(result){
   var hitters=(result.top9||[]).map(function(p){return Object.assign({_kind:'HITTER'},p);});
   var unders=(result.under_picks||[]).map(function(p){return Object.assign({_kind:'UNDER'},p);});
   var ks=((result.pitcher_k||{}).picks||[]).filter(function(p){return (p.starts||0)>0;}).map(function(p){return Object.assign({_kind:'PITCHER K'},p);});
-  var all=hitters.concat(unders, ks);
+  var runs=(result.runs_picks||[]).map(function(p){return Object.assign({_kind:'RUNS'},p);});
+  var all=hitters.concat(unders, ks, runs);
   if(!all.length){body.innerHTML='<div class="text-slate-500 text-sm">No picks yet.</div>';return;}
   var games={}, order=[];
   all.forEach(function(p){
@@ -1460,6 +1582,7 @@ function renderByGame(result){
       if(kind==='HITTER') note='Top hitter pick';
       else if(kind==='UNDER') note='UNDER — vs '+(p.pitcher||'TBD');
       else if(kind==='PITCHER K') note=(p.sugg_line!=null?('OVER '+p.sugg_line+' Ks (line '+(p.line||'')+')'):((p.pick||'')+' '+(p.line||'')+' Ks'));
+      else if(kind==='RUNS') note=(p.pick||'')+' '+(p.line!=null?p.line:0.5)+' runs ('+(p.rate_disp||'')+')';
       var lineup=p.lineup_status==='IN_LINEUP'?'<span class="badge badge-in">✅ IN</span>'
         :p.lineup_status==='NOT_IN_LINEUP'?'<span class="badge badge-out">❌ OUT</span>'
         :'<span class="badge badge-tbd">⏳ TBD</span>';
