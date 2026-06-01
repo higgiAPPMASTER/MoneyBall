@@ -631,13 +631,8 @@ _HTML = """
       </div>
       <div class="card p-6 hidden" id="pitcher-k-card" style="border-color:rgba(99,202,183,.25)">
         <div class="section-hdr" style="color:#63cab7">⚾ Pitcher Picks — Strikeouts, Hits, Outs &amp; Earned Runs</div>
-        <p class="text-xs text-slate-400 mb-3" style="margin-top:-4px">Table is ranked by the strikeout pick. Click any pitcher to see all 4 markets — Strikeouts, Hits Allowed, Outs, Earned Runs — each with its Over/Under, line and game-by-game form.</p>
-        <div class="overflow-x-auto">
-          <table class="results-table" id="pitcher-k-table">
-            <thead><tr><th>Pitcher</th><th>vs (H/A)</th><th>K Line</th><th>Avg K vr OPP</th><th>Blend</th><th>Avg IP vr Opp</th><th>ERA vr Opp</th><th>Hits Allowed vr Opp</th><th>Pick</th></tr></thead>
-            <tbody id="pitcher-k-body"></tbody>
-          </table>
-        </div>
+        <p class="text-xs text-slate-400 mb-3" style="margin-top:-4px">Cards are ranked by the strikeout pick. Click any pitcher to see all 4 markets — Strikeouts, Hits Allowed, Outs, Earned Runs — each with its Over/Under, line and game-by-game form.</p>
+        <div id="pitcher-k-body" class="mlb-picks-grid"></div>
         <details class="mt-4" id="pitcher-k-nopick-details">
           <summary class="cursor-pointer text-xs text-slate-500 select-none">▸ All today's pitchers (no qualifying pick)</summary>
           <table class="results-table mt-2" id="pitcher-k-nopick-table">
@@ -923,33 +918,8 @@ function showResults(result) {
     });
     window.__PK_REG__={};
     document.getElementById('pitcher-k-body').innerHTML = pkSorted.length > 0
-      ? pkSorted.map((p,_i) => {
-          const isOver=p.pick==='OVER';
-          const pickClr=isOver?'#63cab7':'#ff8a65';
-          const sideCls=p.side==='HOME'?'badge-home':'badge-away';
-          const hasSugg=p.sugg_line!=null;
-          const pickLabel=hasSugg?('OVER '+p.sugg_line):p.pick;
-          const odds=hasSugg
-            ?(p.sugg_odds!=null?(p.sugg_odds>0?'+':'')+p.sugg_odds:'')
-            :(isOver?(p.over_odds!=null?(p.over_odds>0?'+':'')+p.over_odds:''):(p.under_odds!=null?(p.under_odds>0?'+':'')+p.under_odds:''));
-          const oppClr=p.avg_k!=null?(p.avg_k>(p.line||0)?'#63cab7':'#ff8a65'):'#94a3b8';
-          const blClr=p.blended_avg_k!=null?(p.blended_avg_k>(p.line||0)?'#63cab7':'#ff8a65'):'#94a3b8';
-          const conflict=p.avg_k!=null&&p.recent_avg_k!=null&&p.line!=null&&((p.avg_k>p.line)!==(p.recent_avg_k>p.line));
-          const blDisp=p.blended_avg_k!=null?p.blended_avg_k+'K'+(conflict?' ⚠️':''):'—';
-          const _k='pk'+_i; window.__PK_REG__[_k]=p;
-          return `<tr onclick="_pkForm('${_k}')" style="cursor:pointer" title="Click for recent form">
-            <td class="font-semibold">${p.name} <span style="color:#64748b;font-size:.7rem">▾</span></td>
-            <td><span class="badge ${sideCls}">${p.side}</span> <span class="text-slate-400 text-xs">${p.opp||''}</span></td>
-            <td style="font-family:monospace;font-weight:700;color:#fff">${p.line!=null?p.line+' Ks':'—'}</td>
-            <td style="font-family:monospace;font-weight:700;color:${oppClr}">${p.avg_k!=null?p.avg_k+' K':'—'}</td>
-            <td style="font-family:monospace;font-weight:700;color:${blClr}">${blDisp}</td>
-            <td style="font-family:monospace;color:#93c5fd;font-weight:600">${p.avg_ip!=null?p.avg_ip+' IP':'—'}</td>
-            <td style="font-family:monospace;color:#fbbf24;font-weight:600">${p.era||'—'}</td>
-            <td style="font-family:monospace;font-weight:600;color:#fca5a5">${p.avg_hits!=null?p.avg_hits+' H':'—'}</td>
-            <td><span style="color:${pickClr};font-weight:900;font-size:1rem">${pickLabel}</span><span class="text-slate-500" style="font-size:.68rem;display:block">${odds}</span></td>
-          </tr>`;
-        }).join('')
-      : '<tr><td colspan="9" class="text-slate-500 text-center" style="padding:16px">No qualifying picks today</td></tr>';
+      ? pkSorted.map((p,_i) => _pitcherCard(p, _i+1)).join('')
+      : '<p class="text-slate-500 text-center" style="padding:16px">No qualifying picks today</p>';
     const pkNoPick=pkAll.filter(p=>!p.pick);
     const npDet=document.getElementById('pitcher-k-nopick-details');
     if (npDet) {
@@ -1896,6 +1866,49 @@ function _underCard(p, rank) {
         <span style="font-family:monospace;color:#63cab7;font-weight:700;font-size:.9rem">${tbOdds}</span>
       </div>
       ${adminStats}
+    </div>
+  </div>`;
+}
+
+function _pitcherCard(p, rank) {
+  const abbr = _mlbTeamAbbr(p.team);
+  const teamLogo = abbr ? `https://a.espncdn.com/i/teamlogos/mlb/500/${abbr}.png` : '';
+  const rnkColors = rank===1?['#63cab7','#022']:rank===2?['#5eead4','#022']:rank===3?['#2dd4bf','#022']:['#1e1e1e','#63cab7'];
+  const sideCls = p.side==='HOME'?'badge-home':'badge-away';
+  const isOver = p.pick==='OVER';
+  const pickClr = isOver?'#63cab7':'#ff8a65';
+  const hasSugg = p.sugg_line!=null;
+  const pickLabel = hasSugg?('OVER '+p.sugg_line+' K'):(p.pick?p.pick+' '+(p.line!=null?p.line:'')+' K':'—');
+  const odds = hasSugg
+    ?(p.sugg_odds!=null?(p.sugg_odds>0?'+':'')+p.sugg_odds:'')
+    :(isOver?(p.over_odds!=null?(p.over_odds>0?'+':'')+p.over_odds:''):(p.under_odds!=null?(p.under_odds>0?'+':'')+p.under_odds:''));
+  const conflict = p.avg_k!=null&&p.recent_avg_k!=null&&p.line!=null&&((p.avg_k>p.line)!==(p.recent_avg_k>p.line));
+  const blDisp = p.blended_avg_k!=null?p.blended_avg_k+'K'+(conflict?' ⚠️':''):'—';
+  window.__PK_REG__=window.__PK_REG__||{}; window.__PK_REG__['pk'+rank]=p;
+  return `<div class="mlb-pick-card" onclick="_pkForm('pk${rank}')" title="Click for all 4 markets" style="cursor:pointer">
+    <div class="mlb-card-header" style="background:linear-gradient(135deg,#0f2420 0%,#08160f 100%)">
+      <div style="display:flex;align-items:center;gap:8px">
+        <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
+        <span style="font-size:.72rem;letter-spacing:.12em;color:#63cab7;font-weight:800">MLB · P</span>
+      </div>
+      ${teamLogo?`<img src="${teamLogo}" alt="${p.team}" style="height:34px;width:34px;object-fit:contain" onerror="this.style.display='none'"/>`:''}
+    </div>
+    <div class="mlb-card-name">${p.name}</div>
+    <div class="mlb-card-body">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <span style="font-size:.82rem;color:#94a3b8">vs <strong style="color:#fff">${p.opp||'—'}</strong></span>
+        <span class="badge ${sideCls}">${p.side}</span>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
+        <span style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">K Line ${p.line!=null?p.line:'—'}</span>
+        <span style="color:${pickClr};font-weight:900;font-size:1rem">${pickLabel}</span>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:3px">
+        <span style="font-size:.72rem;color:#64748b">Blend ${blDisp}</span>
+        <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.9rem">${odds||'—'}</span>
+      </div>
+      <div style="margin-top:5px;font-size:.7rem;color:#94a3b8">Avg K <strong style="color:#cbd5e1">${p.avg_k!=null?p.avg_k:'—'}</strong> · IP <strong style="color:#cbd5e1">${p.avg_ip!=null?p.avg_ip:'—'}</strong> · ERA <strong style="color:#cbd5e1">${p.era||'—'}</strong> · H <strong style="color:#cbd5e1">${p.avg_hits!=null?p.avg_hits:'—'}</strong> <span style="color:#64748b">vr opp</span></div>
+      <div style="margin-top:5px;font-size:.66rem;color:#63cab7;text-align:right">all 4 markets →</div>
     </div>
   </div>`;
 }
