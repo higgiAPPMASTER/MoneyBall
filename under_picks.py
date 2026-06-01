@@ -3,21 +3,18 @@
 under_picks.py — Under Picks via The Odds API (batter_hits 1.5 line).
 Replaces the DraftKings scraper. Requires ODDS_API_KEY env var.
 
-Algorithm per candidate:
-  S1  Career BA vs today's probable pitcher  — N/A passes; DQ only if >= .250 with AB > 0
-  S2  H/A BA vs today's opponent             — must have data AND < .250
-  S3  Current-season H/A BA                  — must have data AND < .250
-  All three pass -> ranked coldest first (lowest S2 + S3 combined BA).
-  CAREER FAST-TRACK: a horrible career mark vs THIS pitcher (S1 BA <= .150 on
-  10+ AB) qualifies even when recent form is hot — it SKIPS the S2/S3/L7 gates.
-  Mirrors the player-lookup "Under lean" rule. Flagged under_basis="vs-pitcher".
+Algorithm per candidate (must pass ALL gates; cutoff < .250 each):
+  S1  Career BA vs today's probable pitcher                    — N/A / 0 AB passes; DQ if >= .250
+  S2  BA over last 10 (or fewer) H/A games vs TODAY'S opponent — data required AND < .250
+  S3  BA over last 10 (or fewer) H/A games vs ANY opponent     — data required AND < .250
+  L7  BA over last 7 games (general, any side/opp)             — N/A passes; DQ if >= .250
+  Qualifiers ranked coldest first (lowest S2 + S3 + L7 combined BA). No fast-track.
 """
 import os
 import requests
 import time
 from datetime import date, datetime, timezone
 
-from mlb_stats_splits import fetch_step2_ba, fetch_step3_ba
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 ODDS_API_KEY = os.environ.get("ODDS_API_KEY", "")
@@ -168,6 +165,47 @@ def _get_last7_ba(batter_id) -> dict:
         return {"ba": ba, "display": f".{int(ba*1000):03d} ({h}H/{ab}AB)", "ab": ab}
     except Exception:
         return {"ba": None, "display": "N/A", "ab": 0}
+
+
+def _last10_ba(player_id, side: str, opp_name: str = "", max_games: int = 10) -> dict:
+    """BA over the most recent max_games H/A games (up to 5 seasons back), counting
+       only games with >=1 AB and matching the side the player is on today. When
+       opp_name is set, restrict to games vs THAT team. Returns {ba, display, games}."""
+    if not player_id:
+        return {"ba": None, "display": "N/A", "games": 0}
+    try:
+        from mlb_stats_splits import _get_game_logs, _team_name_match
+        from datetime import date as _dt
+        cy = _dt.today().year
+        hits = abs_ = g = 0
+        done = False
+        for season in range(cy, cy - 5, -1):
+            for sp in reversed(_get_game_logs(player_id, season)):
+                is_home = sp.get("isHome", False)
+                if (side.upper() == "HOME") != is_home:
+                    continue
+                if opp_name:
+                    opp = sp.get("opponent", {}).get("name", "")
+                    if not _team_name_match(opp, opp_name):
+                        continue
+                stat = sp.get("stat", {})
+                ab = int(stat.get("atBats", 0) or 0)
+                if ab < 1:
+                    continue
+                hits += int(stat.get("hits", 0) or 0)
+                abs_ += ab
+                g += 1
+                if g >= max_games:
+                    done = True
+                    break
+            if done:
+                break
+        if abs_ == 0:
+            return {"ba": None, "display": "N/A", "games": 0}
+        ba = hits / abs_
+        return {"ba": ba, "display": f".{int(ba*1000):03d} ({g}G)", "games": g}
+    except Exception:
+        return {"ba": None, "display": "N/A", "games": 0}
 
 
 def _fetch_hits_lines(run_date: str, emit=None) -> list:
@@ -396,31 +434,25 @@ def run_under_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 pitcher_id   = pinfo.get("id")
                 break
         s1 = _get_s1_vs_pitcher(batter_id, pitcher_id)
-        # CAREER FAST-TRACK: a genuinely awful career mark vs THIS pitcher
-        # (BA <= .150 on 10+ AB) qualifies for the Under card even when recent
-        # form is hot — the head-to-head history is the strongest cold signal.
-        # These picks SKIP the S2/S3/L7 recent-form gates. Mirrors the player-
-        # lookup "Under lean" rule (same .150 / 10AB threshold).
-        fast = (s1["ba"] is not None and s1["ab"] >= 10 and s1["ba"] <= 0.150)
-        if not fast and s1["ba"] is not None and s1["ab"] > 0 and s1["ba"] >= 0.250: return None
-        s2 = fetch_step2_ba(batter_id, side, opp_name)
-        if not fast and (s2["ba"] is None or s2["ba"] >= 0.250): return None
-        s3 = fetch_step3_ba(batter_id, side, season)
-        if not fast and (s3["ba"] is None or s3["ba"] >= 0.250): return None
+        # S1: career BA vs today's pitcher. N/A / 0 AB passes (no history = he
+        # doesn't know how to hit the pitcher = fine for an under). DQ if >= .250.
+        if s1["ba"] is not None and s1["ab"] > 0 and s1["ba"] >= 0.250: return None
+        # S2: BA over last 10 (or fewer) H/A games vs TODAY'S opponent. Data req'd, < .250.
+        s2 = _last10_ba(batter_id, side, opp_name, 10)
+        if s2["ba"] is None or s2["ba"] >= 0.250: return None
+        # S3: BA over last 10 (or fewer) H/A games vs ANY opponent. Data req'd, < .250.
+        s3 = _last10_ba(batter_id, side, "", 10)
+        if s3["ba"] is None or s3["ba"] >= 0.250: return None
+        # L7: last 7 games (general) — hot/cold check. N/A passes; DQ if >= .250.
         l7 = _get_last7_ba(batter_id)
-        if not fast and l7["ba"] is not None and l7["ba"] > 0.250: return None
-        # Score: lower = colder = ranked first. Fast-track picks may have no H/A
-        # data (S2/S3/L7 None) — fall back to the career mark so they still sort.
-        _fb = s1["ba"] if s1["ba"] is not None else 0.250
-        _s2b = s2["ba"] if s2["ba"] is not None else _fb
-        _s3b = s3["ba"] if s3["ba"] is not None else _fb
-        l7_ba = l7["ba"] if l7["ba"] is not None else _s3b
-        under_score = round((_s2b + _s3b + l7_ba) * 1000)
+        if l7["ba"] is not None and l7["ba"] >= 0.250: return None
+        # Coldest first: lower under_score ranks higher.
+        l7_ba = l7["ba"] if l7["ba"] is not None else s3["ba"]
+        under_score = round((s2["ba"] + s3["ba"] + l7_ba) * 1000)
         return {"name": name, "team": player_team, "pos": "—", "side": side, "opp": opp_name,
                 "pitcher": pitcher_name, "s1_disp": s1["display"],
                 "s1_ab": s1["ab"], "s2": s2, "s3": s3, "l7": l7,
                 "lineup_status": "TBD", "under_score": under_score,
-                "under_basis": ("vs-pitcher" if fast else "recent"),
                 "batter_id": batter_id,
                 "under_odds": c.get("under_odds"), "over_odds": c.get("over_odds"),
                 "tb_under_odds": c.get("tb_under_odds")}
