@@ -589,6 +589,8 @@ _HTML = """
           <button class="btn-primary" onclick="generateParlay()" style="background:#1f2937;color:#fff">🎲 Generate New</button>
           <button class="btn-primary" id="parlay-overs-btn" onclick="toggleParlayOvers()" style="background:#1f2937;color:#fff">&#11014; Overs Only</button>
           <button class="btn-primary" id="parlay-unders-btn" onclick="toggleParlayUnders()" style="background:#1f2937;color:#fff">&#11015; Unders Only</button>
+          <button class="btn-primary" id="parlay-minus-btn" onclick="toggleParlayMinus()" style="background:#1f2937;color:#fff">&minus; Odds Only</button>
+          <button class="btn-primary" id="parlay-plus-btn" onclick="toggleParlayPlus()" style="background:#1f2937;color:#fff">&plus; Odds Only</button>
           <div style="position:relative;display:inline-block">
             <button class="btn-primary" id="parlay-cats-btn" onclick="toggleCatMenu(event)" style="background:#1f2937;color:#fff">&#9776; Categories (8/8) &#9662;</button>
             <div id="parlay-cats-menu" style="display:none;position:absolute;z-index:60;top:calc(100% + 6px);left:0;background:#0e0e0e;border:1px solid #2a2a2a;border-radius:10px;padding:10px;min-width:215px;box-shadow:0 12px 34px rgba(0,0,0,.55)">
@@ -1439,6 +1441,10 @@ function _mlbPool(){
   // Parlay-builder "Unders only" option — keep only UNDER legs (Under 1.5 hits/TB + pitcher K Unders)
   if(window.PARLAY_UNDERS){ cands=cands.filter(function(c){ return c.dir==='UNDER'; }); }
   if(window.PARLAY_OVERS){ cands=cands.filter(function(c){ return c.dir==='OVER'; }); }
+  // Parlay-builder "− Odds Only" / "+ Odds Only" — restrict to favorites (American odds < 0)
+  // or plus-money (> 0). Independent of Overs/Unders; mutually exclusive with each other.
+  if(window.PARLAY_MINUS){ cands=cands.filter(function(c){ return Number(c.odds)<0; }); }
+  if(window.PARLAY_PLUS){ cands=cands.filter(function(c){ return Number(c.odds)>0; }); }
   // Parlay-builder category checkboxes — keep only legs whose category is checked.
   if(window.PARLAY_CATS){ cands=cands.filter(function(c){ return window.PARLAY_CATS[_legCat(c)]!==false; }); }
   // Dedupe per player+market (was per player only). One pitcher can now supply a
@@ -1520,6 +1526,8 @@ window._lastResult = null;
 window.UNDERS_ONLY = false;
 window.PARLAY_UNDERS = false;
 window.PARLAY_OVERS = false;
+window.PARLAY_MINUS = false;
+window.PARLAY_PLUS = false;
 // Parlay category checkboxes — which pick categories feed the parlay pool (all on by default).
 window.PARLAY_CATS = {HIT:true,UNDER_HITS:true,UNDER_TB:true,K:true,RUN:true,pitcher_hits_allowed:true,pitcher_outs:true,pitcher_earned_runs:true};
 
@@ -1529,6 +1537,10 @@ function _paintParlayDirBtns(){
   if(u){ u.style.background=window.PARLAY_UNDERS?'#ff8a65':'#1f2937'; u.style.color=window.PARLAY_UNDERS?'#0e0e0e':'#fff'; }
   var o=document.getElementById('parlay-overs-btn');
   if(o){ o.style.background=window.PARLAY_OVERS?'#63cab7':'#1f2937'; o.style.color=window.PARLAY_OVERS?'#0e0e0e':'#fff'; }
+  var mn=document.getElementById('parlay-minus-btn');
+  if(mn){ mn.style.background=window.PARLAY_MINUS?'#fbbf24':'#1f2937'; mn.style.color=window.PARLAY_MINUS?'#0e0e0e':'#fff'; }
+  var pl=document.getElementById('parlay-plus-btn');
+  if(pl){ pl.style.background=window.PARLAY_PLUS?'#34d399':'#1f2937'; pl.style.color=window.PARLAY_PLUS?'#0e0e0e':'#fff'; }
 }
 
 // Parlay-builder "Unders Only" toggle button — restricts the parlay candidate pool to
@@ -1547,6 +1559,24 @@ function toggleParlayUnders(){
 function toggleParlayOvers(){
   window.PARLAY_OVERS = !window.PARLAY_OVERS;
   if(window.PARLAY_OVERS) window.PARLAY_UNDERS = false;
+  _paintParlayDirBtns();
+  if((document.getElementById('parlayResult').innerHTML||'').trim()) buildParlay();
+}
+
+// Parlay-builder "− Odds Only" toggle — keeps only favorites (American odds < 0).
+// Independent of Overs/Unders; mutually exclusive with "+ Odds Only".
+function toggleParlayMinus(){
+  window.PARLAY_MINUS = !window.PARLAY_MINUS;
+  if(window.PARLAY_MINUS) window.PARLAY_PLUS = false;
+  _paintParlayDirBtns();
+  if((document.getElementById('parlayResult').innerHTML||'').trim()) buildParlay();
+}
+
+// Parlay-builder "+ Odds Only" toggle — keeps only plus-money legs (American odds > 0).
+// Independent of Overs/Unders; mutually exclusive with "− Odds Only".
+function toggleParlayPlus(){
+  window.PARLAY_PLUS = !window.PARLAY_PLUS;
+  if(window.PARLAY_PLUS) window.PARLAY_MINUS = false;
   _paintParlayDirBtns();
   if((document.getElementById('parlayResult').innerHTML||'').trim()) buildParlay();
 }
