@@ -36,6 +36,10 @@ def _norm_name(s: str) -> str:
     s = _re.sub(r'\s+', ' ', s).strip()
     return s
 HIT_ODDS: dict = {}
+# Populated by _fetch_hits_lines: normalized name -> {name, line, home_team,
+# away_team, over, under} for the batter_runs_scored (Over/Under ~0.5) market.
+# Read by run_runs_picks. Parallel to HIT_ODDS; first game seen per name wins.
+RUNS_ODDS: dict = {}
 
 
 def _log(emit, msg, type_="log"):
@@ -168,6 +172,10 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
         _log(emit, "⚠️  ODDS_API_KEY not set — Under Picks skipped")
         return []
 
+    # Fresh runs odds each call so the in-process scheduler (11/14/17:40 ET) and
+    # any next-day run can't serve a first-seen matchup/price. (HIT_ODDS predates
+    # this and is left as-is.)
+    RUNS_ODDS.clear()
     PREFERRED = ["draftkings", "betmgm", "espnbet", "hardrockbet", "fanduel", "williamhill_us", "pointsbetus"]
     tomorrow  = (time.strftime("%Y-%m-%d",
                   time.gmtime(time.mktime(time.strptime(run_date, "%Y-%m-%d")) + 86400)))
@@ -212,7 +220,7 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
             r2 = requests.get(
                 f"https://api.the-odds-api.com/v4/sports/baseball_mlb/events/{ev['id']}/odds",
                 params={"apiKey": ODDS_API_KEY, "regions": "us,us2",
-                        "markets": "batter_hits,batter_hits_alternate,batter_total_bases,batter_total_bases_alternate",
+                        "markets": "batter_hits,batter_hits_alternate,batter_total_bases,batter_total_bases_alternate,batter_runs_scored",
                         "oddsFormat": "american"}, timeout=15)
             if r2.status_code != 200: continue
             all_bms = r2.json().get("bookmakers", [])
@@ -288,8 +296,33 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
             for nk, entry in event_entries.items():
                 entry["tb_under_odds"] = tb_under.get(nk)
                 seen.setdefault(nk, entry)
+            # Batter runs scored (Over/Under, line ~0.5) for the Runs Picks category.
+            # Same all-books union + PREFERRED order; first price per side wins, stored
+            # in the module-global RUNS_ODDS (parallel to HIT_ODDS), first game seen wins.
+            # ZERO extra Odds API calls beyond the one market added to the request above.
+            for book in ordered_books:
+                for mkt in book.get("markets", []):
+                    if mkt.get("key") != "batter_runs_scored": continue
+                    for oc in mkt.get("outcomes", []):
+                        player = oc.get("description", "").strip()
+                        pt     = oc.get("point")
+                        side   = oc.get("name", "")
+                        price  = oc.get("price")
+                        # This is the Over/Under 0.5 ("to score a run") market only.
+                        if not player or pt != 0.5 or price is None: continue
+                        nk = _norm_name(player)
+                        entry = RUNS_ODDS.get(nk)
+                        if entry is None:
+                            entry = {"name": player, "line": pt,
+                                     "home_team": home_team, "away_team": away_team,
+                                     "over": None, "under": None}
+                            RUNS_ODDS[nk] = entry
+                        if side == "Over" and entry["over"] is None:
+                            entry["over"] = price; entry["line"] = pt
+                        elif side == "Under" and entry["under"] is None:
+                            entry["under"] = price
 
-        _log(emit, f"  ✅ {len(seen)} players on 1.5 hits line | {len(HIT_ODDS)} players with 0.5 hit odds")
+        _log(emit, f"  ✅ {len(seen)} players on 1.5 hits line | {len(HIT_ODDS)} players with 0.5 hit odds | {len(RUNS_ODDS)} with runs odds")
         # Scan ALL players who have any posted hit odds (the 0.5 set), not just
         # the ~57 with a 1.5 line. Players who DO have a 1.5 line keep their
         # Under 1.5 / total-bases odds; 0.5-only players are still evaluated as
@@ -394,4 +427,190 @@ def run_under_picks(run_date: str, team_schedule: dict, emit=None) -> list:
     # finish out of order.
     picks.sort(key=lambda x: (x["under_score"], x["name"]))
     _log(emit, f"✅ Under Picks: {len(picks)} picks found")
+    return picks
+
+
+# ── Runs Picks (Batter Runs Scored, Over/Under 0.5) ────────────────────────
+# A full over/under category mirroring the hit list, driven by how often a batter
+# scores a run (H/A vs the opponent, falling back to L10 H/A any opp when there's
+# no head-to-head sample). Ranked by the Wilson lower bound of that rate so a proven
+# sample outranks a thin lucky one. Odds come from RUNS_ODDS, populated by
+# _fetch_hits_lines (no extra Odds API calls).
+import math as _math
+
+def _wilson_lb(hits: int, games: int, z: float = 1.96) -> float:
+    """Lower bound of a 95% Wilson interval — rewards sample size."""
+    if not games:
+        return 0.0
+    p = hits / games
+    den = 1.0 + z * z / games
+    centre = p + z * z / (2 * games)
+    margin = z * _math.sqrt(p * (1 - p) / games + z * z / (4 * games * games))
+    return (centre - margin) / den
+
+
+def _runs_consistency(player_id, side: str, opp_name: str = "",
+                      max_games: int = 10) -> dict:
+    """Last max_games career H/A games (5 seasons back) counting games with 1+ run.
+       When opp_name is set, restrict to games vs THAT opponent."""
+    if not player_id:
+        return {"runs_games": 0, "games": 0, "display": "N/A", "score": 0}
+    try:
+        from mlb_stats_splits import _get_game_logs, _team_name_match
+        from datetime import date as _dt
+        cy = _dt.today().year
+        seasons = list(range(cy, cy - 5, -1))
+        matching = []
+        for season in seasons:
+            splits = _get_game_logs(player_id, season)
+            for sp in reversed(splits):
+                is_home = sp.get("isHome", False)
+                if (side.upper() == "HOME") != is_home:
+                    continue
+                if opp_name:
+                    opp = sp.get("opponent", {}).get("name", "")
+                    if not _team_name_match(opp, opp_name):
+                        continue
+                stat = sp.get("stat", {})
+                ab = int(stat.get("atBats", 0) or 0)
+                if ab < 1:
+                    continue
+                runs = int(stat.get("runs", 0) or 0)
+                matching.append(1 if runs >= 1 else 0)
+                if len(matching) >= max_games:
+                    break
+            if len(matching) >= max_games:
+                break
+        games = len(matching)
+        runs_games = sum(matching)
+        if games == 0:
+            return {"runs_games": 0, "games": 0, "display": "N/A", "score": 0}
+        return {"runs_games": runs_games, "games": games,
+                "display": f"{runs_games}/{games}",
+                "score": round(runs_games / games * 100)}
+    except Exception:
+        return {"runs_games": 0, "games": 0, "display": "ERR", "score": 0}
+
+
+def _runs_rate(player_id, side: str, opp_name: str) -> dict:
+    """Runs-scored rate vs THIS opponent (H/A); fall back to L10 H/A any opp when
+       there's no head-to-head sample. Returns the consistency dict + a `basis`."""
+    vs = _runs_consistency(player_id, side, opp_name, 10)
+    if vs["games"] > 0:
+        vs["basis"] = "vs opp"
+        return vs
+    la = _runs_consistency(player_id, side, "", 10)
+    la["basis"] = "L10 H/A"
+    return la
+
+
+def _recent_runs_log(player_id, n: int = 5) -> list:
+    """Last n games (any opp), newest-first: date, runs, hits, opp, H/A."""
+    if not player_id:
+        return []
+    try:
+        from mlb_stats_splits import _get_game_logs
+        from datetime import date as _dt
+        cy = _dt.today().year
+        games = []
+        for season in range(cy, cy - 2, -1):
+            splits = _get_game_logs(player_id, season)
+            for sp in reversed(splits):
+                stat = sp.get("stat", {})
+                ab = int(stat.get("atBats", 0) or 0)
+                if ab < 1:
+                    continue
+                games.append({
+                    "d":   (sp.get("date") or "")[5:],
+                    "r":   int(stat.get("runs", 0) or 0),
+                    "h":   int(stat.get("hits", 0) or 0),
+                    "opp": (sp.get("opponent", {}) or {}).get("name", ""),
+                    "ha":  "H" if sp.get("isHome") else "A",
+                })
+                if len(games) >= n:
+                    break
+            if len(games) >= n:
+                break
+        return games
+    except Exception:
+        return []
+
+
+# Pick qualifies as OVER when the runs-scored rate is high, UNDER when low.
+RUNS_OVER_CUT  = 50   # >= this % → likely to score a run
+RUNS_UNDER_CUT = 20   # <= this % → likely NOT to score
+
+
+def run_runs_picks(run_date: str, team_schedule: dict, emit=None) -> list:
+    _log(emit, "", "log")
+    _log(emit, "▸ Runs Picks — Batter Runs Scored (Over/Under 0.5)", "section")
+    season = int(run_date[:4])
+
+    if not RUNS_ODDS:
+        _fetch_hits_lines(run_date, emit)   # populates RUNS_ODDS as a side effect
+    candidates = list(RUNS_ODDS.values())
+    if not candidates:
+        _log(emit, "  No batter runs-scored lines posted today.")
+        return []
+    _log(emit, f"  {len(candidates)} players with a runs line")
+
+    _build_player_map(season)
+    id_map = {}
+    for c in candidates:
+        pid = _resolve_id(c["name"])
+        if pid:
+            id_map[c["name"]] = pid
+    team_map = _get_teams_batch(list(id_map.values()))
+
+    def _eval(c):
+        name = c["name"]
+        batter_id = id_map.get(name)
+        player_team = team_map.get(batter_id, "") if batter_id else ""
+        if not batter_id or not player_team:
+            return None
+        if _team_match(player_team, c["home_team"]):
+            side, opp_name = "HOME", c["away_team"]
+        elif _team_match(player_team, c["away_team"]):
+            side, opp_name = "AWAY", c["home_team"]
+        else:
+            return None
+        rate = _runs_rate(batter_id, side, opp_name)
+        if rate["games"] <= 0:
+            return None
+        score = rate["score"]
+        if score >= RUNS_OVER_CUT:
+            pick = "OVER"
+        elif score <= RUNS_UNDER_CUT:
+            pick = "UNDER"
+        else:
+            return None
+        return {"name": name, "team": player_team, "side": side, "opp": opp_name,
+                "pick": pick, "line": c.get("line", 0.5),
+                "rate_disp": rate["display"], "score": score,
+                "games": rate["games"], "basis": rate.get("basis", ""),
+                "wilson": round(_wilson_lb(rate["runs_games"], rate["games"]), 4),
+                "over_odds": c.get("over"), "under_odds": c.get("under"),
+                "batter_id": batter_id,
+                "recent_runs_log": _recent_runs_log(batter_id)}
+
+    picks = []
+    with ThreadPoolExecutor(max_workers=8) as _ex:
+        _futs = {_ex.submit(_eval, c): c for c in candidates}
+        for _fut in as_completed(_futs):
+            try:
+                pk = _fut.result()
+            except Exception:
+                pk = None
+            if pk:
+                picks.append(pk)
+
+    # OVERs first (highest confidence-adjusted rate), then UNDERs (coldest first).
+    picks.sort(key=lambda p: (
+        0 if p["pick"] == "OVER" else 1,
+        -p["wilson"] if p["pick"] == "OVER" else p["score"],
+        -p["games"],
+    ))
+    _log(emit, f"✅ Runs Picks: {len(picks)} "
+               f"({sum(1 for p in picks if p['pick']=='OVER')} over / "
+               f"{sum(1 for p in picks if p['pick']=='UNDER')} under)")
     return picks
