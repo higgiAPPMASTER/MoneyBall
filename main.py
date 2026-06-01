@@ -383,7 +383,21 @@ def api_lookup(name: str, date_str: str):
             blurb = "No matchup history available yet — can't call it today."
     else:
         blurb = " · ".join(parts)
-        if signal >= 2:
+        # UNDER LEAN: a genuinely bad career mark vs THIS pitcher (real sample,
+        # 10+ AB, BA <= .150) can't be redeemed by a hot small-sample H/A streak —
+        # those streak games are single-hit games, not multi-hit. So the better
+        # angle is Under 1.5 hits / total bases, not "stack him for a hit".
+        if s1_ba is not None and (s1_ab or 0) >= 10 and s1_ba <= 0.150:
+            verdict, headline = "UNDER", "Better angle: lean Under 1.5 hits / TB"
+            if games_n > 0:
+                blurb = (" · ".join(parts)
+                         + f" — only {s1_ba:.3f} lifetime vs {pname}; the "
+                         + f"{s4.get('display')} streak is single-hit games, "
+                         + "so lean Under not over")
+            else:
+                blurb = (" · ".join(parts)
+                         + f" — only {s1_ba:.3f} lifetime vs {pname}; lean Under")
+        elif signal >= 2:
             verdict, headline = "GOOD", "Good choice for a hit today"
         elif signal >= 1:
             verdict, headline = "DECENT", "Decent shot at a hit today"
@@ -646,9 +660,9 @@ _HTML = """
         <p class="text-xs text-slate-500 mt-4 admin-only">
           <strong>Source</strong>: The Odds API — players with 1.5 hits O/U line &nbsp;|&nbsp;
           <strong>S1</strong> Career BA vs today's pitcher (under &lt; .250, N/A passes) &nbsp;|&nbsp;
-          <strong>S2</strong> Lifetime H/A BA vs today's opponent (under &lt; .225) &nbsp;|&nbsp;
-          <strong>S3</strong> 2026 H/A BA (under &lt; .250) &nbsp;|&nbsp;
-          <strong>L7</strong> Last 7 games BA — must be under .250 &nbsp;|&nbsp;
+          <strong>S2</strong> BA — last 10 (or fewer) H/A games vs today's opponent (under &lt; .250) &nbsp;|&nbsp;
+          <strong>S3</strong> BA — last 10 (or fewer) H/A games vs any team (under &lt; .250) &nbsp;|&nbsp;
+          <strong>L7</strong> Last 7 games BA, general (under &lt; .250) &nbsp;|&nbsp;
           <strong>Ranked #1 → coldest bat (S2 + S3 + L7)</strong>
         </p>
       </div>
@@ -1731,7 +1745,7 @@ async function lookupAnyPlayer(){
     var d=await r.json();
     if(!d.found){ out.innerHTML='<div class="text-slate-400 text-sm">'+(d.msg||'No match.')+'</div>'; return; }
     if(d.verdict==='NOT_PLAYING'){ out.innerHTML='<div class="text-slate-400 text-sm">'+(d.msg||'')+'</div>'; return; }
-    var color=d.verdict==='GOOD'?'#22c55e':d.verdict==='DECENT'?'#fbbf24':(d.verdict==='UNKNOWN'||d.verdict==='INSUFFICIENT')?'#9ca3af':'#ef4444';
+    var color=d.verdict==='GOOD'?'#22c55e':d.verdict==='DECENT'?'#fbbf24':d.verdict==='UNDER'?'#ff8a65':(d.verdict==='UNKNOWN'||d.verdict==='INSUFFICIENT')?'#9ca3af':'#ef4444';
     var html='<div style="background:#0f0f0f;border:1px solid #262626;border-left:4px solid '+color+';border-radius:10px;padding:14px 18px">';
     html+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
     html+='<span style="color:#fff;font-weight:700;font-size:1.05rem">'+(d.full_name||name)+'</span>';
