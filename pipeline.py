@@ -621,15 +621,27 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     for _pk in (pitcher_k_result.get("picks", []) + pitcher_k_result.get("all", [])):
         _pk["game_start"] = _game_start_for(_pk.get("team", ""))
 
+    # ── Runs Picks (Batter Runs Scored, Over/Under 0.5) ───────────────
+    try:
+        from under_picks import run_runs_picks
+        runs_picks_list = run_runs_picks(run_date, team_schedule, emit=emit)
+    except Exception as exc:
+        emit({"type": "log", "msg": f"⚠️ Runs Picks skipped: {exc}"})
+        runs_picks_list = []
+    for _rp in runs_picks_list:
+        _rp["game_start"] = _game_start_for(_rp.get("team", ""))
+
     elapsed = round(time.time() - t_start, 1)
     result = {
         "date": run_date, "top9": top9, "also_ran": also_ran,
-        "under_picks": under_picks_list, "all_qualified": era_qualified,
+        "under_picks": under_picks_list, "runs_picks": runs_picks_list,
+        "all_qualified": era_qualified,
         "dq_s1_s3": [x for x in results if x["dq"] and x not in dn_dq and x not in era_dq and x not in dq_lineup and x not in s4_dq],
         "dq_step4": dn_dq, "dq_step5": era_dq, "dq_lineup": dq_lineup, "dq_s4": s4_dq, "pitcher_k": pitcher_k_result,
         "stats": {"step1_count": len(top30), "games": len(team_schedule) // 2,
                   "elapsed": elapsed, "picks": len(top9),
                   "under_count": len(under_picks_list),
+                  "runs_count": len(runs_picks_list),
                   "pitcher_k_count": len(pitcher_k_result.get("picks", [])),
                   "has_tbd": slate_has_tbd(run_date)},
     }
