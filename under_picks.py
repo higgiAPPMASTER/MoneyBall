@@ -80,19 +80,23 @@ def _resolve_id(name: str):
 
 def _get_teams_batch(player_ids: list) -> dict:
     if not player_ids: return {}
-    try:
-        r = requests.get(
-            "https://statsapi.mlb.com/api/v1/people",
-            params={"personIds": ",".join(str(i) for i in player_ids), "hydrate": "currentTeam"},
-            timeout=12)
-        result = {}
-        for p in r.json().get("people", []):
-            pid  = p.get("id")
-            team = p.get("currentTeam", {}).get("name", "")
-            if pid: result[pid] = team
-        return result
-    except Exception:
-        return {}
+    result = {}
+    # Chunk to keep the personIds URL short — the candidate pool is now the full
+    # hit-odds set (~300 players), not just the ~57 on the 1.5 line.
+    for i in range(0, len(player_ids), 100):
+        chunk = player_ids[i:i + 100]
+        try:
+            r = requests.get(
+                "https://statsapi.mlb.com/api/v1/people",
+                params={"personIds": ",".join(str(x) for x in chunk), "hydrate": "currentTeam"},
+                timeout=12)
+            for p in r.json().get("people", []):
+                pid  = p.get("id")
+                team = p.get("currentTeam", {}).get("name", "")
+                if pid: result[pid] = team
+        except Exception:
+            continue
+    return result
 
 
 def _get_probable_pitchers(run_date: str) -> dict:
@@ -190,7 +194,8 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
             return False
         events = [e for e in r.json() if _is_run_date_game(e.get("commence_time", ""))]
         _log(emit, f"  Odds API: {len(events)} games for {run_date}")
-        seen: dict = {}
+        seen:  dict = {}
+        hit05: dict = {}  # nk -> {name, home_team, away_team} for every 0.5-line player
 
         now_utc = datetime.now(timezone.utc)
         for ev in events:
@@ -224,8 +229,12 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
                         price  = oc.get("price")
                         if not player or pt is None or side != "Over": continue
                         nk = _norm_name(player)
-                        if pt == 0.5 and nk not in HIT_ODDS and price is not None:
-                            HIT_ODDS[nk] = price
+                        if pt == 0.5 and price is not None:
+                            if nk not in HIT_ODDS:
+                                HIT_ODDS[nk] = price
+                            hit05.setdefault(nk, {"name": player,
+                                                  "home_team": home_team,
+                                                  "away_team": away_team})
             # Build 1.5-line candidates from ALL books — a player qualifies if ANY
             # book posts his 1.5 line (stops part-time players from blinking in/out
             # based on a single book's coverage). Honor PREFERRED order for the
@@ -281,7 +290,20 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
                 seen.setdefault(nk, entry)
 
         _log(emit, f"  ✅ {len(seen)} players on 1.5 hits line | {len(HIT_ODDS)} players with 0.5 hit odds")
-        return list(seen.values())
+        # Scan ALL players who have any posted hit odds (the 0.5 set), not just
+        # the ~57 with a 1.5 line. Players who DO have a 1.5 line keep their
+        # Under 1.5 / total-bases odds; 0.5-only players are still evaluated as
+        # potential unders but carry no 1.5/TB price (no book posted one). This
+        # adds ZERO Odds API calls — both lines come from the per-game odds
+        # already fetched above; only the (free) MLB Stats scan grows.
+        candidates = list(seen.values())
+        for nk, info in hit05.items():
+            if nk in seen: continue
+            candidates.append({"name": info["name"], "line": 1.5,
+                               "home_team": info["home_team"], "away_team": info["away_team"],
+                               "over_odds": None, "under_odds": None, "tb_under_odds": None})
+        _log(emit, f"  ▸ Scanning {len(candidates)} players for unders (was {len(seen)} on the 1.5 line)")
+        return candidates
     except Exception as exc:
         _log(emit, f"⚠️  Odds API error: {exc}")
         return []
