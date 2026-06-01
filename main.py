@@ -501,6 +501,8 @@ _HTML = """
     .chip .val{font-size:1.9rem;font-weight:900;color:#FDB827}
     .chip .lbl{font-size:.65rem;color:#555;text-transform:uppercase;letter-spacing:1px;margin-top:4px}
     .mlb-picks-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px}
+    .parlay-cat-row{display:flex;align-items:center;gap:8px;padding:4px 2px;cursor:pointer;font-size:.78rem;color:#ddd;user-select:none}
+    .parlay-cat-row input{cursor:pointer;width:15px;height:15px;accent-color:#f59e0b}
     .mlb-pick-card{border-radius:14px;overflow:hidden;background:linear-gradient(180deg,#161616 0%,#0f0f0f 100%);border:1px solid #262626;display:flex;flex-direction:column}
     .mlb-pick-card:hover{border-color:rgba(245,158,11,.35)}
     .mlb-card-header{padding:10px 14px;display:flex;align-items:center;justify-content:space-between;border-bottom:2px solid #f59e0b}
@@ -587,6 +589,25 @@ _HTML = """
           <button class="btn-primary" onclick="generateParlay()" style="background:#1f2937;color:#fff">🎲 Generate New</button>
           <button class="btn-primary" id="parlay-overs-btn" onclick="toggleParlayOvers()" style="background:#1f2937;color:#fff">&#11014; Overs Only</button>
           <button class="btn-primary" id="parlay-unders-btn" onclick="toggleParlayUnders()" style="background:#1f2937;color:#fff">&#11015; Unders Only</button>
+          <div style="position:relative;display:inline-block">
+            <button class="btn-primary" id="parlay-cats-btn" onclick="toggleCatMenu(event)" style="background:#1f2937;color:#fff">&#9776; Categories (8/8) &#9662;</button>
+            <div id="parlay-cats-menu" style="display:none;position:absolute;z-index:60;top:calc(100% + 6px);left:0;background:#0e0e0e;border:1px solid #2a2a2a;border-radius:10px;padding:10px;min-width:215px;box-shadow:0 12px 34px rgba(0,0,0,.55)">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px">
+                <span style="font-size:.66rem;color:#888;font-weight:800;letter-spacing:.06em">PARLAY CATEGORIES</span>
+                <span style="font-size:.66rem"><a onclick="_catSetAll(true)" style="color:#63cab7;cursor:pointer;font-weight:800">All</a> <span style="color:#444">·</span> <a onclick="_catSetAll(false)" style="color:#ff8a65;cursor:pointer;font-weight:800">None</a></span>
+              </div>
+              <div id="parlay-cats-list">
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="HIT" checked onchange="_catChanged()"> Hits</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="UNDER_HITS" checked onchange="_catChanged()"> Under 1.5 Hits</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="UNDER_TB" checked onchange="_catChanged()"> Under 1.5 Total Bases</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="K" checked onchange="_catChanged()"> Pitcher K</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="RUN" checked onchange="_catChanged()"> Runs</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="pitcher_hits_allowed" checked onchange="_catChanged()"> Hits Allowed</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="pitcher_outs" checked onchange="_catChanged()"> Outs</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="pitcher_earned_runs" checked onchange="_catChanged()"> Earned Runs</label>
+              </div>
+            </div>
+          </div>
         </div>
         <div id="parlayResult" style="margin-top:16px"></div>
       </div>
@@ -1443,6 +1464,8 @@ function _mlbPool(){
   // Parlay-builder "Unders only" option — keep only UNDER legs (Under 1.5 hits/TB + pitcher K Unders)
   if(window.PARLAY_UNDERS){ cands=cands.filter(function(c){ return c.dir==='UNDER'; }); }
   if(window.PARLAY_OVERS){ cands=cands.filter(function(c){ return c.dir==='OVER'; }); }
+  // Parlay-builder category checkboxes — keep only legs whose category is checked.
+  if(window.PARLAY_CATS){ cands=cands.filter(function(c){ return window.PARLAY_CATS[_legCat(c)]!==false; }); }
   // Dedupe per player+market (was per player only). One pitcher can now supply a
   // K leg AND separate Hits Allowed / Outs / Earned Runs legs — and a hitter can
   // supply a Hits leg + a Total Bases leg — so the new prop categories actually
@@ -1459,6 +1482,8 @@ function _renderParlay(randomize){
   var n=parseInt(sel?sel.value:'3',10)||3;
   var out=document.getElementById('parlayResult'); if(!out) return;
   if(!window._lastResult){ out.innerHTML='<div style="color:#888;padding:10px">Run picks first, then build a parlay.</div>'; return; }
+  var _anyCat=false; for(var _ck in window.PARLAY_CATS){ if(window.PARLAY_CATS[_ck]){ _anyCat=true; break; } }
+  if(!_anyCat){ out.innerHTML='<div style="color:#f87171;padding:10px">Pick at least one category from the Categories menu.</div>'; return; }
   var cands=_mlbPool();
   if(cands.length<n){ out.innerHTML='<div style="color:#f87171;padding:10px">Only '+cands.length+' qualifying play'+(cands.length!==1?'s':'')+' on the board. Pick a smaller parlay.</div>'; return; }
   var legs;
@@ -1520,6 +1545,8 @@ window._lastResult = null;
 window.UNDERS_ONLY = false;
 window.PARLAY_UNDERS = false;
 window.PARLAY_OVERS = false;
+// Parlay category checkboxes — which pick categories feed the parlay pool (all on by default).
+window.PARLAY_CATS = {HIT:true,UNDER_HITS:true,UNDER_TB:true,K:true,RUN:true,pitcher_hits_allowed:true,pitcher_outs:true,pitcher_earned_runs:true};
 
 // Paints both Overs Only / Unders Only buttons to match their toggle state.
 function _paintParlayDirBtns(){
@@ -1548,6 +1575,34 @@ function toggleParlayOvers(){
   _paintParlayDirBtns();
   if((document.getElementById('parlayResult').innerHTML||'').trim()) buildParlay();
 }
+
+// Maps a parlay candidate leg to its category key (the unders split by stat so
+// Under 1.5 Hits and Under 1.5 Total Bases are independently checkable).
+function _legCat(c){
+  if(c.type==='UNDER') return (c.stat==='Total Bases')?'UNDER_TB':'UNDER_HITS';
+  return c.type;
+}
+function _catCount(){ var n=0,t=0; for(var k in window.PARLAY_CATS){ t++; if(window.PARLAY_CATS[k]) n++; } return n+'/'+t; }
+function _paintCatBtn(){ var b=document.getElementById('parlay-cats-btn'); if(b) b.innerHTML='&#9776; Categories ('+_catCount()+') &#9662;'; }
+function toggleCatMenu(e){ if(e){ e.stopPropagation(); } var m=document.getElementById('parlay-cats-menu'); if(m) m.style.display=(m.style.display==='block')?'none':'block'; }
+function _catChanged(){
+  var cbs=document.querySelectorAll('.parlay-cat-cb');
+  for(var i=0;i<cbs.length;i++){ window.PARLAY_CATS[cbs[i].value]=cbs[i].checked; }
+  _paintCatBtn();
+  if((document.getElementById('parlayResult').innerHTML||'').trim()) buildParlay();
+}
+function _catSetAll(v){
+  var cbs=document.querySelectorAll('.parlay-cat-cb');
+  for(var i=0;i<cbs.length;i++){ cbs[i].checked=v; }
+  _catChanged();
+}
+// Close the categories dropdown when clicking anywhere outside it.
+document.addEventListener('click', function(e){
+  var m=document.getElementById('parlay-cats-menu'); if(!m||m.style.display!=='block') return;
+  var btn=document.getElementById('parlay-cats-btn');
+  if(m.contains(e.target) || (btn&&btn.contains(e.target))) return;
+  m.style.display='none';
+});
 
 // Admin-only client-side filter: re-renders the current picks showing only UNDER
 // plays (hitter Under 1.5 + pitcher K Unders). No re-run, no server call.
