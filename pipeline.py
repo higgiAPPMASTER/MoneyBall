@@ -621,6 +621,13 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     for _pk in (pitcher_k_result.get("picks", []) + pitcher_k_result.get("all", [])):
         _pk["game_start"] = _game_start_for(_pk.get("team", ""))
 
+    # Stamp first-pitch time on the 3 pitcher prop categories (hits allowed / outs /
+    # earned runs) too, so the frontend can hide games that already started.
+    pitcher_props = pitcher_k_result.get("props", {}) or {}
+    for _mkt, _bucket in pitcher_props.items():
+        for _pp in (_bucket.get("picks", []) + _bucket.get("all", [])):
+            _pp["game_start"] = _game_start_for(_pp.get("team", ""))
+
     # ── Runs Picks (Batter Runs Scored, Over/Under 0.5) ───────────────
     try:
         from under_picks import run_runs_picks
@@ -638,11 +645,13 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         "all_qualified": era_qualified,
         "dq_s1_s3": [x for x in results if x["dq"] and x not in dn_dq and x not in era_dq and x not in dq_lineup and x not in s4_dq],
         "dq_step4": dn_dq, "dq_step5": era_dq, "dq_lineup": dq_lineup, "dq_s4": s4_dq, "pitcher_k": pitcher_k_result,
+        "pitcher_props": pitcher_props,
         "stats": {"step1_count": len(top30), "games": len(team_schedule) // 2,
                   "elapsed": elapsed, "picks": len(top9),
                   "under_count": len(under_picks_list),
                   "runs_count": len(runs_picks_list),
                   "pitcher_k_count": len(pitcher_k_result.get("picks", [])),
+                  "prop_counts": {m: len(b.get("picks", [])) for m, b in pitcher_props.items()},
                   "has_tbd": slate_has_tbd(run_date)},
     }
     emit({"type": "done", "result": result})
