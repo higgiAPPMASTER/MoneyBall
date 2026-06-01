@@ -248,6 +248,8 @@ def career_ha_ks_vs_opp(pitcher_id: int, side: str, opp_name: str) -> dict:
     k_list   = []
     ip_list  = []
     era_list = []
+    h_list   = []          # hits allowed per start vs opp
+    vs_log   = []          # dated per-start log vs opp (K + hits allowed)
     for season in reversed(K_SEASONS):
         splits = _get_pitching_logs(pitcher_id, season)
         time.sleep(0.08)
@@ -257,20 +259,32 @@ def career_ha_ks_vs_opp(pitcher_id: int, side: str, opp_name: str) -> dict:
             stat = sp.get("stat", {})
             ip = _ip_to_float(stat.get("inningsPitched", "0"))
             if ip < MIN_IP_START: continue
-            k_list.append(stat.get("strikeOuts", 0))
+            k = stat.get("strikeOuts", 0)
+            h = int(stat.get("hits", 0) or 0)   # "hits" in pitching gameLog = hits ALLOWED
+            k_list.append(k)
+            h_list.append(h)
             ip_list.append(ip)
             er = int(stat.get("earnedRuns", 0) or 0)
             if ip > 0:
                 era_list.append(round(er / ip * 9, 2))
+            vs_log.append({"d": (sp.get("date") or ""), "k": k, "h": h,
+                           "ip": stat.get("inningsPitched", "")})
+    # newest-first; compact the date to YY-MM-DD (vs-opp log spans seasons)
+    vs_log.sort(key=lambda e: e["d"], reverse=True)
+    for e in vs_log:
+        e["d"] = (e["d"] or "")[2:]
     if len(k_list) < MIN_STARTS:
         return {"avg_k": None, "starts": len(k_list), "k_list": k_list,
-                "min_k": None, "max_k": None, "avg_ip": None, "era": None}
-    avg_k  = round(sum(k_list) / len(k_list), 1)
-    avg_ip = round(sum(ip_list) / len(ip_list), 1) if ip_list else None
-    era    = round(sum(era_list) / len(era_list), 2) if era_list else None
+                "min_k": None, "max_k": None, "avg_ip": None, "era": None,
+                "avg_hits": None, "h_list": h_list, "vs_opp_log": vs_log}
+    avg_k    = round(sum(k_list) / len(k_list), 1)
+    avg_ip   = round(sum(ip_list) / len(ip_list), 1) if ip_list else None
+    era      = round(sum(era_list) / len(era_list), 2) if era_list else None
+    avg_hits = round(sum(h_list) / len(h_list), 1) if h_list else None
     return {"avg_k": avg_k, "starts": len(k_list), "k_list": k_list,
             "min_k": min(k_list), "max_k": max(k_list),
-            "avg_ip": avg_ip, "era": era}
+            "avg_ip": avg_ip, "era": era,
+            "avg_hits": avg_hits, "h_list": h_list, "vs_opp_log": vs_log}
 
 
 def _fetch_probable_starters(run_date: str) -> list:
@@ -406,6 +420,8 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                  "max_k": hist["max_k"] if hist else None,
                  "avg_ip": hist["avg_ip"] if hist else None,
                  "era":    hist["era"]    if hist else None,
+                 "avg_hits":   hist["avg_hits"]   if hist else None,
+                 "vs_opp_log": hist["vs_opp_log"] if hist else [],
                  "k_hit_rate": k_hit_rate,
                  "k_history": ", ".join(str(k) for k in k_list) if k_list else "—",
                  "sugg_line": sugg_line, "sugg_odds": sugg_odds,
@@ -449,6 +465,8 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                 "max_k": max(k_list2) if k_list2 else None,
                 "avg_ip": hist2["avg_ip"] if hist2 else None,
                 "era": hist2["era"] if hist2 else None,
+                "avg_hits": hist2["avg_hits"] if hist2 else None,
+                "vs_opp_log": hist2["vs_opp_log"] if hist2 else [],
                 "k_hit_rate": "—", "k_history": k_history2,
                 "recent_avg_k": rf2["recent_avg_k"], "recent_k_list": rf2["recent_k_list"],
                 "recent_starts": rf2["recent_starts"], "recent_k_log": rf2["recent_k_log"],
