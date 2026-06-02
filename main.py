@@ -141,7 +141,7 @@ async def start_run(request: Request, date_str: str, force: bool = False, token:
             disk = _load_disk_cache(date_str)
             if disk:
                 _cache[date_str] = disk
-    if not force and date_str in _cache:
+    if not force and date_str in _cache and not _cache[date_str].get("stats", {}).get("has_tbd"):
         task_id = str(uuid.uuid4())
         notify  = asyncio.Event()
         _tasks[task_id] = {
@@ -172,11 +172,11 @@ async def start_run(request: Request, date_str: str, force: bool = False, token:
             result = run_pipeline(date_str, emit=emit)
             task["status"] = "done"
             task["result"] = result
-            # Don't freeze the cache while any starter is still TBD — let the
-            # next load rebuild so a late-named starter gets picked up.
-            if not result.get("stats", {}).get("has_tbd"):
-                _cache[date_str] = result
-                _save_disk_cache(date_str, result)
+            # Always persist so the read-only /api/results endpoint (parlay hub)
+            # can serve the slate even when a starter is still TBD. The MLB app's
+            # own load re-runs when has_tbd to pick up late-named starters.
+            _cache[date_str] = result
+            _save_disk_cache(date_str, result)
             try:
                 # Bake the picks into the page HTML so the Replit hub can serve
                 # an instant, no-cold-start snapshot at moneypicksarena.com.
@@ -2224,14 +2224,14 @@ def _auto_run_pipeline(date_str: str, label: str):
     try:
         print(f"[auto-run] {label} — running pipeline for {date_str}")
         result = run_pipeline(date_str, emit=lambda ev: None)
-        # Don't freeze the cache while any starter is still TBD — let the next
-        # load (or the next slot) rebuild so a late-named starter gets picked up.
-        if not result.get("stats", {}).get("has_tbd"):
-            _cache[date_str] = result
-            _save_disk_cache(date_str, result)
-            print(f"[auto-run] {label} — cached {date_str}")
+        # Always persist so the parlay hub's /api/results can serve the slate
+        # even with a TBD starter. The MLB app's own load re-runs when has_tbd.
+        _cache[date_str] = result
+        _save_disk_cache(date_str, result)
+        if result.get("stats", {}).get("has_tbd"):
+            print(f"[auto-run] {label} — cached {date_str} (has TBD starters; app will re-run on load)")
         else:
-            print(f"[auto-run] {label} — {date_str} still has TBD starters; not frozen")
+            print(f"[auto-run] {label} — cached {date_str}")
         try:
             baked = {**result, "date": date_str}
             inject = (
