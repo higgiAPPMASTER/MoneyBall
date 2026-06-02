@@ -638,10 +638,12 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     for _rp in runs_picks_list:
         _rp["game_start"] = _game_start_for(_rp.get("team", ""))
 
-    # ── Ballpark + weather environment factor (DISPLAY ONLY) ──────────
+    # ── Ballpark + weather environment factor ─────────────────────────
     # Per-game factor = Savant park factor x Open-Meteo temp/wind. Stamped onto
-    # every pick so the frontend can show a chip. Never changes picks, scores or
-    # ranking (Phase A). Any failure is silent (env=None -> no chip).
+    # every pick for the frontend chip, AND used below to RE-RANK picks within
+    # each category (Phase B, reorder only — qualification gates untouched, so
+    # the same picks appear, only their order shifts). Excluded: pitcher K + Outs.
+    # Any failure is silent (env=None -> no chip, no reorder).
     try:
         from ballpark import game_env
     except Exception as _exc:
@@ -680,6 +682,59 @@ def run_pipeline(run_date: str, emit=None) -> dict:
             except Exception:
                 _pp["env"] = None
         emit({"type": "log", "msg": f"  ✅ Ballpark/weather env computed for {len(_env_cache)} stadium(s)"})
+
+        # ── Phase B: weather-adjusted RE-RANKING (reorder only) ───────────
+        # Multiply each category's existing rank metric by a SIGNED env factor:
+        # an offense-friendly park boosts OVER-type plays and penalizes UNDER-
+        # type plays (inverse). Qualification is never touched — the same picks
+        # appear, only the order shifts. Excluded markets: pitcher K + Outs.
+        def _envf(p):
+            e = p.get("env")
+            try:
+                f = float(e.get("factor")) if e else 1.0
+            except Exception:
+                f = 1.0
+            return f if f and f > 0 else 1.0
+
+        # Hitters ("to record a hit", all OVER): boost Wilson LB by the factor,
+        # then re-split the headline Top-10 vs Money Ball from the same pool.
+        _hit_pool = list(top9) + list(also_ran)
+        _hit_pool.sort(
+            key=lambda x: (_wilson_lb((x.get("s4") or {}).get("hits_games", 0),
+                                      (x.get("s4") or {}).get("games", 0)) * _envf(x),
+                           (x.get("s4") or {}).get("games", 0),
+                           x.get("total", 0)),
+            reverse=True,
+        )
+        top9     = _hit_pool[:10]
+        also_ran = _hit_pool[10:]
+
+        # Under 1.5 hits / TB (all UNDER): under_score is lower=colder=better, so
+        # x factor pushes hitter-park unders DOWN the board (penalized correctly).
+        under_picks_list.sort(key=lambda p: (p.get("under_score", 0) * _envf(p),
+                                             p.get("name", "")))
+
+        # Runs 0.5: OVERs boosted (-wilson x factor), UNDERs penalized (score x
+        # factor). OVER block stays ahead of UNDER block, same as run_runs_picks.
+        runs_picks_list.sort(key=lambda p: (
+            0 if p.get("pick") == "OVER" else 1,
+            (-p.get("wilson", 0) * _envf(p)) if p.get("pick") == "OVER"
+            else (p.get("score", 0) * _envf(p)),
+            -p.get("games", 0),
+        ))
+
+        # Pitcher props — Hits Allowed + Earned Runs ONLY (K + Outs excluded).
+        # Re-rank by env-adjusted edge: OVER x factor, UNDER x 1/factor.
+        for _mkt, _bk in pitcher_props.items():
+            if _mkt not in ("pitcher_hits_allowed", "pitcher_earned_runs"):
+                continue
+            _bk["picks"].sort(
+                key=lambda x: abs((x.get("blended") if x.get("blended") is not None else 0)
+                                  - (x.get("line") or 0))
+                              * (_envf(x) if x.get("pick") == "OVER" else 1.0 / _envf(x)),
+                reverse=True,
+            )
+        emit({"type": "log", "msg": "  ✅ Weather-adjusted re-ranking applied (reorder only, gates untouched)"})
 
     elapsed = round(time.time() - t_start, 1)
     result = {
