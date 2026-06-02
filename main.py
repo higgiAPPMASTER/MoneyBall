@@ -1538,6 +1538,15 @@ function _renderParlay(randomize){
     legs=cands.slice(0,n);
   }
   window._lastParlayPlayers=legs.map(function(l){return l.player;});
+  window._parlayLegs=legs;
+  window._parlayMode=randomize?'RANDOM MIX':'TOP PLAYS';
+  _paintParlay();
+}
+// Paints the parlay ticket from window._parlayLegs. Split out of _renderParlay so a
+// single-leg Replace (_replaceParlayLeg) can repaint without regenerating the slate.
+function _paintParlay(){
+  var out=document.getElementById('parlayResult'); if(!out) return;
+  var legs=window._parlayLegs||[]; var n=legs.length;
   var dec=1, priced=0, missing=0;
   legs.forEach(function(l){ if(l.dec){dec*=l.dec;priced++;}else{missing++;} });
   var am = priced? _decToAm(dec) : null;
@@ -1551,18 +1560,41 @@ function _renderParlay(randomize){
     +'<div style="font-weight:800;color:#fff;font-size:.85rem">'+(idx+1)+'. '+_nameSpan(l.src,l.player)+' <span style="color:#777;font-size:.7rem">'+(l.team?l.team+' ':'')+'vs '+l.opp+'</span> <span style="background:'+(tagBg[l.type]||'#222')+';color:'+(tagFg[l.type]||'#aaa')+';padding:1px 6px;border-radius:4px;font-size:.6rem;font-weight:800">'+(tagLbl[l.type]||l.type)+'</span></div>'
     +'<div style="color:#999;font-size:.72rem;margin-top:2px">'+l.reason+'</div>'
     +'</div>'
-    +'<div style="text-align:right;white-space:nowrap">'
+    +'<div style="display:flex;align-items:center;gap:8px;white-space:nowrap">'
+    +'<div style="text-align:right">'
     +'<div style="color:'+dirColor(l.dir)+';font-weight:900;font-size:.8rem">'+l.dir+' '+l.stat+'</div>'
     +'<div style="color:#fbbf24;font-size:.72rem;font-weight:800">'+(fo||'odds N/A')+'</div>'
+    +'</div>'
+    +'<button id="mlbrep'+idx+'" onclick="event.stopPropagation();_replaceParlayLeg('+idx+')" title="Swap this leg for another play" style="background:#1e3a8a;color:#bfdbfe;border:1px solid #1d4ed8;border-radius:7px;padding:4px 9px;font-size:.85rem;cursor:pointer;font-weight:800;line-height:1;flex-shrink:0">&#8635;</button>'
     +'</div></div>';}).join('');
   var header='<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid #262626;background:#121212">'
-    +'<span style="font-weight:800;color:#ccc;font-size:.74rem">'+(randomize?'RANDOM MIX':'TOP PLAYS')+'</span>'
+    +'<span style="font-weight:800;color:#ccc;font-size:.74rem">'+(window._parlayMode||'TOP PLAYS')+'</span>'
     +'<span onclick="closeParlay()" title="Close" style="cursor:pointer;color:#888;font-weight:900;font-size:1.15rem;line-height:1;padding:0 6px">×</span></div>';
   var summary='<div style="display:flex;justify-content:space-between;align-items:center;padding:12px;background:linear-gradient(135deg,rgba(245,158,11,.12),rgba(245,158,11,.02));border-top:1px solid #262626">'
     +'<div style="font-weight:900;color:#f59e0b">'+n+'-LEG PARLAY</div>'
     +'<div style="text-align:right">'+(am?('<div style="font-weight:900;color:#63cab7;font-size:1.05rem">'+am+'</div><div style="color:#999;font-size:.7rem">$100 → $'+payout.toFixed(2)+(missing?(' · '+priced+'/'+n+' legs priced'):'')+'</div>'):('<div style="color:#888;font-size:.78rem">No book odds available for these legs</div>'))+'</div>'
     +'</div>';
   out.innerHTML='<div style="background:#0e0e0e;border:1px solid #262626;border-radius:12px;overflow:hidden">'+header+rows+summary+'</div>';
+}
+// Swap ONE leg for a different qualifying play, keeping every other leg in place.
+// Candidate pool = _mlbPool() (respects all current parlay filters), minus the legs
+// already on the ticket (by player|type|stat). Random pick; repeated presses cycle
+// since the just-placed leg is then on the ticket. No regenerate, no other leg lost.
+function _replaceParlayLeg(idx){
+  var legs=window._parlayLegs; if(!legs||!legs[idx]) return;
+  var cur=legs[idx];
+  var curKey=cur.player+'|'+cur.type+'|'+cur.stat;
+  var used={}; legs.forEach(function(l,i){ if(i!==idx) used[l.player+'|'+l.type+'|'+l.stat]=1; });
+  var pool=_mlbPool().filter(function(c){ var k=c.player+'|'+c.type+'|'+c.stat; return k!==curKey && !used[k]; });
+  if(!pool.length){ _flashNoSwapP(idx); return; }
+  legs[idx]=pool[Math.floor(Math.random()*pool.length)];
+  window._lastParlayPlayers=legs.map(function(l){return l.player;});
+  _paintParlay();
+}
+function _flashNoSwapP(idx){
+  var b=document.getElementById('mlbrep'+idx); if(!b) return;
+  var o=b.innerHTML; b.innerHTML='none'; b.style.background='#374151'; b.style.color='#9ca3af';
+  setTimeout(function(){ b.innerHTML=o; b.style.background='#1e3a8a'; b.style.color='#bfdbfe'; },1000);
 }
 
 function _fmtBA(v){return (v==null)?'—':(typeof v==='number'?v.toFixed(3):v);}
