@@ -674,6 +674,10 @@ _HTML = """
       <div class="card p-6 hidden" id="under-picks-card" style="border-color:rgba(255,107,107,.25)">
         <div class="section-hdr" style="color:#ff8a65">⬇️ Under Picks — Bet Under 1.5 Hits</div>
         <div id="under-picks-body" class="mlb-picks-grid"></div>
+        <details class="mt-4" id="under-picks-more-details" style="display:none">
+          <summary class="cursor-pointer text-sm text-slate-400 select-none" style="color:#ff8a65" id="under-picks-more-summary">▸ Show more Under Picks</summary>
+          <div id="under-picks-more-body" class="mlb-picks-grid mt-3"></div>
+        </details>
         <p class="text-xs text-slate-500 mt-4 admin-only">
           <strong>Source</strong>: The Odds API — players with 1.5 hits O/U line &nbsp;|&nbsp;
           <strong>S1</strong> Career BA vs today's pitcher (under &lt; .250, N/A passes) &nbsp;|&nbsp;
@@ -954,7 +958,19 @@ function showResults(result) {
   const underPicks = view.under_picks || [];
   if (underPicks.length > 0) {
     show('under-picks-card');
-    document.getElementById('under-picks-body').innerHTML = underPicks.map((p,i) => _underCard(p, i+1)).join('');
+    const underTop = underPicks.slice(0, 30);
+    const underRest = underPicks.slice(30);
+    document.getElementById('under-picks-body').innerHTML = underTop.map((p,i) => _underCard(p, i+1)).join('');
+    const moreDet = document.getElementById('under-picks-more-details');
+    if (underRest.length > 0) {
+      moreDet.style.display = '';
+      moreDet.open = false;
+      document.getElementById('under-picks-more-summary').textContent = '▸ Show ' + underRest.length + ' more Under Picks (31–' + underPicks.length + ')';
+      document.getElementById('under-picks-more-body').innerHTML = underRest.map((p,i) => _underCard(p, i+31)).join('');
+    } else {
+      moreDet.style.display = 'none';
+      document.getElementById('under-picks-more-body').innerHTML = '';
+    }
   }
 
   const pkData=view.pitcher_k||{}, pkAll=pkData.all||[];
