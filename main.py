@@ -514,6 +514,11 @@ _HTML = """
     .chip{background:#111;border-top:3px solid #FDB827;border-radius:8px;padding:16px 10px;text-align:center}
     .chip .val{font-size:1.9rem;font-weight:900;color:#FDB827}
     .chip .lbl{font-size:.65rem;color:#555;text-transform:uppercase;letter-spacing:1px;margin-top:4px}
+    .chip.chip-link{cursor:pointer;transition:transform .12s ease,border-top-color .12s ease,box-shadow .12s ease}
+    .chip.chip-link:hover{transform:translateY(-2px);border-top-color:#fff;box-shadow:0 8px 22px rgba(253,184,39,.18)}
+    .chip.chip-link:active{transform:translateY(0)}
+    .flash{animation:cardflash 1.1s ease-out}
+    @keyframes cardflash{0%{box-shadow:0 0 0 3px rgba(253,184,39,.9)}100%{box-shadow:0 0 0 3px rgba(253,184,39,0)}}
     .mlb-picks-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px}
     .parlay-cat-row{display:flex;align-items:center;gap:8px;padding:4px 2px;cursor:pointer;font-size:.78rem;color:#ddd;user-select:none}
     .parlay-cat-row input{cursor:pointer;width:15px;height:15px;accent-color:#f59e0b}
@@ -925,12 +930,12 @@ function showResults(result) {
   hide('also-ran-card'); hide('under-picks-card'); hide('pitcher-k-card'); hide('runs-picks-card');
 
   document.getElementById('stats-row').innerHTML = [
-    statCard('🎯','Top Picks',top9.length),
-    statCard('⬇️','Under Picks',(view.under_picks||[]).length),
-    statCard('🏃','Runs Picks',(view.runs_picks||[]).length),
-    statCard('⚾','Pitcher K',((view.pitcher_k||{}).all||[]).filter(p=>p.pick&&(p.starts||0)>0).length),
-    statCard('🧮','Pitcher Props',PROP_ORDER.reduce((n,m)=>n+(((view.pitcher_props||{})[m]||{}).picks||[]).length,0)),
-    statCard('⚾','Games Today',stats.games),
+    statCard('🎯','Top Picks',top9.length,'top-picks-card'),
+    statCard('⬇️','Under Picks',(view.under_picks||[]).length,'under-picks-card'),
+    statCard('🏃','Runs Picks',(view.runs_picks||[]).length,'runs-picks-card'),
+    statCard('⚾','Pitcher K',((view.pitcher_k||{}).all||[]).filter(p=>p.pick&&(p.starts||0)>0).length,'pitcher-k-card'),
+    statCard('🧮','Pitcher Props',PROP_ORDER.reduce((n,m)=>n+(((view.pitcher_props||{})[m]||{}).picks||[]).length,0),'pitcher-k-card'),
+    statCard('⚾','Games Today',stats.games,'by-game-card'),
     statCard('🔍','Players Run',stats.step1_count),
     statCard('⏱️','Time (s)',stats.elapsed),
   ].join('');
@@ -2102,8 +2107,19 @@ function _pitcherCard(p, rank) {
   </div>`;
 }
 
-function statCard(icon,label,value) {
-  return `<div class="chip"><div class="val">${value}</div><div class="lbl">${label}</div></div>`;
+function statCard(icon,label,value,target) {
+  const linkable = target && Number(value)>0;
+  return `<div class="chip${linkable?' chip-link':''}"${linkable?` onclick="_jumpTo('${target}')" title="Jump to ${label}"`:''}><div class="val">${value}</div><div class="lbl">${label}</div></div>`;
+}
+function _jumpTo(id){
+  const el=document.getElementById(id);
+  if(!el) return;
+  el.classList.remove('hidden');
+  el.scrollIntoView({behavior:'smooth',block:'start'});
+  el.classList.remove('flash');
+  void el.offsetWidth;
+  el.classList.add('flash');
+  setTimeout(function(){el.classList.remove('flash');},1200);
 }
 function lineupBadge(s) {
   if(s==='IN_LINEUP') return '<span class="badge badge-in">✅ IN</span>';
