@@ -27,12 +27,13 @@ BOTTOM_K_TEAMS_N = 0  # disabled — show all teams
 # Each is a true Over/Under betting line that feeds the parlay builder.
 # Data comes from the SAME pitching gameLog already pulled for K's:
 #   hits allowed = stat["hits"], outs = inningsPitched×3, earned runs = stat["earnedRuns"].
-PROP_MARKETS = ["pitcher_hits_allowed", "pitcher_outs", "pitcher_earned_runs"]
+PROP_MARKETS = ["pitcher_hits_allowed", "pitcher_outs", "pitcher_earned_runs", "pitcher_walks"]
 # market -> (display label, per-start value field on the stat dicts, unit suffix)
 PROP_META = {
     "pitcher_hits_allowed": ("Hits Allowed", "h",    "H"),
     "pitcher_outs":         ("Outs",         "outs", " outs"),
     "pitcher_earned_runs":  ("Earned Runs",  "er",   "ER"),
+    "pitcher_walks":        ("Walks Allowed", "bb",  "BB"),
 }
 # Populated by _fetch_pitcher_props each run (cleared at the start so a warm
 # process / 3×-day scheduler never serves a stale matchup):
@@ -320,17 +321,20 @@ def _get_recent_k_form(pitcher_id: int, n: int = 5) -> dict:
         return {"recent_avg_k": None, "recent_k_list": [], "recent_starts": 0, "recent_k_log": [],
                 "recent_avg_hits": None, "recent_hits_list": [],
                 "recent_avg_er": None, "recent_er_list": [],
-                "recent_avg_outs": None, "recent_outs_list": []}
+                "recent_avg_outs": None, "recent_outs_list": [],
+                "recent_avg_bb": None, "recent_bb_list": []}
     k_list    = [sp.get("stat", {}).get("strikeOuts", 0) for sp in recent]
     h_list    = [int(sp.get("stat", {}).get("hits", 0) or 0) for sp in recent]
     er_list   = [int(sp.get("stat", {}).get("earnedRuns", 0) or 0) for sp in recent]
     outs_list = [round(_ip_to_float(sp.get("stat", {}).get("inningsPitched", "0")) * 3) for sp in recent]
+    bb_list   = [int(sp.get("stat", {}).get("baseOnBalls", 0) or 0) for sp in recent]
     k_log = [{
         "d": (sp.get("date") or "")[5:],
         "v": sp.get("stat", {}).get("strikeOuts", 0),
         "h": int(sp.get("stat", {}).get("hits", 0) or 0),
         "er": int(sp.get("stat", {}).get("earnedRuns", 0) or 0),
         "outs": round(_ip_to_float(sp.get("stat", {}).get("inningsPitched", "0")) * 3),
+        "bb": int(sp.get("stat", {}).get("baseOnBalls", 0) or 0),
         "ip": sp.get("stat", {}).get("inningsPitched", ""),
         "opp": (sp.get("opponent", {}) or {}).get("name", ""),
     } for sp in reversed(recent)]
@@ -345,6 +349,8 @@ def _get_recent_k_form(pitcher_id: int, n: int = 5) -> dict:
         "recent_er_list": er_list,
         "recent_avg_outs": round(sum(outs_list) / len(outs_list), 1) if outs_list else None,
         "recent_outs_list": outs_list,
+        "recent_avg_bb": round(sum(bb_list) / len(bb_list), 1) if bb_list else None,
+        "recent_bb_list": bb_list,
     }
 
 
@@ -359,7 +365,8 @@ def career_ha_ks_vs_opp(pitcher_id: int, side: str, opp_name: str) -> dict:
     h_list    = []          # hits allowed per start vs opp
     er_list   = []          # earned runs per start vs opp
     outs_list = []          # outs recorded per start vs opp (IP×3)
-    vs_log    = []          # dated per-start log vs opp (K + hits + ER + outs)
+    bb_list   = []          # walks allowed per start vs opp
+    vs_log    = []          # dated per-start log vs opp (K + hits + ER + outs + BB)
     for season in reversed(K_SEASONS):
         splits = _get_pitching_logs(pitcher_id, season)
         time.sleep(0.08)
@@ -372,16 +379,18 @@ def career_ha_ks_vs_opp(pitcher_id: int, side: str, opp_name: str) -> dict:
             k = stat.get("strikeOuts", 0)
             h = int(stat.get("hits", 0) or 0)   # "hits" in pitching gameLog = hits ALLOWED
             er = int(stat.get("earnedRuns", 0) or 0)
+            bb = int(stat.get("baseOnBalls", 0) or 0)   # walks ALLOWED
             outs = round(ip * 3)
             k_list.append(k)
             h_list.append(h)
             er_list.append(er)
+            bb_list.append(bb)
             outs_list.append(outs)
             ip_list.append(ip)
             if ip > 0:
                 era_list.append(round(er / ip * 9, 2))
             vs_log.append({"d": (sp.get("date") or ""), "k": k, "h": h, "er": er,
-                           "outs": outs, "ip": stat.get("inningsPitched", "")})
+                           "bb": bb, "outs": outs, "ip": stat.get("inningsPitched", "")})
     # newest-first; compact the date to YY-MM-DD (vs-opp log spans seasons)
     vs_log.sort(key=lambda e: e["d"], reverse=True)
     for e in vs_log:
@@ -390,19 +399,22 @@ def career_ha_ks_vs_opp(pitcher_id: int, side: str, opp_name: str) -> dict:
         return {"avg_k": None, "starts": len(k_list), "k_list": k_list,
                 "min_k": None, "max_k": None, "avg_ip": None, "era": None,
                 "avg_hits": None, "h_list": h_list, "avg_er": None, "er_list": er_list,
-                "avg_outs": None, "outs_list": outs_list, "vs_opp_log": vs_log}
+                "avg_outs": None, "outs_list": outs_list,
+                "avg_bb": None, "bb_list": bb_list, "vs_opp_log": vs_log}
     avg_k    = round(sum(k_list) / len(k_list), 1)
     avg_ip   = round(sum(ip_list) / len(ip_list), 1) if ip_list else None
     era      = round(sum(era_list) / len(era_list), 2) if era_list else None
     avg_hits = round(sum(h_list) / len(h_list), 1) if h_list else None
     avg_er   = round(sum(er_list) / len(er_list), 1) if er_list else None
     avg_outs = round(sum(outs_list) / len(outs_list), 1) if outs_list else None
+    avg_bb   = round(sum(bb_list) / len(bb_list), 1) if bb_list else None
     return {"avg_k": avg_k, "starts": len(k_list), "k_list": k_list,
             "min_k": min(k_list), "max_k": max(k_list),
             "avg_ip": avg_ip, "era": era,
             "avg_hits": avg_hits, "h_list": h_list,
             "avg_er": avg_er, "er_list": er_list,
-            "avg_outs": avg_outs, "outs_list": outs_list, "vs_opp_log": vs_log}
+            "avg_outs": avg_outs, "outs_list": outs_list,
+            "avg_bb": avg_bb, "bb_list": bb_list, "vs_opp_log": vs_log}
 
 
 def _fetch_probable_starters(run_date: str) -> list:
@@ -451,6 +463,7 @@ _PROP_SRC = {
     "pitcher_hits_allowed": ("avg_hits", "h_list",    "recent_avg_hits", "recent_hits_list"),
     "pitcher_outs":         ("avg_outs", "outs_list", "recent_avg_outs", "recent_outs_list"),
     "pitcher_earned_runs":  ("avg_er",   "er_list",   "recent_avg_er",   "recent_er_list"),
+    "pitcher_walks":        ("avg_bb",   "bb_list",   "recent_avg_bb",   "recent_bb_list"),
 }
 
 
@@ -620,6 +633,7 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                  "avg_ip": hist["avg_ip"] if hist else None,
                  "era":    hist["era"]    if hist else None,
                  "avg_hits":   hist["avg_hits"]   if hist else None,
+                 "avg_bb":     hist["avg_bb"]     if hist else None,
                  "vs_opp_log": hist["vs_opp_log"] if hist else [],
                  "k_hit_rate": k_hit_rate,
                  "k_history": ", ".join(str(k) for k in k_list) if k_list else "—",
@@ -672,6 +686,7 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                 "avg_ip": hist2["avg_ip"] if hist2 else None,
                 "era": hist2["era"] if hist2 else None,
                 "avg_hits": hist2["avg_hits"] if hist2 else None,
+                "avg_bb": hist2["avg_bb"] if hist2 else None,
                 "vs_opp_log": hist2["vs_opp_log"] if hist2 else [],
                 "k_hit_rate": "—", "k_history": k_history2,
                 "recent_avg_k": rf2["recent_avg_k"], "recent_k_list": rf2["recent_k_list"],
