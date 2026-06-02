@@ -606,7 +606,7 @@ _HTML = """
           <button class="btn-primary" id="parlay-minus-btn" onclick="toggleParlayMinus()" style="background:#1f2937;color:#fff">&minus; Odds Only</button>
           <button class="btn-primary" id="parlay-plus-btn" onclick="toggleParlayPlus()" style="background:#1f2937;color:#fff">&plus; Odds Only</button>
           <div style="position:relative;display:inline-block">
-            <button class="btn-primary" id="parlay-cats-btn" onclick="toggleCatMenu(event)" style="background:#1f2937;color:#fff">&#9776; Categories (8/8) &#9662;</button>
+            <button class="btn-primary" id="parlay-cats-btn" onclick="toggleCatMenu(event)" style="background:#1f2937;color:#fff">&#9776; Categories (9/9) &#9662;</button>
             <div id="parlay-cats-menu" style="display:none;position:absolute;z-index:60;top:calc(100% + 6px);left:0;background:#0e0e0e;border:1px solid #2a2a2a;border-radius:10px;padding:10px;min-width:215px;box-shadow:0 12px 34px rgba(0,0,0,.55)">
               <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px">
                 <span style="font-size:.66rem;color:#888;font-weight:800;letter-spacing:.06em">PARLAY CATEGORIES</span>
@@ -621,6 +621,7 @@ _HTML = """
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="pitcher_hits_allowed" checked onchange="_catChanged()"> Hits Allowed</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="pitcher_outs" checked onchange="_catChanged()"> Outs</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="pitcher_earned_runs" checked onchange="_catChanged()"> Earned Runs</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="pitcher_walks" checked onchange="_catChanged()"> Walks Allowed</label>
               </div>
             </div>
           </div>
@@ -677,8 +678,8 @@ _HTML = """
         </p>
       </div>
       <div class="card p-6 hidden" id="pitcher-k-card" style="border-color:rgba(99,202,183,.25)">
-        <div class="section-hdr" style="color:#63cab7">⚾ Pitcher Picks — Strikeouts, Hits, Outs &amp; Earned Runs</div>
-        <p class="text-xs text-slate-400 mb-3" style="margin-top:-4px">Cards are ranked by the strikeout pick. Click any pitcher to see all 4 markets — Strikeouts, Hits Allowed, Outs, Earned Runs — each with its Over/Under, line and game-by-game form.</p>
+        <div class="section-hdr" style="color:#63cab7">⚾ Pitcher Picks — Strikeouts, Hits, Outs, Earned Runs &amp; Walks</div>
+        <p class="text-xs text-slate-400 mb-3" style="margin-top:-4px">Cards are ranked by the strikeout pick. Click any pitcher to see all 5 markets — Strikeouts, Hits Allowed, Outs, Earned Runs, Walks Allowed — each with its Over/Under, line and game-by-game form.</p>
         <div id="pitcher-k-body" class="mlb-picks-grid"></div>
         <details class="mt-4" id="pitcher-k-nopick-details">
           <summary class="cursor-pointer text-xs text-slate-500 select-none">▸ All today's pitchers (no qualifying pick)</summary>
@@ -1071,13 +1072,13 @@ function _pkForm(key){
   var _kOd=_kHasSugg?p.sugg_odds:(p.pick==='OVER'?p.over_odds:(p.pick==='UNDER'?p.under_odds:null));
   var _kBl=(p.blended_avg_k!=null?p.blended_avg_k:p.avg_k);
   var mkBody=_mkRow('Strikeouts',_kLine,_kBl,'K',_kPick,_kOd,'',false);
-  [['pitcher_hits_allowed','Hits Allowed'],['pitcher_outs','Outs'],['pitcher_earned_runs','Earned Runs']].forEach(function(mm){
+  [['pitcher_hits_allowed','Hits Allowed'],['pitcher_outs','Outs'],['pitcher_earned_runs','Earned Runs'],['pitcher_walks','Walks Allowed']].forEach(function(mm){
     var e=_mk[mm[0]];
     if(e&&e.obj){ var o=e.obj; var od=o.pick==='OVER'?o.over_odds:(o.pick==='UNDER'?o.under_odds:null);
       mkBody+=_mkRow(mm[1],o.line,o.blended,(o.unit?String(o.unit).trim():''),o.pick,od,e.key,true);
     } else { mkBody+=_mkRow(mm[1],null,null,'',null,null,'',false); }
   });
-  var mkTable='<div style="font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase;margin-bottom:6px">All 4 Markets</div>'
+  var mkTable='<div style="font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase;margin-bottom:6px">All 5 Markets</div>'
     +'<table style="width:100%;border-collapse:collapse;font-size:.82rem;margin-bottom:16px;border-bottom:1px solid #1e293b">'
     +'<thead><tr><th style="text-align:left;padding:4px 8px;color:#64748b;font-size:.66rem;font-weight:600">Market</th><th style="text-align:left;padding:4px 8px;color:#64748b;font-size:.66rem;font-weight:600">Line</th><th style="text-align:left;padding:4px 8px;color:#64748b;font-size:.66rem;font-weight:600">Blend</th><th style="text-align:left;padding:4px 8px;color:#64748b;font-size:.66rem;font-weight:600">Pick</th></tr></thead>'
     +'<tbody>'+mkBody+'</tbody></table>';
@@ -1118,8 +1119,10 @@ var PROP_CFG = {
     cardId:'prop-outs-card', bodyId:'prop-outs-body', npId:'prop-outs-nopick'},
   pitcher_earned_runs:  {label:'Pitcher Earned Runs',  icon:'🔥', color:'#fb923c',
     cardId:'prop-er-card', bodyId:'prop-er-body', npId:'prop-er-nopick'},
+  pitcher_walks:        {label:'Pitcher Walks Allowed', icon:'🚶', color:'#34d399',
+    cardId:'prop-bb-card', bodyId:'prop-bb-body', npId:'prop-bb-nopick'},
 };
-var PROP_ORDER = ['pitcher_hits_allowed','pitcher_outs','pitcher_earned_runs'];
+var PROP_ORDER = ['pitcher_hits_allowed','pitcher_outs','pitcher_earned_runs','pitcher_walks'];
 function _ppU(p){ return p && p.unit ? (' '+String(p.unit).trim()) : ''; }
 function renderPitcherProps(view){
   var wrap=document.getElementById('pitcher-props-wrap'); if(!wrap) return;
@@ -1518,9 +1521,9 @@ function _renderParlay(randomize){
   var am = priced? _decToAm(dec) : null;
   var payout = priced? (100*dec) : null;
   var dirColor=function(d){return d==='OVER'?'#63cab7':d==='UNDER'?'#ff8a65':'#9ca3af';};
-  var tagBg={HIT:'rgba(245,158,11,.16)',UNDER:'rgba(255,138,101,.16)',K:'rgba(99,202,183,.16)',RUN:'rgba(96,165,250,.16)',pitcher_hits_allowed:'rgba(248,113,113,.16)',pitcher_outs:'rgba(167,139,250,.16)',pitcher_earned_runs:'rgba(251,146,60,.16)'};
-  var tagFg={HIT:'#f59e0b',UNDER:'#ff8a65',K:'#63cab7',RUN:'#60a5fa',pitcher_hits_allowed:'#f87171',pitcher_outs:'#a78bfa',pitcher_earned_runs:'#fb923c'};
-  var tagLbl={HIT:'HIT',UNDER:'UNDER 1.5',K:'PITCHER K',RUN:'RUNS',pitcher_hits_allowed:'HITS ALLOWED',pitcher_outs:'OUTS',pitcher_earned_runs:'EARNED RUNS'};
+  var tagBg={HIT:'rgba(245,158,11,.16)',UNDER:'rgba(255,138,101,.16)',K:'rgba(99,202,183,.16)',RUN:'rgba(96,165,250,.16)',pitcher_hits_allowed:'rgba(248,113,113,.16)',pitcher_outs:'rgba(167,139,250,.16)',pitcher_earned_runs:'rgba(251,146,60,.16)',pitcher_walks:'rgba(52,211,153,.16)'};
+  var tagFg={HIT:'#f59e0b',UNDER:'#ff8a65',K:'#63cab7',RUN:'#60a5fa',pitcher_hits_allowed:'#f87171',pitcher_outs:'#a78bfa',pitcher_earned_runs:'#fb923c',pitcher_walks:'#34d399'};
+  var tagLbl={HIT:'HIT',UNDER:'UNDER 1.5',K:'PITCHER K',RUN:'RUNS',pitcher_hits_allowed:'HITS ALLOWED',pitcher_outs:'OUTS',pitcher_earned_runs:'EARNED RUNS',pitcher_walks:'WALKS ALLOWED'};
   var rows=legs.map(function(l,idx){var fo=_fmtOdds(l.odds);return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #1a1a1a">'
     +'<div style="min-width:0">'
     +'<div style="font-weight:800;color:#fff;font-size:.85rem">'+(idx+1)+'. '+_nameSpan(l.src,l.player)+' <span style="color:#777;font-size:.7rem">'+(l.team?l.team+' ':'')+'vs '+l.opp+'</span> <span style="background:'+(tagBg[l.type]||'#222')+';color:'+(tagFg[l.type]||'#aaa')+';padding:1px 6px;border-radius:4px;font-size:.6rem;font-weight:800">'+(tagLbl[l.type]||l.type)+'</span></div>'
@@ -1558,7 +1561,7 @@ window.PARLAY_OVERS = false;
 window.PARLAY_MINUS = false;
 window.PARLAY_PLUS = false;
 // Parlay category checkboxes — which pick categories feed the parlay pool (all on by default).
-window.PARLAY_CATS = {HIT:true,UNDER_HITS:true,UNDER_TB:true,K:true,RUN:true,pitcher_hits_allowed:true,pitcher_outs:true,pitcher_earned_runs:true};
+window.PARLAY_CATS = {HIT:true,UNDER_HITS:true,UNDER_TB:true,K:true,RUN:true,pitcher_hits_allowed:true,pitcher_outs:true,pitcher_earned_runs:true,pitcher_walks:true};
 // Parlay game filter — which games feed the parlay pool. Empty = all games allowed; a
 // game is excluded only when explicitly set false. Keyed by the same gameKey() label as
 // the "By Game" card. Repopulated each run from the day's slate (_buildGamesMenu).
@@ -2071,7 +2074,7 @@ function _pitcherCard(p, rank) {
   const conflict = p.avg_k!=null&&p.recent_avg_k!=null&&p.line!=null&&((p.avg_k>p.line)!==(p.recent_avg_k>p.line));
   const blDisp = p.blended_avg_k!=null?p.blended_avg_k+'K'+(conflict?' ⚠️':''):'—';
   window.__PK_REG__=window.__PK_REG__||{}; window.__PK_REG__['pk'+rank]=p;
-  return `<div class="mlb-pick-card" onclick="_pkForm('pk${rank}')" title="Click for all 4 markets" style="cursor:pointer">
+  return `<div class="mlb-pick-card" onclick="_pkForm('pk${rank}')" title="Click for all 5 markets" style="cursor:pointer">
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#0f2420 0%,#08160f 100%)">
       <div style="display:flex;align-items:center;gap:8px">
         <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
@@ -2093,8 +2096,8 @@ function _pitcherCard(p, rank) {
         <span style="font-size:.72rem;color:#64748b">Blend ${blDisp}</span>
         <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.9rem">${odds||'—'}</span>
       </div>
-      <div style="margin-top:5px;font-size:.7rem;color:#94a3b8">Avg K <strong style="color:#cbd5e1">${p.avg_k!=null?p.avg_k:'—'}</strong> · IP <strong style="color:#cbd5e1">${p.avg_ip!=null?p.avg_ip:'—'}</strong> · ERA <strong style="color:#cbd5e1">${p.era||'—'}</strong> · H <strong style="color:#cbd5e1">${p.avg_hits!=null?p.avg_hits:'—'}</strong> <span style="color:#64748b">vr opp</span></div>
-      <div style="margin-top:5px;font-size:.66rem;color:#63cab7;text-align:right">all 4 markets →</div>
+      <div style="margin-top:5px;font-size:.7rem;color:#94a3b8">Avg K <strong style="color:#cbd5e1">${p.avg_k!=null?p.avg_k:'—'}</strong> · IP <strong style="color:#cbd5e1">${p.avg_ip!=null?p.avg_ip:'—'}</strong> · ERA <strong style="color:#cbd5e1">${p.era||'—'}</strong> · H <strong style="color:#cbd5e1">${p.avg_hits!=null?p.avg_hits:'—'}</strong> · BB <strong style="color:#cbd5e1">${p.avg_bb!=null?p.avg_bb:'—'}</strong> <span style="color:#64748b">vr opp</span></div>
+      <div style="margin-top:5px;font-size:.66rem;color:#63cab7;text-align:right">all 5 markets →</div>
     </div>
   </div>`;
 }
