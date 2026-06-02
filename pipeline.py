@@ -638,6 +638,49 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     for _rp in runs_picks_list:
         _rp["game_start"] = _game_start_for(_rp.get("team", ""))
 
+    # ── Ballpark + weather environment factor (DISPLAY ONLY) ──────────
+    # Per-game factor = Savant park factor x Open-Meteo temp/wind. Stamped onto
+    # every pick so the frontend can show a chip. Never changes picks, scores or
+    # ranking (Phase A). Any failure is silent (env=None -> no chip).
+    try:
+        from ballpark import game_env
+    except Exception as _exc:
+        emit({"type": "log", "msg": f"⚠️ Ballpark env unavailable: {_exc}"})
+        game_env = None
+    if game_env is not None:
+        def _home_team(team_name):
+            if not team_name:
+                return ""
+            s = team_schedule.get(team_name)
+            if s:
+                return team_name if s.get("side") == "HOME" else s.get("opponent", "")
+            tl = team_name.lower()
+            for _k, _v in team_schedule.items():
+                if tl in _k.lower() or _k.lower() in tl:
+                    return _k if _v.get("side") == "HOME" else _v.get("opponent", "")
+            return ""
+        _env_cache = {}
+        def _env_for(team_name, game_start):
+            home = _home_team(team_name)
+            if not home:
+                return None
+            if home not in _env_cache:
+                try:
+                    _env_cache[home] = game_env(home, game_start)
+                except Exception:
+                    _env_cache[home] = None
+            return _env_cache[home]
+        _env_targets = list(top9) + list(also_ran) + list(under_picks_list) + list(runs_picks_list)
+        _env_targets += pitcher_k_result.get("picks", []) + pitcher_k_result.get("all", [])
+        for _b in pitcher_props.values():
+            _env_targets += _b.get("picks", []) + _b.get("all", [])
+        for _pp in _env_targets:
+            try:
+                _pp["env"] = _env_for(_pp.get("team", ""), _pp.get("game_start", ""))
+            except Exception:
+                _pp["env"] = None
+        emit({"type": "log", "msg": f"  ✅ Ballpark/weather env computed for {len(_env_cache)} stadium(s)"})
+
     elapsed = round(time.time() - t_start, 1)
     result = {
         "date": run_date, "top9": top9, "also_ran": also_ran,
