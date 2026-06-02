@@ -2011,6 +2011,7 @@ function _underCard(p, rank) {
         <span style="font-size:.78rem;color:#64748b">${p.pitcher?'vs '+p.pitcher:''}</span>
         ${lineupBadge(p.lineup_status)}
       </div>
+      ${p.under_basis==='vs-ace'?`<div style="margin-top:6px;font-size:.7rem;color:#fca5a5;background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.35);border-radius:6px;padding:3px 7px">🔥 Facing top-30 ERA ace${p.ace_era!=null?' · '+(+p.ace_era).toFixed(2)+' ERA':''}</div>`:''}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
         <span style="font-size:.8rem;color:#ff8a65;font-weight:800">U 1.5 Hits</span>
         <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${uOdds}</span>
