@@ -522,7 +522,8 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     # ── Under Picks ───────────────────────────────────────────────────
     try:
         from under_picks import run_under_picks
-        under_picks_list = run_under_picks(run_date, team_schedule, emit=emit)
+        under_picks_list = run_under_picks(run_date, team_schedule, emit=emit,
+                                           top_era=top_era_lastnames, top_era_list=top_era_list)
     except Exception as exc:
         emit({"type": "log", "msg": f"⚠️ Under Picks skipped: {exc}"})
         under_picks_list = []
