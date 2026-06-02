@@ -454,7 +454,11 @@ def run_under_picks(run_date: str, team_schedule: dict, emit=None,
         if not ace and s1["ba"] is not None and s1["ab"] > 0 and s1["ba"] >= 0.250: return None
         # S2: BA over last 10 (or fewer) H/A games vs TODAY'S opponent. Data req'd, < .250.
         s2 = _last10_ba(batter_id, side, opp_name, 10)
-        if not ace and (s2["ba"] is None or s2["ba"] >= 0.250): return None
+        # S2 (H/A vs this opponent) is REQUIRED for everyone — including ace
+        # fast-track picks. No S2 sample = no real signal = off the list (per
+        # user). The ace bypass still applies only to the warm-form threshold.
+        if s2["ba"] is None: return None
+        if not ace and s2["ba"] >= 0.250: return None
         # S3: BA over last 10 (or fewer) H/A games vs ANY opponent. Data req'd, < .250.
         s3 = _last10_ba(batter_id, side, "", 10)
         if not ace and (s3["ba"] is None or s3["ba"] >= 0.250): return None
