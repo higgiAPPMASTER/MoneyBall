@@ -639,12 +639,19 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     for _rp in runs_picks_list:
         _rp["game_start"] = _game_start_for(_rp.get("team", ""))
 
-    # ── Ballpark + weather environment factor ─────────────────────────
-    # Per-game factor = Savant park factor x Open-Meteo temp/wind. Stamped onto
-    # every pick for the frontend chip, AND used below to RE-RANK picks within
-    # each category (Phase B, reorder only — qualification gates untouched, so
-    # the same picks appear, only their order shifts). Excluded: pitcher K + Outs.
-    # Any failure is silent (env=None -> no chip, no reorder).
+    # ── Game-environment re-ranking inputs (weather + home-plate umpire) ──
+    # Build the shared target list ONCE; ballpark/weather and umpire each stamp
+    # onto it (Phase A), then a single combined Phase B re-ranks every category
+    # (reorder only — qualification gates are never touched, so the same picks
+    # appear, just in a different order). Either factor missing -> neutral 1.0.
+    _rr_targets = list(top9) + list(also_ran) + list(under_picks_list) + list(runs_picks_list)
+    _rr_targets += pitcher_k_result.get("picks", []) + pitcher_k_result.get("all", [])
+    for _b in pitcher_props.values():
+        _rr_targets += _b.get("picks", []) + _b.get("all", [])
+
+    # ── Phase A1: ballpark + weather env chip (per HOME park) ──
+    # Per-game factor = Savant park factor x Open-Meteo temp/wind. Silent on
+    # failure (env=None -> no chip, neutral re-rank).
     try:
         from ballpark import game_env
     except Exception as _exc:
@@ -673,69 +680,105 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                 except Exception:
                     _env_cache[home] = None
             return _env_cache[home]
-        _env_targets = list(top9) + list(also_ran) + list(under_picks_list) + list(runs_picks_list)
-        _env_targets += pitcher_k_result.get("picks", []) + pitcher_k_result.get("all", [])
-        for _b in pitcher_props.values():
-            _env_targets += _b.get("picks", []) + _b.get("all", [])
-        for _pp in _env_targets:
+        for _pp in _rr_targets:
             try:
                 _pp["env"] = _env_for(_pp.get("team", ""), _pp.get("game_start", ""))
             except Exception:
                 _pp["env"] = None
         emit({"type": "log", "msg": f"  ✅ Ballpark/weather env computed for {len(_env_cache)} stadium(s)"})
 
-        # ── Phase B: weather-adjusted RE-RANKING (reorder only) ───────────
-        # Multiply each category's existing rank metric by a SIGNED env factor:
-        # an offense-friendly park boosts OVER-type plays and penalizes UNDER-
-        # type plays (inverse). Qualification is never touched — the same picks
-        # appear, only the order shifts. Excluded markets: pitcher K + Outs.
-        def _envf(p):
-            e = p.get("env")
-            try:
-                f = float(e.get("factor")) if e else 1.0
-            except Exception:
-                f = 1.0
-            return f if f and f > 0 else 1.0
+    # ── Phase A2: home-plate umpire effect (per game) ──
+    # Each game's HP umpire + how their games trend on K/BB/runs vs league
+    # (statsapi only, cached per day). Silent on failure / unposted officials.
+    try:
+        from umpire import build_today as _ump_build, lookup as _ump_lookup
+    except Exception as _exc:
+        emit({"type": "log", "msg": f"⚠️ Umpire effect unavailable: {_exc}"})
+        _ump_build = None
+        _ump_lookup = None
+    if _ump_build is not None:
+        try:
+            _ump_map = _ump_build(run_date, emit=emit) or {}
+        except Exception as _exc:
+            emit({"type": "log", "msg": f"⚠️ Umpire effect skipped: {_exc}"})
+            _ump_map = {}
+        if _ump_map:
+            for _pp in _rr_targets:
+                try:
+                    _pp["ump"] = _ump_lookup(_ump_map, _pp.get("team", ""))
+                except Exception:
+                    _pp["ump"] = None
 
-        # Hitters ("to record a hit", all OVER): boost Wilson LB by the factor,
-        # then re-split the headline Top-10 vs Money Ball from the same pool.
-        _hit_pool = list(top9) + list(also_ran)
-        _hit_pool.sort(
-            key=lambda x: (_wilson_lb((x.get("s4") or {}).get("hits_games", 0),
-                                      (x.get("s4") or {}).get("games", 0)) * _envf(x),
-                           (x.get("s4") or {}).get("games", 0),
-                           x.get("total", 0)),
-            reverse=True,
-        )
-        top9     = _hit_pool[:10]
-        also_ran = _hit_pool[10:]
+    # ── Phase B: combined env + umpire RE-RANKING (reorder only) ──
+    # Offense axis = weather/park env × umpire RUN factor (a wide strike zone
+    # suppresses offense; a tight zone inflates it). Pitcher Walks uses the
+    # umpire WALK factor. Pitcher Strikeouts are re-ranked CLIENT-SIDE in
+    # main.py (the only category the frontend re-sorts) via the K factor.
+    # Outs stay excluded. Both factors default to 1.0 -> base order preserved.
+    def _envf(p):
+        e = p.get("env")
+        try:
+            f = float(e.get("factor")) if e else 1.0
+        except Exception:
+            f = 1.0
+        return f if f and f > 0 else 1.0
+    def _umpf(p, comp):
+        u = p.get("ump")
+        try:
+            f = float(u.get(comp)) if u else 1.0
+        except Exception:
+            f = 1.0
+        return f if f and f > 0 else 1.0
+    def _offf(p):                       # combined offense multiplier
+        return _envf(p) * _umpf(p, "rFactor")
 
-        # Under 1.5 hits / TB (all UNDER): under_score is lower=colder=better, so
-        # x factor pushes hitter-park unders DOWN the board (penalized correctly).
-        under_picks_list.sort(key=lambda p: (p.get("under_score", 0) * _envf(p),
-                                             p.get("name", "")))
+    # Hitters ("to record a hit", all OVER): offense boost, then re-split the
+    # headline Top-10 vs Money Ball from the same pool.
+    _hit_pool = list(top9) + list(also_ran)
+    _hit_pool.sort(
+        key=lambda x: (_wilson_lb((x.get("s4") or {}).get("hits_games", 0),
+                                  (x.get("s4") or {}).get("games", 0)) * _offf(x),
+                       (x.get("s4") or {}).get("games", 0),
+                       x.get("total", 0)),
+        reverse=True,
+    )
+    top9     = _hit_pool[:10]
+    also_ran = _hit_pool[10:]
 
-        # Runs 0.5: OVERs boosted (-wilson x factor), UNDERs penalized (score x
-        # factor). OVER block stays ahead of UNDER block, same as run_runs_picks.
-        runs_picks_list.sort(key=lambda p: (
-            0 if p.get("pick") == "OVER" else 1,
-            (-p.get("wilson", 0) * _envf(p)) if p.get("pick") == "OVER"
-            else (p.get("score", 0) * _envf(p)),
-            -p.get("games", 0),
-        ))
+    # Under 1.5 hits / TB (all UNDER): under_score is lower=colder=better, so
+    # × offense factor pushes hitter-park / tight-zone unders DOWN the board.
+    under_picks_list.sort(key=lambda p: (p.get("under_score", 0) * _offf(p),
+                                         p.get("name", "")))
 
-        # Pitcher props — Hits Allowed + Earned Runs ONLY (K + Outs excluded).
-        # Re-rank by env-adjusted edge: OVER x factor, UNDER x 1/factor.
-        for _mkt, _bk in pitcher_props.items():
-            if _mkt not in ("pitcher_hits_allowed", "pitcher_earned_runs"):
-                continue
+    # Runs 0.5: OVERs boosted (-wilson × offense), UNDERs penalized (score ×
+    # offense). OVER block stays ahead of UNDER block, same as run_runs_picks.
+    runs_picks_list.sort(key=lambda p: (
+        0 if p.get("pick") == "OVER" else 1,
+        (-p.get("wilson", 0) * _offf(p)) if p.get("pick") == "OVER"
+        else (p.get("score", 0) * _offf(p)),
+        -p.get("games", 0),
+    ))
+
+    # Pitcher props — Hits Allowed + Earned Runs use the offense axis; Walks use
+    # the umpire walk factor (wide zone -> fewer walks -> Under boosted). Outs +
+    # K excluded here. OVER × factor, UNDER × 1/factor.
+    for _mkt, _bk in pitcher_props.items():
+        if _mkt in ("pitcher_hits_allowed", "pitcher_earned_runs"):
             _bk["picks"].sort(
                 key=lambda x: abs((x.get("blended") if x.get("blended") is not None else 0)
                                   - (x.get("line") or 0))
-                              * (_envf(x) if x.get("pick") == "OVER" else 1.0 / _envf(x)),
+                              * (_offf(x) if x.get("pick") == "OVER" else 1.0 / _offf(x)),
                 reverse=True,
             )
-        emit({"type": "log", "msg": "  ✅ Weather-adjusted re-ranking applied (reorder only, gates untouched)"})
+        elif _mkt == "pitcher_walks":
+            _bk["picks"].sort(
+                key=lambda x: abs((x.get("blended") if x.get("blended") is not None else 0)
+                                  - (x.get("line") or 0))
+                              * (_umpf(x, "bbFactor") if x.get("pick") == "OVER"
+                                 else 1.0 / _umpf(x, "bbFactor")),
+                reverse=True,
+            )
+    emit({"type": "log", "msg": "  ✅ Env + umpire re-ranking applied (reorder only, gates untouched)"})
 
     elapsed = round(time.time() - t_start, 1)
     result = {
