@@ -500,16 +500,11 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         s4_qualified.append(r)
 
     emit({"type": "log", "msg": f"S4 filter: {len(s4_qualified)} pass, {len(s4_dq)} DQ'd (<50%)"})
-    # Final HIT-list order is driven by S4 (H/A hit rate vs THIS opponent), but
-    # confidence-adjusted so sample size matters: a proven 9/10 or 7/8 outranks a
-    # thin 4/4 or 5/5, while strong big samples (10/10) stay on top. We rank by the
-    # Wilson lower bound of the hit rate; ties broken by game count, then model total.
+    # Rank by model total (points) — S4 hit rate is displayed on the card for
+    # consistency reference only and does not affect ordering.
     all_ranked = sorted(
         s4_qualified,
-        key=lambda x: (_wilson_lb((x.get("s4") or {}).get("hits_games", 0),
-                                  (x.get("s4") or {}).get("games", 0)),
-                       (x.get("s4") or {}).get("games", 0),
-                       x.get("total", 0)),
+        key=lambda x: x.get("total", 0),
         reverse=True,
     )
     top9     = all_ranked[:10]
@@ -732,14 +727,11 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     def _offf(p):                       # combined offense multiplier
         return _envf(p) * _umpf(p, "rFactor")
 
-    # Hitters ("to record a hit", all OVER): offense boost, then re-split the
-    # headline Top-10 vs Money Ball from the same pool.
+    # Hitters ("to record a hit", all OVER): points × offense factor, then
+    # re-split the headline Top-10 vs Money Ball from the same pool.
     _hit_pool = list(top9) + list(also_ran)
     _hit_pool.sort(
-        key=lambda x: (_wilson_lb((x.get("s4") or {}).get("hits_games", 0),
-                                  (x.get("s4") or {}).get("games", 0)) * _offf(x),
-                       (x.get("s4") or {}).get("games", 0),
-                       x.get("total", 0)),
+        key=lambda x: x.get("total", 0) * _offf(x),
         reverse=True,
     )
     top9     = _hit_pool[:10]
