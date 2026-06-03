@@ -1998,7 +1998,7 @@ function _bpChip(p){
   if(!bp||bp.bp_ip==null) return '';
   var ip=bp.bp_ip, taxed=bp.taxed;
   if(taxed){
-    var lbl=isPitcher?'\uD83D\uDD25 Taxed Own BP':'\uD83D\uDD25 Taxed Opp BP';
+    var lbl=isPitcher?'🔥 Taxed Own BP':'🔥 Taxed Opp BP';
     var clr=isPitcher?'#fbbf24':'#63cab7';
     var tip=isPitcher
       ?'Own bullpen threw '+ip+' IP in last 3 days \u2014 starter may be asked to go deeper'
