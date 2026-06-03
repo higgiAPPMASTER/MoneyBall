@@ -1990,6 +1990,27 @@ function _umpChip(p){
     +' \u2014 nudges pick order, gates untouched';
   return '<div class="env-chip" title="'+_esc(tip)+'" style="border-color:'+c+'55;color:'+c+'">'+_esc(u.summary)+'</div>';
 }
+function _bpChip(p){
+  // hitter cards carry bp_opp (opponent bullpen); pitcher cards carry bp_own
+  var bp=null, isPitcher=false;
+  if(p&&p.bp_opp!=null){ bp=p.bp_opp; isPitcher=false; }
+  else if(p&&p.bp_own!=null){ bp=p.bp_own; isPitcher=true; }
+  if(!bp||bp.bp_ip==null) return '';
+  var ip=bp.bp_ip, taxed=bp.taxed;
+  if(taxed){
+    var lbl=isPitcher?'\uD83D\uDD25 Taxed Own BP':'\uD83D\uDD25 Taxed Opp BP';
+    var clr=isPitcher?'#fbbf24':'#63cab7';
+    var tip=isPitcher
+      ?'Own bullpen threw '+ip+' IP in last 3 days \u2014 starter may be asked to go deeper'
+      :'Opponent bullpen threw '+ip+' IP in last 3 days \u2014 late-game pitching may be weaker';
+    return '<div class="env-chip" title="'+_esc(tip)+'" style="border-color:'+clr+'44;color:'+clr+'">'+lbl+' \u00b7 '+ip+' IP/3d</div>';
+  }
+  if(!isPitcher&&(p.pick==='UNDER'||(p.under_basis!=null))){
+    var tip2='Opponent bullpen fresh ('+ip+' IP in last 3 days) \u2014 supports under lean';
+    return '<div class="env-chip" title="'+_esc(tip2)+'" style="border-color:#60a5fa44;color:#60a5fa">\u2744\uFE0F Fresh Opp BP \u00b7 '+ip+' IP/3d</div>';
+  }
+  return '';
+}
 // Umpire-adjusted multiplier for the client-side pitcher-K sort: a wide-zone
 // ump (kFactor>1) lifts OVER picks and lowers UNDER picks; tight zone inverse.
 function _umpKMul(p){
@@ -2030,6 +2051,7 @@ function _mlbCard(p, rank, dim) {
       </div>
       ${_envChip(p)}
       ${_umpChip(p)}
+      ${_bpChip(p)}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:2px">
         <span style="font-size:.78rem;color:#64748b">${p.pitcher?'vs '+p.pitcher:''}</span>
         ${lineupBadge(p.lineup_status)}
@@ -2075,6 +2097,7 @@ function _underCard(p, rank) {
       </div>
       ${_envChip(p)}
       ${_umpChip(p)}
+      ${_bpChip(p)}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:2px">
         <span style="font-size:.78rem;color:#64748b">${p.pitcher?'vs '+p.pitcher:''}</span>
         ${lineupBadge(p.lineup_status)}
@@ -2147,6 +2170,7 @@ function _runsCard(p, rank, pfx) {
       </div>
       ${_envChip(p)}
       ${_umpChip(p)}
+      ${_bpChip(p)}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
         <span style="font-size:.78rem;color:#94a3b8">Runs Rate vr Opp</span>
         <span style="font-family:monospace;font-weight:700;color:${scoreClr}">${p.rate_disp||'—'} <span style="color:#64748b;font-size:.68rem">${p.basis||''}</span></span>
@@ -2195,6 +2219,7 @@ function _pitcherCard(p, rank) {
       </div>
       ${_envChip(p)}
       ${_umpChip(p)}
+      ${_bpChip(p)}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
         <span style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">K Line ${p.line!=null?p.line:'—'}</span>
         <span style="color:${pickClr};font-weight:900;font-size:1rem">${pickLabel}</span>
