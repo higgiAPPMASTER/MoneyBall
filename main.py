@@ -2124,15 +2124,12 @@ function _moreWrap(items, renderFn, startRank, label, color) {
   if (!items || !items.length) return '';
   var clr = color || '#94a3b8';
   var cards = items.map(function(p,i){ return renderFn(p, startRank+i); }).join('');
-  var btnId = '_mb_' + Math.random().toString(36).slice(2,7);
-  return '<button class="more-btn" id="'+btnId+'" style="color:'+clr+';border-color:'+clr+'33"'
-    +' onclick="var d=document.getElementById(\''+btnId+'_d\');d.hidden=!d.hidden;'
-    +'this.querySelector(\'span\').textContent=d.hidden'
-    +'?\'▸ Show '+items.length+' more '+label+'\''
-    +':\'▴ Hide '+items.length+' '+label+'\'">'
-    +'<span>▸ Show '+items.length+' more '+label+'</span>'
-    +'</button>'
-    +'<div id="'+btnId+'_d" hidden class="mlb-picks-grid mt-3">'+cards+'</div>';
+  return '<details style="margin-top:14px">'
+    + '<summary class="more-btn" style="color:'+clr+';border-color:'+clr+'33">'
+    + '&#9655; '+items.length+' more '+label
+    + '</summary>'
+    + '<div class="mlb-picks-grid mt-3">'+cards+'</div>'
+    + '</details>';
 }
 
 function _runsCard(p, rank, pfx) {
