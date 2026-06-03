@@ -256,6 +256,71 @@ def _wilson_lb(hits: int, games: int, z: float = 1.96) -> float:
     return (centre - margin) / den
 
 
+def _fetch_bullpen_fatigue(run_date: str) -> dict:
+    """
+    Returns {team_full_name: {"bp_ip": float, "games": int, "taxed": bool}}
+    for every MLB team that played in the last 3 days.
+    Uses one MLB Stats API schedule call with boxscore hydration.
+    Taxed = bullpen threw >= 9 IP across last 3 days (~3 IP/day avg).
+    """
+    from datetime import datetime, timedelta
+    BP_TAXED = 9.0
+    today   = datetime.strptime(run_date, "%Y-%m-%d")
+    d_start = (today - timedelta(days=3)).strftime("%Y-%m-%d")
+    d_end   = (today - timedelta(days=1)).strftime("%Y-%m-%d")
+    try:
+        url  = (f"https://statsapi.mlb.com/api/v1/schedule?sportId=1"
+                f"&startDate={d_start}&endDate={d_end}&hydrate=boxscore")
+        data = requests.get(url, timeout=20).json()
+    except Exception:
+        return {}
+
+    team_ip: dict = {}   # team_name -> {"bp_ip": float, "games": int}
+
+    def _parse_ip(raw) -> float:
+        try:
+            parts = str(raw).split(".")
+            full  = int(parts[0]) if parts[0] else 0
+            outs  = int(parts[1]) if len(parts) > 1 and parts[1] else 0
+            return full + outs / 3.0
+        except Exception:
+            return 0.0
+
+    for date_entry in data.get("dates", []):
+        for game in date_entry.get("games", []):
+            if game.get("status", {}).get("abstractGameState", "") != "Final":
+                continue
+            box = game.get("boxscore", {})
+            if not box:
+                continue
+            for side in ("home", "away"):
+                td = box.get("teams", {}).get(side, {})
+                team_name = td.get("team", {}).get("name", "")
+                if not team_name:
+                    continue
+                pitchers = td.get("pitchers", [])   # ordered list of player IDs
+                players  = td.get("players", {})    # "ID<n>": {...}
+                bp_ip = 0.0
+                for idx, pid in enumerate(pitchers):
+                    if idx == 0:         # starter — skip
+                        continue
+                    pdata = players.get(f"ID{pid}", {})
+                    ip_raw = (pdata.get("stats", {})
+                                   .get("pitching", {})
+                                   .get("inningsPitched", "0"))
+                    bp_ip += _parse_ip(ip_raw)
+                acc = team_ip.setdefault(team_name, {"bp_ip": 0.0, "games": 0})
+                acc["bp_ip"]  += bp_ip
+                acc["games"]  += 1
+
+    return {
+        name: {"bp_ip": round(d["bp_ip"], 1),
+               "games": d["games"],
+               "taxed": d["bp_ip"] >= BP_TAXED}
+        for name, d in team_ip.items()
+    }
+
+
 def run_pipeline(run_date: str, emit=None) -> dict:
     if emit is None:
         emit = lambda _: None
@@ -703,6 +768,48 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                     _pp["ump"] = _ump_lookup(_ump_map, _pp.get("team", ""))
                 except Exception:
                     _pp["ump"] = None
+
+    # ── Phase A3: bullpen fatigue (chip-only, last 3 days) ──
+    # Hitters get bp_opp = opponent team's bullpen usage.
+    # Pitchers get bp_own = their own team's bullpen usage (affects how deep
+    # they might pitch if the bullpen is taxed). Chip displayed in main.py;
+    # no re-ranking here — signal only.
+    try:
+        _bp_map = _fetch_bullpen_fatigue(run_date)
+        if _bp_map:
+            def _bp_for(team_name: str):
+                if not team_name:
+                    return None
+                d = _bp_map.get(team_name)
+                if d:
+                    return d
+                tl = team_name.lower()
+                for _k, _v in _bp_map.items():
+                    if tl in _k.lower() or _k.lower() in tl:
+                        return _v
+                return None
+
+            _hitter_bp = (list(top9) + list(also_ran)
+                          + list(under_picks_list) + list(runs_picks_list))
+            _pitcher_bp: list = (list(pitcher_k_result.get("picks", []))
+                                 + list(pitcher_k_result.get("all", [])))
+            for _bk in pitcher_props.values():
+                _pitcher_bp += list(_bk.get("picks", [])) + list(_bk.get("all", []))
+
+            for _pp in _hitter_bp:
+                try:
+                    _pp["bp_opp"] = _bp_for(_pp.get("opp", ""))
+                except Exception:
+                    _pp["bp_opp"] = None
+            for _pp in _pitcher_bp:
+                try:
+                    _pp["bp_own"] = _bp_for(_pp.get("team", ""))
+                except Exception:
+                    _pp["bp_own"] = None
+            emit({"type": "log",
+                  "msg": f"  ✅ Bullpen fatigue attached ({len(_bp_map)} teams)"})
+    except Exception as _bp_exc:
+        emit({"type": "log", "msg": f"⚠️ Bullpen fatigue skipped: {_bp_exc}"})
 
     # ── Phase B: combined env + umpire RE-RANKING (reorder only) ──
     # Offense axis = weather/park env × umpire RUN factor (a wide strike zone
