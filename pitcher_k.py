@@ -272,14 +272,23 @@ def _get_pitcher_id(full_name: str):
             params={"names": last, "sportId": 1}, timeout=8)
         norm = _normalize(full_name)
         candidates = r.json().get("people", [])
+        # Pass 1: exact full name + pitcher/TWP position
         for p in candidates:
             if (_normalize(p.get("fullName", "")) == norm and p.get("active") and
                     p.get("primaryPosition", {}).get("code") in ("1", "TWP")):
                 _pitcher_id_cache[key] = p["id"]
                 return p["id"]
+        # Pass 2: last name + pitcher/TWP position
         for p in candidates:
             if (_normalize(p.get("lastName", "")) == _normalize(last) and
                     p.get("active") and p.get("primaryPosition", {}).get("code") in ("1", "TWP")):
+                _pitcher_id_cache[key] = p["id"]
+                return p["id"]
+        # Pass 3: exact full name, any position — catches two-way players (e.g. Ohtani)
+        # whose primaryPosition code is registered as DH/hitter in the API.
+        # Safe because we still require an exact full-name match.
+        for p in candidates:
+            if _normalize(p.get("fullName", "")) == norm and p.get("active"):
                 _pitcher_id_cache[key] = p["id"]
                 return p["id"]
     except Exception:
