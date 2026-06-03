@@ -40,6 +40,11 @@ PROP_META = {
 #   {market: {norm_name: {name,line,over_odds,under_odds,home_team,away_team}}}
 PROP_ODDS = {}
 
+# Populated by _get_bottom_k_teams each run.
+# Full MLB team K/game ranking: key = team name, value = {rank, k_per_g, total}
+# rank 1 = most Ks (easiest matchup for pitcher), rank 30 = fewest Ks (toughest).
+TEAM_K_RANKS: dict = {}
+
 _pitcher_id_cache = {}
 _team_id_cache    = {}
 
@@ -72,6 +77,7 @@ def _ip_to_float(ip_str) -> float:
 
 
 def _get_bottom_k_teams(season: str, n: int = BOTTOM_K_TEAMS_N):
+    global TEAM_K_RANKS
     try:
         r = requests.get(f"{MLB_API}/teams/stats",
             params={"season": season, "sportId": 1, "group": "hitting", "stats": "season"},
@@ -87,6 +93,11 @@ def _get_bottom_k_teams(season: str, n: int = BOTTOM_K_TEAMS_N):
                                 "k_per_g": round(ks / gp, 2)})
         teams_data.sort(key=lambda x: x["k_per_g"])
         bottom_n = teams_data[:n]
+        # Build full ranking: rank 1 = most Ks per game (easiest for pitchers)
+        teams_desc = sorted(teams_data, key=lambda x: x["k_per_g"], reverse=True)
+        total = len(teams_desc)
+        TEAM_K_RANKS = {t["name"]: {"rank": i + 1, "k_per_g": t["k_per_g"], "total": total}
+                        for i, t in enumerate(teams_desc)}
         return {t["name"] for t in bottom_n}, bottom_n
     except Exception:
         return set(), []
@@ -565,6 +576,12 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
         side = "HOME" if _teams_match(pitcher_team, pl["home_team"]) else "AWAY"
         opp  = pl["away_team"] if side == "HOME" else pl["home_team"]
 
+        # Full K-rank lookup for the chip (rank 1 = most Ks = easiest matchup)
+        _opp_kr = next((v for k, v in TEAM_K_RANKS.items() if _teams_match(k, opp)), None)
+        opp_k_rank = _opp_kr["rank"]   if _opp_kr else None
+        opp_k_pg   = _opp_kr["k_per_g"] if _opp_kr else None
+        opp_k_total = _opp_kr["total"] if _opp_kr else None
+
         opp_k_info = next((t for t in bottom_k_list if _teams_match(t["name"], opp)), None)
         if bottom_k_set and opp_k_info:
             dq_note = f"Opp {opp} is bottom {BOTTOM_K_TEAMS_N} K team ({opp_k_info['k_per_g']} K/G)"
@@ -641,6 +658,7 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                  "recent_avg_k": recent_avg_k, "recent_k_list": recent_k_list,
                  "recent_starts": recent_starts, "recent_k_log": rf["recent_k_log"],
                  "blended_avg_k": blended_avg, "blend_src": blend_src,
+                 "opp_k_rank": opp_k_rank, "opp_k_pg": opp_k_pg, "opp_k_total": opp_k_total,
                  "props": _build_prop_picks(name, pitcher_team, opp, side, hist, rf),
                  "pick": pick, "pick_note": pick_note}), logs
 
@@ -676,6 +694,7 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
             k_list2 = hist2["k_list"] if hist2 else []
             k_history2 = ", ".join(str(k) for k in k_list2) if k_list2 else "—"
             rf2 = _get_recent_k_form(pid2) if pid2 else {"recent_avg_k": None, "recent_k_list": [], "recent_starts": 0, "recent_k_log": []}
+            _opp_kr2 = next((v for k, v in TEAM_K_RANKS.items() if _teams_match(k, st["opp"])), None)
             return {
                 "name": st["name"], "team": st["team"], "opp": st["opp"],
                 "side": st["side"], "line": None,
@@ -692,6 +711,9 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                 "recent_avg_k": rf2["recent_avg_k"], "recent_k_list": rf2["recent_k_list"],
                 "recent_starts": rf2["recent_starts"], "recent_k_log": rf2["recent_k_log"],
                 "blended_avg_k": None, "blend_src": None,
+                "opp_k_rank": _opp_kr2["rank"]    if _opp_kr2 else None,
+                "opp_k_pg":   _opp_kr2["k_per_g"] if _opp_kr2 else None,
+                "opp_k_total": _opp_kr2["total"]  if _opp_kr2 else None,
                 # Pitchers with NO K line may still have hits/outs/ER lines posted —
                 # build their prop picks too so the parlay pool is as deep as possible.
                 "props": _build_prop_picks(st["name"], st["team"], st["opp"], st["side"], hist2, rf2),
