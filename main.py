@@ -1990,6 +1990,17 @@ function _umpChip(p){
     +' \u2014 nudges pick order, gates untouched';
   return '<div class="env-chip" title="'+_esc(tip)+'" style="border-color:'+c+'55;color:'+c+'">'+_esc(u.summary)+'</div>';
 }
+function _kRankChip(p) {
+  if (p.opp_k_rank == null || p.opp_k_pg == null) return '';
+  var rank = p.opp_k_rank, total = p.opp_k_total || 30, kg = p.opp_k_pg;
+  if (rank <= 10) {
+    return '<div class="env-chip" style="border-color:#22c55e44;color:#22c55e">&#9650; High-K Lineup &middot; ' + kg + ' K/g &middot; #' + rank + ' of ' + total + '</div>';
+  }
+  if (rank >= total - 9) {
+    return '<div class="env-chip" style="border-color:#ef444444;color:#ef4444">&#9660; Low-K Lineup &middot; ' + kg + ' K/g &middot; #' + rank + ' of ' + total + '</div>';
+  }
+  return '';
+}
 function _bpChip(p){
   // hitter cards carry bp_opp (opponent bullpen); pitcher cards carry bp_own
   var bp=null, isPitcher=false;
@@ -2217,6 +2228,7 @@ function _pitcherCard(p, rank) {
       ${_envChip(p)}
       ${_umpChip(p)}
       ${_bpChip(p)}
+      ${_kRankChip(p)}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
         <span style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">K Line ${p.line!=null?p.line:'—'}</span>
         <span style="color:${pickClr};font-weight:900;font-size:1rem">${pickLabel}</span>
