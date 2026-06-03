@@ -8,7 +8,9 @@ Algorithm per candidate (must pass ALL gates; cutoff < .250 each):
   S2  BA over last 10 (or fewer) H/A games vs TODAY'S opponent — data required AND < .250
   S3  BA over last 10 (or fewer) H/A games vs ANY opponent     — data required AND < .250
   L7  BA over last 7 games (general, any side/opp)             — N/A passes; DQ if >= .250
-  Qualifiers ranked coldest first (lowest S2 + S3 + L7 combined BA). No fast-track.
+  All four gates apply to every player — no bypasses.
+  Facing a top-30 ERA ace shows a display chip on the card only (does not affect qualification).
+  Qualifiers ranked coldest first (lowest S2 + S3 + L7 combined BA).
 """
 import os
 import requests
@@ -434,10 +436,8 @@ def run_under_picks(run_date: str, team_schedule: dict, emit=None,
                 pitcher_name = pinfo["name"]
                 pitcher_id   = pinfo.get("id")
                 break
-        # Ace fast-track: a hitter facing a top-30-lowest-ERA starter qualifies as
-        # an UNDER even when his recent averages aren't cold — the elite matchup IS
-        # the cold signal. These are exactly the hitters Step 5 drops from the OVER
-        # list, surfaced here instead. When `ace`, the recent-form gates are bypassed.
+        # Facing a top-30 ERA ace is DISPLAY ONLY — it shows a chip on the card
+        # but does NOT bypass or affect any qualification gate.
         def _plast(nm):
             nm = (nm or "").strip()
             if not nm or nm.upper() == "TBD": return ""
@@ -449,24 +449,18 @@ def run_under_picks(run_date: str, team_schedule: dict, emit=None,
             ace_era = next((q["era"] for q in top_era_list
                             if q.get("name", "").lower().endswith(p_last)), None)
         s1 = _get_s1_vs_pitcher(batter_id, pitcher_id)
-        # S1: career BA vs today's pitcher. N/A / 0 AB passes (no history = he
-        # doesn't know how to hit the pitcher = fine for an under). DQ if >= .250.
-        if not ace and s1["ba"] is not None and s1["ab"] > 0 and s1["ba"] >= 0.250: return None
-        # S2: BA over last 10 (or fewer) H/A games vs TODAY'S opponent. Data req'd, < .250.
+        # S1: career BA vs today's pitcher. N/A / 0 AB passes. DQ if >= .250.
+        if s1["ba"] is not None and s1["ab"] > 0 and s1["ba"] >= 0.250: return None
+        # S2: H/A games vs TODAY'S opponent. Data required AND < .250.
         s2 = _last10_ba(batter_id, side, opp_name, 10)
-        # S2 (H/A vs this opponent) is REQUIRED for everyone — including ace
-        # fast-track picks. No S2 sample = no real signal = off the list (per
-        # user). The ace bypass still applies only to the warm-form threshold.
-        if s2["ba"] is None: return None
-        if not ace and s2["ba"] >= 0.250: return None
-        # S3: BA over last 10 (or fewer) H/A games vs ANY opponent. Data req'd, < .250.
+        if s2["ba"] is None or s2["ba"] >= 0.250: return None
+        # S3: H/A games vs ANY opponent. Data required AND < .250.
         s3 = _last10_ba(batter_id, side, "", 10)
-        if not ace and (s3["ba"] is None or s3["ba"] >= 0.250): return None
-        # L7: last 7 games (general) — hot/cold check. N/A passes; DQ if >= .250.
+        if s3["ba"] is None or s3["ba"] >= 0.250: return None
+        # L7: last 7 games (general). N/A passes; DQ if >= .250.
         l7 = _get_last7_ba(batter_id)
-        if not ace and l7["ba"] is not None and l7["ba"] >= 0.250: return None
-        # Coldest first: lower under_score ranks higher. None-safe so ace fast-track
-        # picks (whose recent splits may be empty) still rank — fall back to S1, then .250.
+        if l7["ba"] is not None and l7["ba"] >= 0.250: return None
+        # Coldest first: lower under_score ranks higher.
         def _ba(x, fb=0.250): return x["ba"] if x and x["ba"] is not None else fb
         l7_ba = l7["ba"] if l7["ba"] is not None else _ba(s3, _ba(s1))
         under_score = round((_ba(s2) + _ba(s3) + l7_ba) * 1000)
