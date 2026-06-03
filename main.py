@@ -523,6 +523,8 @@ _HTML = """
     .parlay-cat-row{display:flex;align-items:center;gap:8px;padding:4px 2px;cursor:pointer;font-size:.78rem;color:#ddd;user-select:none}
     .parlay-cat-row input{cursor:pointer;width:15px;height:15px;accent-color:#f59e0b}
     .env-chip{display:inline-block;margin:6px 0 2px;padding:3px 7px;border:1px solid #333;border-radius:6px;font-size:.64rem;font-weight:700;letter-spacing:.01em;line-height:1.35;background:#0d0d0d}
+    .more-btn{width:100%;margin-top:14px;padding:11px 16px;background:#0f172a;border:1px solid #334155;border-radius:12px;font-size:.82rem;font-weight:700;cursor:pointer;letter-spacing:.06em;text-align:center;transition:background .15s,border-color .15s}
+    .more-btn:hover{background:#1e293b;border-color:#475569}
     .mlb-pick-card{border-radius:14px;overflow:hidden;background:linear-gradient(180deg,#161616 0%,#0f0f0f 100%);border:1px solid #262626;display:flex;flex-direction:column}
     .mlb-pick-card:hover{border-color:rgba(245,158,11,.35)}
     .mlb-card-header{padding:10px 14px;display:flex;align-items:center;justify-content:space-between;border-bottom:2px solid #f59e0b}
@@ -655,29 +657,21 @@ _HTML = """
       <div class="card p-6" id="top-picks-card">
         <div class="section-hdr">🏆 Top Picks — To Record a Hit</div>
         <div id="picks-body" class="mlb-picks-grid"></div>
+        <div id="also-ran-wrap"></div>
         <p class="text-xs text-slate-500 mt-4 admin-only">
-          <strong>S1</strong> Lifetime BA vs today's pitcher (FIC) &nbsp;|&nbsp;
+          <strong>S1</strong> Lifetime BA vs today's pitcher &nbsp;|&nbsp;
           <strong>S2</strong> Lifetime H/A BA vs today's opponent &nbsp;|&nbsp;
           <strong>S3</strong> 2026 season H/A BA vs all teams &nbsp;|&nbsp;
-          <strong>S4</strong> Last 10 H/A games vs THIS opponent — games with 1+ hit (sets the rank order) &nbsp;|&nbsp;
+          <strong>S4</strong> Last 10 H/A games vs THIS opponent — hit-rate reference &nbsp;|&nbsp;
           <strong>Hit Odds</strong> Sportsbook price "to record a hit" (0.5 line) &nbsp;|&nbsp;
-          <strong>S5</strong> Day/night BA for tonight's game type &nbsp;|&nbsp;
-          <strong>Score</strong> = (S1+S2+S3+S5)×1000 &nbsp;|&nbsp; <strong>Rank</strong> = S4 hit rate, ties → more games
+          <strong>S5</strong> Day/night BA &nbsp;|&nbsp;
+          <strong>Score</strong> = (S1+S2+S3+S5)×1000
         </p>
-      </div>
-      <div class="card p-6 hidden" id="also-ran-card">
-        <div class="section-hdr">⚾ Money Ball Picks</div>
-        <p class="text-xs text-slate-400 mb-3" style="margin-top:-8px">Solid plays the model still likes.</p>
-        <div id="also-ran-body" class="mlb-picks-grid"></div>
-        <p class="text-xs text-slate-500 mt-3 admin-only">These players passed all 5 steps — ranked by score.</p>
       </div>
       <div class="card p-6 hidden" id="under-picks-card" style="border-color:rgba(255,107,107,.25)">
         <div class="section-hdr" style="color:#ff8a65">⬇️ Under Picks — Bet Under 1.5 Hits</div>
         <div id="under-picks-body" class="mlb-picks-grid"></div>
-        <details class="mt-4" id="under-picks-more-details" style="display:none">
-          <summary class="cursor-pointer text-sm text-slate-400 select-none" style="color:#ff8a65" id="under-picks-more-summary">▸ Show more Under Picks</summary>
-          <div id="under-picks-more-body" class="mlb-picks-grid mt-3"></div>
-        </details>
+        <div id="under-more-wrap"></div>
         <p class="text-xs text-slate-500 mt-4 admin-only">
           <strong>Source</strong>: The Odds API — players with 1.5 hits O/U line &nbsp;|&nbsp;
           <strong>S1</strong> Career BA vs today's pitcher (under &lt; .250, N/A passes) &nbsp;|&nbsp;
@@ -705,11 +699,20 @@ _HTML = """
       </div>
       <div class="card p-6 hidden" id="runs-picks-card" style="border-color:rgba(96,165,250,.25)">
         <div class="section-hdr" style="color:#60a5fa">🏃 Runs Picks — Score a Run (Over / Under 0.5)</div>
-        <p class="text-xs text-slate-400 mb-3" style="margin-top:-4px">Who's likely to cross the plate. Runs are lower-frequency than hits, so treat these as higher-variance plays.</p>
-        <div id="runs-picks-body" class="mlb-picks-grid"></div>
+        <p class="text-xs text-slate-400 mb-3" style="margin-top:-4px">Who's likely to cross the plate. Runs are lower-frequency than hits — higher-variance plays.</p>
+        <div id="runs-over-section">
+          <div style="font-size:.72rem;font-weight:800;letter-spacing:.1em;color:#60a5fa;margin-bottom:10px;text-transform:uppercase">⬆ Runs Over</div>
+          <div id="runs-over-body" class="mlb-picks-grid"></div>
+          <div id="runs-over-more"></div>
+        </div>
+        <div id="runs-under-section" style="margin-top:24px;padding-top:20px;border-top:1px solid #1e293b">
+          <div style="font-size:.72rem;font-weight:800;letter-spacing:.1em;color:#ff8a65;margin-bottom:10px;text-transform:uppercase">⬇ Runs Under</div>
+          <div id="runs-under-body" class="mlb-picks-grid"></div>
+          <div id="runs-under-more"></div>
+        </div>
         <p class="text-xs text-slate-500 mt-4 admin-only">
-          <strong>Runs Rate vr Opp</strong> = last 10 H/A games vs THIS opponent with 1+ run (falls back to L10 H/A any opp when no head-to-head) &nbsp;|&nbsp;
-          <strong>Pick</strong> = OVER when the rate is high, UNDER when low &nbsp;|&nbsp; ranked by Wilson lower-bound so proven samples beat thin lucky ones.
+          <strong>Runs Rate vr Opp</strong> = last 10 H/A games vs THIS opponent with 1+ run &nbsp;|&nbsp;
+          <strong>Pick</strong> = OVER ≥70%, UNDER ≤30%, vs-opp only (min 3 games) &nbsp;|&nbsp; ranked by Wilson lower-bound.
         </p>
       </div>
       <div id="pitcher-props-wrap"></div>
@@ -932,7 +935,7 @@ function showResults(result) {
       })
     : result;
   const { top9, stats, pitcher_k } = view;
-  hide('also-ran-card'); hide('under-picks-card'); hide('pitcher-k-card'); hide('runs-picks-card');
+  hide('under-picks-card'); hide('pitcher-k-card'); hide('runs-picks-card');
 
   document.getElementById('stats-row').innerHTML = [
     statCard('🎯','Top Picks',top9.length,'top-picks-card'),
@@ -948,29 +951,18 @@ function showResults(result) {
   if (window.UNDERS_ONLY && window.IS_ADMIN) { hide('top-picks-card'); } else { show('top-picks-card'); }
   window.__HIT_REG__={};
   document.getElementById('picks-body').innerHTML = top9.map((p,i) => _mlbCard(p, i+1)).join('');
-
   const alsoRan = view.also_ran || [];
-  if (alsoRan.length > 0) {
-    show('also-ran-card');
-    document.getElementById('also-ran-body').innerHTML = alsoRan.map((p,i) => _mlbCard(p, i+11, true)).join('');
-  }
+  document.getElementById('also-ran-wrap').innerHTML = alsoRan.length > 0
+    ? _moreWrap(alsoRan, function(p,r){ return _mlbCard(p, r, true); }, 11, 'Money Ball Picks', '#f59e0b')
+    : '';
 
   const underPicks = view.under_picks || [];
   if (underPicks.length > 0) {
     show('under-picks-card');
-    const underTop = underPicks.slice(0, 30);
-    const underRest = underPicks.slice(30);
-    document.getElementById('under-picks-body').innerHTML = underTop.map((p,i) => _underCard(p, i+1)).join('');
-    const moreDet = document.getElementById('under-picks-more-details');
-    if (underRest.length > 0) {
-      moreDet.style.display = '';
-      moreDet.open = false;
-      document.getElementById('under-picks-more-summary').textContent = '▸ Show ' + underRest.length + ' more Under Picks (31–' + underPicks.length + ')';
-      document.getElementById('under-picks-more-body').innerHTML = underRest.map((p,i) => _underCard(p, i+31)).join('');
-    } else {
-      moreDet.style.display = 'none';
-      document.getElementById('under-picks-more-body').innerHTML = '';
-    }
+    document.getElementById('under-picks-body').innerHTML = underPicks.slice(0, 10).map((p,i) => _underCard(p, i+1)).join('');
+    document.getElementById('under-more-wrap').innerHTML = underPicks.length > 10
+      ? _moreWrap(underPicks.slice(10), function(p,r){ return _underCard(p, r); }, 11, 'Under Picks', '#ff8a65')
+      : '';
   }
 
   const pkData=view.pitcher_k||{}, pkAll=pkData.all||[];
@@ -1009,7 +1001,17 @@ function showResults(result) {
   if (runsPicks.length > 0) {
     show('runs-picks-card');
     window.__RUNS_REG__={};
-    document.getElementById('runs-picks-body').innerHTML = runsPicks.map((p,i) => _runsCard(p, i+1)).join('');
+    const runsOver = runsPicks.filter(function(p){ return p.pick==='OVER'; });
+    const runsUnder = runsPicks.filter(function(p){ return p.pick==='UNDER'; });
+    document.getElementById('runs-over-body').innerHTML = runsOver.slice(0,10).map(function(p,i){ return _runsCard(p, i+1, 'rno'); }).join('');
+    document.getElementById('runs-over-more').innerHTML = runsOver.length > 10
+      ? _moreWrap(runsOver.slice(10), function(p,r){ return _runsCard(p, r, 'rno'); }, 11, 'Runs Over', '#60a5fa')
+      : '';
+    document.getElementById('runs-under-section').style.display = runsUnder.length ? '' : 'none';
+    document.getElementById('runs-under-body').innerHTML = runsUnder.slice(0,10).map(function(p,i){ return _runsCard(p, i+1, 'rnu'); }).join('');
+    document.getElementById('runs-under-more').innerHTML = runsUnder.length > 10
+      ? _moreWrap(runsUnder.slice(10), function(p,r){ return _runsCard(p, r, 'rnu'); }, 11, 'Runs Under', '#ff8a65')
+      : '';
   }
 
   renderPitcherProps(view);
@@ -2091,7 +2093,27 @@ function _underCard(p, rank) {
   </div>`;
 }
 
-function _runsCard(p, rank) {
+// _moreWrap: renders a styled "Show N more" toggle button + hidden card grid.
+// items: array of pick objects. renderFn(p, displayRank) -> card HTML string.
+// startRank: display rank for the first item (e.g. 11). label: button text.
+// color: accent hex for the button text/border.
+function _moreWrap(items, renderFn, startRank, label, color) {
+  if (!items || !items.length) return '';
+  var clr = color || '#94a3b8';
+  var cards = items.map(function(p,i){ return renderFn(p, startRank+i); }).join('');
+  var btnId = '_mb_' + Math.random().toString(36).slice(2,7);
+  return '<button class="more-btn" id="'+btnId+'" style="color:'+clr+';border-color:'+clr+'33"'
+    +' onclick="var d=document.getElementById(\''+btnId+'_d\');d.hidden=!d.hidden;'
+    +'this.querySelector(\'span\').textContent=d.hidden'
+    +'?\'▸ Show '+items.length+' more '+label+'\''
+    +':\'▴ Hide '+items.length+' '+label+'\'">'
+    +'<span>▸ Show '+items.length+' more '+label+'</span>'
+    +'</button>'
+    +'<div id="'+btnId+'_d" hidden class="mlb-picks-grid mt-3">'+cards+'</div>';
+}
+
+function _runsCard(p, rank, pfx) {
+  pfx = pfx || 'rn';
   const abbr = _mlbTeamAbbr(p.team);
   const teamLogo = abbr ? `https://a.espncdn.com/i/teamlogos/mlb/500/${abbr}.png` : '';
   const isOver = p.pick==='OVER';
@@ -2108,8 +2130,8 @@ function _runsCard(p, rank) {
     <span>Games <strong style="color:#94a3b8">${p.games||0}</strong></span> &nbsp;
     <span>Wilson <strong style="color:#94a3b8">${p.wilson!=null?p.wilson:'—'}</strong></span>
   </div>`;
-  window.__RUNS_REG__=window.__RUNS_REG__||{}; window.__RUNS_REG__['rn'+rank]=p;
-  return `<div class="mlb-pick-card" onclick="_runsForm('rn${rank}')" title="Click for recent form" style="cursor:pointer">
+  window.__RUNS_REG__=window.__RUNS_REG__||{}; window.__RUNS_REG__[pfx+rank]=p;
+  return `<div class="mlb-pick-card" onclick="_runsForm('${pfx}${rank}')" title="Click for recent form" style="cursor:pointer">
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#0e1f33 0%,#08111d 100%)">
       <div style="display:flex;align-items:center;gap:8px">
         <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
