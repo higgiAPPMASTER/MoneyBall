@@ -977,8 +977,8 @@ function showResults(result) {
   if (pkAll.length > 0) {
     show('pitcher-k-card');
     const pkSorted = pkAll.filter(p=>p.pick && (p.starts||0)>0).sort((a,b)=>{
-      const ga=Math.abs((a.blended_avg_k!=null?a.blended_avg_k:(a.avg_k||0))-(a.line||0));
-      const gb=Math.abs((b.blended_avg_k!=null?b.blended_avg_k:(b.avg_k||0))-(b.line||0));
+      const ga=Math.abs((a.blended_avg_k!=null?a.blended_avg_k:(a.avg_k||0))-(a.line||0))*_umpKMul(a);
+      const gb=Math.abs((b.blended_avg_k!=null?b.blended_avg_k:(b.avg_k||0))-(b.line||0))*_umpKMul(b);
       return gb-ga;
     });
     window.__PK_REG__={};
@@ -1979,6 +1979,22 @@ function _envChip(p){
   var tip=e.lean==='NEUTRAL'?'Park + weather: neutral game environment':('Park + weather environment leans '+e.lean+' (display only — does not change picks)');
   return '<div class="env-chip" title="'+_esc(tip)+'" style="border-color:'+c+'55;color:'+c+'">'+_esc(e.summary)+'</div>';
 }
+function _umpChip(p){
+  var u=p&&p.ump; if(!u||!u.summary) return '';
+  var c=u.zone==='WIDE'?'#5eead4':u.zone==='TIGHT'?'#fca5a5':'#c4b5fd';
+  var tip='Home-plate umpire'+(u.games?(' \u00b7 '+u.games+' games graded'):'')
+    +(u.zone==='WIDE'?' \u00b7 wide zone (trends more strikeouts, fewer runs)'
+      :u.zone==='TIGHT'?' \u00b7 tight zone (trends fewer strikeouts, more runs)':'')
+    +' \u2014 nudges pick order, gates untouched';
+  return '<div class="env-chip" title="'+_esc(tip)+'" style="border-color:'+c+'55;color:'+c+'">'+_esc(u.summary)+'</div>';
+}
+// Umpire-adjusted multiplier for the client-side pitcher-K sort: a wide-zone
+// ump (kFactor>1) lifts OVER picks and lowers UNDER picks; tight zone inverse.
+function _umpKMul(p){
+  var u=p&&p.ump; if(!u) return 1;
+  var k=Number(u.kFactor); if(!k||k<=0) return 1;
+  return p.pick==='UNDER'?(1/k):k;
+}
 function _mlbCard(p, rank, dim) {
   const abbr = _mlbTeamAbbr(p.team);
   const teamLogo = abbr ? `https://a.espncdn.com/i/teamlogos/mlb/500/${abbr}.png` : '';
@@ -2011,6 +2027,7 @@ function _mlbCard(p, rank, dim) {
         <span class="badge ${sideCls}">${p.side}</span>
       </div>
       ${_envChip(p)}
+      ${_umpChip(p)}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:2px">
         <span style="font-size:.78rem;color:#64748b">${p.pitcher?'vs '+p.pitcher:''}</span>
         ${lineupBadge(p.lineup_status)}
@@ -2055,6 +2072,7 @@ function _underCard(p, rank) {
         <span class="badge ${sideCls}">${p.side}</span>
       </div>
       ${_envChip(p)}
+      ${_umpChip(p)}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:2px">
         <span style="font-size:.78rem;color:#64748b">${p.pitcher?'vs '+p.pitcher:''}</span>
         ${lineupBadge(p.lineup_status)}
@@ -2106,6 +2124,7 @@ function _runsCard(p, rank) {
         <span class="badge ${sideCls}">${p.side}</span>
       </div>
       ${_envChip(p)}
+      ${_umpChip(p)}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
         <span style="font-size:.78rem;color:#94a3b8">Runs Rate vr Opp</span>
         <span style="font-family:monospace;font-weight:700;color:${scoreClr}">${p.rate_disp||'—'} <span style="color:#64748b;font-size:.68rem">${p.basis||''}</span></span>
@@ -2153,6 +2172,7 @@ function _pitcherCard(p, rank) {
         <span class="badge ${sideCls}">${p.side}</span>
       </div>
       ${_envChip(p)}
+      ${_umpChip(p)}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
         <span style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">K Line ${p.line!=null?p.line:'—'}</span>
         <span style="color:${pickClr};font-weight:900;font-size:1rem">${pickLabel}</span>
