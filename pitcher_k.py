@@ -263,12 +263,12 @@ def _get_pitcher_id(full_name: str):
         candidates = r.json().get("people", [])
         for p in candidates:
             if (_normalize(p.get("fullName", "")) == norm and p.get("active") and
-                    p.get("primaryPosition", {}).get("code") == "1"):
+                    p.get("primaryPosition", {}).get("code") in ("1", "TWP")):
                 _pitcher_id_cache[key] = p["id"]
                 return p["id"]
         for p in candidates:
             if (_normalize(p.get("lastName", "")) == _normalize(last) and
-                    p.get("active") and p.get("primaryPosition", {}).get("code") == "1"):
+                    p.get("active") and p.get("primaryPosition", {}).get("code") in ("1", "TWP")):
                 _pitcher_id_cache[key] = p["id"]
                 return p["id"]
     except Exception:
