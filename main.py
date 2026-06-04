@@ -3415,6 +3415,11 @@ function _betToast(m){
 async function openMyBets(){
   show('mybets-card');
   document.getElementById('mybets-card').scrollIntoView({behavior:'smooth',block:'start'});
+  // Always reset spinner/button — prevents stale state from a previous getMyBetsResults call
+  var _spn=document.getElementById('mybets-spinner');
+  var _rbtn=document.getElementById('mybets-results-btn');
+  if(_spn) _spn.classList.add('hidden');
+  if(_rbtn){ _rbtn.disabled=false; _rbtn.textContent='🔄 Get Results'; }
   document.getElementById('mybets-body').innerHTML='<p style="color:#94a3b8;padding:8px 0;font-size:.85rem">Loading…</p>';
   try{
     var res=await fetch('/api/bets'+_betAuthQS()+'&settle=false');
