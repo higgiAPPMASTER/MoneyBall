@@ -1622,15 +1622,16 @@ function _pkForm(key){
     var over=line!=null&&kv>line;
     var clr=line!=null?(over?'#63cab7':'#ff8a65'):'#e2e8f0';
     var oppCell=usingVs?'':`<td style="padding:6px 10px;color:#cbd5e1;font-size:.8rem">${g.opp?('vs '+g.opp):''}</td>`;
-    var hCell=usingVs?`<td style="padding:6px 10px;text-align:right;font-family:monospace;font-weight:800;color:#fca5a5">${g.h!=null?g.h+' H':''}</td>`:'';
     return `<tr>
       <td style="padding:6px 10px;color:#94a3b8;font-family:monospace">${g.d||'—'}</td>
       ${oppCell}
       <td style="padding:6px 10px;color:#93c5fd;font-family:monospace;font-size:.8rem">${g.ip?(g.ip+' IP'):''}</td>
-      <td style="padding:6px 10px;text-align:right;font-family:monospace;font-weight:800;color:${clr}">${kv} K</td>
-      ${hCell}
+      <td style="padding:6px 10px;text-align:right;font-family:monospace;font-weight:800;color:${clr}">${kv!=null?kv+' K':'—'}</td>
+      <td style="padding:6px 10px;text-align:right;font-family:monospace;font-weight:800;color:#fca5a5">${g.h!=null?g.h+' H':'—'}</td>
+      <td style="padding:6px 10px;text-align:right;font-family:monospace;color:#a78bfa">${g.outs!=null?g.outs+' outs':'—'}</td>
+      <td style="padding:6px 10px;text-align:right;font-family:monospace;color:#fb923c">${g.er!=null?g.er+' ER':'—'}</td>
     </tr>`;
-  }).join(''):'<tr><td colspan="4" style="padding:14px;color:#64748b;text-align:center">No starts on record</td></tr>';
+  }).join(''):`<tr><td colspan="${usingVs?6:7}" style="padding:14px;color:#64748b;text-align:center">No starts on record</td></tr>`;
   // Recent form (last N any-opp starts) — always shown as its own section when we
   // also have a vs-opp table above (so user sees dated K's like 5, 7, 12).
   var rlog=p.recent_k_log||[];
@@ -1642,13 +1643,16 @@ function _pkForm(key){
       <td style="padding:6px 10px;color:#94a3b8;font-family:monospace">${g.d||'—'}</td>
       <td style="padding:6px 10px;color:#cbd5e1;font-size:.8rem">${g.opp?('vs '+g.opp):''}</td>
       <td style="padding:6px 10px;color:#93c5fd;font-family:monospace;font-size:.8rem">${g.ip?(g.ip+' IP'):''}</td>
-      <td style="padding:6px 10px;text-align:right;font-family:monospace;font-weight:800;color:${clr}">${kv} K</td>
+      <td style="padding:6px 10px;text-align:right;font-family:monospace;font-weight:800;color:${clr}">${kv!=null?kv+' K':'—'}</td>
+      <td style="padding:6px 10px;text-align:right;font-family:monospace;font-weight:800;color:#fca5a5">${g.h!=null?g.h+' H':'—'}</td>
+      <td style="padding:6px 10px;text-align:right;font-family:monospace;color:#a78bfa">${g.outs!=null?g.outs+' outs':'—'}</td>
+      <td style="padding:6px 10px;text-align:right;font-family:monospace;color:#fb923c">${g.er!=null?g.er+' ER':'—'}</td>
     </tr>`;
   }).join(''):'';
   var recentSection=(usingVs&&recentRows)?`
     <div style="margin-top:18px;font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase;margin-bottom:8px">Last ${rlog.length} Starts (any opp)</div>
-    <table style="width:100%;border-collapse:collapse;font-size:.85rem"><thead><tr><th style="text-align:left;padding:4px 10px;color:#64748b;font-size:.68rem;font-weight:600">Date</th><th style="text-align:left;padding:4px 10px;color:#64748b;font-size:.68rem;font-weight:600">Opp</th><th style="text-align:left;padding:4px 10px;color:#64748b;font-size:.68rem;font-weight:600">IP</th><th style="text-align:right;padding:4px 10px;color:#64748b;font-size:.68rem;font-weight:600">K</th></tr></thead><tbody>${recentRows}</tbody></table>`:'';
-  var histTitle=usingVs?('Starts vs '+(p.opp||'opp')+' — Ks & Hits allowed'):('Last '+(log.length||0)+' Starts (any opp)');
+    <table style="width:100%;border-collapse:collapse;font-size:.85rem"><thead><tr><th style="text-align:left;padding:4px 10px;color:#64748b;font-size:.68rem;font-weight:600">Date</th><th style="text-align:left;padding:4px 10px;color:#64748b;font-size:.68rem;font-weight:600">Opp</th><th style="text-align:left;padding:4px 10px;color:#64748b;font-size:.68rem;font-weight:600">IP</th><th style="text-align:right;padding:4px 10px;color:#64748b;font-size:.68rem;font-weight:600">K</th><th style="text-align:right;padding:4px 10px;color:#fca5a5;font-size:.68rem;font-weight:600">H</th><th style="text-align:right;padding:4px 10px;color:#a78bfa;font-size:.68rem;font-weight:600">Outs</th><th style="text-align:right;padding:4px 10px;color:#fb923c;font-size:.68rem;font-weight:600">ER</th></tr></thead><tbody>${recentRows}</tbody></table>`:'';
+  var histTitle=usingVs?('Starts vs '+(p.opp||'opp')+' — Ks, Hits, Outs & ER'):('Last '+(log.length||0)+' Starts (any opp)');
   var careerTxt=p.avg_k!=null?(p.avg_k+' K · '+(p.starts||0)+' starts vs '+(p.opp||'opp')):'no career vs opp';
   var recentTxt=p.recent_avg_k!=null?(p.recent_avg_k+' K · last '+(p.recent_starts||0)):'no recent data';
   var blendTxt=p.blended_avg_k!=null?(p.blended_avg_k+' K'):'—';
@@ -1706,7 +1710,7 @@ function _pkForm(key){
     <div style="padding:14px 18px">
       ${mkTable}
       <div style="font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase;margin-bottom:8px">${histTitle}</div>
-      <table style="width:100%;border-collapse:collapse;font-size:.85rem">${usingVs?'<thead><tr><th style="text-align:left;padding:4px 10px;color:#64748b;font-size:.68rem;font-weight:600">Date</th><th style="text-align:left;padding:4px 10px;color:#64748b;font-size:.68rem;font-weight:600">IP</th><th style="text-align:right;padding:4px 10px;color:#64748b;font-size:.68rem;font-weight:600">K</th><th style="text-align:right;padding:4px 10px;color:#64748b;font-size:.68rem;font-weight:600">Hits</th></tr></thead>':''}<tbody>${rows}</tbody></table>
+      <table style="width:100%;border-collapse:collapse;font-size:.85rem">${usingVs?'<thead><tr><th style="text-align:left;padding:4px 10px;color:#64748b;font-size:.68rem;font-weight:600">Date</th><th style="text-align:left;padding:4px 10px;color:#64748b;font-size:.68rem;font-weight:600">IP</th><th style="text-align:right;padding:4px 10px;color:#64748b;font-size:.68rem;font-weight:600">K</th><th style="text-align:right;padding:4px 10px;color:#fca5a5;font-size:.68rem;font-weight:600">H</th><th style="text-align:right;padding:4px 10px;color:#a78bfa;font-size:.68rem;font-weight:600">Outs</th><th style="text-align:right;padding:4px 10px;color:#fb923c;font-size:.68rem;font-weight:600">ER</th></tr></thead>':''}<tbody>${rows}</tbody></table>
       ${recentSection}
       <div style="margin-top:16px;border-top:1px solid #1e293b;padding-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:.82rem">
         <div><span style="color:#64748b">Career vs opp</span><br><span style="color:#e2e8f0;font-weight:600">${careerTxt}</span></div>
@@ -2669,6 +2673,16 @@ function _bpChip(p){
   }
   return '';
 }
+function _platoonChip(p) {
+  var pl = p && p.platoon;
+  if (!pl || !pl.bat_hand || !pl.pit_hand) return '';
+  var adv = pl.adv;
+  var c   = adv ? '#34d399' : '#f87171';
+  var ba  = pl.ba != null ? ('.' + String(Math.round(pl.ba * 1000)).padStart(3, '0')) : 'N/A';
+  var ab  = pl.ab ? ' (' + pl.ab + 'AB)' : '';
+  var tip = (adv ? 'Platoon advantage' : 'Platoon disadvantage') + ' \u2014 career BA ' + ba + ab + ' in this matchup';
+  return `<div class="env-chip" title="${_esc(tip)}" style="border-color:${c}55;color:${c}">${_esc(pl.label)} \u00b7 ${ba}</div>`;
+}
 // Umpire-adjusted multiplier for the client-side pitcher-K sort: a wide-zone
 // ump (kFactor>1) lifts OVER picks and lowers UNDER picks; tight zone inverse.
 function _mlbHead(id) {
@@ -2724,6 +2738,7 @@ function _mlbCard(p, rank, dim) {
       ${_envChip(p)}
       ${_umpChip(p)}
       ${_bpChip(p)}
+      ${_platoonChip(p)}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:2px">
         <span style="font-size:.78rem;color:#64748b">${p.pitcher?'vs '+p.pitcher:''}</span>
         ${lineupBadge(p.lineup_status)}
@@ -2772,6 +2787,7 @@ function _underCard(p, rank) {
       ${_envChip(p)}
       ${_umpChip(p)}
       ${_bpChip(p)}
+      ${_platoonChip(p)}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:2px">
         <span style="font-size:.78rem;color:#64748b">${p.pitcher?'vs '+p.pitcher:''}</span>
         ${lineupBadge(p.lineup_status)}
