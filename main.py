@@ -3510,7 +3510,7 @@ function renderTrackRecord(d){
     :'<p style="color:#94a3b8;padding:16px">No graded days yet \u2014 fills in automatically as slates go Final.</p>';
   var det=d.detail||[];
   var earnHtml='<div style="background:#0a1f14;border:1px solid #16432c;border-radius:10px;padding:14px 18px;margin-bottom:16px;display:flex;flex-wrap:wrap;gap:14px;align-items:center">'
-    +'<div style="font-weight:800;font-size:.92rem;color:#6ee7b7">\uD83D\uDCB0 Potential Earnings</div>'
+    +'<div style="font-weight:800;font-size:.92rem;color:#6ee7b7">💰 Potential Earnings</div>'
     +'<label style="font-size:.82rem;color:#94a3b8">Flat bet $ <input id="trkBet" type="number" min="1" step="1" value="100" oninput="_recalcEarnings()" style="width:84px;margin-left:4px;background:#020617;border:1px solid #334155;color:#fff;border-radius:6px;padding:5px 8px;font-size:.82rem"></label>'
     +'<div id="trkNet" style="font-size:.88rem;font-weight:700;color:#e2e8f0"></div>'
     +'<button onclick="downloadTrackEarningsCSV()" style="margin-left:auto;background:#16a34a;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:.78rem;font-weight:700;cursor:pointer">\u2b07 Earnings CSV (Excel)</button>'
