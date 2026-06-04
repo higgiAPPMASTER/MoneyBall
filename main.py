@@ -65,7 +65,7 @@ def _verify_hub_token(token: str) -> bool:
 # as "sub". If that email matches the admin email, the picks page turns on the
 # admin view automatically — on any device, no key needed. Defaults to the
 # owner's email; can be overridden with an ADMIN_EMAIL env var.
-_ADMIN_EMAIL = _os.environ.get("ADMIN_EMAIL", "higgi117711@gmail.com").strip().lower()
+_ADMIN_EMAILS = {e.strip().lower() for e in _os.environ.get("ADMIN_EMAIL", "higgi117711@gmail.com").split(",") if e.strip()}
 
 
 def _token_email(token: str) -> str:
@@ -80,7 +80,7 @@ def _token_email(token: str) -> str:
 
 
 def _is_admin_token(token: str) -> bool:
-    return bool(_ADMIN_EMAIL) and _token_email(token) == _ADMIN_EMAIL
+    return bool(_ADMIN_EMAILS) and _token_email(token) in _ADMIN_EMAILS
 
 
 from replit_push import push_picks_to_replit  # pushes daily picks to Replit DB
@@ -3432,8 +3432,9 @@ async function openMyBets(){
 }
 async function getMyBetsResults(){
   var btn=document.getElementById('mybets-results-btn');
-  if(btn){ btn.disabled=true; btn.textContent='Checking results…'; }
-  document.getElementById('mybets-spinner').classList.remove('hidden');
+  var wrap=document.getElementById('mybets-spinner-wrap');
+  if(btn){ btn.disabled=true; btn.textContent='Checking…'; }
+  if(wrap) wrap.innerHTML='<span style="color:#94a3b8;font-size:.85rem;display:inline-flex;align-items:center;gap:7px;margin-left:4px"><span class="spinner"></span> Checking results…</span>';
   var _mbc=new AbortController(); var _mbt=setTimeout(function(){ _mbc.abort(); },30000);
   try{
     var res=await fetch('/api/bets'+_betAuthQS(),{signal:_mbc.signal});
@@ -3446,7 +3447,7 @@ async function getMyBetsResults(){
   }finally{
     clearTimeout(_mbt);
     if(btn){ btn.disabled=false; btn.textContent='🔄 Get Results'; }
-    document.getElementById('mybets-spinner').classList.add('hidden');
+    if(wrap) wrap.innerHTML='';
   }
 }
 function _money(n){ if(n==null) return '—'; var v=Number(n); return (v<0?'-$':'$')+Math.abs(v).toFixed(2); }
@@ -3542,7 +3543,7 @@ function downloadMyBetsCSV(){
     <div style="margin-top:18px;padding-top:14px;border-top:1px solid #1e293b;display:flex;align-items:center;gap:12px">
       <button id="mybets-results-btn" onclick="getMyBetsResults()" style="background:#22c55e;color:#0f172a;border:none;border-radius:10px;padding:10px 22px;font-size:.88rem;font-weight:800;cursor:pointer">🔄 Get Results</button>
       <span style="font-size:.78rem;color:#64748b">Fetches box scores and grades all pending bets</span>
-      <div id="mybets-spinner" class="hidden" style="color:#94a3b8;font-size:.85rem;display:flex;align-items:center;gap:7px;margin-left:4px"><span class="spinner"></span> Checking results…</div>
+      <span id="mybets-spinner-wrap"></span>
     </div>
   </div>
 </div>
