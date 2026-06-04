@@ -1310,51 +1310,57 @@ _HTML = """
         <span id="bc-arrow" style="color:#64748b;font-size:.74rem">&#9658; expand</span>
       </div>
       <div id="betting-context-body" class="hidden" style="padding:0 16px 14px;overflow-x:auto">
-        <table style="width:100%;border-collapse:collapse;font-size:.75rem;min-width:540px">
+        <table style="width:100%;border-collapse:collapse;font-size:.75rem;min-width:600px">
           <thead>
             <tr style="border-bottom:2px solid #1e293b">
-              <th style="text-align:left;padding:7px 10px;color:#94a3b8;font-size:.64rem;letter-spacing:.06em;white-space:nowrap;font-weight:700">DAY / PERIOD</th>
-              <th style="text-align:left;padding:7px 10px;color:#4ade80;font-size:.64rem;letter-spacing:.06em;font-weight:700">HEAVY OVER FACTORS</th>
-              <th style="text-align:left;padding:7px 10px;color:#60a5fa;font-size:.64rem;letter-spacing:.06em;font-weight:700">HEAVY UNDER FACTORS</th>
-              <th style="text-align:left;padding:7px 10px;color:#fbbf24;font-size:.64rem;letter-spacing:.06em;font-weight:700">KEY BETTING TAKEAWAY</th>
+              <th style="text-align:left;padding:7px 10px;color:#94a3b8;font-size:.64rem;letter-spacing:.06em;white-space:nowrap;font-weight:700;width:10%">DAY OF WEEK</th>
+              <th style="text-align:left;padding:7px 10px;color:#4ade80;font-size:.64rem;letter-spacing:.06em;font-weight:700;width:28%">HEAVY OVER TRIGGERS</th>
+              <th style="text-align:left;padding:7px 10px;color:#60a5fa;font-size:.64rem;letter-spacing:.06em;font-weight:700;width:28%">HEAVY UNDER TRIGGERS</th>
+              <th style="text-align:left;padding:7px 10px;color:#fbbf24;font-size:.64rem;letter-spacing:.06em;font-weight:700;width:34%">BEST BET STRATEGY</th>
             </tr>
           </thead>
           <tbody>
             <tr style="border-bottom:1px solid #1e1e1e">
-              <td style="padding:8px 10px;color:#e2e8f0;font-weight:700;white-space:nowrap">Mon &amp; Tue</td>
-              <td style="padding:8px 10px;color:#86efac;line-height:1.4">Tired bullpen if no prev off-day</td>
-              <td style="padding:8px 10px;color:#93c5fd;line-height:1.4">Fresh bullpens &middot; Starters on regular rest</td>
-              <td style="padding:8px 10px;color:#fde68a;line-height:1.4">Strong day to look for <strong>Unders</strong></td>
+              <td style="padding:8px 10px;color:#e2e8f0;font-weight:700;white-space:nowrap">Monday</td>
+              <td style="padding:8px 10px;color:#86efac;line-height:1.5">&bull; Tired arms if a team played a long 14-inning game on Sunday.</td>
+              <td style="padding:8px 10px;color:#93c5fd;line-height:1.5">&bull; Fresh bullpens after a Sunday night reset.<br>&bull; Top-of-the-rotation aces usually start series.</td>
+              <td style="padding:8px 10px;color:#fde68a;line-height:1.5"><strong>Lean Under.</strong> Look for series openers where managers have an entirely fresh bullpen available.</td>
             </tr>
             <tr style="border-bottom:1px solid #1e1e1e">
-              <td style="padding:8px 10px;color:#e2e8f0;font-weight:700;white-space:nowrap">Thu (Getaway)</td>
-              <td style="padding:8px 10px;color:#86efac;line-height:1.4">Late-night travel fatigue &middot; Sloppy defense</td>
-              <td style="padding:8px 10px;color:#93c5fd;line-height:1.4">Star players rested &middot; Backup catchers playing</td>
-              <td style="padding:8px 10px;color:#fde68a;line-height:1.4">High value for <strong>Unders</strong> once lineup cards drop</td>
+              <td style="padding:8px 10px;color:#e2e8f0;font-weight:700;white-space:nowrap">Tuesday</td>
+              <td style="padding:8px 10px;color:#86efac;line-height:1.5">&bull; Travel fatigue if a team flew cross-country after Sunday night baseball.</td>
+              <td style="padding:8px 10px;color:#93c5fd;line-height:1.5">&bull; Bullpens still fresh early in the series.<br>&bull; Standard 5-day pitcher rest cycles.</td>
+              <td style="padding:8px 10px;color:#fde68a;line-height:1.5"><strong>Lean Under.</strong> Pitchers and catchers are focused; bullpen depth is usually not an issue yet.</td>
             </tr>
             <tr style="border-bottom:1px solid #1e1e1e">
-              <td style="padding:8px 10px;color:#e2e8f0;font-weight:700;white-space:nowrap">Sun (Series Finale)</td>
-              <td style="padding:8px 10px;color:#86efac;line-height:1.4">Exhausted bullpens &middot; Low-tier relievers forced in &middot; Stars rested in day games</td>
+              <td style="padding:8px 10px;color:#e2e8f0;font-weight:700;white-space:nowrap">Wednesday</td>
+              <td style="padding:8px 10px;color:#86efac;line-height:1.5">&bull; Mid-series fatigue sets in.<br>&bull; Middle-of-the-rotation pitchers face hot hitters.<br>&bull; Travel days if it is a short 2-game series finale.</td>
               <td style="padding:8px 10px;color:#4b5563">&mdash;</td>
-              <td style="padding:8px 10px;color:#fde68a;line-height:1.4">Heavy tilt toward <strong>Overs</strong> due to pitching fatigue</td>
+              <td style="padding:8px 10px;color:#fde68a;line-height:1.5"><strong>Neutral.</strong> Check specific pitching matchups; lines are usually very sharp by Wednesday.</td>
             </tr>
             <tr style="border-bottom:1px solid #1e1e1e">
-              <td style="padding:8px 10px;color:#e2e8f0;font-weight:700;white-space:nowrap">Apr &amp; May<br><span style="font-size:.7rem;color:#64748b;font-weight:400">(Early Season)</span></td>
-              <td style="padding:8px 10px;color:#4b5563">&mdash;</td>
-              <td style="padding:8px 10px;color:#93c5fd;line-height:1.4">High-altitude parks &middot; Freezing/dense air &middot; Pitchers ahead of hitters</td>
-              <td style="padding:8px 10px;color:#fde68a;line-height:1.4">Historically best months for <strong>Unders</strong></td>
+              <td style="padding:8px 10px;color:#e2e8f0;font-weight:700;white-space:nowrap">Thursday<br><span style="font-size:.7rem;color:#64748b;font-weight:400">(Getaway Day)</span></td>
+              <td style="padding:8px 10px;color:#86efac;line-height:1.5">&bull; Mental errors and lazy defense from players thinking about their upcoming flights.</td>
+              <td style="padding:8px 10px;color:#93c5fd;line-height:1.5">&bull; Star sluggers get benched for rest.<br>&bull; Backup catchers play day games.</td>
+              <td style="padding:8px 10px;color:#fde68a;line-height:1.5"><strong>Heavy Under.</strong> Wait for lineup cards to drop. If the best hitters are resting, hammer the Under.</td>
             </tr>
             <tr style="border-bottom:1px solid #1e1e1e">
-              <td style="padding:8px 10px;color:#e2e8f0;font-weight:700;white-space:nowrap">Jun &ndash; Aug<br><span style="font-size:.7rem;color:#64748b;font-weight:400">(Summer)</span></td>
-              <td style="padding:8px 10px;color:#86efac;line-height:1.4">High heat &amp; humidity &middot; Less dense air (ball carries) &middot; Domed stadiums</td>
+              <td style="padding:8px 10px;color:#e2e8f0;font-weight:700;white-space:nowrap">Friday</td>
+              <td style="padding:8px 10px;color:#86efac;line-height:1.5">&bull; Weekend crowds energize home offenses.<br>&bull; Fresh series resets the hitting focus.<br>&bull; Bullpens are fully reset if Thursday was a league-wide off-day.</td>
               <td style="padding:8px 10px;color:#4b5563">&mdash;</td>
-              <td style="padding:8px 10px;color:#fde68a;line-height:1.4">Historically prime months for <strong>Overs</strong></td>
+              <td style="padding:8px 10px;color:#fde68a;line-height:1.5"><strong>Lean Over.</strong> Teams are in front of big weekend home crowds, and Friday nights feature fewer rested off-days.</td>
+            </tr>
+            <tr style="border-bottom:1px solid #1e1e1e">
+              <td style="padding:8px 10px;color:#e2e8f0;font-weight:700;white-space:nowrap">Saturday</td>
+              <td style="padding:8px 10px;color:#86efac;line-height:1.5">&bull; Middle-to-bottom rotation pitchers (4th and 5th starters) usually pitch.<br>&bull; Late-night Friday games can cause slow morning offenses for early Saturday games.</td>
+              <td style="padding:8px 10px;color:#4b5563">&mdash;</td>
+              <td style="padding:8px 10px;color:#fde68a;line-height:1.5"><strong>Lean Over.</strong> Pitching quality drops off drastically on Saturdays compared to earlier in the week.</td>
             </tr>
             <tr>
-              <td style="padding:8px 10px;color:#e2e8f0;font-weight:700;white-space:nowrap">Doubleheader Days</td>
-              <td style="padding:8px 10px;color:#86efac;line-height:1.4">Game 2: position players pitching</td>
-              <td style="padding:8px 10px;color:#93c5fd;line-height:1.4">Game 1 pitching is fresh</td>
-              <td style="padding:8px 10px;color:#fde68a;line-height:1.4">Target the <strong>Over in Game 2</strong> if Game 1 drains the bullpen</td>
+              <td style="padding:8px 10px;color:#e2e8f0;font-weight:700;white-space:nowrap">Sunday<br><span style="font-size:.7rem;color:#64748b;font-weight:400">(Series Finale)</span></td>
+              <td style="padding:8px 10px;color:#86efac;line-height:1.5">&bull; Exhausted bullpens from the whole weekend.<br>&bull; Managers must use bad, low-tier relievers.<br>&bull; Stars get rested during Sunday afternoon getaway day games.</td>
+              <td style="padding:8px 10px;color:#4b5563">&mdash;</td>
+              <td style="padding:8px 10px;color:#fde68a;line-height:1.5"><strong>Heavy Over.</strong> Bullpen fatigue kills teams late in the game. Back the Over unless top hitters sit out.</td>
             </tr>
           </tbody>
         </table>
