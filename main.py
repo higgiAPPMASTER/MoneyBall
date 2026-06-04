@@ -1301,6 +1301,65 @@ _HTML = """
       <h1 style="font-family:'Playfair Display',serif;font-size:2.6rem;font-weight:900;color:#fff;margin-bottom:6px">MLB <span style="color:#f59e0b">MoneyBall</span></h1>
       <p style="font-size:.85rem;color:#6b7280;letter-spacing:.15em;text-transform:uppercase">MLB Daily Picks</p>
     </div>
+    <div id="betting-context-card" class="card" style="max-width:960px;margin:0 auto 18px;padding:0;overflow:hidden">
+      <div onclick="_bcToggle()" style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;cursor:pointer;user-select:none;background:linear-gradient(135deg,rgba(245,158,11,.06),transparent)">
+        <div>
+          <span style="font-weight:800;color:#fbbf24;font-size:.85rem">&#128202; MLB Betting Context</span>
+          <span style="font-size:.68rem;color:#64748b;margin-left:8px">day / period edge guide</span>
+        </div>
+        <span id="bc-arrow" style="color:#64748b;font-size:.74rem">&#9658; expand</span>
+      </div>
+      <div id="betting-context-body" class="hidden" style="padding:0 16px 14px;overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:.75rem;min-width:540px">
+          <thead>
+            <tr style="border-bottom:2px solid #1e293b">
+              <th style="text-align:left;padding:7px 10px;color:#94a3b8;font-size:.64rem;letter-spacing:.06em;white-space:nowrap;font-weight:700">DAY / PERIOD</th>
+              <th style="text-align:left;padding:7px 10px;color:#4ade80;font-size:.64rem;letter-spacing:.06em;font-weight:700">HEAVY OVER FACTORS</th>
+              <th style="text-align:left;padding:7px 10px;color:#60a5fa;font-size:.64rem;letter-spacing:.06em;font-weight:700">HEAVY UNDER FACTORS</th>
+              <th style="text-align:left;padding:7px 10px;color:#fbbf24;font-size:.64rem;letter-spacing:.06em;font-weight:700">KEY BETTING TAKEAWAY</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr style="border-bottom:1px solid #1e1e1e">
+              <td style="padding:8px 10px;color:#e2e8f0;font-weight:700;white-space:nowrap">Mon &amp; Tue</td>
+              <td style="padding:8px 10px;color:#86efac;line-height:1.4">Tired bullpen if no prev off-day</td>
+              <td style="padding:8px 10px;color:#93c5fd;line-height:1.4">Fresh bullpens &middot; Starters on regular rest</td>
+              <td style="padding:8px 10px;color:#fde68a;line-height:1.4">Strong day to look for <strong>Unders</strong></td>
+            </tr>
+            <tr style="border-bottom:1px solid #1e1e1e">
+              <td style="padding:8px 10px;color:#e2e8f0;font-weight:700;white-space:nowrap">Thu (Getaway)</td>
+              <td style="padding:8px 10px;color:#86efac;line-height:1.4">Late-night travel fatigue &middot; Sloppy defense</td>
+              <td style="padding:8px 10px;color:#93c5fd;line-height:1.4">Star players rested &middot; Backup catchers playing</td>
+              <td style="padding:8px 10px;color:#fde68a;line-height:1.4">High value for <strong>Unders</strong> once lineup cards drop</td>
+            </tr>
+            <tr style="border-bottom:1px solid #1e1e1e">
+              <td style="padding:8px 10px;color:#e2e8f0;font-weight:700;white-space:nowrap">Sun (Series Finale)</td>
+              <td style="padding:8px 10px;color:#86efac;line-height:1.4">Exhausted bullpens &middot; Low-tier relievers forced in &middot; Stars rested in day games</td>
+              <td style="padding:8px 10px;color:#4b5563">&mdash;</td>
+              <td style="padding:8px 10px;color:#fde68a;line-height:1.4">Heavy tilt toward <strong>Overs</strong> due to pitching fatigue</td>
+            </tr>
+            <tr style="border-bottom:1px solid #1e1e1e">
+              <td style="padding:8px 10px;color:#e2e8f0;font-weight:700;white-space:nowrap">Apr &amp; May<br><span style="font-size:.7rem;color:#64748b;font-weight:400">(Early Season)</span></td>
+              <td style="padding:8px 10px;color:#4b5563">&mdash;</td>
+              <td style="padding:8px 10px;color:#93c5fd;line-height:1.4">High-altitude parks &middot; Freezing/dense air &middot; Pitchers ahead of hitters</td>
+              <td style="padding:8px 10px;color:#fde68a;line-height:1.4">Historically best months for <strong>Unders</strong></td>
+            </tr>
+            <tr style="border-bottom:1px solid #1e1e1e">
+              <td style="padding:8px 10px;color:#e2e8f0;font-weight:700;white-space:nowrap">Jun &ndash; Aug<br><span style="font-size:.7rem;color:#64748b;font-weight:400">(Summer)</span></td>
+              <td style="padding:8px 10px;color:#86efac;line-height:1.4">High heat &amp; humidity &middot; Less dense air (ball carries) &middot; Domed stadiums</td>
+              <td style="padding:8px 10px;color:#4b5563">&mdash;</td>
+              <td style="padding:8px 10px;color:#fde68a;line-height:1.4">Historically prime months for <strong>Overs</strong></td>
+            </tr>
+            <tr>
+              <td style="padding:8px 10px;color:#e2e8f0;font-weight:700;white-space:nowrap">Doubleheader Days</td>
+              <td style="padding:8px 10px;color:#86efac;line-height:1.4">Game 2: position players pitching</td>
+              <td style="padding:8px 10px;color:#93c5fd;line-height:1.4">Game 1 pitching is fresh</td>
+              <td style="padding:8px 10px;color:#fde68a;line-height:1.4">Target the <strong>Over in Game 2</strong> if Game 1 drains the bullpen</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
     <div class="run-box" id="runBox" style="text-align:center;max-width:600px;margin:0 auto 20px">
       <h2 style="font-family:'Playfair Display',serif;font-size:1.5rem;font-weight:700;color:#fff;margin-bottom:20px">Run Today's Picks</h2>
       <div class="date-row" style="justify-content:center;margin-bottom:20px">
@@ -2605,9 +2664,9 @@ function runPlayerSearch(raw){
   });
 
   if(!hits.length){
-    box.innerHTML='<div class="text-slate-500 text-sm" style="margin-bottom:10px">"<strong>'+raw+'</strong>" is not in today\u0027s analyzed picks. Check any hitter in today\u0027s games for a quick hit verdict:</div>'
+    box.innerHTML='<div class="text-slate-500 text-sm" style="margin-bottom:10px">"<strong>'+raw+'</strong>" is not in today\\'s analyzed picks. Check any hitter in today\\'s games for a quick hit verdict:</div>'
       +'<button onclick="lookupAnyPlayer()" style="background:#fbbf24;color:#111;border:none;border-radius:8px;padding:8px 16px;font-weight:700;cursor:pointer">Look up this player →</button>'
-      +'<div class="text-slate-600 text-xs" style="margin-top:8px">Searching a pitcher? Expand "All today\u0027s pitchers" below the K Picks table.</div>'
+      +'<div class="text-slate-600 text-xs" style="margin-top:8px">Searching a pitcher? Expand "All today\\'s pitchers" below the K Picks table.</div>'
       +'<div id="lookup-any-result" style="margin-top:12px"></div>';
     return;
   }
@@ -2638,13 +2697,13 @@ function runPlayerSearch(raw){
       if(p.lineup_status) html+='<span><strong style="color:#94a3b8">Lineup</strong> '+_lineupTxt(p.lineup_status)+'</span>';
       html+='</div>';
       if(kind==='HITTER-DQ' && p.dq_reason){
-        html+='<div style="margin-top:8px;color:#fca5a5;font-size:.82rem"><strong>Why DQ\u0027d:</strong> '+p.dq_reason+'</div>';
+        html+='<div style="margin-top:8px;color:#fca5a5;font-size:.82rem"><strong>Why DQ\\'d:</strong> '+p.dq_reason+'</div>';
       } else if(h.bucket==='Top Picks'){
         html+='<div style="margin-top:8px;color:#cbd5e1;font-size:.82rem">Cleared every filter and ranks in the top 9 by total score.</div>';
       } else if(h.bucket==='Money Ball Picks'){
         html+='<div style="margin-top:8px;color:#cbd5e1;font-size:.82rem">Passed all 5 filters — solid play just outside the Top 9.</div>';
       } else if(h.bucket==='Under Picks'){
-        html+='<div style="margin-top:8px;color:#cbd5e1;font-size:.82rem">Cold bat vs today\u0027s pitcher \u2014 model likes the UNDER.</div>';
+        html+='<div style="margin-top:8px;color:#cbd5e1;font-size:.82rem">Cold bat vs today\\'s pitcher \u2014 model likes the UNDER.</div>';
       }
     } else if(kind==='PITCHER'){
       html+='<div style="display:flex;flex-wrap:wrap;gap:14px;font-size:.82rem;color:#cbd5e1">';
@@ -2670,7 +2729,7 @@ async function lookupAnyPlayer(){
   if(!out) return;
   if(name.length<3){ out.innerHTML='<div class="text-slate-500 text-sm">Type at least 3 letters.</div>'; return; }
   var date=(window._lastResult&&window._lastResult.date)||'';
-  out.innerHTML='<div class="text-slate-500 text-sm">Checking '+name+' across today\u0027s games\u2026</div>';
+  out.innerHTML='<div class="text-slate-500 text-sm">Checking '+name+' across today\\'s games\u2026</div>';
   try{
     var r=await fetch('/api/lookup?name='+encodeURIComponent(name)+'&date_str='+encodeURIComponent(date));
     var d=await r.json();
@@ -3765,6 +3824,13 @@ async function _mpSave(){
   }
 }
 function _manualParlayForm(){ window._mpLegs=[]; window._mpPhase=1; _mpRender(); }
+function _bcToggle(){
+  var b=document.getElementById('betting-context-body');
+  var a=document.getElementById('bc-arrow');
+  var wasHidden=b.classList.contains('hidden');
+  b.classList.toggle('hidden');
+  if(a) a.textContent=wasHidden?'\u25bc collapse':'\u25b6 expand';
+}
 function _betToast(m){
   var t=document.getElementById('bet-toast');
   if(!t){ t=document.createElement('div'); t.id='bet-toast';
@@ -3860,7 +3926,7 @@ function renderMyBets(d){
           +'<span style="font-weight:700;color:'+_resColor(lr)+';min-width:46px;text-align:right">'+(lr==='pending'?'pend':lr)+at+'</span>'
           +'</div>';
       }).join('');
-      return '<tr onclick="var e=document.getElementById(\''+lid+'\');e.style.display=e.style.display===\'none\'?\'table-row\':\'none\'" style="cursor:pointer">'
+      return '<tr onclick="var e=document.getElementById(\\''+lid+'\\');e.style.display=e.style.display===\\'none\\'?\\'table-row\\':\\'none\\'" style="cursor:pointer">'
         +'<td style="white-space:nowrap;color:#94a3b8;font-family:monospace;font-size:.76rem">'+(b.date||'')+'</td>'
         +'<td style="font-weight:700;color:#fbbf24">'+n+'-Leg Parlay <span style="font-size:.66rem;color:#475569;font-weight:400">&#9658; expand</span></td>'
         +'<td style="font-size:.78rem;color:#64748b">Combined</td>'
