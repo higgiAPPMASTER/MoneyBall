@@ -487,7 +487,7 @@ _PROP_SRC = {
 }
 
 
-def _build_prop_picks(name, team, opp, side, hist, rf) -> list:
+def _build_prop_picks(name, team, opp, side, hist, rf, pid=None) -> list:
     """One Over/Under pick per prop market that has a posted line in PROP_ODDS.
     Uniform dict so the frontend can render all 3 categories generically."""
     props = []
@@ -523,6 +523,7 @@ def _build_prop_picks(name, team, opp, side, hist, rf) -> list:
         props.append({
             "market": market, "label": label, "unit": unit, "_prop": True,
             "name": name, "team": team, "opp": opp, "side": side,
+            "pid": pid,
             "line": line, "over_odds": odds.get("over_odds"), "under_odds": odds.get("under_odds"),
             "career_avg": career_avg, "recent_avg": recent_avg, "recent_starts": recent_n,
             "blended": blended, "avg": blended, "blend_src": blend_src, "starts": starts,
@@ -659,6 +660,8 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                  "avg_ip": hist["avg_ip"] if hist else None,
                  "era":    hist["era"]    if hist else None,
                  "avg_hits":   hist["avg_hits"]   if hist else None,
+                 "avg_er":     hist["avg_er"]     if hist else None,
+                 "avg_outs":   hist["avg_outs"]   if hist else None,
                  "avg_bb":     hist["avg_bb"]     if hist else None,
                  "vs_opp_log": hist["vs_opp_log"] if hist else [],
                  "k_hit_rate": k_hit_rate,
@@ -668,7 +671,8 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                  "recent_starts": recent_starts, "recent_k_log": rf["recent_k_log"],
                  "blended_avg_k": blended_avg, "blend_src": blend_src,
                  "opp_k_rank": opp_k_rank, "opp_k_pg": opp_k_pg, "opp_k_total": opp_k_total,
-                 "props": _build_prop_picks(name, pitcher_team, opp, side, hist, rf),
+                 "pid": pid,
+                 "props": _build_prop_picks(name, pitcher_team, opp, side, hist, rf, pid),
                  "pick": pick, "pick_note": pick_note}), logs
 
     # Today's probable starters — used to map each pitcher to his big-league club
@@ -714,7 +718,9 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                 "avg_ip": hist2["avg_ip"] if hist2 else None,
                 "era": hist2["era"] if hist2 else None,
                 "avg_hits": hist2["avg_hits"] if hist2 else None,
-                "avg_bb": hist2["avg_bb"] if hist2 else None,
+                "avg_er":   hist2["avg_er"]   if hist2 else None,
+                "avg_outs": hist2["avg_outs"] if hist2 else None,
+                "avg_bb":   hist2["avg_bb"]   if hist2 else None,
                 "vs_opp_log": hist2["vs_opp_log"] if hist2 else [],
                 "k_hit_rate": "—", "k_history": k_history2,
                 "recent_avg_k": rf2["recent_avg_k"], "recent_k_list": rf2["recent_k_list"],
@@ -723,9 +729,10 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                 "opp_k_rank": _opp_kr2["rank"]    if _opp_kr2 else None,
                 "opp_k_pg":   _opp_kr2["k_per_g"] if _opp_kr2 else None,
                 "opp_k_total": _opp_kr2["total"]  if _opp_kr2 else None,
+                "pid": pid2,
                 # Pitchers with NO K line may still have hits/outs/ER lines posted —
                 # build their prop picks too so the parlay pool is as deep as possible.
-                "props": _build_prop_picks(st["name"], st["team"], st["opp"], st["side"], hist2, rf2),
+                "props": _build_prop_picks(st["name"], st["team"], st["opp"], st["side"], hist2, rf2, pid2),
                 "pick": None, "pick_note": "No K line posted today",
             }
 
@@ -764,4 +771,6 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
     emit({"type": "log", "msg": "✅ Pitcher props — " +
           ", ".join(f"{PROP_META[m][0]}: {len(prop_picks[m]['picks'])}" for m in PROP_MARKETS)})
 
-    return {"picks": confirmed, "all": all_results, "props": prop_picks}
+    return {"picks": confirmed, "all": all_results, "props": prop_picks,
+            "team_k_ranks": [{"name": k, "rank": v["rank"], "k_per_g": v["k_per_g"]}
+                             for k, v in sorted(TEAM_K_RANKS.items(), key=lambda x: x[1]["rank"])]}
