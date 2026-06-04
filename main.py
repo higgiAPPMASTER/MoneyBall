@@ -3541,9 +3541,9 @@ function _betBtn(p,cat,side,statKey,statLabel,line,odds){
   window.__BET_SRC__[k]={name:(p.full_name||p.name||''),team:(p.team||''),opp:(p.opp||''),
     category:cat,side:side,stat_key:statKey,stat_label:statLabel,line:line,
     odds:(odds!=null?odds:null),date:((window._lastResult&&window._lastResult.date)||'')};
-  return `<div class="admin-only" style="display:flex;gap:5px;margin-top:auto;padding-top:7px">
-    <button onclick="event.stopPropagation();_betForm('${k}')" style="flex:1;background:rgba(67,56,202,.18);border:1px solid rgba(129,140,248,.55);color:#c7d2fe;border-radius:7px;padding:5px 0;font-size:.68rem;font-weight:800;cursor:pointer;letter-spacing:.03em">＋ Track Bet</button>
-    <button onclick="event.stopPropagation();_addToCart('${k}')" style="flex:1;background:rgba(99,202,183,.12);border:1px solid rgba(99,202,183,.35);color:#6ee7b7;border-radius:7px;padding:5px 0;font-size:.68rem;font-weight:800;cursor:pointer;letter-spacing:.03em">＋ Parlay</button>
+  return `<div class="admin-only" style="display:flex;gap:0;margin:12px -12px -12px;border-top:1px solid #1e293b;overflow:hidden;border-radius:0 0 12px 12px">
+    <button onclick="event.stopPropagation();_betForm('${k}')" style="flex:1;background:rgba(67,56,202,.22);border:none;border-right:1px solid #1e293b;color:#c7d2fe;padding:10px 0;font-size:.75rem;font-weight:800;cursor:pointer;letter-spacing:.04em;transition:background .15s" onmouseover="this.style.background='rgba(67,56,202,.4)'" onmouseout="this.style.background='rgba(67,56,202,.22)'">＋ Track Bet</button>
+    <button onclick="event.stopPropagation();_addToCart('${k}')" style="flex:1;background:rgba(16,185,129,.14);border:none;color:#6ee7b7;padding:10px 0;font-size:.75rem;font-weight:800;cursor:pointer;letter-spacing:.04em;transition:background .15s" onmouseover="this.style.background='rgba(16,185,129,.3)'" onmouseout="this.style.background='rgba(16,185,129,.14)'">＋ Parlay</button>
   </div>`;
 }
 window._cartLegs=window._cartLegs||[];
