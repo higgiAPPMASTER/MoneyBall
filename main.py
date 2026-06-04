@@ -584,23 +584,13 @@ def _american_profit(odds, stake, result) -> float:
         return -stake
     return 0.0  # PUSH / pending
 
-def _settle_bet(bet: dict) -> bool:
-    """Grade a still-pending bet against final box scores. Returns True if it
-    changed. Only settles past dates; a player whose game isn't Final (or who
-    didn't pitch, for pitching props) stays pending."""
+def _settle_bet_cached(bet: dict, name_stats: dict) -> bool:
+    """Grade a pending bet using pre-fetched name_stats (no extra API call)."""
     if bet.get("result") in ("WIN", "LOSS", "PUSH"):
         return False
-    bdate = bet.get("date")
-    if not bdate or bdate >= date.today().isoformat():
-        return False
-    try:
-        _ps, ns, _any, _af = _mlb_box_lookup(bdate)
-    except Exception as e:
-        print(f"[bet_log] settle lookup failed {bdate}: {e}")
-        return False
-    st = ns.get((bet.get("name") or "").lower())
+    st = name_stats.get((bet.get("name") or "").lower())
     if not st or not st.get("final"):
-        return False  # player's game not final yet (or DNP / not found)
+        return False
     stat_key = bet.get("stat_key")
     actual = st.get(stat_key)
     if actual is None:
@@ -623,6 +613,48 @@ def _settle_bet(bet: dict) -> bool:
     bet["profit"] = round(_american_profit(bet.get("odds"), bet.get("stake"), res), 2)
     bet["settled_at"] = date.today().isoformat()
     return True
+
+def _settle_bet(bet: dict) -> bool:
+    """Grade a still-pending bet against final box scores. Returns True if it
+    changed. Only settles past dates; a player whose game isn't Final (or who
+    didn't pitch, for pitching props) stays pending."""
+    if bet.get("result") in ("WIN", "LOSS", "PUSH"):
+        return False
+    bdate = bet.get("date")
+    if not bdate or bdate >= date.today().isoformat():
+        return False
+    try:
+        _ps, ns, _any, _af = _mlb_box_lookup(bdate)
+    except Exception as e:
+        print(f"[bet_log] settle lookup failed {bdate}: {e}")
+        return False
+    return _settle_bet_cached(bet, ns)
+
+def _settle_bets_batch(bets: list) -> bool:
+    """Settle all pending bets with ONE box-score API call per unique date
+    instead of one call per bet. Returns True if any bet changed."""
+    today = date.today().isoformat()
+    dates_needed = {
+        b["date"] for b in bets
+        if b.get("result") not in ("WIN", "LOSS", "PUSH")
+        and b.get("date") and b["date"] < today
+    }
+    if not dates_needed:
+        return False
+    ns_cache: dict = {}
+    for d in sorted(dates_needed):
+        try:
+            _ps, ns, _any, _af = _mlb_box_lookup(d)
+            ns_cache[d] = ns
+        except Exception as e:
+            print(f"[bet_log] batch settle lookup failed {d}: {e}")
+    changed = False
+    for b in bets:
+        bdate = b.get("date")
+        if bdate and bdate in ns_cache:
+            if _settle_bet_cached(b, ns_cache[bdate]):
+                changed = True
+    return changed
 
 def _summarize_bets(bets: list) -> dict:
     cats: dict = {}
@@ -685,9 +717,7 @@ async def get_bets(request: Request, token: str = "", admin: str = "",
         bets = data.get(key, [])
         changed = False
         if settle:
-            for b in bets:
-                if _settle_bet(b):
-                    changed = True
+            changed = _settle_bets_batch(bets)
         if changed:
             data[key] = bets
             _save_bets(data)
