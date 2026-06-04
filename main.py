@@ -1278,6 +1278,7 @@ _HTML = """
           <strong>Pick</strong> = OVER/UNDER based on blended avg (50% career H/A vs opp + 50% last 5 starts). ⚠️ = signals conflict. Min 1 career start vs opp.
         </p>
       </div>
+      <div id="pitcher-props-wrap"></div>
       <div class="card p-6 hidden" id="runs-picks-card" style="border-color:rgba(96,165,250,.25)">
         <div class="section-hdr" style="color:#60a5fa">🏃 Runs Picks — Score a Run (Over / Under 0.5)</div>
         <p class="text-xs text-slate-400 mb-3" style="margin-top:-4px">Who's likely to cross the plate. Runs are lower-frequency than hits — higher-variance plays.</p>
@@ -1296,7 +1297,6 @@ _HTML = """
           <strong>Pick</strong> = OVER ≥70%, UNDER ≤30%, vs-opp only (min 3 games) &nbsp;|&nbsp; ranked by Wilson lower-bound.
         </p>
       </div>
-      <div id="pitcher-props-wrap"></div>
       <div class="card p-6" id="by-game-card">
         <div class="section-hdr" style="color:#f59e0b">🏟️ Picks by Game</div>
         <p class="text-xs text-slate-500 mb-3">Pick your team's game to see all picks for that matchup.</p>
@@ -2673,7 +2673,7 @@ function _bpChip(p){
 // ump (kFactor>1) lifts OVER picks and lowers UNDER picks; tight zone inverse.
 function _mlbHead(id) {
   if (!id) return '';
-  return `<img src="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/${id}/headshot/67/current" alt="" style="width:38px;height:38px;border-radius:50%;object-fit:cover;object-position:top;border:1px solid rgba(255,255,255,.12);flex-shrink:0" onerror="this.style.display='none'">`;
+  return `<img src="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/${id}/headshot/67/current" alt="" style="width:38px;height:38px;border-radius:50%;object-fit:cover;object-position:center 18%;border:1px solid rgba(255,255,255,.12);flex-shrink:0" onerror="this.style.display='none'">`;
 }
 function _teamMatchJS(a, b) {
   if (!a||!b) return false;
