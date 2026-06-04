@@ -2605,9 +2605,9 @@ function runPlayerSearch(raw){
   });
 
   if(!hits.length){
-    box.innerHTML='<div class="text-slate-500 text-sm" style="margin-bottom:10px">"<strong>'+raw+'</strong>" isn\\'t in today\\'s analyzed picks. Check any hitter in today\\'s games for a quick hit verdict:</div>'
+    box.innerHTML='<div class="text-slate-500 text-sm" style="margin-bottom:10px">"<strong>'+raw+'</strong>" is not in today\u0027s analyzed picks. Check any hitter in today\u0027s games for a quick hit verdict:</div>'
       +'<button onclick="lookupAnyPlayer()" style="background:#fbbf24;color:#111;border:none;border-radius:8px;padding:8px 16px;font-weight:700;cursor:pointer">Look up this player →</button>'
-      +'<div class="text-slate-600 text-xs" style="margin-top:8px">Searching a pitcher? Expand "All today\\'s pitchers" below the K Picks table.</div>'
+      +'<div class="text-slate-600 text-xs" style="margin-top:8px">Searching a pitcher? Expand "All today\u0027s pitchers" below the K Picks table.</div>'
       +'<div id="lookup-any-result" style="margin-top:12px"></div>';
     return;
   }
@@ -2638,13 +2638,13 @@ function runPlayerSearch(raw){
       if(p.lineup_status) html+='<span><strong style="color:#94a3b8">Lineup</strong> '+_lineupTxt(p.lineup_status)+'</span>';
       html+='</div>';
       if(kind==='HITTER-DQ' && p.dq_reason){
-        html+='<div style="margin-top:8px;color:#fca5a5;font-size:.82rem"><strong>Why DQ\\'d:</strong> '+p.dq_reason+'</div>';
+        html+='<div style="margin-top:8px;color:#fca5a5;font-size:.82rem"><strong>Why DQ\u0027d:</strong> '+p.dq_reason+'</div>';
       } else if(h.bucket==='Top Picks'){
         html+='<div style="margin-top:8px;color:#cbd5e1;font-size:.82rem">Cleared every filter and ranks in the top 9 by total score.</div>';
       } else if(h.bucket==='Money Ball Picks'){
         html+='<div style="margin-top:8px;color:#cbd5e1;font-size:.82rem">Passed all 5 filters — solid play just outside the Top 9.</div>';
       } else if(h.bucket==='Under Picks'){
-        html+='<div style="margin-top:8px;color:#cbd5e1;font-size:.82rem">Cold bat vs today\\'s pitcher — model likes the UNDER.</div>';
+        html+='<div style="margin-top:8px;color:#cbd5e1;font-size:.82rem">Cold bat vs today\u0027s pitcher \u2014 model likes the UNDER.</div>';
       }
     } else if(kind==='PITCHER'){
       html+='<div style="display:flex;flex-wrap:wrap;gap:14px;font-size:.82rem;color:#cbd5e1">';
@@ -2670,7 +2670,7 @@ async function lookupAnyPlayer(){
   if(!out) return;
   if(name.length<3){ out.innerHTML='<div class="text-slate-500 text-sm">Type at least 3 letters.</div>'; return; }
   var date=(window._lastResult&&window._lastResult.date)||'';
-  out.innerHTML='<div class="text-slate-500 text-sm">Checking '+name+' across today\\'s games…</div>';
+  out.innerHTML='<div class="text-slate-500 text-sm">Checking '+name+' across today\u0027s games\u2026</div>';
   try{
     var r=await fetch('/api/lookup?name='+encodeURIComponent(name)+'&date_str='+encodeURIComponent(date));
     var d=await r.json();
