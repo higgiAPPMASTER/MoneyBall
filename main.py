@@ -1741,7 +1741,7 @@ function _propBestCard(p, key, rank) {
   var mktColors={pitcher_hits_allowed:'#f87171',pitcher_outs:'#a78bfa',pitcher_earned_runs:'#fb923c'};
   var clr=mktColors[p.market]||'#63cab7';
   var abbr=_mlbTeamAbbr(p.team);
-  var teamLogo=abbr?'https://a.espncdn.com/i/teamlogos/mlb/500/'+abbr+'.png':'';
+  var teamLogo=abbr?`https://a.espncdn.com/i/teamlogos/mlb/500/${abbr}.png`:'';
   var isOver=(p.pick||'').toUpperCase()==='OVER';
   var odds=isOver?(p.over_odds!=null?(p.over_odds>0?'+':'')+p.over_odds:'')
                  :(p.under_odds!=null?(p.under_odds>0?'+':'')+p.under_odds:'');
@@ -1749,33 +1749,32 @@ function _propBestCard(p, key, rank) {
   var gapDisp=gap!=null?'edge +'+gap.toFixed(1)+(p.unit?' '+p.unit:''):'';
   var blendDisp=p.blended!=null?p.blended+(p.unit?' '+p.unit:''):'—';
   var lineDisp=p.line!=null?p.line+(p.unit?' '+p.unit:''):'—';
-  var sideLabel=p.side?'<span style="font-size:.62rem;background:rgba(255,255,255,.07);border-radius:4px;padding:1px 5px;color:#94a3b8">'+(p.homeRoad||p.side)+'</span>':'';
-  var oppLabel=p.opp?'<span style="font-size:.62rem;color:#64748b">vs '+p.opp+'</span>':'';
+  var sideLabel=p.side?`<span style="font-size:.62rem;background:rgba(255,255,255,.07);border-radius:4px;padding:1px 5px;color:#94a3b8">${p.homeRoad||p.side}</span>`:'';
+  var oppLabel=p.opp?`<span style="font-size:.62rem;color:#64748b">vs ${p.opp}</span>`:'';
+  var gapHtml=gapDisp?`<div style="margin-top:4px;font-size:.66rem;color:#fbbf24">${gapDisp}</div>`:'';
+  var oddsHtml=odds?`<div style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.85rem;margin-top:2px">${odds}</div>`:'';
+  var rgbClr=p.market==='pitcher_hits_allowed'?'248,113,113':p.market==='pitcher_outs'?'167,139,250':'251,146,60';
   window.__PP_REG__=window.__PP_REG__||{}; window.__PP_REG__[key]=p;
-  return '<div class="mlb-pick-card" onclick="_ppForm(\''+key+'\')" title="Click for recent form" style="cursor:pointer">'
-    +'<div class="mlb-card-header" style="background:linear-gradient(135deg,rgba('+
-      (p.market==='pitcher_hits_allowed'?'248,113,113'
-      :p.market==='pitcher_outs'?'167,139,250'
-      :'251,146,60')+
-      ',.18) 0%,#08111d 100%)">'
-    +'<div style="display:flex;align-items:center;gap:8px">'
-    +'<div style="width:26px;height:26px;border-radius:50%;background:'+clr+';color:#000;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.78rem">'+rank+'</div>'
-    +_mlbHead(p.pid)
-    +'<span style="font-size:.62rem;letter-spacing:.1em;color:'+clr+';font-weight:800">'+String(p.label||p.market||'PROP').toUpperCase()+'</span>'
-    +'</div>'
-    +(teamLogo?'<img src="'+teamLogo+'" alt="'+p.team+'" style="height:30px;width:30px;object-fit:contain" onerror="this.style.display=\'none\'"/>'  :'')
-    +'</div>'
-    +'<div class="mlb-card-name">'+String(p.name||'')+'</div>'
-    +'<div style="padding:10px 14px">'
-    +'<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">'+sideLabel+oppLabel+'</div>'
-    +'<div style="display:flex;align-items:center;justify-content:space-between;border-top:1px solid #1f2d3d;padding-top:6px;margin-top:2px">'
-    +'<span style="font-size:.7rem;color:#64748b">Line '+lineDisp+' · Blend '+blendDisp+'</span>'
-    +'<span style="color:'+(isOver?'#63cab7':'#ff8a65')+';font-weight:900;font-size:.9rem">'+(p.pick||'—')+'</span>'
-    +'</div>'
-    +(gapDisp?'<div style="margin-top:4px;font-size:.66rem;color:#fbbf24">'+gapDisp+'</div>':'')
-    +(odds?'<div style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.85rem;margin-top:2px">'+odds+'</div>':'')
-    +'</div>'
-    +'</div>';
+  return `<div class="mlb-pick-card" onclick="_ppForm('${key}')" title="Click for recent form" style="cursor:pointer">
+    <div class="mlb-card-header" style="background:linear-gradient(135deg,rgba(${rgbClr},.18) 0%,#08111d 100%)">
+      <div style="display:flex;align-items:center;gap:8px">
+        <div style="width:26px;height:26px;border-radius:50%;background:${clr};color:#000;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.78rem">${rank}</div>
+        ${_mlbHead(p.pid)}
+        <span style="font-size:.62rem;letter-spacing:.1em;color:${clr};font-weight:800">${String(p.label||p.market||'PROP').toUpperCase()}</span>
+      </div>
+      ${teamLogo?`<img src="${teamLogo}" alt="${p.team||''}" style="height:30px;width:30px;object-fit:contain" onerror="this.style.display='none'"/>`:''}
+    </div>
+    <div class="mlb-card-name">${String(p.name||'')}</div>
+    <div style="padding:10px 14px">
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">${sideLabel}${oppLabel}</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;border-top:1px solid #1f2d3d;padding-top:6px;margin-top:2px">
+        <span style="font-size:.7rem;color:#64748b">Line ${lineDisp} · Blend ${blendDisp}</span>
+        <span style="color:${isOver?'#63cab7':'#ff8a65'};font-weight:900;font-size:.9rem">${p.pick||'—'}</span>
+      </div>
+      ${gapHtml}
+      ${oddsHtml}
+    </div>
+  </div>`;
 }
 function renderPitcherProps(view){
   var wrap=document.getElementById('pitcher-props-wrap'); if(!wrap) return;
