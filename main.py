@@ -2752,8 +2752,8 @@ function _mlbCard(p, rank, dim) {
         <span style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">Hit Odds</span>
         <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odds}</span>
       </div>
-      ${_betBtn(p,'Hitter Hits','OVER','hits','Hits',0.5,p.hit_odds)}
       ${adminStats}
+      ${_betBtn(p,'Hitter Hits','OVER','hits','Hits',0.5,p.hit_odds)}
     </div>
   </div>`;
 }
@@ -2805,8 +2805,8 @@ function _underCard(p, rank) {
         <span style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">U 1.5 Total Bases</span>
         <span style="font-family:monospace;color:#63cab7;font-weight:700;font-size:.9rem">${tbOdds}</span>
       </div>
-      ${_betBtn(p,'Hitter Hits',(p.pick||'UNDER'),'hits','Hits',1.5,(p.pick==='OVER'?p.over_odds:p.under_odds))}
       ${adminStats}
+      ${_betBtn(p,'Hitter Hits',(p.pick||'UNDER'),'hits','Hits',1.5,(p.pick==='OVER'?p.over_odds:p.under_odds))}
     </div>
   </div>`;
 }
@@ -2876,8 +2876,8 @@ function _runsCard(p, rank, pfx) {
         <span style="font-size:.8rem;color:${pickClr};font-weight:900">${p.pick} ${p.line!=null?p.line:0.5} Runs</span>
         <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}</span>
       </div>
-      ${_betBtn(p,'Runs',p.pick,'runs','Runs',(p.line!=null?p.line:0.5),(p.pick==='OVER'?p.over_odds:p.under_odds))}
       ${adminStats}
+      ${_betBtn(p,'Runs',p.pick,'runs','Runs',(p.line!=null?p.line:0.5),(p.pick==='OVER'?p.over_odds:p.under_odds))}
     </div>
   </div>`;
 }
@@ -2936,8 +2936,8 @@ function _pitcherCard(p, rank) {
         <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.9rem">${odds||'—'}</span>
       </div>
       <div style="margin-top:5px;font-size:.68rem;color:#94a3b8;line-height:1.6">K <strong style="color:#cbd5e1">${p.avg_k!=null?p.avg_k:'—'}</strong> · H <strong style="color:#cbd5e1">${p.avg_hits!=null?p.avg_hits:'—'}</strong> · ER <strong style="color:#cbd5e1">${p.avg_er!=null?p.avg_er:'—'}</strong> · Outs <strong style="color:#cbd5e1">${p.avg_outs!=null?p.avg_outs:'—'}</strong> · BB <strong style="color:#cbd5e1">${p.avg_bb!=null?p.avg_bb:'—'}</strong> · IP <strong style="color:#cbd5e1">${p.avg_ip!=null?p.avg_ip:'—'}</strong> · ERA <strong style="color:#cbd5e1">${p.era||'—'}</strong> <span style="color:#64748b">vr opp</span></div>
-      ${_betBtn(p,'Pitcher Ks',(hasSugg?'OVER':p.pick),'strikeOuts','Ks',(hasSugg?p.sugg_line:p.line),(hasSugg?p.sugg_odds:(isOver?p.over_odds:p.under_odds)))}
       <div style="margin-top:5px;font-size:.66rem;color:#63cab7;text-align:right">all 5 markets →</div>
+      ${_betBtn(p,'Pitcher Ks',(hasSugg?'OVER':p.pick),'strikeOuts','Ks',(hasSugg?p.sugg_line:p.line),(hasSugg?p.sugg_odds:(isOver?p.over_odds:p.under_odds)))}
     </div>
   </div>`;
 }
