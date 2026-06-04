@@ -3541,7 +3541,63 @@ function _betBtn(p,cat,side,statKey,statLabel,line,odds){
   window.__BET_SRC__[k]={name:(p.full_name||p.name||''),team:(p.team||''),opp:(p.opp||''),
     category:cat,side:side,stat_key:statKey,stat_label:statLabel,line:line,
     odds:(odds!=null?odds:null),date:((window._lastResult&&window._lastResult.date)||'')};
-  return `<button class="admin-only" onclick="event.stopPropagation();_betForm('${k}')" style="margin-top:auto;padding-top:7px;width:100%;background:rgba(67,56,202,.18);border:1px solid rgba(129,140,248,.55);color:#c7d2fe;border-radius:7px;padding:5px 0;font-size:.72rem;font-weight:800;cursor:pointer;letter-spacing:.04em">＋ Track Bet</button>`;
+  return `<div class="admin-only" style="display:flex;gap:5px;margin-top:auto;padding-top:7px">
+    <button onclick="event.stopPropagation();_betForm('${k}')" style="flex:1;background:rgba(67,56,202,.18);border:1px solid rgba(129,140,248,.55);color:#c7d2fe;border-radius:7px;padding:5px 0;font-size:.68rem;font-weight:800;cursor:pointer;letter-spacing:.03em">＋ Track Bet</button>
+    <button onclick="event.stopPropagation();_addToCart('${k}')" style="flex:1;background:rgba(99,202,183,.12);border:1px solid rgba(99,202,183,.35);color:#6ee7b7;border-radius:7px;padding:5px 0;font-size:.68rem;font-weight:800;cursor:pointer;letter-spacing:.03em">＋ Parlay</button>
+  </div>`;
+}
+window._cartLegs=window._cartLegs||[];
+function _addToCart(key){
+  var src=(window.__BET_SRC__||{})[key]; if(!src) return;
+  var already=window._cartLegs.some(function(l){ return l._key===key; });
+  if(already){ _betToast('Already in parlay'); return; }
+  var dec=src.odds!=null?_amToDec(src.odds):null;
+  window._cartLegs.push({_key:key,player:src.name,team:src.team,opp:src.opp,
+    dir:src.side,line:src.line,stat:src.stat_label,
+    odds:src.odds,dec:dec,type:src.category,src:src});
+  _updateCartBar();
+  _betToast('\u2795 Added to parlay \u2014 '+window._cartLegs.length+' leg'+(window._cartLegs.length===1?'':'s'));
+}
+function _removeFromCart(key){
+  window._cartLegs=window._cartLegs.filter(function(l){ return l._key!==key; });
+  _updateCartBar();
+}
+function _updateCartBar(){
+  var bar=document.getElementById('cart-bar');
+  if(!bar){
+    bar=document.createElement('div'); bar.id='cart-bar';
+    bar.style.cssText='position:fixed;bottom:0;left:0;right:0;z-index:9998;background:linear-gradient(135deg,#1e1b4b,#2e1065);border-top:2px solid #4f46e5;padding:10px 16px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 -4px 30px rgba(79,70,229,.35);transition:transform .25s;gap:10px';
+    document.body.appendChild(bar);
+  }
+  var n=window._cartLegs.length;
+  if(n===0){ bar.style.transform='translateY(100%)'; return; }
+  bar.style.transform='translateY(0)';
+  var dec=1; var allOdds=true;
+  window._cartLegs.forEach(function(l){ if(l.dec) dec*=l.dec; else allOdds=false; });
+  var amRaw=allOdds?_decToAm(dec):null;
+  var amTxt=amRaw!=null?(amRaw>0?'+'+amRaw:''+amRaw):'—';
+  var chips=window._cartLegs.map(function(l){
+    return '<span style="display:inline-flex;align-items:center;gap:4px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);border-radius:6px;padding:3px 8px;font-size:.7rem;white-space:nowrap">'
+      +'<span style="color:#e2e8f0;font-weight:700">'+_esc(l.player)+'</span>'
+      +'<span style="color:#a5b4fc">'+_esc(l.dir+' '+l.line)+'</span>'
+      +'<button onclick="event.stopPropagation();_removeFromCart(\\''+l._key+'\\')" style="background:none;border:none;color:#f87171;cursor:pointer;font-size:.75rem;padding:0 1px;line-height:1">\u2715</button>'
+      +'</span>';
+  }).join('');
+  bar.innerHTML='<div style="display:flex;flex-wrap:wrap;gap:5px;align-items:center;flex:1;min-width:0">'
+    +'<span style="font-weight:800;color:#fff;font-size:.82rem;white-space:nowrap">\U0001F3AF '+n+'-Leg</span>'
+    +chips
+    +'</div>'
+    +'<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0">'
+    +'<span style="color:#fbbf24;font-weight:800;font-size:.9rem;font-family:monospace">'+amTxt+'</span>'
+    +'<div style="display:flex;gap:5px">'
+    +'<button onclick="window._cartLegs=[];_updateCartBar()" style="background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.3);color:#fca5a5;border-radius:7px;padding:5px 9px;font-size:.7rem;font-weight:700;cursor:pointer">Clear</button>'
+    +'<button onclick="_cartParlayForm()" style="background:#4f46e5;border:none;color:#fff;border-radius:7px;padding:6px 13px;font-weight:800;font-size:.8rem;cursor:pointer">\U0001F4DD Log Parlay</button>'
+    +'</div></div>';
+}
+function _cartParlayForm(){
+  if(!window._cartLegs||!window._cartLegs.length) return;
+  window._parlayLegs=window._cartLegs.slice();
+  _parlayBetForm();
 }
 function _betForm(key){
   var src=(window.__BET_SRC__||{})[key]; if(!src) return;
@@ -3671,6 +3727,7 @@ async function _saveParlay(){
     if(!res.ok) throw new Error(await res.text());
     document.getElementById('pbet-modal').style.display='none';
     _betToast('\u2705 Parlay logged');
+    window._cartLegs=[]; _updateCartBar();
     var mb=document.getElementById('mybets-card');
     if(mb && !mb.classList.contains('hidden')) openMyBets();
   }catch(e){ msg.textContent=(e.message||'Save failed'); btn.disabled=false; btn.textContent='Log Parlay'; }
