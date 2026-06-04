@@ -1134,6 +1134,13 @@ _HTML = """
 <div id="dashboard" class="hidden min-h-screen flex flex-col" style="padding-top:80px">
   <nav class="app-nav">
     <span class="app-nav-logo">Money<span> Picks</span> Arena</span>
+    <div class="admin-only" id="admin-menu-wrap" style="position:relative">
+      <button id="admin-menu-btn" onclick="toggleAdminMenu(event)" title="Admin tools" style="background:#4338ca;color:#fff;border:1px solid #6366f1;border-radius:10px;padding:9px 16px;font-weight:800;font-size:.85rem;cursor:pointer;display:flex;align-items:center;gap:7px">🔒 Admin <span style="font-size:.7rem">▾</span></button>
+      <div id="admin-menu" class="hidden" style="position:absolute;right:0;top:calc(100% + 10px);background:#0f172a;border:1px solid #312e81;border-radius:12px;padding:8px;min-width:210px;box-shadow:0 18px 50px rgba(0,0,0,.6);display:flex;flex-direction:column;gap:6px;z-index:120">
+        <button onclick="openTrackRecord();closeAdminMenu()" style="background:#7c3aed;color:#fff;border:none;border-radius:8px;padding:11px 14px;font-weight:700;font-size:.86rem;cursor:pointer;text-align:left">🏆 Track Record</button>
+        <button onclick="openMyBets();closeAdminMenu()" style="background:#4338ca;color:#fff;border:none;border-radius:8px;padding:11px 14px;font-weight:700;font-size:.86rem;cursor:pointer;text-align:left">💰 My Bets</button>
+      </div>
+    </div>
   </nav>
   <main class="flex-1 px-4 py-6 max-w-7xl mx-auto w-full space-y-6">
     <div style="text-align:center;margin-bottom:32px">
@@ -1151,8 +1158,6 @@ _HTML = """
         <button class="btn-primary admin-only" id="run-btn" onclick="startRun()" style="margin-left:10px">Run Picks</button>
         <button class="btn-primary admin-only" id="force-btn" onclick="startRun(true)" style="margin-left:10px;background:#dc2626;color:#fff" title="Bypass cache and rebuild today's picks from scratch">Force Refresh</button>
         <button class="btn-primary" id="results-btn" onclick="checkResults()" style="margin-left:10px;background:#1d4ed8;color:#fff">📊 Results</button>
-        <button class="btn-primary admin-only" id="track-btn" onclick="openTrackRecord()" style="margin-left:10px;background:#7c3aed;color:#fff" title="All-time + daily Win/Loss record across every graded day, by category">🏆 Track Record</button>
-        <button class="btn-primary admin-only" id="mybets-btn" onclick="openMyBets()" style="margin-left:10px;background:#4338ca;color:#fff" title="Your personal logged bets, record and ROI (auto-settled from box scores)">💰 My Bets</button>
       </div>
       <div id="run-spinner" class="hidden" style="margin-top:12px;color:#6b7280;font-size:13px">
         <span class="spinner"></span> Analyzing player histories…
@@ -3103,6 +3108,14 @@ function _trackCSV(which){
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
+
+// ── Admin top-right menu (Track Record + My Bets) ──────────────────────
+function toggleAdminMenu(e){ if(e) e.stopPropagation(); var m=document.getElementById('admin-menu'); if(m) m.classList.toggle('hidden'); }
+function closeAdminMenu(){ var m=document.getElementById('admin-menu'); if(m) m.classList.add('hidden'); }
+document.addEventListener('click',function(e){
+  var w=document.getElementById('admin-menu-wrap'); var m=document.getElementById('admin-menu');
+  if(m && !m.classList.contains('hidden') && w && !w.contains(e.target)) m.classList.add('hidden');
+});
 
 // ── My Bets: personal bet log + ROI (admin-only) ───────────────────────
 function _betAuthQS(){
