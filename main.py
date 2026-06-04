@@ -1547,6 +1547,7 @@ function showResults(result) {
   }
 
   const pkData=view.pitcher_k||{}, pkAll=pkData.all||[];
+  window.__TEAM_K_RANKS__=(pkData.team_k_ranks||[]);
   if (pkAll.length > 0) {
     show('pitcher-k-card');
     const pkSorted = pkAll.filter(p=>p.pick && (p.starts||0)>0).sort((a,b)=>{
@@ -1736,6 +1737,46 @@ var PROP_CFG = {
 };
 var PROP_ORDER = ['pitcher_hits_allowed','pitcher_outs','pitcher_earned_runs','pitcher_walks'];
 function _ppU(p){ return p && p.unit ? (' '+String(p.unit).trim()) : ''; }
+function _propBestCard(p, key, rank) {
+  var mktColors={pitcher_hits_allowed:'#f87171',pitcher_outs:'#a78bfa',pitcher_earned_runs:'#fb923c'};
+  var clr=mktColors[p.market]||'#63cab7';
+  var abbr=_mlbTeamAbbr(p.team);
+  var teamLogo=abbr?'https://a.espncdn.com/i/teamlogos/mlb/500/'+abbr+'.png':'';
+  var isOver=(p.pick||'').toUpperCase()==='OVER';
+  var odds=isOver?(p.over_odds!=null?(p.over_odds>0?'+':'')+p.over_odds:'')
+                 :(p.under_odds!=null?(p.under_odds>0?'+':'')+p.under_odds:'');
+  var gap=p.blended!=null&&p.line!=null?Math.abs(p.blended-p.line):null;
+  var gapDisp=gap!=null?'edge +'+gap.toFixed(1)+(p.unit?' '+p.unit:''):'';
+  var blendDisp=p.blended!=null?p.blended+(p.unit?' '+p.unit:''):'—';
+  var lineDisp=p.line!=null?p.line+(p.unit?' '+p.unit:''):'—';
+  var sideLabel=p.side?'<span style="font-size:.62rem;background:rgba(255,255,255,.07);border-radius:4px;padding:1px 5px;color:#94a3b8">'+(p.homeRoad||p.side)+'</span>':'';
+  var oppLabel=p.opp?'<span style="font-size:.62rem;color:#64748b">vs '+p.opp+'</span>':'';
+  window.__PP_REG__=window.__PP_REG__||{}; window.__PP_REG__[key]=p;
+  return '<div class="mlb-pick-card" onclick="_ppForm(\''+key+'\')" title="Click for recent form" style="cursor:pointer">'
+    +'<div class="mlb-card-header" style="background:linear-gradient(135deg,rgba('+
+      (p.market==='pitcher_hits_allowed'?'248,113,113'
+      :p.market==='pitcher_outs'?'167,139,250'
+      :'251,146,60')+
+      ',.18) 0%,#08111d 100%)">'
+    +'<div style="display:flex;align-items:center;gap:8px">'
+    +'<div style="width:26px;height:26px;border-radius:50%;background:'+clr+';color:#000;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.78rem">'+rank+'</div>'
+    +_mlbHead(p.pid)
+    +'<span style="font-size:.62rem;letter-spacing:.1em;color:'+clr+';font-weight:800">'+String(p.label||p.market||'PROP').toUpperCase()+'</span>'
+    +'</div>'
+    +(teamLogo?'<img src="'+teamLogo+'" alt="'+p.team+'" style="height:30px;width:30px;object-fit:contain" onerror="this.style.display=\'none\'"/>'  :'')
+    +'</div>'
+    +'<div class="mlb-card-name">'+String(p.name||'')+'</div>'
+    +'<div style="padding:10px 14px">'
+    +'<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">'+sideLabel+oppLabel+'</div>'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;border-top:1px solid #1f2d3d;padding-top:6px;margin-top:2px">'
+    +'<span style="font-size:.7rem;color:#64748b">Line '+lineDisp+' · Blend '+blendDisp+'</span>'
+    +'<span style="color:'+(isOver?'#63cab7':'#ff8a65')+';font-weight:900;font-size:.9rem">'+(p.pick||'—')+'</span>'
+    +'</div>'
+    +(gapDisp?'<div style="margin-top:4px;font-size:.66rem;color:#fbbf24">'+gapDisp+'</div>':'')
+    +(odds?'<div style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.85rem;margin-top:2px">'+odds+'</div>':'')
+    +'</div>'
+    +'</div>';
+}
 function renderPitcherProps(view){
   var wrap=document.getElementById('pitcher-props-wrap'); if(!wrap) return;
   var props=(view&&view.pitcher_props)||{};
@@ -1753,11 +1794,30 @@ function renderPitcherProps(view){
       if(!_ex || (!_ex.obj.pick && _p.pick)) window.__PP_BY_NAME__[_nm][_mkt]={obj:_p,key:_key};
     });
   });
-  // Consolidated into the single Pitcher box popup (_pkForm shows all 4 markets);
-  // the 3 separate prop sections are no longer drawn. The per-name index above
-  // (window.__PP_BY_NAME__) and r.pitcher_props still feed the popup, parlay,
-  // CSV and by-game views, so nothing downstream is affected.
-  wrap.innerHTML='';
+  // Build "Best Pitching Props" card box: collect qualifying picks across all
+  // markets, sort by edge (|blended - line|) desc, show top 10 as cards.
+  var bestPicks=[];
+  PROP_ORDER.forEach(function(m){
+    ((props[m]||{}).picks||[]).forEach(function(p2){
+      var g=(p2.blended!=null&&p2.line!=null)?Math.abs(p2.blended-p2.line):0;
+      var k='bp'+(++_ppN); window.__PP_REG__[k]=p2;
+      bestPicks.push({p:p2,key:k,gap:g});
+    });
+  });
+  bestPicks.sort(function(a,b){return b.gap-a.gap;});
+  if(!bestPicks.length){wrap.innerHTML='';return;}
+  var top10=bestPicks.slice(0,10), rest=bestPicks.slice(10);
+  var topHtml=top10.map(function(x,i){return _propBestCard(x.p,x.key,i+1);}).join('');
+  var moreHtml='';
+  if(rest.length){
+    var restCards=rest.map(function(x,i){return _propBestCard(x.p,x.key,11+i);}).join('');
+    moreHtml='<details style="margin-top:14px"><summary class="more-btn" style="color:#94a3b8;border-color:#94a3b833">&#9655; '+rest.length+' more Pitcher Props</summary><div class="mlb-picks-grid mt-3">'+restCards+'</div></details>';
+  }
+  wrap.innerHTML='<div class="section-card" style="margin-top:20px;padding:20px;background:linear-gradient(180deg,#0f1924 0%,#0a1118 100%);border-radius:16px;border:1px solid #1e293b">'
+    +'<div style="font-size:1.05rem;font-weight:800;color:#f8fafc;margin-bottom:14px">&#127919; Best Pitching Props <span style="font-size:.72rem;font-weight:400;color:#64748b">top picks by edge across all markets</span></div>'
+    +'<div class="mlb-picks-grid">'+topHtml+'</div>'
+    +moreHtml
+    +'</div>';
 }
 // Generic prop recent-form popup (mirrors _pkForm, market-agnostic).
 function _ppForm(key){
@@ -2612,6 +2672,19 @@ function _bpChip(p){
 }
 // Umpire-adjusted multiplier for the client-side pitcher-K sort: a wide-zone
 // ump (kFactor>1) lifts OVER picks and lowers UNDER picks; tight zone inverse.
+function _mlbHead(id) {
+  if (!id) return '';
+  return `<img src="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/${id}/headshot/67/current" alt="" style="width:38px;height:38px;border-radius:50%;object-fit:cover;object-position:top;border:1px solid rgba(255,255,255,.12);flex-shrink:0" onerror="this.style.display='none'">`;
+}
+function _teamMatchJS(a, b) {
+  if (!a||!b) return false;
+  var n1=a.toLowerCase(), n2=b.toLowerCase();
+  if(n1===n2||n1.includes(n2)||n2.includes(n1)) return true;
+  var st=['of','the','los','las','san','new','de'];
+  var w1=n1.split(' ').filter(function(w){return st.indexOf(w)<0;});
+  var w2=n2.split(' ').filter(function(w){return st.indexOf(w)<0;});
+  return w1.some(function(w){return w2.indexOf(w)>=0;});
+}
 function _umpKMul(p){
   var u=p&&p.ump; if(!u) return 1;
   var k=Number(u.kFactor); if(!k||k<=0) return 1;
@@ -2638,6 +2711,7 @@ function _mlbCard(p, rank, dim) {
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#1a2a1a 0%,#0a1a0a 100%)">
       <div style="display:flex;align-items:center;gap:8px">
         <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
+        ${_mlbHead(p.player_id)}
         <span style="font-size:.72rem;letter-spacing:.12em;color:#f59e0b;font-weight:800">MLB · ${p.pos||''}</span>
       </div>
       ${teamLogo?`<img src="${teamLogo}" alt="${p.team}" style="height:34px;width:34px;object-fit:contain" onerror="this.style.display='none'"/>`:''}
@@ -2685,6 +2759,7 @@ function _underCard(p, rank) {
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#2a1414 0%,#180808 100%)">
       <div style="display:flex;align-items:center;gap:8px">
         <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
+        ${_mlbHead(p.batter_id)}
         <span style="font-size:.72rem;letter-spacing:.12em;color:#ff8a65;font-weight:800">MLB · UNDER</span>
       </div>
       ${teamLogo?`<img src="${teamLogo}" alt="${p.team}" style="height:34px;width:34px;object-fit:contain" onerror="this.style.display='none'"/>`:''}
@@ -2756,6 +2831,7 @@ function _runsCard(p, rank, pfx) {
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#0e1f33 0%,#08111d 100%)">
       <div style="display:flex;align-items:center;gap:8px">
         <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
+        ${_mlbHead(p.batter_id)}
         <span style="font-size:.72rem;letter-spacing:.12em;color:#60a5fa;font-weight:800">MLB · RUN</span>
       </div>
       ${teamLogo?`<img src="${teamLogo}" alt="${p.team}" style="height:34px;width:34px;object-fit:contain" onerror="this.style.display='none'"/>`:''}
@@ -2801,11 +2877,22 @@ function _pitcherCard(p, rank) {
     :(isOver?(p.over_odds!=null?(p.over_odds>0?'+':'')+p.over_odds:''):(p.under_odds!=null?(p.under_odds>0?'+':'')+p.under_odds:''));
   const conflict = p.avg_k!=null&&p.recent_avg_k!=null&&p.line!=null&&((p.avg_k>p.line)!==(p.recent_avg_k>p.line));
   const blDisp = p.blended_avg_k!=null?p.blended_avg_k+'K'+(conflict?' ⚠️':''):'—';
+  var tkr=window.__TEAM_K_RANKS__||[];
+  var tkRows=tkr.length?tkr.map(function(t){
+    var hi=_teamMatchJS(t.name,p.opp||'');
+    var s=hi?'color:#63cab7;font-weight:800':'color:#64748b';
+    var bg=hi?'background:rgba(99,202,183,.1)':'';
+    return '<tr style="'+bg+'"><td style="padding:1px 5px;'+s+'">#'+t.rank+'</td>'
+      +'<td style="padding:1px 5px;font-size:.62rem;'+s+'">'+t.name+'</td>'
+      +'<td style="padding:1px 5px;text-align:right;font-family:monospace;font-size:.6rem;'+s+'">'+t.k_per_g+' K/g</td></tr>';
+  }).join(''):'';
+  var tkSection=tkRows?'<details style="margin-top:5px"><summary style="cursor:pointer;font-size:.65rem;color:#64748b;list-style:none;user-select:none">&#9654; All Team K Rankings</summary><div style="max-height:120px;overflow-y:auto;margin-top:2px"><table style="width:100%;font-size:.62rem;border-collapse:collapse">'+tkRows+'</table></div></details>':'';
   window.__PK_REG__=window.__PK_REG__||{}; window.__PK_REG__['pk'+rank]=p;
   return `<div class="mlb-pick-card" onclick="_pkForm('pk${rank}')" title="Click for all 5 markets" style="cursor:pointer">
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#0f2420 0%,#08160f 100%)">
       <div style="display:flex;align-items:center;gap:8px">
         <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
+        ${_mlbHead(p.pid)}
         <span style="font-size:.72rem;letter-spacing:.12em;color:#63cab7;font-weight:800">MLB · P</span>
       </div>
       ${teamLogo?`<img src="${teamLogo}" alt="${p.team}" style="height:34px;width:34px;object-fit:contain" onerror="this.style.display='none'"/>`:''}
@@ -2820,6 +2907,7 @@ function _pitcherCard(p, rank) {
       ${_umpChip(p)}
       ${_bpChip(p)}
       ${_kRankChip(p)}
+      ${tkSection}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
         <span style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">K Line ${p.line!=null?p.line:'—'}</span>
         <span style="color:${pickClr};font-weight:900;font-size:1rem">${pickLabel}</span>
@@ -2828,7 +2916,7 @@ function _pitcherCard(p, rank) {
         <span style="font-size:.72rem;color:#64748b">Blend ${blDisp}</span>
         <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.9rem">${odds||'—'}</span>
       </div>
-      <div style="margin-top:5px;font-size:.7rem;color:#94a3b8">Avg K <strong style="color:#cbd5e1">${p.avg_k!=null?p.avg_k:'—'}</strong> · IP <strong style="color:#cbd5e1">${p.avg_ip!=null?p.avg_ip:'—'}</strong> · ERA <strong style="color:#cbd5e1">${p.era||'—'}</strong> · H <strong style="color:#cbd5e1">${p.avg_hits!=null?p.avg_hits:'—'}</strong> · BB <strong style="color:#cbd5e1">${p.avg_bb!=null?p.avg_bb:'—'}</strong> <span style="color:#64748b">vr opp</span></div>
+      <div style="margin-top:5px;font-size:.68rem;color:#94a3b8;line-height:1.6">K <strong style="color:#cbd5e1">${p.avg_k!=null?p.avg_k:'—'}</strong> · H <strong style="color:#cbd5e1">${p.avg_hits!=null?p.avg_hits:'—'}</strong> · ER <strong style="color:#cbd5e1">${p.avg_er!=null?p.avg_er:'—'}</strong> · Outs <strong style="color:#cbd5e1">${p.avg_outs!=null?p.avg_outs:'—'}</strong> · BB <strong style="color:#cbd5e1">${p.avg_bb!=null?p.avg_bb:'—'}</strong> · IP <strong style="color:#cbd5e1">${p.avg_ip!=null?p.avg_ip:'—'}</strong> · ERA <strong style="color:#cbd5e1">${p.era||'—'}</strong> <span style="color:#64748b">vr opp</span></div>
       ${_betBtn(p,'Pitcher Ks',(hasSugg?'OVER':p.pick),'strikeOuts','Ks',(hasSugg?p.sugg_line:p.line),(hasSugg?p.sugg_odds:(isOver?p.over_odds:p.under_odds)))}
       <div style="margin-top:5px;font-size:.66rem;color:#63cab7;text-align:right">all 5 markets →</div>
     </div>
