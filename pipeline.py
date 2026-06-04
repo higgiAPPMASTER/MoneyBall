@@ -406,11 +406,11 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         dq = []
         if s2["ba"] is None:
             dq.append("S2 N/A")
-        elif "✅" in s2["flag"] and s2["ba"] < 0.225:
+        elif "✅" in s2["flag"] and s2["ba"] < 0.250:
             dq.append(f"S2 {s2['display']}")
         if s3["ba"] is None:
             dq.append("S3 N/A")
-        elif "✅" in s3["flag"] and s3["ba"] < 0.225:
+        elif "✅" in s3["flag"] and s3["ba"] < 0.250:
             dq.append(f"S3 {s3['display']}")
 
         s2s   = round(s2["ba"] * 1000) if s2["ba"] and "✅" in s2["flag"] else 0
