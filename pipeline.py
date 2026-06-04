@@ -4,6 +4,7 @@ pipeline.py — MLB Daily Picks master pipeline (web-optimized).
 Runs all 4 steps with real-time progress via emit callback.
 """
 import os, sys, time, json, math, requests
+from concurrent.futures import ThreadPoolExecutor as _TPEx
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -321,6 +322,61 @@ def _fetch_bullpen_fatigue(run_date: str) -> dict:
     }
 
 
+# ── Platoon split helpers ────────────────────────────────────────────────
+_PITCHER_HAND_CACHE: dict = {}
+_PLATOON_CACHE:      dict = {}
+
+def _get_pitcher_hand(pitcher_id):
+    """Pitcher throwing hand: 'R', 'L', or None."""
+    if not pitcher_id:
+        return None
+    if pitcher_id in _PITCHER_HAND_CACHE:
+        return _PITCHER_HAND_CACHE[pitcher_id]
+    try:
+        r = requests.get(
+            f"https://statsapi.mlb.com/api/v1/people/{pitcher_id}",
+            params={"fields": "people,pitchHand,code"}, timeout=8)
+        hand = (r.json().get("people", [{}])[0]
+                        .get("pitchHand", {}).get("code"))
+        _PITCHER_HAND_CACHE[pitcher_id] = hand
+        return hand
+    except Exception:
+        _PITCHER_HAND_CACHE[pitcher_id] = None
+        return None
+
+def _get_batter_platoon(batter_id):
+    """Career platoon splits: bat_hand (R/L/S), vs_r {ba,ab}, vs_l {ba,ab}."""
+    if not batter_id:
+        return {}
+    if batter_id in _PLATOON_CACHE:
+        return _PLATOON_CACHE[batter_id]
+    try:
+        ph = requests.get(
+            f"https://statsapi.mlb.com/api/v1/people/{batter_id}",
+            params={"fields": "people,batSide,code"}, timeout=8)
+        bat_hand = (ph.json().get("people", [{}])[0]
+                              .get("batSide", {}).get("code"))  # R, L, or S
+        sr = requests.get(
+            f"https://statsapi.mlb.com/api/v1/people/{batter_id}/stats",
+            params={"stats": "career", "group": "hitting",
+                    "sitCodes": "vr,vl", "gameType": "R"}, timeout=10)
+        splits = sr.json().get("stats", [{}])[0].get("splits", [])
+        vs_r = vs_l = None
+        for sp in splits:
+            code = sp.get("split", {}).get("code", "")
+            st   = sp.get("stat", {})
+            ab   = int(st.get("atBats", 0) or 0)
+            h    = int(st.get("hits",   0) or 0)
+            ba   = round(h / ab, 3) if ab > 0 else None
+            if code == "vr":   vs_r = {"ba": ba, "ab": ab}
+            elif code == "vl": vs_l = {"ba": ba, "ab": ab}
+        result = {"bat_hand": bat_hand, "vs_r": vs_r, "vs_l": vs_l}
+        _PLATOON_CACHE[batter_id] = result
+        return result
+    except Exception:
+        _PLATOON_CACHE[batter_id] = {}
+        return {}
+
 def run_pipeline(run_date: str, emit=None) -> dict:
     if emit is None:
         emit = lambda _: None
@@ -534,6 +590,54 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         lineup_qualified = era_qualified
         for r in lineup_qualified:
             r.setdefault("lineup_status", "TBD")
+
+    # ── Platoon Splits ─────────────────────────────────────────────────────
+    emit({"type": "section", "msg": "Platoon — Fetching batter/pitcher handedness"})
+    try:
+        pit_id_map = {tn: pi.get("id") for tn, pi in mlb_probable.items() if pi.get("id")}
+        _pltn_bids = list({r.get("player_id") for r in lineup_qualified if r.get("player_id")})
+        _pltn_pids = list({pid for pid in pit_id_map.values() if pid})
+        with _TPEx(max_workers=8) as _ex:
+            list(_ex.map(_get_batter_platoon, _pltn_bids))
+        with _TPEx(max_workers=8) as _ex:
+            list(_ex.map(_get_pitcher_hand, _pltn_pids))
+        _stop_w = {"the", "of", "los", "san", "new", "de"}
+        def _match_opp(opp):
+            opp_l = opp.lower()
+            for tn, pid in pit_id_map.items():
+                if tn.lower() == opp_l: return pid
+            for tn, pid in pit_id_map.items():
+                if (set(tn.lower().split()) - _stop_w) & (set(opp_l.split()) - _stop_w):
+                    return pid
+            return None
+        enriched = 0
+        for r in lineup_qualified:
+            batter_id = r.get("player_id")
+            pit_id    = _match_opp(r.get("opp", ""))
+            pl        = _get_batter_platoon(batter_id)
+            bat_hand  = pl.get("bat_hand")
+            pit_hand  = _get_pitcher_hand(pit_id) if pit_id else None
+            if bat_hand and pit_hand:
+                eff = ("L" if pit_hand == "R" else "R") if bat_hand == "S" else bat_hand
+                split = pl.get("vs_r" if pit_hand == "R" else "vs_l") or {}
+                ba   = split.get("ba")
+                ab   = split.get("ab", 0)
+                adv  = (eff == "L" and pit_hand == "R") or (eff == "R" and pit_hand == "L")
+                ba_d = (".%03d" % int(ba * 1000)) if ba is not None else "N/A"
+                r["platoon"] = {
+                    "bat_hand": bat_hand, "pit_hand": pit_hand,
+                    "ba": ba, "ab": ab, "adv": adv,
+                    "display": f"{ba_d} ({ab}AB)",
+                    "label": f"{'L' if bat_hand=='S' else bat_hand}HB vs {pit_hand}HP",
+                }
+                enriched += 1
+            else:
+                r["platoon"] = None
+        emit({"type": "log", "msg": f"✅ Platoon: {enriched}/{len(lineup_qualified)} enriched"})
+    except Exception as _exc:
+        emit({"type": "log", "msg": f"⚠️ Platoon enrichment skipped: {_exc}"})
+        for r in lineup_qualified:
+            r.setdefault("platoon", None)
 
     # ── S4 (L10 H/A consistency ≥50%) — filter then re-rank ──────────
     emit({"type": "section", "msg": "S4 (L10 H/A consistency ≥50%) + S5 (D/N BA) — filter & re-rank"})
