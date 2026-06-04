@@ -584,6 +584,13 @@ def _american_profit(odds, stake, result) -> float:
         return -stake
     return 0.0  # PUSH / pending
 
+def _am_to_dec(odds) -> float:
+    try:
+        o = float(odds)
+    except Exception:
+        return 0.0
+    return round(1 + o / 100, 6) if o > 0 else round(1 + 100 / abs(o), 6)
+
 def _settle_bet_cached(bet: dict, name_stats: dict) -> bool:
     """Grade a pending bet using pre-fetched name_stats (no extra API call)."""
     if bet.get("result") in ("WIN", "LOSS", "PUSH"):
@@ -630,15 +637,72 @@ def _settle_bet(bet: dict) -> bool:
         return False
     return _settle_bet_cached(bet, ns)
 
-def _settle_bets_batch(bets: list) -> bool:
-    """Settle all pending bets with ONE box-score API call per unique date
-    instead of one call per bet. Returns True if any bet changed."""
+def _settle_parlay_cached(parlay: dict, ns_cache: dict) -> bool:
+    """Grade a parlay using pre-fetched ns_cache. WIN=all legs win, LOSS=any leg loses."""
+    if parlay.get("result") in ("WIN", "LOSS", "PUSH"):
+        return False
+    legs = parlay.get("legs") or []
+    for lg in legs:
+        if lg.get("result") in ("WIN", "LOSS", "PUSH"):
+            continue
+        bdate = lg.get("date")
+        if bdate and bdate in ns_cache:
+            _settle_bet_cached(lg, ns_cache[bdate])
+    results = [lg.get("result") for lg in legs]
+    if not results or any(r not in ("WIN", "LOSS", "PUSH") for r in results):
+        if any(r == "LOSS" for r in results):
+            pass  # fall through to LOSS
+        else:
+            return False  # still pending legs
+    if any(r == "LOSS" for r in results):
+        parlay["result"] = "LOSS"
+        parlay["profit"] = round(-float(parlay.get("stake") or 0), 2)
+        parlay["settled_at"] = date.today().isoformat()
+        return True
+    if all(r == "WIN" for r in results):
+        dec = _am_to_dec(parlay.get("odds"))
+        stake = float(parlay.get("stake") or 0)
+        parlay["result"] = "WIN"
+        parlay["profit"] = round(stake * (dec - 1), 2) if dec else None
+        parlay["settled_at"] = date.today().isoformat()
+        return True
+    if all(r in ("WIN", "PUSH") for r in results):
+        parlay["result"] = "PUSH"
+        parlay["profit"] = 0.0
+        parlay["settled_at"] = date.today().isoformat()
+        return True
+    return False
+
+def _settle_parlay(parlay: dict) -> bool:
+    """One-shot settle attempt for a just-logged parlay."""
+    legs = parlay.get("legs") or []
     today = date.today().isoformat()
-    dates_needed = {
-        b["date"] for b in bets
-        if b.get("result") not in ("WIN", "LOSS", "PUSH")
-        and b.get("date") and b["date"] < today
-    }
+    dates_needed = {lg["date"] for lg in legs if lg.get("date") and lg["date"] < today}
+    if not dates_needed:
+        return False
+    ns_cache: dict = {}
+    for d in dates_needed:
+        try:
+            _, ns, _, _ = _mlb_box_lookup(d)
+            ns_cache[d] = ns
+        except Exception:
+            pass
+    return _settle_parlay_cached(parlay, ns_cache)
+
+def _settle_bets_batch(bets: list) -> bool:
+    """Settle all pending bets (single + parlay) with ONE box-score API call per
+    unique date. Returns True if any bet changed."""
+    today = date.today().isoformat()
+    dates_needed: set = set()
+    for b in bets:
+        if b.get("result") in ("WIN", "LOSS", "PUSH"):
+            continue
+        if b.get("bet_type") == "parlay":
+            for lg in b.get("legs") or []:
+                if lg.get("result") not in ("WIN", "LOSS", "PUSH") and lg.get("date") and lg["date"] < today:
+                    dates_needed.add(lg["date"])
+        elif b.get("date") and b["date"] < today:
+            dates_needed.add(b["date"])
     if not dates_needed:
         return False
     ns_cache: dict = {}
@@ -650,10 +714,14 @@ def _settle_bets_batch(bets: list) -> bool:
             print(f"[bet_log] batch settle lookup failed {d}: {e}")
     changed = False
     for b in bets:
-        bdate = b.get("date")
-        if bdate and bdate in ns_cache:
-            if _settle_bet_cached(b, ns_cache[bdate]):
+        if b.get("bet_type") == "parlay":
+            if _settle_parlay_cached(b, ns_cache):
                 changed = True
+        else:
+            bdate = b.get("date")
+            if bdate and bdate in ns_cache:
+                if _settle_bet_cached(b, ns_cache[bdate]):
+                    changed = True
     return changed
 
 def _summarize_bets(bets: list) -> dict:
@@ -731,6 +799,58 @@ async def add_bet(request: Request, token: str = "", admin: str = ""):
     if not _bet_admin_ok(tok, admin):
         raise HTTPException(status_code=403, detail="Admin only")
     body = await request.json()
+    import uuid as _uuid
+    # ── PARLAY PATH ──────────────────────────────────────────────────────────
+    if body.get("bet_type") == "parlay":
+        legs_raw = body.get("legs") or []
+        if len(legs_raw) < 2:
+            raise HTTPException(status_code=400, detail="Parlay needs at least 2 legs")
+        try:
+            stake = round(float(body.get("stake")), 2)
+            odds  = int(round(float(body.get("odds"))))
+        except Exception:
+            raise HTTPException(status_code=400, detail="stake and odds must be numbers")
+        if stake <= 0:
+            raise HTTPException(status_code=400, detail="Bet size must be > 0")
+        legs = []
+        for lg in legs_raw:
+            try: lline = float(lg.get("line"))
+            except Exception: lline = None
+            legs.append({
+                "name":       (lg.get("name") or "").strip(),
+                "team":       (lg.get("team") or "").strip(),
+                "opp":        (lg.get("opp") or "").strip(),
+                "category":   (lg.get("category") or "").strip(),
+                "side":       (lg.get("side") or "OVER").strip().upper(),
+                "stat_key":   (lg.get("stat_key") or "").strip(),
+                "stat_label": (lg.get("stat_label") or "").strip(),
+                "line":       lline,
+                "odds":       lg.get("odds"),
+                "date":       (lg.get("date") or date.today().isoformat()).strip(),
+                "result":     "pending",
+                "actual":     None,
+            })
+        parlay = {
+            "id":         _uuid.uuid4().hex[:12],
+            "bet_type":   "parlay",
+            "date":       (body.get("date") or date.today().isoformat()).strip(),
+            "category":   "Parlay",
+            "legs":       legs,
+            "odds":       odds,
+            "stake":      stake,
+            "placed_at":  (body.get("placed_at") or date.today().isoformat()),
+            "result":     "pending",
+            "profit":     None,
+            "settled_at": None,
+        }
+        _settle_parlay(parlay)
+        with _BET_LOCK:
+            data = _load_bets()
+            key  = _bet_user_key(tok, admin)
+            data.setdefault(key, []).append(parlay)
+            _save_bets(data)
+        return {"ok": True, "bet": parlay}
+    # ── SINGLE BET PATH ───────────────────────────────────────────────────────
     try:
         stake = round(float(body.get("stake")), 2)
         odds = int(round(float(body.get("odds"))))
@@ -745,7 +865,6 @@ async def add_bet(request: Request, token: str = "", admin: str = ""):
     if not name or stat_key not in _BET_STAT_KEYS or side not in ("OVER", "UNDER"):
         raise HTTPException(status_code=400, detail="Invalid bet")
     bdate = (body.get("date") or date.today().isoformat()).strip()
-    import uuid as _uuid
     bet = {
         "id": _uuid.uuid4().hex[:12],
         "date": bdate,
@@ -765,7 +884,7 @@ async def add_bet(request: Request, token: str = "", admin: str = ""):
         "profit": None,
         "settled_at": None,
     }
-    _settle_bet(bet)  # settle immediately if it's already a past, final game
+    _settle_bet(bet)
     with _BET_LOCK:
         data = _load_bets()
         key = _bet_user_key(tok, admin)
@@ -2260,8 +2379,9 @@ function _paintParlay(){
   var header='<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid #262626;background:#121212">'
     +'<span style="font-weight:800;color:#ccc;font-size:.74rem">'+(window._parlayMode||'TOP PLAYS')+'</span>'
     +'<span onclick="closeParlay()" title="Close" style="cursor:pointer;color:#888;font-weight:900;font-size:1.15rem;line-height:1;padding:0 6px">×</span></div>';
+  var logBtn=window.IS_ADMIN?('<button class="admin-only" onclick="_parlayBetForm()" style="margin-top:7px;background:rgba(67,56,202,.18);border:1px solid rgba(129,140,248,.55);color:#c7d2fe;border-radius:7px;padding:5px 11px;font-size:.72rem;font-weight:800;cursor:pointer;display:block">&#128221; Log This Parlay</button>'):'';
   var summary='<div style="display:flex;justify-content:space-between;align-items:center;padding:12px;background:linear-gradient(135deg,rgba(245,158,11,.12),rgba(245,158,11,.02));border-top:1px solid #262626">'
-    +'<div style="font-weight:900;color:#f59e0b">'+n+'-LEG PARLAY</div>'
+    +'<div><div style="font-weight:900;color:#f59e0b">'+n+'-LEG PARLAY</div>'+logBtn+'</div>'
     +'<div style="text-align:right">'+(am?('<div style="font-weight:900;color:#63cab7;font-size:1.05rem">'+am+'</div><div style="color:#999;font-size:.7rem">$100 → $'+payout.toFixed(2)+(missing?(' · '+priced+'/'+n+' legs priced'):'')+'</div>'):('<div style="color:#888;font-size:.78rem">No book odds available for these legs</div>'))+'</div>'
     +'</div>';
   out.innerHTML='<div style="background:#0e0e0e;border:1px solid #262626;border-radius:12px;overflow:hidden">'+header+rows+summary+'</div>';
@@ -2750,12 +2870,15 @@ function _mlbCard(p, rank, dim) {
   const odds = p.hit_odds!=null?(p.hit_odds>0?'+':'')+p.hit_odds:'—';
   const s1Disp = p.s1!=null?p.s1.toFixed(3):'—';
   const s4Disp = p.s4?.display||'—';
+  const s5Lbl = p.dn_label||(p.s5?'D/N':'');
+  const s5Val = p.s5?.display||'—';
   const adminStats = `<div class="admin-only" style="display:none;font-size:.72rem;color:#64748b;margin-top:4px;line-height:1.7">
     <span>S1 <strong style="color:#94a3b8">${s1Disp}</strong></span> &nbsp;
     <span>S2 <strong style="color:#94a3b8">${p.s2?.display||'—'}</strong></span> &nbsp;
     <span>S3 <strong style="color:#94a3b8">${p.s3?.display||'—'}</strong></span><br>
     <span>S4 <strong style="color:#94a3b8">${s4Disp}</strong></span> &nbsp;
-    <span>Score <strong style="color:#f59e0b">${p.total||'—'}</strong></span>
+    <span>Score <strong style="color:#f59e0b">${p.total||'—'}</strong></span> &nbsp;
+    <span>${s5Lbl} BA <strong style="color:#7dd3fc">${s5Val}</strong></span>
   </div>`;
   window.__HIT_REG__=window.__HIT_REG__||{}; window.__HIT_REG__['h'+rank]=p;
   return `<div class="mlb-pick-card" onclick="_hitForm('h${rank}')" title="Click for recent form" style="cursor:pointer;${dim?'opacity:0.85':''}">
@@ -2799,12 +2922,15 @@ function _underCard(p, rank) {
   const sideCls = p.side==='HOME'?'badge-home':'badge-away';
   const uOdds = p.under_odds!=null?(p.under_odds>0?'+':'')+p.under_odds:'—';
   const tbOdds = p.tb_under_odds!=null?(p.tb_under_odds>0?'+':'')+p.tb_under_odds:'—';
+  const s5LblU = p.dn_label||(p.s5?'D/N':'');
+  const s5ValU = p.s5?.display||'—';
   const adminStats = `<div class="admin-only" style="display:none;font-size:.72rem;color:#64748b;margin-top:4px;line-height:1.7">
     <span>S1 <strong style="color:#94a3b8">${p.s1_disp||'—'}</strong> <span style="color:#475569">(${p.s1_ab||0}AB)</span></span> &nbsp;
     <span>S2 <strong style="color:#94a3b8">${p.s2?.display||'—'}</strong></span><br>
     <span>S3 <strong style="color:#94a3b8">${p.s3?.display||'—'}</strong></span> &nbsp;
     <span>L7 <strong style="color:#94a3b8">${p.l7?.display||'—'}</strong></span> &nbsp;
-    <span>Score <strong style="color:#ff8a65">${p.under_score||'—'}</strong></span>
+    <span>Score <strong style="color:#ff8a65">${p.under_score||'—'}</strong></span> &nbsp;
+    <span>${s5LblU} BA <strong style="color:#7dd3fc">${s5ValU}</strong></span>
   </div>`;
   window.__HIT_REG__=window.__HIT_REG__||{}; window.__HIT_REG__['u'+rank]=p;
   return `<div class="mlb-pick-card" onclick="_hitForm('u${rank}')" title="Click for recent form" style="cursor:pointer">
@@ -2874,10 +3000,13 @@ function _runsCard(p, rank, pfx) {
   const scoreClr = p.score>=70?'#63cab7':p.score>=50?'#fbbf24':'#ff8a65';
   const log = p.recent_runs_log||[];
   const recCnt = log.filter(g=>g.r>=1).length;
+  const s5LblR = p.dn_label||(p.s5?'D/N':'');
+  const s5ValR = p.s5?.display||'—';
   const adminStats = `<div class="admin-only" style="display:none;font-size:.72rem;color:#64748b;margin-top:4px;line-height:1.7">
     <span>Score <strong style="color:#60a5fa">${p.score!=null?p.score+'%':'—'}</strong></span> &nbsp;
     <span>Games <strong style="color:#94a3b8">${p.games||0}</strong></span> &nbsp;
-    <span>Wilson <strong style="color:#94a3b8">${p.wilson!=null?p.wilson:'—'}</strong></span>
+    <span>Wilson <strong style="color:#94a3b8">${p.wilson!=null?p.wilson:'—'}</strong></span> &nbsp;
+    <span>${s5LblR} BA <strong style="color:#7dd3fc">${s5ValR}</strong></span>
   </div>`;
   window.__RUNS_REG__=window.__RUNS_REG__||{}; window.__RUNS_REG__[pfx+rank]=p;
   return `<div class="mlb-pick-card" onclick="_runsForm('${pfx}${rank}')" title="Click for recent form" style="cursor:pointer">
@@ -3402,6 +3531,84 @@ async function _saveBet(){
     if(mb && !mb.classList.contains('hidden')) openMyBets();
   }catch(e){ msg.textContent=(e.message||'Save failed'); btn.disabled=false; btn.textContent='Log Bet'; }
 }
+function _legStatKey(l){
+  if(l.type==='UNDER') return l.stat==='Total Bases'?'':'hits';
+  var m={HIT:'hits',K:'strikeOuts',RUN:'runs',
+    pitcher_hits_allowed:'hits_allowed',pitcher_outs:'outs',
+    pitcher_earned_runs:'earnedRuns',pitcher_walks:'walks'};
+  return m[l.type]||'';
+}
+function _parlayBetForm(){
+  var legs=window._parlayLegs||[]; if(!legs.length) return;
+  var dec=1;
+  legs.forEach(function(l){ if(l.dec) dec*=l.dec; });
+  var am=_decToAm(dec);
+  var ov=document.getElementById('pbet-modal');
+  if(!ov){ ov=document.createElement('div'); ov.id='pbet-modal';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.85);z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; };
+    document.body.appendChild(ov);
+  }
+  var legRows=legs.map(function(l,i){
+    var fo=l.odds!=null?((l.odds>0?'+':'')+l.odds):'—';
+    return '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #1e293b;font-size:.78rem">'
+      +'<span style="color:#e2e8f0;font-weight:700">'+(i+1)+'. '+_esc(l.player||'')+'</span>'
+      +'<span style="color:#94a3b8">'+_esc(l.dir+' '+l.line+' '+(l.stat||''))+'</span>'
+      +'<span style="font-family:monospace;color:#fbbf24;font-weight:700">'+fo+'</span>'
+      +'</div>';
+  }).join('');
+  ov.innerHTML='<div style="background:#0f172a;border:1px solid #312e81;border-radius:16px;max-width:400px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.6);max-height:90vh;overflow-y:auto">'
+    +'<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:16px 18px;border-bottom:1px solid #1e293b">'
+      +'<div><div style="font-weight:800;color:#fbbf24;font-size:1rem">'+legs.length+'-Leg Parlay</div>'
+      +'<div style="color:#a5b4fc;font-size:.8rem;margin-top:2px">Combined: <strong>'+(am||'—')+'</strong></div></div>'
+      +'<button onclick="document.getElementById(&#39;pbet-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem">\u2715</button>'
+    +'</div>'
+    +'<div style="padding:12px 18px;border-bottom:1px solid #1e293b">'+legRows+'</div>'
+    +'<div style="padding:16px 18px;display:grid;gap:12px">'
+      +'<label style="font-size:.72rem;color:#94a3b8;font-weight:600">Combined Odds (American)<input id="pbet-odds" type="number" value="'+(am!=null?am:'')+'" style="display:block;width:100%;margin-top:5px;background:#0b1120;border:1px solid #334155;border-radius:8px;padding:9px 11px;color:#fbbf24;font-family:monospace;font-weight:700;font-size:.95rem"></label>'
+      +'<label style="font-size:.72rem;color:#94a3b8;font-weight:600">Bet size ($)<input id="pbet-stake" type="number" min="0" step="0.01" placeholder="e.g. 20" style="display:block;width:100%;margin-top:5px;background:#0b1120;border:1px solid #334155;border-radius:8px;padding:9px 11px;color:#fff;font-weight:700;font-size:.95rem"></label>'
+      +'<div id="pbet-payout" style="font-size:.78rem;color:#64748b;min-height:1em"></div>'
+      +'<div id="pbet-msg" style="font-size:.76rem;color:#f87171;min-height:1em"></div>'
+      +'<button id="pbet-save" onclick="_saveParlay()" style="background:#4338ca;color:#fff;border:none;border-radius:9px;padding:11px;font-weight:800;cursor:pointer;font-size:.92rem">Log Parlay</button>'
+    +'</div></div>';
+  ov.style.display='flex';
+  var so=document.getElementById('pbet-odds'), ss=document.getElementById('pbet-stake');
+  function _pc(){
+    var o=parseFloat(so.value), s=parseFloat(ss.value);
+    var pay=document.getElementById('pbet-payout');
+    if(!isFinite(o)||!isFinite(s)||s<=0){ pay.textContent=''; return; }
+    var win=o>0?s*(o/100):s*(100/Math.abs(o));
+    pay.innerHTML='To win <strong style="color:#4ade80">$'+win.toFixed(2)+'</strong> · total payout <strong style="color:#cbd5e1">$'+(s+win).toFixed(2)+'</strong>';
+  }
+  so.oninput=_pc; ss.oninput=_pc; _pc();
+  setTimeout(function(){ ss.focus(); },50);
+}
+async function _saveParlay(){
+  var legs=window._parlayLegs||[]; if(!legs.length) return;
+  var o=parseFloat(document.getElementById('pbet-odds').value);
+  var s=parseFloat(document.getElementById('pbet-stake').value);
+  var msg=document.getElementById('pbet-msg');
+  if(!isFinite(o)){ msg.textContent='Enter combined odds.'; return; }
+  if(!isFinite(s)||s<=0){ msg.textContent='Enter a stake > 0.'; return; }
+  var btn=document.getElementById('pbet-save'); btn.disabled=true; btn.textContent='Saving…';
+  var today=(window._lastResult&&window._lastResult.date)||new Date().toISOString().slice(0,10);
+  var legsData=legs.map(function(l){
+    return {name:(l.player||''),team:(l.team||''),opp:(l.opp||''),
+      side:l.dir,stat_key:_legStatKey(l),stat_label:(l.stat||''),
+      line:l.line,odds:l.odds,category:l.type,
+      date:((l.src&&l.src.date)||today)};
+  });
+  var body={bet_type:'parlay',legs:legsData,odds:Math.round(o),stake:s,
+    date:today,placed_at:new Date().toISOString()};
+  try{
+    var res=await fetch('/api/bets'+_betAuthQS(),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(!res.ok) throw new Error(await res.text());
+    document.getElementById('pbet-modal').style.display='none';
+    _betToast('\u2705 Parlay logged');
+    var mb=document.getElementById('mybets-card');
+    if(mb && !mb.classList.contains('hidden')) openMyBets();
+  }catch(e){ msg.textContent=(e.message||'Save failed'); btn.disabled=false; btn.textContent='Log Parlay'; }
+}
 function _betToast(m){
   var t=document.getElementById('bet-toast');
   if(!t){ t=document.createElement('div'); t.id='bet-toast';
@@ -3415,11 +3622,11 @@ function _betToast(m){
 async function openMyBets(){
   show('mybets-card');
   document.getElementById('mybets-card').scrollIntoView({behavior:'smooth',block:'start'});
-  // Always reset spinner/button — prevents stale state from a previous getMyBetsResults call
-  var _spn=document.getElementById('mybets-spinner');
+  // Reset button state in case a previous getMyBetsResults call left it disabled
   var _rbtn=document.getElementById('mybets-results-btn');
-  if(_spn) _spn.classList.add('hidden');
   if(_rbtn){ _rbtn.disabled=false; _rbtn.textContent='🔄 Get Results'; }
+  var _swrap=document.getElementById('mybets-spinner-wrap');
+  if(_swrap) _swrap.innerHTML='';
   document.getElementById('mybets-body').innerHTML='<p style="color:#94a3b8;padding:8px 0;font-size:.85rem">Loading…</p>';
   try{
     var res=await fetch('/api/bets'+_betAuthQS()+'&settle=false');
@@ -3482,6 +3689,35 @@ function renderMyBets(d){
   var bcHtml=bc?'<div style="overflow-x:auto;margin-bottom:18px"><table class="grade-table"><thead><tr><th>Category</th><th>W-L</th><th>Pend</th><th>Staked</th><th>Net</th><th>ROI</th></tr></thead><tbody>'+bc+'</tbody></table></div>':'';
   var rows=bets.map(function(b){
     var res=b.result||'pending';
+    var delBtn='<button onclick="_deleteBet(&#39;'+b.id+'&#39;)" title="Remove" style="background:none;border:none;color:#64748b;cursor:pointer;font-size:1rem">\u2716</button>';
+    if(b.bet_type==='parlay'){
+      var n=(b.legs||[]).length;
+      var lid='pleg_'+b.id;
+      var legRows=(b.legs||[]).map(function(lg){
+        var lr=lg.result||'pending';
+        var at=lg.actual!=null?' ('+lg.actual+')':'';
+        return '<div style="display:flex;gap:8px;align-items:center;padding:4px 0;border-bottom:1px solid #0f1422;font-size:.74rem">'
+          +'<span style="color:#64748b;min-width:14px">↳</span>'
+          +'<span style="color:#94a3b8;flex:1">'+_esc(lg.name||'')+'</span>'
+          +'<span style="color:#cbd5e1">'+_esc((lg.side||'')+' '+lg.line+' '+(lg.stat_label||''))+'</span>'
+          +'<span style="font-family:monospace;color:#64748b;min-width:40px;text-align:right">'+_betOddsDisp(lg.odds)+'</span>'
+          +'<span style="font-weight:700;color:'+_resColor(lr)+';min-width:46px;text-align:right">'+(lr==='pending'?'pend':lr)+at+'</span>'
+          +'</div>';
+      }).join('');
+      return '<tr onclick="var e=document.getElementById(\''+lid+'\');e.style.display=e.style.display===\'none\'?\'table-row\':\'none\'" style="cursor:pointer">'
+        +'<td style="white-space:nowrap;color:#94a3b8;font-family:monospace;font-size:.76rem">'+(b.date||'')+'</td>'
+        +'<td style="font-weight:700;color:#fbbf24">'+n+'-Leg Parlay <span style="font-size:.66rem;color:#475569;font-weight:400">&#9658; expand</span></td>'
+        +'<td style="font-size:.78rem;color:#64748b">Combined</td>'
+        +'<td style="font-family:monospace">'+_betOddsDisp(b.odds)+'</td>'
+        +'<td style="font-family:monospace">'+_money(b.stake)+'</td>'
+        +'<td style="font-weight:800;color:'+_resColor(res)+'">'+(res==='pending'?'pending':res)+'</td>'
+        +'<td style="font-family:monospace;font-weight:700;color:'+((b.profit||0)>=0?'#4ade80':'#f87171')+'">'+(b.profit!=null?_money(b.profit):'—')+'</td>'
+        +'<td>'+delBtn+'</td>'
+        +'</tr>'
+        +'<tr id="'+lid+'" style="display:none"><td colspan="8" style="padding:0 12px 8px 24px;background:#080c14">'
+        +'<div style="padding:6px 0">'+legRows+'</div>'
+        +'</td></tr>';
+    }
     var pk=b.side+' '+b.line+' '+(b.stat_label||'');
     var actTxt=b.actual!=null?(' <span style="color:#64748b;font-weight:400;font-size:.72rem">('+b.actual+')</span>'):'';
     return '<tr>'
@@ -3492,7 +3728,7 @@ function renderMyBets(d){
       +'<td style="font-family:monospace">'+_money(b.stake)+'</td>'
       +'<td style="font-weight:800;color:'+_resColor(res)+'">'+(res==='pending'?'pending':res)+actTxt+'</td>'
       +'<td style="font-family:monospace;font-weight:700;color:'+((b.profit||0)>=0?'#4ade80':'#f87171')+'">'+(b.profit!=null?_money(b.profit):'—')+'</td>'
-      +'<td><button onclick="_deleteBet(&#39;'+b.id+'&#39;)" title="Remove this bet" style="background:none;border:none;color:#64748b;cursor:pointer;font-size:1rem">\u2716</button></td>'
+      +'<td>'+delBtn+'</td>'
       +'</tr>';
   }).join('');
   var rowsHtml=bets.length?'<div style="overflow-x:auto"><table class="grade-table"><thead><tr><th>Date</th><th>Player</th><th>Pick</th><th>Odds</th><th>Stake</th><th>Result</th><th>Profit</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>':'<p style="color:#94a3b8;padding:16px">No bets logged yet. Click <strong style="color:#c7d2fe">＋ Track Bet</strong> on any pick card to start.</p>';
@@ -3510,8 +3746,17 @@ function downloadMyBetsCSV(){
   var d=window.__MYBETS__; if(!d){ alert('Open My Bets first.'); return; }
   var rows=[['Date','Player','Category','Pick','Odds','Stake','Result','Actual','Profit']];
   (d.bets||[]).forEach(function(b){
-    rows.push([b.date||'',b.name||'',b.category||'',(b.side+' '+b.line+' '+(b.stat_label||'')),
-      b.odds!=null?b.odds:'',b.stake!=null?b.stake:'',b.result||'',b.actual!=null?b.actual:'',b.profit!=null?b.profit:'']);
+    if(b.bet_type==='parlay'){
+      rows.push([b.date||'',(b.legs||[]).length+'-Leg Parlay','Parlay','Combined',
+        b.odds!=null?b.odds:'',b.stake!=null?b.stake:'',b.result||'','',b.profit!=null?b.profit:'']);
+      (b.legs||[]).forEach(function(lg){
+        rows.push([lg.date||'','  '+(lg.name||''),lg.category||'',(lg.side+' '+lg.line+' '+(lg.stat_label||'')),
+          lg.odds!=null?lg.odds:'','',lg.result||'',lg.actual!=null?lg.actual:'','']);
+      });
+    } else {
+      rows.push([b.date||'',b.name||'',b.category||'',(b.side+' '+b.line+' '+(b.stat_label||'')),
+        b.odds!=null?b.odds:'',b.stake!=null?b.stake:'',b.result||'',b.actual!=null?b.actual:'',b.profit!=null?b.profit:'']);
+    }
   });
   var csv=rows.map(function(row){return row.map(_csvCell).join(',');}).join(String.fromCharCode(13)+String.fromCharCode(10));
   var blob=new Blob([String.fromCharCode(65279)+csv],{type:'text/csv;charset=utf-8;'});
