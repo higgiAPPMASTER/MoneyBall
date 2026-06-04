@@ -1998,8 +1998,8 @@ function _propBestCard(p, key, rank) {
       </div>
       ${gapHtml}
       ${oddsHtml}
-      ${_betBtn(p,'Pitcher Props',p.pick,_propStatKey,String(p.label||'Prop'),p.line,_propOdds)}
     </div>
+  ${_betBtn(p,'Pitcher Props',p.pick,_propStatKey,String(p.label||'Prop'),p.line,_propOdds)}
   </div>`;
 }
 function renderPitcherProps(view){
@@ -2976,8 +2976,8 @@ function _mlbCard(p, rank, dim) {
         <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odds}</span>
       </div>
       ${adminStats}
-      ${_betBtn(p,'Hitter Hits','OVER','hits','Hits',0.5,p.hit_odds)}
     </div>
+  ${_betBtn(p,'Hitter Hits','OVER','hits','Hits',0.5,p.hit_odds)}
   </div>`;
 }
 
@@ -3032,8 +3032,8 @@ function _underCard(p, rank) {
         <span style="font-family:monospace;color:#63cab7;font-weight:700;font-size:.9rem">${tbOdds}</span>
       </div>
       ${adminStats}
-      ${_betBtn(p,'Hitter Hits',(p.pick||'UNDER'),'hits','Hits',1.5,(p.pick==='OVER'?p.over_odds:p.under_odds))}
     </div>
+  ${_betBtn(p,'Hitter Hits',(p.pick||'UNDER'),'hits','Hits',1.5,(p.pick==='OVER'?p.over_odds:p.under_odds))}
   </div>`;
 }
 
@@ -3106,8 +3106,8 @@ function _runsCard(p, rank, pfx) {
         <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}</span>
       </div>
       ${adminStats}
-      ${_betBtn(p,'Runs',p.pick,'runs','Runs',(p.line!=null?p.line:0.5),(p.pick==='OVER'?p.over_odds:p.under_odds))}
     </div>
+  ${_betBtn(p,'Runs',p.pick,'runs','Runs',(p.line!=null?p.line:0.5),(p.pick==='OVER'?p.over_odds:p.under_odds))}
   </div>`;
 }
 
@@ -3166,8 +3166,8 @@ function _pitcherCard(p, rank) {
       </div>
       <div style="margin-top:5px;font-size:.68rem;color:#94a3b8;line-height:1.6">K <strong style="color:#cbd5e1">${p.avg_k!=null?p.avg_k:'—'}</strong> · H <strong style="color:#cbd5e1">${p.avg_hits!=null?p.avg_hits:'—'}</strong> · ER <strong style="color:#cbd5e1">${p.avg_er!=null?p.avg_er:'—'}</strong> · Outs <strong style="color:#cbd5e1">${p.avg_outs!=null?p.avg_outs:'—'}</strong> · BB <strong style="color:#cbd5e1">${p.avg_bb!=null?p.avg_bb:'—'}</strong> · IP <strong style="color:#cbd5e1">${p.avg_ip!=null?p.avg_ip:'—'}</strong> · ERA <strong style="color:#cbd5e1">${p.era||'—'}</strong> <span style="color:#64748b">vr opp</span></div>
       <div style="margin-top:5px;font-size:.66rem;color:#63cab7;text-align:right">all 5 markets →</div>
-      ${_betBtn(p,'Pitcher Ks',(hasSugg?'OVER':p.pick),'strikeOuts','Ks',(hasSugg?p.sugg_line:p.line),(hasSugg?p.sugg_odds:(isOver?p.over_odds:p.under_odds)))}
     </div>
+  ${_betBtn(p,'Pitcher Ks',(hasSugg?'OVER':p.pick),'strikeOuts','Ks',(hasSugg?p.sugg_line:p.line),(hasSugg?p.sugg_odds:(isOver?p.over_odds:p.under_odds)))}
   </div>`;
 }
 
@@ -3541,9 +3541,9 @@ function _betBtn(p,cat,side,statKey,statLabel,line,odds){
   window.__BET_SRC__[k]={name:(p.full_name||p.name||''),team:(p.team||''),opp:(p.opp||''),
     category:cat,side:side,stat_key:statKey,stat_label:statLabel,line:line,
     odds:(odds!=null?odds:null),date:((window._lastResult&&window._lastResult.date)||'')};
-  return `<div class="admin-only" style="display:flex;gap:0;margin:12px -12px -12px;border-top:1px solid #1e293b;overflow:hidden;border-radius:0 0 12px 12px">
-    <button onclick="event.stopPropagation();_betForm('${k}')" style="flex:1;background:rgba(67,56,202,.22);border:none;border-right:1px solid #1e293b;color:#c7d2fe;padding:10px 0;font-size:.75rem;font-weight:800;cursor:pointer;letter-spacing:.04em;transition:background .15s" onmouseover="this.style.background='rgba(67,56,202,.4)'" onmouseout="this.style.background='rgba(67,56,202,.22)'">＋ Track Bet</button>
-    <button onclick="event.stopPropagation();_addToCart('${k}')" style="flex:1;background:rgba(16,185,129,.14);border:none;color:#6ee7b7;padding:10px 0;font-size:.75rem;font-weight:800;cursor:pointer;letter-spacing:.04em;transition:background .15s" onmouseover="this.style.background='rgba(16,185,129,.3)'" onmouseout="this.style.background='rgba(16,185,129,.14)'">＋ Parlay</button>
+  return `<div class="admin-only" style="display:flex;border-top:1px solid #1e293b;flex-shrink:0">
+    <button onclick="event.stopPropagation();_betForm('${k}')" style="flex:1;background:#1a1740;color:#a5b4fc;border:none;border-right:1px solid #1e293b;padding:12px 0;font-size:.8rem;font-weight:800;cursor:pointer;letter-spacing:.05em">&#128221; Track Bet</button>
+    <button onclick="event.stopPropagation();_addToCart('${k}')" style="flex:1;background:#0d2318;color:#6ee7b7;border:none;padding:12px 0;font-size:.8rem;font-weight:800;cursor:pointer;letter-spacing:.05em">&#43; Parlay</button>
   </div>`;
 }
 window._cartLegs=window._cartLegs||[];
