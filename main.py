@@ -457,6 +457,29 @@ def _save_ledger(led: dict):
     except Exception as e:
         print(f"[track_ledger] save failed: {e}")
 
+# Per-pick detail ledger (parallel to the W/L ledger above). Stores one row
+# per graded top-10 pick — player, category, side, odds, line, result — so the
+# Track Record panel can build a per-player earnings sheet. The W/L ledger is
+# left untouched for backward compatibility; detail only accrues from deploy
+# forward + any day still in the disk cache (backfilled on demand).
+_TRACK_DETAIL_PATH = os.path.join(_CACHE_DIR, "_track_detail.json")
+
+def _load_detail() -> dict:
+    try:
+        with open(_TRACK_DETAIL_PATH) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def _save_detail(det: dict):
+    try:
+        tmp = f"{_TRACK_DETAIL_PATH}.{os.getpid()}.tmp"
+        with open(tmp, "w") as f:
+            json.dump(det, f)
+        os.replace(tmp, _TRACK_DETAIL_PATH)
+    except Exception as e:
+        print(f"[track_detail] save failed: {e}")
+
 def _aggregate_graded(graded: dict) -> dict:
     """Collapse a graded day into {category: {side: [W, L]}} counting only decided picks."""
     agg: dict = {}
@@ -474,6 +497,28 @@ def _aggregate_graded(graded: dict) -> dict:
                 rec[1] += 1
     return agg
 
+def _detail_graded(graded: dict) -> list:
+    """Flatten a graded day into per-pick rows (decided picks only) carrying the
+    fields an earnings sheet needs: player, team, category, side, pick, odds,
+    line, result."""
+    out = []
+    for key in ("hitter_overs", "hitter_unders", "runs", "pitcher_ks", "pitcher_props"):
+        for r in graded.get(key, []):
+            res = r.get("result")
+            if res not in ("WIN", "LOSS"):
+                continue
+            out.append({
+                "name": r.get("name", ""),
+                "team": r.get("team", ""),
+                "category": r.get("category") or key,
+                "side": r.get("side") or "OVER",
+                "pick": r.get("pick", ""),
+                "odds": r.get("odds"),
+                "line": r.get("line"),
+                "result": res,
+            })
+    return out
+
 import threading as _trk_threading
 _LEDGER_LOCK = _trk_threading.Lock()
 
@@ -486,12 +531,14 @@ def _update_track_ledger() -> dict:
     each other's writes."""
     with _LEDGER_LOCK:
         led = _load_ledger()
+        det = _load_detail()
         today = date.today().isoformat()
         try:
             _today_d = date.fromisoformat(today)
         except Exception:
             _today_d = None
         changed = False
+        det_changed = False
         try:
             files = sorted(_glob.glob(os.path.join(_CACHE_DIR, "*.json")))
         except Exception:
@@ -502,8 +549,10 @@ def _update_track_ledger() -> dict:
                 continue          # skip ledger file / non-date files
             if bn >= today:
                 continue          # today/future — games not final yet
-            if bn in led:
-                continue          # already locked
+            need_led = bn not in led
+            need_det = bn not in det
+            if not need_led and not need_det:
+                continue          # already locked — W/L and detail both present
             picks = _load_disk_cache(bn)
             if not picks:
                 continue
@@ -522,10 +571,16 @@ def _update_track_ledger() -> dict:
                     old_enough = False
             if not graded.get("all_final") and not old_enough:
                 continue          # slate not all Final yet — wait, don't lock partial
-            led[bn] = _aggregate_graded(graded)
-            changed = True
+            if need_led:
+                led[bn] = _aggregate_graded(graded)
+                changed = True
+            if need_det:
+                det[bn] = _detail_graded(graded)
+                det_changed = True
         if changed:
             _save_ledger(led)
+        if det_changed:
+            _save_detail(det)
         return led
 
 
@@ -941,6 +996,7 @@ async def track_record(request: Request, token: str = "", admin: str = ""):
         raise HTTPException(status_code=403, detail="Admin only")
 
     led = _update_track_ledger()
+    det = _load_detail()
 
     alltime: dict = {}   # {category: {side: [W, L]}}
     daily = []
@@ -962,7 +1018,14 @@ async def track_record(request: Request, token: str = "", admin: str = ""):
                 w, l = alltime[cat][side]
                 rows.append({"category": cat, "side": side, "wins": w, "losses": l})
 
-    return {"alltime": rows, "daily": daily, "days": len(led)}
+    detail = []
+    for ds in sorted(det.keys()):
+        for r in (det[ds] or []):
+            row = dict(r)
+            row["date"] = ds
+            detail.append(row)
+
+    return {"alltime": rows, "daily": daily, "days": len(led), "detail": detail}
 
 
 # ── Any-player lookup ────────────────────────────────────────────────
@@ -3445,7 +3508,15 @@ function renderTrackRecord(d){
       +'<span style="font-size:.68rem;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.07em;min-width:40px;text-align:right">%</span>'
       +'</div>'+catRows+'</div>'
     :'<p style="color:#94a3b8;padding:16px">No graded days yet \u2014 fills in automatically as slates go Final.</p>';
-  document.getElementById('track-alltime').innerHTML=sumHtml+catSection;
+  var det=d.detail||[];
+  var earnHtml='<div style="background:#0a1f14;border:1px solid #16432c;border-radius:10px;padding:14px 18px;margin-bottom:16px;display:flex;flex-wrap:wrap;gap:14px;align-items:center">'
+    +'<div style="font-weight:800;font-size:.92rem;color:#6ee7b7">\uD83D\uDCB0 Potential Earnings</div>'
+    +'<label style="font-size:.82rem;color:#94a3b8">Flat bet $ <input id="trkBet" type="number" min="1" step="1" value="100" oninput="_recalcEarnings()" style="width:84px;margin-left:4px;background:#020617;border:1px solid #334155;color:#fff;border-radius:6px;padding:5px 8px;font-size:.82rem"></label>'
+    +'<div id="trkNet" style="font-size:.88rem;font-weight:700;color:#e2e8f0"></div>'
+    +'<button onclick="downloadTrackEarningsCSV()" style="margin-left:auto;background:#16a34a;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:.78rem;font-weight:700;cursor:pointer">\u2b07 Earnings CSV (Excel)</button>'
+    +'</div>';
+  document.getElementById('track-alltime').innerHTML=sumHtml+earnHtml+catSection;
+  _recalcEarnings();
   var dRows=daily.slice().reverse().map(function(x){
     var cats=x.cats||{};
     var pills='';
@@ -3474,6 +3545,66 @@ function renderTrackRecord(d){
     :'';
 }
 
+// American-odds profit on a winning bet; a loss always costs the full stake.
+// Returns null for a WIN whose odds we never captured (can't value the payout).
+function _amProfit(odds, stake, win){
+  if(!win) return -stake;
+  if(odds==null||odds==='') return null;
+  odds=Number(odds);
+  if(!isFinite(odds)||odds===0) return null;   // unpriceable / malformed -> exclude
+  return odds>0 ? stake*(odds/100) : stake*(100/Math.abs(odds));
+}
+// Single source of truth for the flat bet size — blank/zero/negative/NaN all
+// fall back to the 100 default so the live total and the CSV always agree.
+function _trkStake(){
+  var inp=document.getElementById('trkBet');
+  var s=inp?Number(inp.value):100;
+  if(!isFinite(s)||s<=0) s=100;
+  return s;
+}
+function _recalcEarnings(){
+  var d=window.__TRACK__; if(!d) return;
+  var el=document.getElementById('trkNet'); if(!el) return;
+  var det=d.detail||[];
+  var stake=_trkStake();
+  if(!det.length){ el.innerHTML='<span style="color:#64748b">No per-pick detail yet \u2014 builds up from today forward as slates go Final.</span>'; return; }
+  var net=0, counted=0, skipped=0;
+  det.forEach(function(r){
+    var pl=_amProfit(r.odds, stake, (r.result==='WIN'));
+    if(pl===null){ skipped++; return; }
+    net+=pl; counted++;
+  });
+  var risk=counted*stake;
+  var roi=risk?(net/risk*100):0;
+  var clr=net>=0?'#4ade80':'#f87171';
+  el.innerHTML='Net P/L across '+counted+' plays: <span style="color:'+clr+';font-weight:900;font-size:1.05rem">'+(net>=0?'+':'\u2212')+'$'+Math.abs(net).toFixed(0)+'</span> '
+    +'<span style="color:#64748b">(ROI '+(roi>=0?'+':'\u2212')+Math.abs(roi).toFixed(1)+'% on $'+risk.toFixed(0)+' risked)</span>'
+    +(skipped?(' <span style="color:#facc15">\u00b7 '+skipped+' win'+(skipped===1?'':'s')+' had no odds (excluded)</span>'):'');
+}
+function downloadTrackEarningsCSV(){
+  var d=window.__TRACK__; if(!d){ alert('Open Track Record first.'); return; }
+  var det=d.detail||[];
+  if(!det.length){ alert('No per-pick detail yet \u2014 it accrues from today forward as slates go Final.'); return; }
+  var stake=_trkStake();
+  var rows=[['Date','Player','Team','Category','Side','Pick','Odds','Result','Bet Size','Profit/Loss']];
+  var net=0, counted=0;
+  det.forEach(function(r){
+    var pl=_amProfit(r.odds, stake, (r.result==='WIN'));
+    var plStr='';
+    if(pl!==null){ plStr=pl.toFixed(2); net+=pl; counted++; }
+    rows.push([r.date, r.name, r.team, r.category, r.side, r.pick,
+      (r.odds!=null?((r.odds>0?'+':'')+r.odds):''), r.result, stake, plStr]);
+  });
+  rows.push([]);
+  rows.push(['','','','','','','','TOTALS ('+counted+' graded)', (counted*stake), net.toFixed(2)]);
+  var csv=rows.map(function(row){return row.map(_csvCell).join(',');}).join(String.fromCharCode(13)+String.fromCharCode(10));
+  var blob=new Blob([String.fromCharCode(65279)+csv],{type:'text/csv;charset=utf-8;'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');
+  a.href=url; a.download='mlb-earnings-flat'+stake+'.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 function downloadTrackAllTimeCSV(){ _trackCSV('alltime'); }
 function downloadTrackDailyCSV(){ _trackCSV('daily'); }
 function _trackCSV(which){
