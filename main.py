@@ -176,6 +176,8 @@ async def start_run(request: Request, date_str: str, force: bool = False, token:
             # can serve the slate even when a starter is still TBD. The MLB app's
             # own load re-runs when has_tbd to pick up late-named starters.
             _cache[date_str] = result
+            try: _update_track_ledger()
+            except Exception as _le: print(f"[track_ledger] {_le}")
             _save_disk_cache(date_str, result)
             try:
                 # Bake the picks into the page HTML so the Replit hub can serve
@@ -240,6 +242,572 @@ async def get_results(date_str: str, request: Request, token: str = ""):
     if date_str in _cache:
         return _cache[date_str]
     raise HTTPException(status_code=404, detail="No results for this date.")
+
+
+# ── Grading core (shared by /api/grade and the Track Record ledger) ──────
+def _mlb_box_lookup(date_str: str):
+    """Fetch box scores for a date. Returns (player_stats, name_stats, any_game, all_final)."""
+    import requests as _rq
+    MLB_BASE = "https://statsapi.mlb.com/api/v1"
+    sched = _rq.get(f"{MLB_BASE}/schedule", params={
+        "sportId": 1, "date": date_str, "gameType": "R",
+        "hydrate": "boxscore,linescore"
+    }, timeout=30).json()
+    player_stats: dict = {}
+    name_stats: dict   = {}
+    any_game = False
+    all_final = True
+    for d in sched.get("dates", []):
+        for game in d.get("games", []):
+            any_game = True
+            status = game.get("status", {}).get("detailedState", "Scheduled")
+            final  = status in ("Final", "Game Over")
+            if not final:
+                all_final = False
+            bs = game.get("boxscore", {})
+            for sd in ("home", "away"):
+                td = bs.get("teams", {}).get(sd, {})
+                for _key, pdata in td.get("players", {}).items():
+                    pid       = (pdata.get("person") or {}).get("id")
+                    full_name = (pdata.get("person") or {}).get("fullName", "")
+                    if not pid:
+                        continue
+                    bat = pdata.get("stats", {}).get("batting")  or {}
+                    pit = pdata.get("stats", {}).get("pitching") or {}
+                    entry = {
+                        "hits":         bat.get("hits"),
+                        "runs":         bat.get("runs"),
+                        "strikeOuts":   pit.get("strikeOuts"),
+                        "earnedRuns":   pit.get("earnedRuns"),
+                        "outs":         pit.get("outs"),
+                        "hits_allowed": pit.get("hits"),
+                        "walks":        pit.get("baseOnBalls"),
+                        "status": status,
+                        "final":  final,
+                        "name":   full_name,
+                    }
+                    player_stats[int(pid)] = entry
+                    if full_name:
+                        name_stats[full_name.lower()] = entry
+    return player_stats, name_stats, any_game, all_final
+
+
+def _grade_date(date_str: str, picks: dict) -> dict:
+    """Grade every pick category for a date against actual box scores.
+    Each row carries category + side so the Track Record ledger can tally O/U splits."""
+    player_stats, name_stats, any_game, all_final = _mlb_box_lookup(date_str)
+
+    def _lookup(player_id, fallback_name=None):
+        if player_id:
+            e = player_stats.get(int(player_id))
+            if e:
+                return e
+        if fallback_name:
+            return name_stats.get((fallback_name or "").lower())
+        return None
+
+    def _grade(pick_dir, line, actual, final):
+        if actual is None or not final:
+            return "pending"
+        if pick_dir == "OVER":
+            return "WIN" if actual > float(line) else "LOSS"
+        return "WIN" if actual < float(line) else "LOSS"
+
+    # Hitter OVERs (top9 + also_ran)
+    hitter_overs = []
+    for p in (picks.get("top9") or []) + (picks.get("also_ran") or []):
+        st = _lookup(p.get("player_id"), p.get("full_name") or p.get("name"))
+        actual = st["hits"] if st else None
+        hitter_overs.append({
+            "name": p.get("full_name") or p.get("name", ""),
+            "team": p.get("team", ""),
+            "category": "Hitter Hits", "side": "OVER",
+            "pick": "OVER 0.5 Hits",
+            "odds": p.get("hit_odds"),
+            "line": 0.5,
+            "actual": actual,
+            "stat": "Hits",
+            "result": _grade("OVER", 0.5, actual, (st or {}).get("final", False)),
+            "game_status": (st or {}).get("status", "—"),
+        })
+
+    # Under 1.5 Hits
+    hitter_unders = []
+    for p in (picks.get("under_picks") or []):
+        st = _lookup(p.get("batter_id"), p.get("name"))
+        actual = st["hits"] if st else None
+        pick_dir = p.get("pick", "UNDER")
+        hitter_unders.append({
+            "name": p.get("name", ""),
+            "team": p.get("team", ""),
+            "category": "Hitter Hits", "side": pick_dir,
+            "pick": f"{pick_dir} 1.5 Hits",
+            "odds": p.get("under_odds") if pick_dir == "UNDER" else p.get("over_odds"),
+            "line": 1.5,
+            "actual": actual,
+            "stat": "Hits",
+            "result": _grade(pick_dir, 1.5, actual, (st or {}).get("final", False)),
+            "game_status": (st or {}).get("status", "—"),
+        })
+
+    # Runs OVER/UNDER 0.5
+    runs = []
+    for p in (picks.get("runs_picks") or []):
+        st = _lookup(p.get("batter_id"), p.get("name"))
+        actual = st["runs"] if st else None
+        pick_dir = p.get("pick", "OVER")
+        runs.append({
+            "name": p.get("name", ""),
+            "team": p.get("team", ""),
+            "category": "Runs", "side": pick_dir,
+            "pick": f"{pick_dir} 0.5 Runs",
+            "odds": p.get("over_odds") if pick_dir == "OVER" else p.get("under_odds"),
+            "line": 0.5,
+            "actual": actual,
+            "stat": "Runs",
+            "result": _grade(pick_dir, 0.5, actual, (st or {}).get("final", False)),
+            "game_status": (st or {}).get("status", "—"),
+        })
+
+    # Pitcher Ks (qualifying picks only)
+    pitcher_ks = []
+    for p in (picks.get("pitcher_k") or {}).get("picks") or []:
+        if not p.get("pick"):
+            continue
+        st  = _lookup(None, p.get("name"))
+        actual = st["strikeOuts"] if st else None
+        line   = p.get("sugg_line") if p.get("sugg_line") is not None else p.get("line")
+        if line is None:
+            continue
+        pick_dir = p.get("pick")
+        pitcher_ks.append({
+            "name": p.get("name", ""),
+            "team": p.get("team", ""),
+            "category": "Pitcher Ks", "side": pick_dir,
+            "pick": f"{pick_dir} {line} Ks",
+            "odds": p.get("over_odds") if pick_dir == "OVER" else p.get("under_odds"),
+            "line": line,
+            "actual": actual,
+            "stat": "Ks",
+            "result": _grade(pick_dir, line, actual, (st or {}).get("final", False)),
+            "game_status": (st or {}).get("status", "—"),
+        })
+
+    # Pitcher Props (Hits Allowed / Outs / Earned Runs)
+    PROP_STAT_MAP = {
+        "pitcher_hits_allowed": ("hits_allowed", "Hits Allowed"),
+        "pitcher_outs":         ("outs",         "Outs"),
+        "pitcher_earned_runs":  ("earnedRuns",   "Earned Runs"),
+    }
+    pitcher_props = []
+    for mkt, mdata in (picks.get("pitcher_props") or {}).items():
+        stat_key, stat_label = PROP_STAT_MAP.get(mkt, (None, mkt))
+        for p in (mdata.get("picks") or []):
+            if not p.get("pick") or p.get("line") is None:
+                continue
+            st     = _lookup(None, p.get("name"))
+            actual = st[stat_key] if (st and stat_key) else None
+            pick_dir = p.get("pick")
+            line     = p.get("line")
+            pitcher_props.append({
+                "name": p.get("name", ""),
+                "team": p.get("team", ""),
+                "category": f"Pitcher {stat_label}", "side": pick_dir,
+                "pick": f"{pick_dir} {line} {stat_label}",
+                "odds": p.get("over_odds") if pick_dir == "OVER" else p.get("under_odds"),
+                "line": line,
+                "actual": actual,
+                "stat": stat_label,
+                "result": _grade(pick_dir, line, actual, (st or {}).get("final", False)),
+                "game_status": (st or {}).get("status", "—"),
+            })
+
+    return {
+        "date": date_str,
+        "hitter_overs":  hitter_overs,
+        "hitter_unders": hitter_unders,
+        "runs":          runs,
+        "pitcher_ks":    pitcher_ks,
+        "pitcher_props": pitcher_props,
+        "any_game":      any_game,
+        "all_final":     all_final,
+    }
+
+
+# ── Track Record: permanent W/L ledger across all graded days ────────────
+_TRACK_LEDGER_PATH = os.path.join(_CACHE_DIR, "_track_record.json")
+_TRACK_CAT_ORDER = [
+    "Hitter Hits", "Runs", "Pitcher Ks",
+    "Pitcher Hits Allowed", "Pitcher Outs", "Pitcher Earned Runs",
+]
+
+def _load_ledger() -> dict:
+    try:
+        with open(_TRACK_LEDGER_PATH) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def _save_ledger(led: dict):
+    try:
+        tmp = f"{_TRACK_LEDGER_PATH}.{os.getpid()}.tmp"
+        with open(tmp, "w") as f:
+            json.dump(led, f)
+        os.replace(tmp, _TRACK_LEDGER_PATH)
+    except Exception as e:
+        print(f"[track_ledger] save failed: {e}")
+
+def _aggregate_graded(graded: dict) -> dict:
+    """Collapse a graded day into {category: {side: [W, L]}} counting only decided picks."""
+    agg: dict = {}
+    for key in ("hitter_overs", "hitter_unders", "runs", "pitcher_ks", "pitcher_props"):
+        for r in graded.get(key, []):
+            res = r.get("result")
+            if res not in ("WIN", "LOSS"):
+                continue
+            cat  = r.get("category") or key
+            side = r.get("side") or "OVER"
+            rec  = agg.setdefault(cat, {}).setdefault(side, [0, 0])
+            if res == "WIN":
+                rec[0] += 1
+            else:
+                rec[1] += 1
+    return agg
+
+import threading as _trk_threading
+_LEDGER_LOCK = _trk_threading.Lock()
+
+def _update_track_ledger() -> dict:
+    """Grade every cached PAST date not yet locked and append it to the permanent ledger.
+    A date is locked only once ALL its games are Final (or it is >=2 days old, so a
+    permanently-postponed game can't block it forever) — this avoids freezing a
+    partial-day record. The lock survives cache rollover/cleanup. Serialized by
+    _LEDGER_LOCK so the run thread, scheduler thread and the endpoint never clobber
+    each other's writes."""
+    with _LEDGER_LOCK:
+        led = _load_ledger()
+        today = date.today().isoformat()
+        try:
+            _today_d = date.fromisoformat(today)
+        except Exception:
+            _today_d = None
+        changed = False
+        try:
+            files = sorted(_glob.glob(os.path.join(_CACHE_DIR, "*.json")))
+        except Exception:
+            files = []
+        for fp in files:
+            bn = os.path.basename(fp).replace(".json", "")
+            if bn.startswith("_") or len(bn) != 10 or bn[4] != "-":
+                continue          # skip ledger file / non-date files
+            if bn >= today:
+                continue          # today/future — games not final yet
+            if bn in led:
+                continue          # already locked
+            picks = _load_disk_cache(bn)
+            if not picks:
+                continue
+            try:
+                graded = _grade_date(bn, picks)
+            except Exception as e:
+                print(f"[track_ledger] grade failed for {bn}: {e}")
+                continue
+            if not graded.get("any_game"):
+                continue          # no box scores yet — don't lock an empty day
+            old_enough = False
+            if _today_d is not None:
+                try:
+                    old_enough = (_today_d - date.fromisoformat(bn)).days >= 2
+                except Exception:
+                    old_enough = False
+            if not graded.get("all_final") and not old_enough:
+                continue          # slate not all Final yet — wait, don't lock partial
+            led[bn] = _aggregate_graded(graded)
+            changed = True
+        if changed:
+            _save_ledger(led)
+        return led
+
+
+# ── My Bets: personal bet log + ROI (admin-only, account-keyed) ─────────
+# Stored server-side so it follows the user across devices and survives the
+# monthly cache cleanup (the "_" prefix is skipped by the date-file sweeper,
+# same as the Track Record ledger). Keyed by hub-account email so it is
+# multi-user-ready; for now only the admin can read/write. Each bet self-
+# settles from box scores by player name, so it grades even after that date's
+# pick-cache file is gone.
+_BET_LOG_PATH = os.path.join(_CACHE_DIR, "_bet_log.json")
+_BET_LOCK = _trk_threading.Lock()
+_BET_STAT_KEYS = ("hits", "runs", "strikeOuts", "hits_allowed", "outs", "earnedRuns", "walks")
+_BET_PITCH_STATS = ("strikeOuts", "hits_allowed", "outs", "earnedRuns", "walks")
+
+def _load_bets() -> dict:
+    try:
+        with open(_BET_LOG_PATH) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def _save_bets(data: dict):
+    try:
+        tmp = f"{_BET_LOG_PATH}.{os.getpid()}.tmp"
+        with open(tmp, "w") as f:
+            json.dump(data, f)
+        os.replace(tmp, _BET_LOG_PATH)
+    except Exception as e:
+        print(f"[bet_log] save failed: {e}")
+
+def _bet_admin_ok(tok: str, admin: str) -> bool:
+    return _is_admin_token(tok) or (
+        bool(admin) and admin == os.environ.get("INTERNAL_API_TOKEN", "__none__"))
+
+def _bet_user_key(tok: str, admin: str) -> str:
+    """Storage key for the current user — hub email when available, else a
+    fixed admin bucket for the legacy ?admin=KEY link."""
+    em = _token_email(tok) if tok else ""
+    return em.lower() if em else "__admin__"
+
+def _american_profit(odds, stake, result) -> float:
+    """Net profit (stake already risked). WIN pays per American odds; LOSS
+    forfeits the stake; PUSH refunds (0 net)."""
+    try:
+        stake = float(stake)
+    except Exception:
+        return 0.0
+    if result == "WIN":
+        try:
+            o = float(odds)
+        except Exception:
+            return 0.0
+        return stake * (o / 100.0) if o > 0 else stake * (100.0 / abs(o))
+    if result == "LOSS":
+        return -stake
+    return 0.0  # PUSH / pending
+
+def _settle_bet(bet: dict) -> bool:
+    """Grade a still-pending bet against final box scores. Returns True if it
+    changed. Only settles past dates; a player whose game isn't Final (or who
+    didn't pitch, for pitching props) stays pending."""
+    if bet.get("result") in ("WIN", "LOSS", "PUSH"):
+        return False
+    bdate = bet.get("date")
+    if not bdate or bdate >= date.today().isoformat():
+        return False
+    try:
+        _ps, ns, _any, _af = _mlb_box_lookup(bdate)
+    except Exception as e:
+        print(f"[bet_log] settle lookup failed {bdate}: {e}")
+        return False
+    st = ns.get((bet.get("name") or "").lower())
+    if not st or not st.get("final"):
+        return False  # player's game not final yet (or DNP / not found)
+    stat_key = bet.get("stat_key")
+    actual = st.get(stat_key)
+    if actual is None:
+        if stat_key in _BET_PITCH_STATS:
+            return False  # pitcher didn't pitch → leave pending
+        actual = 0        # batter appeared but no hits/runs
+    try:
+        line = float(bet.get("line"))
+    except Exception:
+        return False
+    side = bet.get("side", "OVER")
+    if actual == line:
+        res = "PUSH"
+    elif side == "OVER":
+        res = "WIN" if actual > line else "LOSS"
+    else:
+        res = "WIN" if actual < line else "LOSS"
+    bet["result"] = res
+    bet["actual"] = actual
+    bet["profit"] = round(_american_profit(bet.get("odds"), bet.get("stake"), res), 2)
+    bet["settled_at"] = date.today().isoformat()
+    return True
+
+def _summarize_bets(bets: list) -> dict:
+    cats: dict = {}
+    tot_staked = tot_profit = 0.0
+    w = l = pu = pend = 0
+    for b in bets:
+        res = b.get("result", "pending")
+        try:
+            stake = float(b.get("stake") or 0)
+        except Exception:
+            stake = 0.0
+        c = cats.setdefault(b.get("category", "?"),
+                            {"wins": 0, "losses": 0, "push": 0, "pending": 0,
+                             "staked": 0.0, "profit": 0.0})
+        if res == "WIN":
+            w += 1; c["wins"] += 1
+        elif res == "LOSS":
+            l += 1; c["losses"] += 1
+        elif res == "PUSH":
+            pu += 1; c["push"] += 1
+        else:
+            pend += 1; c["pending"] += 1
+        if res in ("WIN", "LOSS", "PUSH"):
+            prof = float(b.get("profit") or 0)
+            tot_staked += stake; c["staked"] += stake
+            tot_profit += prof;  c["profit"] += prof
+    roi = (tot_profit / tot_staked * 100.0) if tot_staked > 0 else None
+    by_cat = []
+    ordered = _TRACK_CAT_ORDER + [k for k in cats if k not in _TRACK_CAT_ORDER]
+    for cat in ordered:
+        c = cats.get(cat)
+        if not c:
+            continue
+        st = c["staked"]; pr = c["profit"]
+        by_cat.append({
+            "category": cat, "wins": c["wins"], "losses": c["losses"],
+            "push": c["push"], "pending": c["pending"],
+            "staked": round(st, 2), "profit": round(pr, 2),
+            "roi": round(pr / st * 100, 1) if st > 0 else None,
+        })
+    return {
+        "wins": w, "losses": l, "push": pu, "pending": pend,
+        "staked": round(tot_staked, 2), "profit": round(tot_profit, 2),
+        "returned": round(tot_staked + tot_profit, 2),
+        "roi": round(roi, 1) if roi is not None else None,
+        "by_category": by_cat,
+    }
+
+@app.get("/api/bets")
+async def get_bets(request: Request, token: str = "", admin: str = ""):
+    tok = token or request.headers.get("Authorization", "").replace("Bearer ", "").strip()
+    if not _bet_admin_ok(tok, admin):
+        raise HTTPException(status_code=403, detail="Admin only")
+    with _BET_LOCK:
+        data = _load_bets()
+        key = _bet_user_key(tok, admin)
+        bets = data.get(key, [])
+        changed = False
+        for b in bets:
+            if _settle_bet(b):
+                changed = True
+        if changed:
+            data[key] = bets
+            _save_bets(data)
+        snapshot = list(bets)
+    snapshot.sort(key=lambda b: (b.get("date", ""), b.get("placed_at", "")), reverse=True)
+    return {"bets": snapshot, "summary": _summarize_bets(snapshot)}
+
+@app.post("/api/bets")
+async def add_bet(request: Request, token: str = "", admin: str = ""):
+    tok = token or request.headers.get("Authorization", "").replace("Bearer ", "").strip()
+    if not _bet_admin_ok(tok, admin):
+        raise HTTPException(status_code=403, detail="Admin only")
+    body = await request.json()
+    try:
+        stake = round(float(body.get("stake")), 2)
+        odds = int(round(float(body.get("odds"))))
+        line = float(body.get("line"))
+    except Exception:
+        raise HTTPException(status_code=400, detail="stake, odds and line must be numbers")
+    if stake <= 0:
+        raise HTTPException(status_code=400, detail="Bet size must be greater than 0")
+    name = (body.get("name") or "").strip()
+    stat_key = (body.get("stat_key") or "").strip()
+    side = (body.get("side") or "OVER").strip().upper()
+    if not name or stat_key not in _BET_STAT_KEYS or side not in ("OVER", "UNDER"):
+        raise HTTPException(status_code=400, detail="Invalid bet")
+    bdate = (body.get("date") or date.today().isoformat()).strip()
+    import uuid as _uuid
+    bet = {
+        "id": _uuid.uuid4().hex[:12],
+        "date": bdate,
+        "name": name,
+        "team": (body.get("team") or "").strip(),
+        "opp": (body.get("opp") or "").strip(),
+        "category": (body.get("category") or "?").strip(),
+        "side": side,
+        "stat_key": stat_key,
+        "stat_label": (body.get("stat_label") or "").strip(),
+        "line": line,
+        "odds": odds,
+        "stake": stake,
+        "placed_at": (body.get("placed_at") or date.today().isoformat()),
+        "result": "pending",
+        "actual": None,
+        "profit": None,
+        "settled_at": None,
+    }
+    _settle_bet(bet)  # settle immediately if it's already a past, final game
+    with _BET_LOCK:
+        data = _load_bets()
+        key = _bet_user_key(tok, admin)
+        data.setdefault(key, []).append(bet)
+        _save_bets(data)
+    return {"ok": True, "bet": bet}
+
+@app.delete("/api/bets/{bet_id}")
+async def delete_bet(bet_id: str, request: Request, token: str = "", admin: str = ""):
+    tok = token or request.headers.get("Authorization", "").replace("Bearer ", "").strip()
+    if not _bet_admin_ok(tok, admin):
+        raise HTTPException(status_code=403, detail="Admin only")
+    with _BET_LOCK:
+        data = _load_bets()
+        key = _bet_user_key(tok, admin)
+        bets = data.get(key, [])
+        new = [b for b in bets if b.get("id") != bet_id]
+        if len(new) != len(bets):
+            data[key] = new
+            _save_bets(data)
+    return {"ok": True}
+
+
+@app.get("/api/grade/{date_str}")
+async def grade_picks(date_str: str, request: Request, token: str = ""):
+    """Fetch actual MLB box scores and grade all picks for the given date."""
+    tok = token or request.headers.get("Authorization", "").replace("Bearer ", "").strip()
+    if not _verify_hub_token(tok):
+        raise HTTPException(status_code=401, detail="Subscription required")
+    if date_str not in _cache:
+        disk = _load_disk_cache(date_str)
+        if disk is not None:
+            _cache[date_str] = disk
+    picks = _cache.get(date_str)
+    if not picks:
+        raise HTTPException(status_code=404, detail="No picks for this date")
+    try:
+        return _grade_date(date_str, picks)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"MLB API error: {e}")
+
+
+@app.get("/api/track-record")
+async def track_record(request: Request, token: str = "", admin: str = ""):
+    """Admin-only. All-time + daily W/L record per category (Over vs Under) from the
+    permanent ledger. Grades any past cached day not yet locked, then aggregates."""
+    tok = token or request.headers.get("Authorization", "").replace("Bearer ", "").strip()
+    is_admin = _is_admin_token(tok) or (
+        bool(admin) and admin == os.environ.get("INTERNAL_API_TOKEN", "__none__")
+    )
+    if not is_admin:
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    led = _update_track_ledger()
+
+    alltime: dict = {}   # {category: {side: [W, L]}}
+    daily = []
+    for ds in sorted(led.keys()):
+        day_w = day_l = 0
+        for cat, sides in (led[ds] or {}).items():
+            for side, wl in sides.items():
+                rec = alltime.setdefault(cat, {}).setdefault(side, [0, 0])
+                rec[0] += wl[0]; rec[1] += wl[1]
+                day_w += wl[0]; day_l += wl[1]
+        daily.append({"date": ds, "wins": day_w, "losses": day_l})
+
+    cats = [c for c in _TRACK_CAT_ORDER if c in alltime] + \
+           [c for c in alltime if c not in _TRACK_CAT_ORDER]
+    rows = []
+    for cat in cats:
+        for side in ("OVER", "UNDER"):
+            if side in alltime.get(cat, {}):
+                w, l = alltime[cat][side]
+                rows.append({"category": cat, "side": side, "wins": w, "losses": l})
+
+    return {"alltime": rows, "daily": daily, "days": len(led)}
 
 
 # ── Any-player lookup ────────────────────────────────────────────────
@@ -468,6 +1036,12 @@ _HTML = """
     .results-table td { padding: 12px 14px; border-bottom: 1px solid rgba(255,255,255,.05); vertical-align: middle; }
     .results-table tr:hover td { background: rgba(255,255,255,.03); }
     .results-table tr:last-child td { border-bottom: none; }
+    .grade-table { width:100%; border-collapse:collapse; font-size:.82rem; }
+    .grade-table th { color:#94a3b8; font-weight:600; padding:6px 12px; border-bottom:1px solid #1f2937; text-align:left; white-space:nowrap; }
+    .grade-table td { padding:7px 12px; border-bottom:1px solid #111827; vertical-align:middle; }
+    .grade-table tr:hover td { background:rgba(255,255,255,.02); }
+    .bet-input { width:68px; background:#1e1e1e; border:1px solid #374151; border-radius:6px; color:#fff; padding:4px 6px; font-size:.85rem; text-align:center; }
+    .bet-input:focus { outline:none; border-color:#f59e0b; }
     /* Admin gate: hidden by default, shown only when body has is-admin */
     .admin-only { display: none !important; }
     body.is-admin .admin-only { display: revert !important; }
@@ -576,6 +1150,9 @@ _HTML = """
         <button class="btn-primary" id="get-btn" onclick="getPicks()">🎯 Get Picks</button>
         <button class="btn-primary admin-only" id="run-btn" onclick="startRun()" style="margin-left:10px">Run Picks</button>
         <button class="btn-primary admin-only" id="force-btn" onclick="startRun(true)" style="margin-left:10px;background:#dc2626;color:#fff" title="Bypass cache and rebuild today's picks from scratch">Force Refresh</button>
+        <button class="btn-primary" id="results-btn" onclick="checkResults()" style="margin-left:10px;background:#1d4ed8;color:#fff">📊 Results</button>
+        <button class="btn-primary admin-only" id="track-btn" onclick="openTrackRecord()" style="margin-left:10px;background:#7c3aed;color:#fff" title="All-time + daily Win/Loss record across every graded day, by category">🏆 Track Record</button>
+        <button class="btn-primary admin-only" id="mybets-btn" onclick="openMyBets()" style="margin-left:10px;background:#4338ca;color:#fff" title="Your personal logged bets, record and ROI (auto-settled from box scores)">💰 My Bets</button>
       </div>
       <div id="run-spinner" class="hidden" style="margin-top:12px;color:#6b7280;font-size:13px">
         <span class="spinner"></span> Analyzing player histories…
@@ -1079,32 +1656,39 @@ function _pkForm(key){
   // Prop rows are clickable → _ppForm for that market's game-by-game log.
   var _nm=String(p.name||'').toLowerCase().trim();
   var _mk=(window.__PP_BY_NAME__||{})[_nm]||{};
-  function _mkRow(lbl,ln,bl,unit,pk,od,key,clickable){
+  var _adm=!!window.IS_ADMIN;
+  function _mkRow(lbl,ln,bl,unit,pk,od,key,clickable,betSrc,betCat,statKey){
     var pc=pk==='OVER'?'#63cab7':(pk==='UNDER'?'#ff8a65':'#64748b');
     var odStr=od!=null?((od>0?'+':'')+od):'';
     var pickStr=pk?(pk+(odStr?(' '+odStr):'')):'\u2014';
     var clk=(clickable&&key)?(' onclick="_ppForm(&#39;'+key+'&#39;)" style="cursor:pointer" title="Game-by-game log"'):'';
     var caret=(clickable&&key)?' <span style="color:#64748b;font-size:.62rem">\u25be</span>':'';
+    var betCell='';
+    if(_adm){
+      var bb=(betSrc&&pk&&ln!=null&&statKey)?_betBtn(betSrc,betCat,pk,statKey,lbl,ln,od):'';
+      betCell='<td style="padding:5px 8px;text-align:right;white-space:nowrap">'+bb+'</td>';
+    }
     return '<tr'+clk+'><td style="padding:5px 8px;color:#e2e8f0;font-weight:600">'+lbl+caret+'</td>'
       +'<td style="padding:5px 8px;font-family:monospace;color:#fff">'+(ln!=null?ln:'\u2014')+'</td>'
       +'<td style="padding:5px 8px;font-family:monospace;color:#cbd5e1">'+(bl!=null?(bl+(unit?(' '+unit):'')):'\u2014')+'</td>'
-      +'<td style="padding:5px 8px;font-weight:800;color:'+pc+'">'+pickStr+'</td></tr>';
+      +'<td style="padding:5px 8px;font-weight:800;color:'+pc+'">'+pickStr+'</td>'+betCell+'</tr>';
   }
   var _kHasSugg=p.sugg_line!=null;
   var _kLine=_kHasSugg?p.sugg_line:p.line;
   var _kPick=_kHasSugg?'OVER':p.pick;
   var _kOd=_kHasSugg?p.sugg_odds:(p.pick==='OVER'?p.over_odds:(p.pick==='UNDER'?p.under_odds:null));
   var _kBl=(p.blended_avg_k!=null?p.blended_avg_k:p.avg_k);
-  var mkBody=_mkRow('Strikeouts',_kLine,_kBl,'K',_kPick,_kOd,'',false);
-  [['pitcher_hits_allowed','Hits Allowed'],['pitcher_outs','Outs'],['pitcher_earned_runs','Earned Runs'],['pitcher_walks','Walks Allowed']].forEach(function(mm){
+  var _kSrc={name:p.name,team:p.team,opp:p.opp};
+  var mkBody=_mkRow('Strikeouts',_kLine,_kBl,'K',_kPick,_kOd,'',false,_kSrc,'Pitcher Ks','strikeOuts');
+  [['pitcher_hits_allowed','Hits Allowed','hits_allowed','Pitcher Hits Allowed'],['pitcher_outs','Outs','outs','Pitcher Outs'],['pitcher_earned_runs','Earned Runs','earnedRuns','Pitcher Earned Runs'],['pitcher_walks','Walks Allowed','walks','Pitcher Walks Allowed']].forEach(function(mm){
     var e=_mk[mm[0]];
     if(e&&e.obj){ var o=e.obj; var od=o.pick==='OVER'?o.over_odds:(o.pick==='UNDER'?o.under_odds:null);
-      mkBody+=_mkRow(mm[1],o.line,o.blended,(o.unit?String(o.unit).trim():''),o.pick,od,e.key,true);
-    } else { mkBody+=_mkRow(mm[1],null,null,'',null,null,'',false); }
+      mkBody+=_mkRow(mm[1],o.line,o.blended,(o.unit?String(o.unit).trim():''),o.pick,od,e.key,true,o,mm[3],mm[2]);
+    } else { mkBody+=_mkRow(mm[1],null,null,'',null,null,'',false,null,'',''); }
   });
   var mkTable='<div style="font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase;margin-bottom:6px">All 5 Markets</div>'
     +'<table style="width:100%;border-collapse:collapse;font-size:.82rem;margin-bottom:16px;border-bottom:1px solid #1e293b">'
-    +'<thead><tr><th style="text-align:left;padding:4px 8px;color:#64748b;font-size:.66rem;font-weight:600">Market</th><th style="text-align:left;padding:4px 8px;color:#64748b;font-size:.66rem;font-weight:600">Line</th><th style="text-align:left;padding:4px 8px;color:#64748b;font-size:.66rem;font-weight:600">Blend</th><th style="text-align:left;padding:4px 8px;color:#64748b;font-size:.66rem;font-weight:600">Pick</th></tr></thead>'
+    +'<thead><tr><th style="text-align:left;padding:4px 8px;color:#64748b;font-size:.66rem;font-weight:600">Market</th><th style="text-align:left;padding:4px 8px;color:#64748b;font-size:.66rem;font-weight:600">Line</th><th style="text-align:left;padding:4px 8px;color:#64748b;font-size:.66rem;font-weight:600">Blend</th><th style="text-align:left;padding:4px 8px;color:#64748b;font-size:.66rem;font-weight:600">Pick</th>'+(_adm?'<th style="text-align:right;padding:4px 8px;color:#64748b;font-size:.66rem;font-weight:600">Bet</th>':'')+'</tr></thead>'
     +'<tbody>'+mkBody+'</tbody></table>';
   ov.innerHTML=`<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:440px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">
     <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid #1e293b">
@@ -2072,6 +2656,7 @@ function _mlbCard(p, rank, dim) {
         <span style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">Hit Odds</span>
         <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odds}</span>
       </div>
+      ${_betBtn(p,'Hitter Hits','OVER','hits','Hits',0.5,p.hit_odds)}
       ${adminStats}
     </div>
   </div>`;
@@ -2122,6 +2707,7 @@ function _underCard(p, rank) {
         <span style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">U 1.5 Total Bases</span>
         <span style="font-family:monospace;color:#63cab7;font-weight:700;font-size:.9rem">${tbOdds}</span>
       </div>
+      ${_betBtn(p,'Hitter Hits',(p.pick||'UNDER'),'hits','Hits',1.5,(p.pick==='OVER'?p.over_odds:p.under_odds))}
       ${adminStats}
     </div>
   </div>`;
@@ -2191,6 +2777,7 @@ function _runsCard(p, rank, pfx) {
         <span style="font-size:.8rem;color:${pickClr};font-weight:900">${p.pick} ${p.line!=null?p.line:0.5} Runs</span>
         <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}</span>
       </div>
+      ${_betBtn(p,'Runs',p.pick,'runs','Runs',(p.line!=null?p.line:0.5),(p.pick==='OVER'?p.over_odds:p.under_odds))}
       ${adminStats}
     </div>
   </div>`;
@@ -2238,6 +2825,7 @@ function _pitcherCard(p, rank) {
         <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.9rem">${odds||'—'}</span>
       </div>
       <div style="margin-top:5px;font-size:.7rem;color:#94a3b8">Avg K <strong style="color:#cbd5e1">${p.avg_k!=null?p.avg_k:'—'}</strong> · IP <strong style="color:#cbd5e1">${p.avg_ip!=null?p.avg_ip:'—'}</strong> · ERA <strong style="color:#cbd5e1">${p.era||'—'}</strong> · H <strong style="color:#cbd5e1">${p.avg_hits!=null?p.avg_hits:'—'}</strong> · BB <strong style="color:#cbd5e1">${p.avg_bb!=null?p.avg_bb:'—'}</strong> <span style="color:#64748b">vr opp</span></div>
+      ${_betBtn(p,'Pitcher Ks',(hasSugg?'OVER':p.pick),'strikeOuts','Ks',(hasSugg?p.sugg_line:p.line),(hasSugg?p.sugg_odds:(isOver?p.over_odds:p.under_odds)))}
       <div style="margin-top:5px;font-size:.66rem;color:#63cab7;text-align:right">all 5 markets →</div>
     </div>
   </div>`;
@@ -2292,7 +2880,423 @@ function disableRunBtn(d){
   const fb=document.getElementById('force-btn');
   if(fb) fb.disabled=d;
 }
+
+// ── Results / Grader ──────────────────────────────────────────────────────
+window.__GRADE_ROWS__ = [];
+
+async function checkResults() {
+  var dateStr = document.getElementById('date-picker').value;
+  if (!dateStr) { alert('Pick a date first'); return; }
+  var tok = localStorage.getItem('hub_token') || '';
+  var btn = document.getElementById('results-btn');
+  btn.disabled = true; btn.textContent = 'Loading...';
+  show('grade-card');
+  document.getElementById('grade-spinner').classList.remove('hidden');
+  document.getElementById('grade-body').innerHTML = '';
+  document.getElementById('grade-summary').innerHTML = '';
+  try {
+    var res = await fetch('/api/grade/' + dateStr + '?token=' + encodeURIComponent(tok));
+    if (!res.ok) { var t = await res.text(); throw new Error(t); }
+    renderGradeResults(await res.json());
+  } catch(e) {
+    document.getElementById('grade-body').innerHTML = '<p style="color:#f87171;padding:16px">' + (e.message || 'Error fetching results') + '</p>';
+  } finally {
+    btn.disabled = false; btn.textContent = '📊 Results';
+    document.getElementById('grade-spinner').classList.add('hidden');
+  }
+}
+
+function _gradeOddsDisp(odds) {
+  if (odds == null || odds === '') return '—';
+  var o = parseFloat(odds);
+  return isNaN(o) ? '—' : (o > 0 ? '+' + o : '' + o);
+}
+
+function _gradeResultBadge(result) {
+  if (result === 'WIN')  return '<span style="color:#4ade80;font-weight:700">WIN</span>';
+  if (result === 'LOSS') return '<span style="color:#f87171;font-weight:700">LOSS</span>';
+  return '<span style="color:#94a3b8">Pending</span>';
+}
+
+function renderGradeSection(title, rows, color) {
+  if (!rows || !rows.length) return '';
+  var offset = window.__GRADE_ROWS__.length;
+  rows.forEach(function(r) { window.__GRADE_ROWS__.push(r); });
+  var trs = rows.map(function(r, i) {
+    var idx = offset + i;
+    var res = r.result || 'pending';
+    var bg  = res === 'WIN' ? 'rgba(74,222,128,.06)' : res === 'LOSS' ? 'rgba(248,113,113,.06)' : '';
+    var actual = r.actual != null ? r.actual : '—';
+    var statusNote = (r.game_status && r.game_status !== 'Final' && r.game_status !== 'Game Over' && r.game_status !== '—')
+      ? ' <span style="font-size:.68rem;color:#64748b">(' + r.game_status + ')</span>' : '';
+    return '<tr style="background:' + bg + '">' +
+      '<td style="color:#64748b;font-size:.75rem">' + (i + 1) + '</td>' +
+      '<td style="font-weight:700;white-space:nowrap">' + (r.name || '—') + '</td>' +
+      '<td style="font-size:.8rem;color:#cbd5e1">' + (r.pick || '—') + '</td>' +
+      '<td style="font-family:monospace;color:#94a3b8">' + _gradeOddsDisp(r.odds) + '</td>' +
+      '<td><input type="number" min="0" step="1" placeholder="$" oninput="recalcPL()" id="gbet' + idx + '" class="bet-input"></td>' +
+      '<td style="font-family:monospace;font-weight:700;color:#fff">' + actual + statusNote + '</td>' +
+      '<td>' + _gradeResultBadge(res) + '</td>' +
+      '<td id="gpl' + idx + '" style="font-family:monospace;font-weight:700;color:#94a3b8">—</td>' +
+      '</tr>';
+  }).join('');
+  return '<details open style="margin-bottom:20px">' +
+    '<summary style="cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid #1f2937;margin-bottom:8px">' +
+    '<span style="font-weight:700;color:' + color + ';font-size:.9rem">' + title + '</span>' +
+    '<span style="font-size:.72rem;color:#64748b;background:#111;border-radius:999px;padding:2px 8px">' + rows.length + '</span>' +
+    '<span style="font-size:.7rem;color:#475569;margin-left:auto">▸ toggle</span></summary>' +
+    '<div style="overflow-x:auto"><table class="grade-table">' +
+    '<thead><tr><th>#</th><th>Player</th><th>Pick</th><th>Odds</th><th>Bet ($)</th><th>Actual</th><th>Result</th><th>P&L</th></tr></thead>' +
+    '<tbody>' + trs + '</tbody></table></div></details>';
+}
+
+function renderGradeResults(data) {
+  window.__GRADE_ROWS__ = [];
+  var cats = [
+    { key: 'hitter_overs',  label: 'Hitter OVER 0.5 Hits',  color: '#4ade80' },
+    { key: 'hitter_unders', label: 'Hitter Under 1.5 Hits', color: '#ff8a65' },
+    { key: 'runs',          label: 'Runs OVER / UNDER 0.5', color: '#60a5fa' },
+    { key: 'pitcher_ks',    label: 'Pitcher Strikeouts',     color: '#63cab7' },
+    { key: 'pitcher_props', label: 'Pitcher Props',          color: '#a78bfa' },
+  ];
+  var allRows = [];
+  cats.forEach(function(c) { allRows = allRows.concat(data[c.key] || []); });
+  var wins    = allRows.filter(function(r) { return r.result === 'WIN'; }).length;
+  var losses  = allRows.filter(function(r) { return r.result === 'LOSS'; }).length;
+  var pending = allRows.filter(function(r) { return r.result !== 'WIN' && r.result !== 'LOSS'; }).length;
+  document.getElementById('grade-summary').innerHTML =
+    '<div style="background:#111;border-radius:10px;padding:14px 18px;margin-bottom:20px;display:flex;flex-wrap:wrap;gap:12px;align-items:center">' +
+    '<div><span style="color:#4ade80;font-weight:700;font-size:1.1rem">' + wins + 'W</span> ' +
+    '<span style="color:#f87171;font-weight:700;font-size:1.1rem">' + losses + 'L</span>' +
+    (pending > 0 ? ' <span style="color:#94a3b8;font-size:.85rem;margin-left:4px">' + pending + ' pending</span>' : '') + '</div>' +
+    '<div style="margin-left:auto;font-size:.82rem;color:#94a3b8" id="grade-summary-stats">Enter bet amounts below to track P&L</div>' +
+    '</div>';
+  var bodyHtml = cats.map(function(c) {
+    return renderGradeSection(c.label, data[c.key] || [], c.color);
+  }).join('');
+  document.getElementById('grade-body').innerHTML = bodyHtml ||
+    '<p style="color:#94a3b8;padding:16px">No graded picks for this date.</p>';
+}
+
+function recalcPL() {
+  var rows = window.__GRADE_ROWS__ || [];
+  var totalWagered = 0, totalNet = 0, wins = 0, losses = 0;
+  rows.forEach(function(r, idx) {
+    var input = document.getElementById('gbet' + idx);
+    var cell  = document.getElementById('gpl' + idx);
+    if (!input || !cell) return;
+    var stake = parseFloat(input.value) || 0;
+    if (!stake) { cell.textContent = '—'; cell.style.color = '#94a3b8'; return; }
+    var odds = parseFloat(r.odds);
+    if (isNaN(odds) || r.odds == null) { cell.textContent = '—'; cell.style.color = '#94a3b8'; return; }
+    if (r.result === 'WIN') {
+      var profit = odds > 0 ? (odds / 100) * stake : (100 / Math.abs(odds)) * stake;
+      cell.textContent = '+' + profit.toFixed(2); cell.style.color = '#4ade80';
+      totalNet += profit; totalWagered += stake; wins++;
+    } else if (r.result === 'LOSS') {
+      cell.textContent = '-' + stake.toFixed(2); cell.style.color = '#f87171';
+      totalNet -= stake; totalWagered += stake; losses++;
+    } else {
+      cell.textContent = 'TBD'; cell.style.color = '#94a3b8';
+      totalWagered += stake;
+    }
+  });
+  var stats = document.getElementById('grade-summary-stats');
+  if (!stats || totalWagered === 0) return;
+  var roi = totalNet / totalWagered * 100;
+  stats.innerHTML =
+    'Wagered <strong style="color:#fff">$' + totalWagered.toFixed(2) + '</strong>' +
+    ' &nbsp;|&nbsp; Net <strong style="color:' + (totalNet >= 0 ? '#4ade80' : '#f87171') + '">' +
+    (totalNet >= 0 ? '+' : '') + totalNet.toFixed(2) + '</strong>' +
+    ' &nbsp;|&nbsp; ROI <strong style="color:' + (roi >= 0 ? '#4ade80' : '#f87171') + '">' +
+    (roi >= 0 ? '+' : '') + roi.toFixed(1) + '%</strong>';
+}
+
+// ── Track Record (admin) — all-time + daily W/L by category ──────────────
+async function openTrackRecord(){
+  var btn=document.getElementById('track-btn');
+  var tok=localStorage.getItem('__mpa_token')||localStorage.getItem('hub_token')||'';
+  var adm=new URLSearchParams(location.search).get('admin')||'';
+  var lbl=btn.textContent; btn.disabled=true; btn.textContent='Loading...';
+  show('track-card');
+  document.getElementById('track-spinner').classList.remove('hidden');
+  document.getElementById('track-alltime').innerHTML='';
+  document.getElementById('track-daily').innerHTML='';
+  try{
+    var url='/api/track-record?token='+encodeURIComponent(tok)+(adm?('&admin='+encodeURIComponent(adm)):'');
+    var res=await fetch(url);
+    if(!res.ok){ var t=await res.text(); throw new Error(t); }
+    window.__TRACK__=await res.json();
+    renderTrackRecord(window.__TRACK__);
+  }catch(e){
+    document.getElementById('track-alltime').innerHTML='<p style="color:#f87171;padding:16px">'+(e.message||'Error loading track record')+'</p>';
+  }finally{
+    btn.disabled=false; btn.textContent=lbl;
+    document.getElementById('track-spinner').classList.add('hidden');
+  }
+}
+
+function _twPct(w,l){ var n=w+l; return n? (w/n*100).toFixed(1)+'%' : '—'; }
+function _twColor(w,l){ var n=w+l; if(!n) return '#94a3b8'; var p=w/n*100; return p>=60?'#4ade80':(p>=50?'#facc15':'#f87171'); }
+function _twSide(s){ return s==='OVER' ? '<span style="color:#4ade80">OVER</span>' : '<span style="color:#ff8a65">UNDER</span>'; }
+
+function renderTrackRecord(d){
+  var rows=d.alltime||[]; var daily=d.daily||[];
+  var tw=0,tl=0;
+  rows.forEach(function(r){ tw+=r.wins; tl+=r.losses; });
+  var sumHtml='<div style="background:#111;border-radius:10px;padding:14px 18px;margin-bottom:20px;display:flex;flex-wrap:wrap;gap:14px;align-items:center">'+
+    '<div style="font-weight:700">All-Time: <span style="color:#4ade80">'+tw+'W</span> <span style="color:#f87171">'+tl+'L</span> '+
+    '<span style="color:'+_twColor(tw,tl)+'">('+_twPct(tw,tl)+')</span></div>'+
+    '<div style="font-size:.82rem;color:#94a3b8">'+(d.days||0)+' day'+((d.days===1)?'':'s')+' graded · counts Final games only</div>'+
+    '<div style="margin-left:auto;display:flex;gap:8px">'+
+      '<button onclick="downloadTrackAllTimeCSV()" style="background:#7c3aed;color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:.78rem;font-weight:600;cursor:pointer">⬇ CSV — All-Time</button>'+
+      '<button onclick="downloadTrackDailyCSV()" style="background:#1d4ed8;color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:.78rem;font-weight:600;cursor:pointer">⬇ CSV — Daily</button>'+
+    '</div></div>';
+  var atRows=rows.map(function(r){
+    return '<tr>'+
+      '<td style="font-weight:600">'+r.category+'</td>'+
+      '<td>'+_twSide(r.side)+'</td>'+
+      '<td style="font-family:monospace;color:#4ade80;font-weight:700">'+r.wins+'</td>'+
+      '<td style="font-family:monospace;color:#f87171;font-weight:700">'+r.losses+'</td>'+
+      '<td style="font-family:monospace;font-weight:700;color:'+_twColor(r.wins,r.losses)+'">'+_twPct(r.wins,r.losses)+'</td>'+
+      '</tr>';
+  }).join('');
+  var atHtml=sumHtml+(rows.length ?
+    '<div style="overflow-x:auto"><table class="grade-table">'+
+    '<thead><tr><th>Category</th><th>Side</th><th>W</th><th>L</th><th>Win %</th></tr></thead><tbody>'+atRows+
+    '<tr style="border-top:2px solid #334155"><td style="font-weight:800">TOTAL</td><td>—</td>'+
+      '<td style="font-family:monospace;color:#4ade80;font-weight:800">'+tw+'</td>'+
+      '<td style="font-family:monospace;color:#f87171;font-weight:800">'+tl+'</td>'+
+      '<td style="font-family:monospace;font-weight:800;color:'+_twColor(tw,tl)+'">'+_twPct(tw,tl)+'</td></tr>'+
+    '</tbody></table></div>'
+    : '<p style="color:#94a3b8;padding:16px">No graded days yet — the ledger fills in automatically as past slates go Final.</p>');
+  document.getElementById('track-alltime').innerHTML=atHtml;
+  var dRows=daily.slice().reverse().map(function(x){
+    return '<tr><td style="font-weight:600">'+x.date+'</td>'+
+      '<td style="font-family:monospace;color:#4ade80;font-weight:700">'+x.wins+'</td>'+
+      '<td style="font-family:monospace;color:#f87171;font-weight:700">'+x.losses+'</td>'+
+      '<td style="font-family:monospace;font-weight:700;color:'+_twColor(x.wins,x.losses)+'">'+_twPct(x.wins,x.losses)+'</td></tr>';
+  }).join('');
+  document.getElementById('track-daily').innerHTML = daily.length ?
+    '<details style="margin-top:20px"><summary style="cursor:pointer;font-weight:700;color:#a78bfa;padding:10px 0;border-bottom:1px solid #1f2937">📅 Daily Breakdown ('+daily.length+')</summary>'+
+    '<div style="overflow-x:auto;margin-top:8px"><table class="grade-table">'+
+    '<thead><tr><th>Date</th><th>W</th><th>L</th><th>Win %</th></tr></thead><tbody>'+dRows+'</tbody></table></div></details>' : '';
+}
+
+function downloadTrackAllTimeCSV(){ _trackCSV('alltime'); }
+function downloadTrackDailyCSV(){ _trackCSV('daily'); }
+function _trackCSV(which){
+  var d=window.__TRACK__; if(!d){ alert('Open Track Record first.'); return; }
+  var rows;
+  if(which==='daily'){
+    rows=[['Date','Wins','Losses','Win %']];
+    (d.daily||[]).forEach(function(x){ var n=x.wins+x.losses; rows.push([x.date,x.wins,x.losses, n?(x.wins/n*100).toFixed(1):'']); });
+  } else {
+    rows=[['Category','Side','Wins','Losses','Win %']];
+    (d.alltime||[]).forEach(function(r){ var n=r.wins+r.losses; rows.push([r.category,r.side,r.wins,r.losses, n?(r.wins/n*100).toFixed(1):'']); });
+  }
+  var csv=rows.map(function(row){return row.map(_csvCell).join(',');}).join(String.fromCharCode(13)+String.fromCharCode(10));
+  var blob=new Blob([String.fromCharCode(65279)+csv],{type:'text/csv;charset=utf-8;'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');
+  a.href=url; a.download='mlb-track-record-'+which+'.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ── My Bets: personal bet log + ROI (admin-only) ───────────────────────
+function _betAuthQS(){
+  var tok=localStorage.getItem('__mpa_token')||localStorage.getItem('hub_token')||'';
+  var adm=new URLSearchParams(location.search).get('admin')||'';
+  return '?token='+encodeURIComponent(tok)+(adm?('&admin='+encodeURIComponent(adm)):'');
+}
+// Builds the "＋ Track Bet" control (admin-only). Registers the pick in
+// __BET_SRC__ and opens the stake form. No line ⇒ no button (can't grade).
+function _betBtn(p,cat,side,statKey,statLabel,line,odds){
+  if(!window.IS_ADMIN) return '';
+  if(line==null||!side||!statKey) return '';
+  window.__BET_SRC__=window.__BET_SRC__||{}; window.__BET_N__=(window.__BET_N__||0)+1;
+  var k='bs'+window.__BET_N__;
+  window.__BET_SRC__[k]={name:(p.full_name||p.name||''),team:(p.team||''),opp:(p.opp||''),
+    category:cat,side:side,stat_key:statKey,stat_label:statLabel,line:line,
+    odds:(odds!=null?odds:null),date:((window._lastResult&&window._lastResult.date)||'')};
+  return `<button class="admin-only" onclick="event.stopPropagation();_betForm('${k}')" style="margin-top:7px;width:100%;background:rgba(67,56,202,.18);border:1px solid rgba(129,140,248,.55);color:#c7d2fe;border-radius:7px;padding:5px 0;font-size:.72rem;font-weight:800;cursor:pointer;letter-spacing:.04em">＋ Track Bet</button>`;
+}
+function _betForm(key){
+  var src=(window.__BET_SRC__||{})[key]; if(!src) return;
+  window.__BET_CUR__=src;
+  var ov=document.getElementById('bet-modal');
+  if(!ov){ ov=document.createElement('div'); ov.id='bet-modal';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.82);z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; };
+    document.body.appendChild(ov);
+  }
+  var pickTxt=src.side+' '+src.line+' '+(src.stat_label||'');
+  ov.innerHTML='<div style="background:#0f172a;border:1px solid #312e81;border-radius:16px;max-width:360px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.6)">'
+    +'<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:16px 18px;border-bottom:1px solid #1e293b">'
+      +'<div><div style="font-weight:800;color:#fff;font-size:1.02rem">'+_esc(src.name)+'</div>'
+      +'<div style="color:#a5b4fc;font-size:.82rem;font-weight:800;margin-top:2px">'+_esc(pickTxt)+'</div>'
+      +'<div style="color:#94a3b8;font-size:.72rem;margin-top:2px">'+_esc(src.category||'')+(src.opp?(' · vs '+_esc(src.opp)):'')+(src.date?(' · '+src.date):'')+'</div></div>'
+      +'<button onclick="document.getElementById(&#39;bet-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem">\u2715</button>'
+    +'</div>'
+    +'<div style="padding:16px 18px;display:grid;gap:12px">'
+      +'<label style="font-size:.72rem;color:#94a3b8;font-weight:600">Odds (American)<input id="bet-odds" type="number" value="'+(src.odds!=null?src.odds:'')+'" style="display:block;width:100%;margin-top:5px;background:#0b1120;border:1px solid #334155;border-radius:8px;padding:9px 11px;color:#fbbf24;font-family:monospace;font-weight:700;font-size:.95rem"></label>'
+      +'<label style="font-size:.72rem;color:#94a3b8;font-weight:600">Bet size ($)<input id="bet-stake" type="number" min="0" step="0.01" placeholder="e.g. 50" style="display:block;width:100%;margin-top:5px;background:#0b1120;border:1px solid #334155;border-radius:8px;padding:9px 11px;color:#fff;font-weight:700;font-size:.95rem"></label>'
+      +'<div id="bet-payout" style="font-size:.78rem;color:#64748b;min-height:1em"></div>'
+      +'<div id="bet-msg" style="font-size:.76rem;color:#f87171;min-height:1em"></div>'
+      +'<button id="bet-save" onclick="_saveBet()" style="background:#4338ca;color:#fff;border:none;border-radius:9px;padding:11px;font-weight:800;cursor:pointer;font-size:.92rem">Log Bet</button>'
+    +'</div></div>';
+  ov.style.display='flex';
+  var so=document.getElementById('bet-odds'), ss=document.getElementById('bet-stake');
+  function _calc(){
+    var o=parseFloat(so.value), s=parseFloat(ss.value);
+    var pay=document.getElementById('bet-payout');
+    if(!isFinite(o)||!isFinite(s)||s<=0){ pay.textContent=''; return; }
+    var win=o>0?s*(o/100):s*(100/Math.abs(o));
+    pay.innerHTML='To win <strong style="color:#4ade80">$'+win.toFixed(2)+'</strong> · total payout <strong style="color:#cbd5e1">$'+(s+win).toFixed(2)+'</strong>';
+  }
+  so.oninput=_calc; ss.oninput=_calc; _calc();
+  setTimeout(function(){ ss.focus(); },50);
+}
+async function _saveBet(){
+  var src=window.__BET_CUR__; if(!src) return;
+  var o=parseFloat(document.getElementById('bet-odds').value);
+  var s=parseFloat(document.getElementById('bet-stake').value);
+  var msg=document.getElementById('bet-msg');
+  if(!isFinite(o)){ msg.textContent='Enter the odds.'; return; }
+  if(!isFinite(s)||s<=0){ msg.textContent='Enter a bet size greater than 0.'; return; }
+  var btn=document.getElementById('bet-save'); btn.disabled=true; btn.textContent='Saving…';
+  try{
+    var body=Object.assign({},src,{odds:Math.round(o),stake:s,placed_at:new Date().toISOString()});
+    var res=await fetch('/api/bets'+_betAuthQS(),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(!res.ok){ throw new Error(await res.text()); }
+    document.getElementById('bet-modal').style.display='none';
+    _betToast('✅ Bet logged');
+    var mb=document.getElementById('mybets-card');
+    if(mb && !mb.classList.contains('hidden')) openMyBets();
+  }catch(e){ msg.textContent=(e.message||'Save failed'); btn.disabled=false; btn.textContent='Log Bet'; }
+}
+function _betToast(m){
+  var t=document.getElementById('bet-toast');
+  if(!t){ t=document.createElement('div'); t.id='bet-toast';
+    t.style.cssText='position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#4338ca;color:#fff;padding:10px 18px;border-radius:10px;font-weight:700;font-size:.85rem;z-index:10001;box-shadow:0 10px 30px rgba(0,0,0,.5);transition:opacity .3s;opacity:0';
+    document.body.appendChild(t);
+  }
+  t.textContent=m; t.style.opacity='1';
+  clearTimeout(window.__betToastT__);
+  window.__betToastT__=setTimeout(function(){ t.style.opacity='0'; },1800);
+}
+async function openMyBets(){
+  var btn=document.getElementById('mybets-btn');
+  var lbl=btn?btn.textContent:'';
+  if(btn){ btn.disabled=true; btn.textContent='Loading…'; }
+  show('mybets-card');
+  document.getElementById('mybets-spinner').classList.remove('hidden');
+  try{
+    var res=await fetch('/api/bets'+_betAuthQS());
+    if(!res.ok){ throw new Error(await res.text()); }
+    window.__MYBETS__=await res.json();
+    renderMyBets(window.__MYBETS__);
+  }catch(e){
+    document.getElementById('mybets-body').innerHTML='<p style="color:#f87171;padding:16px">'+(e.message||'Error loading bets')+'</p>';
+  }finally{
+    if(btn){ btn.disabled=false; btn.textContent=lbl; }
+    document.getElementById('mybets-spinner').classList.add('hidden');
+  }
+}
+function _money(n){ if(n==null) return '—'; var v=Number(n); return (v<0?'-$':'$')+Math.abs(v).toFixed(2); }
+function _betOddsDisp(o){ return o!=null?((o>0?'+':'')+o):'—'; }
+function _resColor(r){ return r==='WIN'?'#4ade80':(r==='LOSS'?'#f87171':(r==='PUSH'?'#facc15':'#94a3b8')); }
+function _statBox(lbl,val,clr){ return '<div style="background:#111;border-radius:10px;padding:10px 14px;min-width:92px"><div style="font-size:.64rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">'+lbl+'</div><div style="font-size:1.12rem;font-weight:800;color:'+(clr||'#e2e8f0')+'">'+val+'</div></div>'; }
+function renderMyBets(d){
+  var s=d.summary||{}; var bets=d.bets||[];
+  var roiTxt=s.roi!=null?((s.roi>0?'+':'')+s.roi+'%'):'—';
+  var roiClr=s.roi==null?'#94a3b8':(s.roi>0?'#4ade80':(s.roi<0?'#f87171':'#facc15'));
+  var netClr=(s.profit||0)>0?'#4ade80':((s.profit||0)<0?'#f87171':'#cbd5e1');
+  var recTxt=(s.wins||0)+'-'+(s.losses||0)+(s.push?('-'+s.push+'P'):'');
+  var head='<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:18px">'
+    +_statBox('Record',recTxt,'#e2e8f0')
+    +_statBox('Pending',(s.pending||0),'#94a3b8')
+    +_statBox('Staked',_money(s.staked||0),'#cbd5e1')
+    +_statBox('Net',_money(s.profit||0),netClr)
+    +_statBox('Returned',_money(s.returned||0),'#cbd5e1')
+    +_statBox('ROI',roiTxt,roiClr)
+    +'<div style="margin-left:auto"><button onclick="downloadMyBetsCSV()" style="background:#4338ca;color:#fff;border:none;border-radius:8px;padding:8px 12px;font-size:.78rem;font-weight:700;cursor:pointer">⬇ CSV</button></div>'
+    +'</div>';
+  var bc=(s.by_category||[]).map(function(c){
+    var croi=c.roi!=null?((c.roi>0?'+':'')+c.roi+'%'):'—';
+    var cclr=c.roi==null?'#94a3b8':(c.roi>0?'#4ade80':(c.roi<0?'#f87171':'#facc15'));
+    return '<tr><td style="font-weight:600">'+c.category+'</td>'
+      +'<td style="font-family:monospace">'+c.wins+'-'+c.losses+(c.push?('-'+c.push+'P'):'')+'</td>'
+      +'<td style="font-family:monospace;color:#94a3b8">'+(c.pending||0)+'</td>'
+      +'<td style="font-family:monospace">'+_money(c.staked)+'</td>'
+      +'<td style="font-family:monospace;color:'+((c.profit||0)>=0?'#4ade80':'#f87171')+'">'+_money(c.profit)+'</td>'
+      +'<td style="font-family:monospace;font-weight:700;color:'+cclr+'">'+croi+'</td></tr>';
+  }).join('');
+  var bcHtml=bc?'<div style="overflow-x:auto;margin-bottom:18px"><table class="grade-table"><thead><tr><th>Category</th><th>W-L</th><th>Pend</th><th>Staked</th><th>Net</th><th>ROI</th></tr></thead><tbody>'+bc+'</tbody></table></div>':'';
+  var rows=bets.map(function(b){
+    var res=b.result||'pending';
+    var pk=b.side+' '+b.line+' '+(b.stat_label||'');
+    var actTxt=b.actual!=null?(' <span style="color:#64748b;font-weight:400;font-size:.72rem">('+b.actual+')</span>'):'';
+    return '<tr>'
+      +'<td style="white-space:nowrap;color:#94a3b8;font-family:monospace;font-size:.76rem">'+(b.date||'')+'</td>'
+      +'<td style="font-weight:600">'+_esc(b.name)+'<div style="font-size:.68rem;color:#64748b">'+_esc(b.category||'')+'</div></td>'
+      +'<td style="font-size:.82rem">'+_esc(pk)+'</td>'
+      +'<td style="font-family:monospace">'+_betOddsDisp(b.odds)+'</td>'
+      +'<td style="font-family:monospace">'+_money(b.stake)+'</td>'
+      +'<td style="font-weight:800;color:'+_resColor(res)+'">'+(res==='pending'?'pending':res)+actTxt+'</td>'
+      +'<td style="font-family:monospace;font-weight:700;color:'+((b.profit||0)>=0?'#4ade80':'#f87171')+'">'+(b.profit!=null?_money(b.profit):'—')+'</td>'
+      +'<td><button onclick="_deleteBet(&#39;'+b.id+'&#39;)" title="Remove this bet" style="background:none;border:none;color:#64748b;cursor:pointer;font-size:1rem">\u2716</button></td>'
+      +'</tr>';
+  }).join('');
+  var rowsHtml=bets.length?'<div style="overflow-x:auto"><table class="grade-table"><thead><tr><th>Date</th><th>Player</th><th>Pick</th><th>Odds</th><th>Stake</th><th>Result</th><th>Profit</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>':'<p style="color:#94a3b8;padding:16px">No bets logged yet. Click <strong style="color:#c7d2fe">＋ Track Bet</strong> on any pick card to start.</p>';
+  document.getElementById('mybets-body').innerHTML=head+bcHtml+rowsHtml;
+}
+async function _deleteBet(id){
+  if(!confirm('Remove this bet from your log?')) return;
+  try{
+    var res=await fetch('/api/bets/'+encodeURIComponent(id)+_betAuthQS(),{method:'DELETE'});
+    if(!res.ok){ throw new Error(await res.text()); }
+    openMyBets();
+  }catch(e){ alert(e.message||'Delete failed'); }
+}
+function downloadMyBetsCSV(){
+  var d=window.__MYBETS__; if(!d){ alert('Open My Bets first.'); return; }
+  var rows=[['Date','Player','Category','Pick','Odds','Stake','Result','Actual','Profit']];
+  (d.bets||[]).forEach(function(b){
+    rows.push([b.date||'',b.name||'',b.category||'',(b.side+' '+b.line+' '+(b.stat_label||'')),
+      b.odds!=null?b.odds:'',b.stake!=null?b.stake:'',b.result||'',b.actual!=null?b.actual:'',b.profit!=null?b.profit:'']);
+  });
+  var csv=rows.map(function(row){return row.map(_csvCell).join(',');}).join(String.fromCharCode(13)+String.fromCharCode(10));
+  var blob=new Blob([String.fromCharCode(65279)+csv],{type:'text/csv;charset=utf-8;'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a'); a.href=url; a.download='mlb-my-bets.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+}
 </script>
+<div id="grade-card" class="hidden space-y-6" style="max-width:960px;margin:0 auto 24px;padding:0 16px">
+  <div class="card p-6">
+    <div class="section-hdr" style="color:#60a5fa;margin-bottom:16px">📊 Today's Results</div>
+    <div id="grade-spinner" class="hidden" style="color:#94a3b8;font-size:.9rem;margin-bottom:12px;display:flex;align-items:center;gap:8px"><span class="spinner"></span> Fetching box scores…</div>
+    <div id="grade-summary"></div>
+    <div id="grade-body"></div>
+  </div>
+</div>
+<div id="track-card" class="hidden space-y-6" style="max-width:960px;margin:0 auto 24px;padding:0 16px">
+  <div class="card p-6">
+    <div class="section-hdr" style="color:#a78bfa;margin-bottom:16px">🏆 Track Record — All-Time &amp; Daily</div>
+    <div id="track-spinner" class="hidden" style="color:#94a3b8;font-size:.9rem;margin-bottom:12px;display:flex;align-items:center;gap:8px"><span class="spinner"></span> Grading history…</div>
+    <div id="track-alltime"></div>
+    <div id="track-daily"></div>
+  </div>
+</div>
+<div id="mybets-card" class="hidden space-y-6" style="max-width:960px;margin:0 auto 24px;padding:0 16px">
+  <div class="card p-6">
+    <div class="section-hdr" style="color:#a5b4fc;margin-bottom:16px">💰 My Bets — Record &amp; ROI</div>
+    <div id="mybets-spinner" class="hidden" style="color:#94a3b8;font-size:.9rem;margin-bottom:12px;display:flex;align-items:center;gap:8px"><span class="spinner"></span> Settling bets…</div>
+    <div id="mybets-body"></div>
+  </div>
+</div>
 <footer style="text-align:center;padding:32px 24px;color:#4b5563;font-size:.78rem;border-top:1px solid #1c1c1c;margin-top:24px;font-family:'Source Sans Pro',sans-serif">
   <div style="font-family:'Playfair Display',serif;color:#f59e0b;font-weight:700;font-size:.95rem;margin-bottom:6px">Money Picks Arena</div>
   <div>MLB MoneyBall &middot; Daily Picks</div>
@@ -2352,6 +3356,8 @@ def _auto_run_pipeline(date_str: str, label: str):
         # Always persist so the parlay hub's /api/results can serve the slate
         # even with a TBD starter. The MLB app's own load re-runs when has_tbd.
         _cache[date_str] = result
+        try: _update_track_ledger()
+        except Exception as _le: print(f"[track_ledger] {_le}")
         _save_disk_cache(date_str, result)
         if result.get("stats", {}).get("has_tbd"):
             print(f"[auto-run] {label} — cached {date_str} (has TBD starters; app will re-run on load)")
