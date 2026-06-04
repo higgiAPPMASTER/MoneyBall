@@ -3195,7 +3195,7 @@ function renderTrackRecord(d){
   var catRows='';
   rows.forEach(function(r){
     var key=r.category+'|'+r.side;
-    var cfg=CAT_CFG[key]||{lbl:r.category+' ('+r.side+')',icon:'\uD83D\uDCCA',abbr:r.side};
+    var cfg=CAT_CFG[key]||{lbl:r.category+' ('+r.side+')',icon:'📊',abbr:r.side};
     var n=r.wins+r.losses;
     var clr=_rc(r.wins,n);
     var pctStr=n?Math.round(r.wins/n*100)+'%':'—';
@@ -3238,7 +3238,7 @@ function renderTrackRecord(d){
       +'<td style="padding-left:8px;padding-top:3px;padding-bottom:3px">'+pills+'</td></tr>';
   }).join('');
   document.getElementById('track-daily').innerHTML=daily.length
-    ?'<details style="margin-top:0"><summary style="cursor:pointer;font-weight:700;color:#a78bfa;padding:10px 0;border-bottom:1px solid #1f2937">\uD83D\uDCC5 Daily Breakdown ('+daily.length+' days)</summary>'
+    ?'<details style="margin-top:0"><summary style="cursor:pointer;font-weight:700;color:#a78bfa;padding:10px 0;border-bottom:1px solid #1f2937">📅 Daily Breakdown ('+daily.length+' days)</summary>'
       +'<div style="overflow-x:auto;margin-top:8px"><table class="grade-table">'
       +'<thead><tr><th>Date</th><th>W</th><th>L</th><th>%</th><th style="text-align:left">By Category</th></tr></thead>'
       +'<tbody>'+dRows+'</tbody></table></div></details>'
