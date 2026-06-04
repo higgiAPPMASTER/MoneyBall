@@ -3541,9 +3541,9 @@ function _betBtn(p,cat,side,statKey,statLabel,line,odds){
   window.__BET_SRC__[k]={name:(p.full_name||p.name||''),team:(p.team||''),opp:(p.opp||''),
     category:cat,side:side,stat_key:statKey,stat_label:statLabel,line:line,
     odds:(odds!=null?odds:null),date:((window._lastResult&&window._lastResult.date)||'')};
-  return `<div class="admin-only" style="display:flex;border-top:1px solid #1e293b;flex-shrink:0">
-    <button onclick="event.stopPropagation();_betForm('${k}')" style="flex:1;background:#1a1740;color:#a5b4fc;border:none;border-right:1px solid #1e293b;padding:12px 0;font-size:.8rem;font-weight:800;cursor:pointer;letter-spacing:.05em">&#128221; Track Bet</button>
-    <button onclick="event.stopPropagation();_addToCart('${k}')" style="flex:1;background:#0d2318;color:#6ee7b7;border:none;padding:12px 0;font-size:.8rem;font-weight:800;cursor:pointer;letter-spacing:.05em">&#43; Parlay</button>
+  return `<div class="admin-only" style="display:flex;border-top:1px solid #1e293b;flex-shrink:0;width:100%;box-sizing:border-box">
+    <button onclick="event.stopPropagation();_betForm('${k}')" style="width:50%;box-sizing:border-box;background:#1a1740;color:#a5b4fc;border:none;border-right:1px solid #1e293b;padding:12px 0;font-size:.8rem;font-weight:800;cursor:pointer;letter-spacing:.05em;white-space:nowrap;text-align:center">Track Bet</button>
+    <button onclick="event.stopPropagation();_addToCart('${k}')" style="width:50%;box-sizing:border-box;background:#0d2318;color:#6ee7b7;border:none;padding:12px 0;font-size:.8rem;font-weight:800;cursor:pointer;letter-spacing:.05em;white-space:nowrap;text-align:center">+ Parlay</button>
   </div>`;
 }
 window._cartLegs=window._cartLegs||[];
