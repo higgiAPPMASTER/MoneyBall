@@ -313,9 +313,9 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             return "WIN" if actual > float(line) else "LOSS"
         return "WIN" if actual < float(line) else "LOSS"
 
-    # Hitter OVERs (top9 + also_ran)
+    # Hitter OVERs — top 10 only (top9 list); also_ran "solid plays" excluded from Track Record
     hitter_overs = []
-    for p in (picks.get("top9") or []) + (picks.get("also_ran") or []):
+    for p in (picks.get("top9") or [])[:10]:
         st = _lookup(p.get("player_id"), p.get("full_name") or p.get("name"))
         actual = st["hits"] if st else None
         hitter_overs.append({
@@ -672,7 +672,10 @@ def _summarize_bets(bets: list) -> dict:
     }
 
 @app.get("/api/bets")
-async def get_bets(request: Request, token: str = "", admin: str = ""):
+async def get_bets(request: Request, token: str = "", admin: str = "",
+                   settle: bool = True):
+    """Load logged bets. settle=false skips box-score lookups (fast read).
+    settle=true (default) grades any unresolved past-game bets on the spot."""
     tok = token or request.headers.get("Authorization", "").replace("Bearer ", "").strip()
     if not _bet_admin_ok(tok, admin):
         raise HTTPException(status_code=403, detail="Admin only")
@@ -681,9 +684,10 @@ async def get_bets(request: Request, token: str = "", admin: str = ""):
         key = _bet_user_key(tok, admin)
         bets = data.get(key, [])
         changed = False
-        for b in bets:
-            if _settle_bet(b):
-                changed = True
+        if settle:
+            for b in bets:
+                if _settle_bet(b):
+                    changed = True
         if changed:
             data[key] = bets
             _save_bets(data)
@@ -798,7 +802,7 @@ async def track_record(request: Request, token: str = "", admin: str = ""):
                 rec = alltime.setdefault(cat, {}).setdefault(side, [0, 0])
                 rec[0] += wl[0]; rec[1] += wl[1]
                 day_w += wl[0]; day_l += wl[1]
-        daily.append({"date": ds, "wins": day_w, "losses": day_l})
+        daily.append({"date": ds, "wins": day_w, "losses": day_l, "cats": led[ds]})
 
     cats = [c for c in _TRACK_CAT_ORDER if c in alltime] + \
            [c for c in alltime if c not in _TRACK_CAT_ORDER]
@@ -1139,7 +1143,7 @@ _HTML = """
     <div style="display:flex;gap:10px;align-items:center">
       <button id="results-btn" onclick="checkResults()" title="Grade every pick for the selected date against final box scores" style="background:#1d4ed8;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">📊 Results</button>
       <button class="admin-only" id="track-btn" onclick="openTrackRecord()" title="All-time + daily Win/Loss record across every graded day, by category" style="background:#7c3aed;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">🏆 Track Record</button>
-      <button class="admin-only" id="mybets-btn" onclick="openMyBets()" title="Your personal logged bets, record and ROI (auto-settled from box scores)" style="background:#4338ca;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">💰 My Bets</button>
+      <button class="admin-only" id="mybets-btn" onclick="openMyBets()" title="Your personal logged bets — click Get Results to grade against box scores" style="background:#4338ca;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">💰 My Bets</button>
     </div>
   </nav>
   <main class="flex-1 px-4 py-6 max-w-7xl mx-auto w-full space-y-6">
@@ -3154,43 +3158,91 @@ function renderTrackRecord(d){
   var rows=d.alltime||[]; var daily=d.daily||[];
   var tw=0,tl=0;
   rows.forEach(function(r){ tw+=r.wins; tl+=r.losses; });
-  var sumHtml='<div style="background:#111;border-radius:10px;padding:14px 18px;margin-bottom:20px;display:flex;flex-wrap:wrap;gap:14px;align-items:center">'+
-    '<div style="font-weight:700">All-Time: <span style="color:#4ade80">'+tw+'W</span> <span style="color:#f87171">'+tl+'L</span> '+
-    '<span style="color:'+_twColor(tw,tl)+'">('+_twPct(tw,tl)+')</span></div>'+
-    '<div style="font-size:.82rem;color:#94a3b8">'+(d.days||0)+' day'+((d.days===1)?'':'s')+' graded · counts Final games only</div>'+
-    '<div style="margin-left:auto;display:flex;gap:8px">'+
-      '<button onclick="downloadTrackAllTimeCSV()" style="background:#7c3aed;color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:.78rem;font-weight:600;cursor:pointer">⬇ CSV — All-Time</button>'+
-      '<button onclick="downloadTrackDailyCSV()" style="background:#1d4ed8;color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:.78rem;font-weight:600;cursor:pointer">⬇ CSV — Daily</button>'+
-    '</div></div>';
-  var atRows=rows.map(function(r){
-    return '<tr>'+
-      '<td style="font-weight:600">'+r.category+'</td>'+
-      '<td>'+_twSide(r.side)+'</td>'+
-      '<td style="font-family:monospace;color:#4ade80;font-weight:700">'+r.wins+'</td>'+
-      '<td style="font-family:monospace;color:#f87171;font-weight:700">'+r.losses+'</td>'+
-      '<td style="font-family:monospace;font-weight:700;color:'+_twColor(r.wins,r.losses)+'">'+_twPct(r.wins,r.losses)+'</td>'+
-      '</tr>';
-  }).join('');
-  var atHtml=sumHtml+(rows.length ?
-    '<div style="overflow-x:auto"><table class="grade-table">'+
-    '<thead><tr><th>Category</th><th>Side</th><th>W</th><th>L</th><th>Win %</th></tr></thead><tbody>'+atRows+
-    '<tr style="border-top:2px solid #334155"><td style="font-weight:800">TOTAL</td><td>—</td>'+
-      '<td style="font-family:monospace;color:#4ade80;font-weight:800">'+tw+'</td>'+
-      '<td style="font-family:monospace;color:#f87171;font-weight:800">'+tl+'</td>'+
-      '<td style="font-family:monospace;font-weight:800;color:'+_twColor(tw,tl)+'">'+_twPct(tw,tl)+'</td></tr>'+
-    '</tbody></table></div>'
-    : '<p style="color:#94a3b8;padding:16px">No graded days yet — the ledger fills in automatically as past slates go Final.</p>');
-  document.getElementById('track-alltime').innerHTML=atHtml;
+  var CAT_CFG={
+    'Hitter Hits|OVER':          {lbl:'Top Picks (Over 0.5 Hits)', icon:'🎯', abbr:'Hits'},
+    'Hitter Hits|UNDER':         {lbl:'Under 1.5 Hits',            icon:'📉', abbr:'Unders'},
+    'Runs|OVER':                 {lbl:'Runs (Over 0.5)',            icon:'🏃', abbr:'Runs+'},
+    'Runs|UNDER':                {lbl:'Runs (Under 0.5)',           icon:'🏃', abbr:'Runs-'},
+    'Pitcher Ks|OVER':           {lbl:'Pitcher Ks (Over)',          icon:'⚾', abbr:'Ks+'},
+    'Pitcher Ks|UNDER':          {lbl:'Pitcher Ks (Under)',         icon:'⚾', abbr:'Ks-'},
+    'Pitcher Hits Allowed|OVER': {lbl:'Hits Allowed (Over)',        icon:'🎯', abbr:'H-All+'},
+    'Pitcher Hits Allowed|UNDER':{lbl:'Hits Allowed (Under)',       icon:'🎯', abbr:'H-All-'},
+    'Pitcher Outs|OVER':         {lbl:'Pitcher Outs (Over)',        icon:'🔢', abbr:'Outs+'},
+    'Pitcher Outs|UNDER':        {lbl:'Pitcher Outs (Under)',       icon:'🔢', abbr:'Outs-'},
+    'Pitcher Earned Runs|OVER':  {lbl:'Earned Runs (Over)',         icon:'🔥', abbr:'ER+'},
+    'Pitcher Earned Runs|UNDER': {lbl:'Earned Runs (Under)',        icon:'🔥', abbr:'ER-'},
+  };
+  var CAT_ORDER=['Hitter Hits|OVER','Hitter Hits|UNDER','Runs|OVER','Runs|UNDER',
+    'Pitcher Ks|OVER','Pitcher Ks|UNDER','Pitcher Hits Allowed|OVER','Pitcher Hits Allowed|UNDER',
+    'Pitcher Outs|OVER','Pitcher Outs|UNDER','Pitcher Earned Runs|OVER','Pitcher Earned Runs|UNDER'];
+  function _rc(w,n){ if(!n) return '#64748b'; var p=w/n; return p>=0.70?'#4ade80':(p>=0.55?'#facc15':'#f87171'); }
+  function _bar(w,n,clr){
+    var pct=n?Math.round(w/n*100):0;
+    return '<div style="height:9px;border-radius:5px;background:#1e293b;overflow:hidden;flex:1;min-width:80px">'
+      +'<div style="height:100%;width:'+pct+'%;background:'+clr+';border-radius:5px"></div></div>';
+  }
+  var sumHtml='<div style="background:#111;border-radius:10px;padding:14px 18px;margin-bottom:16px;display:flex;flex-wrap:wrap;gap:12px;align-items:center">'
+    +'<div style="font-weight:700;font-size:.95rem">All-Time: '
+    +'<span style="color:#4ade80;font-size:1.2rem;font-weight:900">'+tw+'W</span> '
+    +'<span style="color:#f87171;font-size:1.2rem;font-weight:900">'+tl+'L</span> '
+    +'<span style="color:'+_twColor(tw,tl)+'"> ('+_twPct(tw,tl)+')</span></div>'
+    +'<div style="font-size:.79rem;color:#64748b">'+(d.days||0)+' day'+((d.days===1)?'':'s')+' graded \u00b7 top-10 picks per category \u00b7 Final games only</div>'
+    +'<div style="margin-left:auto;display:flex;gap:8px">'
+    +'<button onclick="downloadTrackAllTimeCSV()" style="background:#7c3aed;color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:.78rem;font-weight:600;cursor:pointer">\u2b07 All-Time CSV</button>'
+    +'<button onclick="downloadTrackDailyCSV()" style="background:#1d4ed8;color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:.78rem;font-weight:600;cursor:pointer">\u2b07 Daily CSV</button>'
+    +'</div>'
+    +'</div>';
+  var catRows='';
+  rows.forEach(function(r){
+    var key=r.category+'|'+r.side;
+    var cfg=CAT_CFG[key]||{lbl:r.category+' ('+r.side+')',icon:'\uD83D\uDCCA',abbr:r.side};
+    var n=r.wins+r.losses;
+    var clr=_rc(r.wins,n);
+    var pctStr=n?Math.round(r.wins/n*100)+'%':'—';
+    catRows+='<div style="display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid #1e293b">'
+      +'<span style="font-size:1.1rem;width:22px;text-align:center;flex-shrink:0">'+cfg.icon+'</span>'
+      +'<span style="color:#e2e8f0;font-weight:600;min-width:195px;font-size:.87rem;flex-shrink:0">'+cfg.lbl+'</span>'
+      +'<span style="font-family:monospace;font-weight:900;font-size:1.1rem;color:'+clr+';min-width:54px;text-align:right;flex-shrink:0">'+r.wins+'/'+n+'</span>'
+      +_bar(r.wins,n,clr)
+      +'<span style="font-family:monospace;font-size:.87rem;font-weight:700;color:'+clr+';min-width:40px;text-align:right;flex-shrink:0">'+pctStr+'</span>'
+      +'</div>';
+  });
+  var catSection=rows.length
+    ?'<div style="border:1px solid #1e293b;border-radius:12px;overflow:hidden;margin-bottom:16px">'
+      +'<div style="display:flex;align-items:center;padding:7px 14px;background:#0c1829;border-bottom:1px solid #1e293b">'
+      +'<span style="font-size:.68rem;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.07em;min-width:217px">Category</span>'
+      +'<span style="font-size:.68rem;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.07em;min-width:54px;text-align:right">W/N</span>'
+      +'<span style="font-size:.68rem;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.07em;flex:1;margin:0 10px">Hit Rate</span>'
+      +'<span style="font-size:.68rem;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.07em;min-width:40px;text-align:right">%</span>'
+      +'</div>'+catRows+'</div>'
+    :'<p style="color:#94a3b8;padding:16px">No graded days yet \u2014 fills in automatically as slates go Final.</p>';
+  document.getElementById('track-alltime').innerHTML=sumHtml+catSection;
   var dRows=daily.slice().reverse().map(function(x){
-    return '<tr><td style="font-weight:600">'+x.date+'</td>'+
-      '<td style="font-family:monospace;color:#4ade80;font-weight:700">'+x.wins+'</td>'+
-      '<td style="font-family:monospace;color:#f87171;font-weight:700">'+x.losses+'</td>'+
-      '<td style="font-family:monospace;font-weight:700;color:'+_twColor(x.wins,x.losses)+'">'+_twPct(x.wins,x.losses)+'</td></tr>';
+    var cats=x.cats||{};
+    var pills='';
+    CAT_ORDER.forEach(function(key){
+      var parts=key.split('|'); var cat=parts[0],side=parts[1];
+      var wl=(cats[cat]||{})[side];
+      if(!wl) return;
+      var w=wl[0],l=wl[1],n=w+l;
+      if(!n) return;
+      var cfg2=CAT_CFG[key]||{abbr:cat,icon:''};
+      var clr2=_rc(w,n);
+      pills+='<span style="display:inline-block;background:#1e293b;border-radius:6px;padding:3px 8px;font-size:.76rem;color:'+clr2+';font-weight:700;margin:2px 3px 2px 0">'+cfg2.icon+' '+cfg2.abbr+' '+w+'/'+n+'</span>';
+    });
+    return '<tr>'
+      +'<td style="white-space:nowrap;color:#94a3b8;font-weight:600">'+x.date+'</td>'
+      +'<td style="font-family:monospace;color:#4ade80;font-weight:700">'+x.wins+'</td>'
+      +'<td style="font-family:monospace;color:#f87171;font-weight:700">'+x.losses+'</td>'
+      +'<td style="font-family:monospace;font-weight:700;color:'+_twColor(x.wins,x.losses)+'">'+_twPct(x.wins,x.losses)+'</td>'
+      +'<td style="padding-left:8px;padding-top:3px;padding-bottom:3px">'+pills+'</td></tr>';
   }).join('');
-  document.getElementById('track-daily').innerHTML = daily.length ?
-    '<details style="margin-top:20px"><summary style="cursor:pointer;font-weight:700;color:#a78bfa;padding:10px 0;border-bottom:1px solid #1f2937">📅 Daily Breakdown ('+daily.length+')</summary>'+
-    '<div style="overflow-x:auto;margin-top:8px"><table class="grade-table">'+
-    '<thead><tr><th>Date</th><th>W</th><th>L</th><th>Win %</th></tr></thead><tbody>'+dRows+'</tbody></table></div></details>' : '';
+  document.getElementById('track-daily').innerHTML=daily.length
+    ?'<details style="margin-top:0"><summary style="cursor:pointer;font-weight:700;color:#a78bfa;padding:10px 0;border-bottom:1px solid #1f2937">\uD83D\uDCC5 Daily Breakdown ('+daily.length+' days)</summary>'
+      +'<div style="overflow-x:auto;margin-top:8px"><table class="grade-table">'
+      +'<thead><tr><th>Date</th><th>W</th><th>L</th><th>%</th><th style="text-align:left">By Category</th></tr></thead>'
+      +'<tbody>'+dRows+'</tbody></table></div></details>'
+    :'';
 }
 
 function downloadTrackAllTimeCSV(){ _trackCSV('alltime'); }
@@ -3198,9 +3250,39 @@ function downloadTrackDailyCSV(){ _trackCSV('daily'); }
 function _trackCSV(which){
   var d=window.__TRACK__; if(!d){ alert('Open Track Record first.'); return; }
   var rows;
+  var DAYS=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  var CAT_COLS=[
+    ['Hitter Hits','OVER','Hits W','Hits L'],
+    ['Hitter Hits','UNDER','Unders W','Unders L'],
+    ['Runs','OVER','Runs+ W','Runs+ L'],
+    ['Runs','UNDER','Runs- W','Runs- L'],
+    ['Pitcher Ks','OVER','Ks+ W','Ks+ L'],
+    ['Pitcher Ks','UNDER','Ks- W','Ks- L'],
+    ['Pitcher Hits Allowed','OVER','H-All+ W','H-All+ L'],
+    ['Pitcher Hits Allowed','UNDER','H-All- W','H-All- L'],
+    ['Pitcher Outs','OVER','Outs+ W','Outs+ L'],
+    ['Pitcher Outs','UNDER','Outs- W','Outs- L'],
+    ['Pitcher Earned Runs','OVER','ER+ W','ER+ L'],
+    ['Pitcher Earned Runs','UNDER','ER- W','ER- L'],
+  ];
   if(which==='daily'){
-    rows=[['Date','Wins','Losses','Win %']];
-    (d.daily||[]).forEach(function(x){ var n=x.wins+x.losses; rows.push([x.date,x.wins,x.losses, n?(x.wins/n*100).toFixed(1):'']); });
+    var hdr=['Date','Day'];
+    CAT_COLS.forEach(function(c){ hdr.push(c[2],c[3]); });
+    hdr.push('Total W','Total L','Win %');
+    rows=[hdr];
+    (d.daily||[]).forEach(function(x){
+      var dow='';
+      try{ var dt=new Date(x.date+'T12:00:00'); dow=DAYS[dt.getDay()]||''; }catch(e){}
+      var row=[x.date,dow];
+      var cats=x.cats||{};
+      CAT_COLS.forEach(function(c){
+        var wl=(cats[c[0]]||{})[c[1]];
+        row.push(wl?wl[0]:'', wl?wl[1]:'');
+      });
+      var n=x.wins+x.losses;
+      row.push(x.wins, x.losses, n?(x.wins/n*100).toFixed(1):'');
+      rows.push(row);
+    });
   } else {
     rows=[['Category','Side','Wins','Losses','Win %']];
     (d.alltime||[]).forEach(function(r){ var n=r.wins+r.losses; rows.push([r.category,r.side,r.wins,r.losses, n?(r.wins/n*100).toFixed(1):'']); });
@@ -3297,21 +3379,34 @@ function _betToast(m){
   window.__betToastT__=setTimeout(function(){ t.style.opacity='0'; },1800);
 }
 async function openMyBets(){
-  var btn=document.getElementById('mybets-btn');
-  var lbl=btn?btn.textContent:'';
-  if(btn){ btn.disabled=true; btn.textContent='Loading…'; }
   show('mybets-card');
   document.getElementById('mybets-card').scrollIntoView({behavior:'smooth',block:'start'});
-  document.getElementById('mybets-spinner').classList.remove('hidden');
+  document.getElementById('mybets-body').innerHTML='<p style="color:#94a3b8;padding:8px 0;font-size:.85rem">Loading…</p>';
   try{
-    var res=await fetch('/api/bets'+_betAuthQS());
+    var res=await fetch('/api/bets'+_betAuthQS()+'&settle=false');
     if(!res.ok){ throw new Error(await res.text()); }
     window.__MYBETS__=await res.json();
     renderMyBets(window.__MYBETS__);
   }catch(e){
     document.getElementById('mybets-body').innerHTML='<p style="color:#f87171;padding:16px">'+(e.message||'Error loading bets')+'</p>';
+  }
+}
+async function getMyBetsResults(){
+  var btn=document.getElementById('mybets-results-btn');
+  if(btn){ btn.disabled=true; btn.textContent='Checking results…'; }
+  document.getElementById('mybets-spinner').classList.remove('hidden');
+  var _mbc=new AbortController(); var _mbt=setTimeout(function(){ _mbc.abort(); },30000);
+  try{
+    var res=await fetch('/api/bets'+_betAuthQS(),{signal:_mbc.signal});
+    if(!res.ok){ throw new Error(await res.text()); }
+    window.__MYBETS__=await res.json();
+    renderMyBets(window.__MYBETS__);
+  }catch(e){
+    var em=e.name==='AbortError'?'Timed out — try again':(e.message||'Error');
+    document.getElementById('mybets-body').innerHTML+='<p style="color:#f87171;padding:8px">'+em+'</p>';
   }finally{
-    if(btn){ btn.disabled=false; btn.textContent=lbl; }
+    clearTimeout(_mbt);
+    if(btn){ btn.disabled=false; btn.textContent='🔄 Get Results'; }
     document.getElementById('mybets-spinner').classList.add('hidden');
   }
 }
@@ -3404,8 +3499,12 @@ function downloadMyBetsCSV(){
 <div id="mybets-card" class="hidden space-y-6" style="max-width:960px;margin:0 auto 24px;padding:0 16px">
   <div class="card p-6">
     <div class="section-hdr" style="color:#a5b4fc;margin-bottom:16px">💰 My Bets — Record &amp; ROI</div>
-    <div id="mybets-spinner" class="hidden" style="color:#94a3b8;font-size:.9rem;margin-bottom:12px;display:flex;align-items:center;gap:8px"><span class="spinner"></span> Settling bets…</div>
     <div id="mybets-body"></div>
+    <div style="margin-top:18px;padding-top:14px;border-top:1px solid #1e293b;display:flex;align-items:center;gap:12px">
+      <button id="mybets-results-btn" onclick="getMyBetsResults()" style="background:#22c55e;color:#0f172a;border:none;border-radius:10px;padding:10px 22px;font-size:.88rem;font-weight:800;cursor:pointer">🔄 Get Results</button>
+      <span style="font-size:.78rem;color:#64748b">Fetches box scores and grades all pending bets</span>
+      <div id="mybets-spinner" class="hidden" style="color:#94a3b8;font-size:.85rem;display:flex;align-items:center;gap:7px;margin-left:4px"><span class="spinner"></span> Checking results…</div>
+    </div>
   </div>
 </div>
 <footer style="text-align:center;padding:32px 24px;color:#4b5563;font-size:.78rem;border-top:1px solid #1c1c1c;margin-top:24px;font-family:'Source Sans Pro',sans-serif">
