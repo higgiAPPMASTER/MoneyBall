@@ -1293,6 +1293,7 @@ _HTML = """
       <button id="results-btn" onclick="checkResults()" title="Grade every pick for the selected date against final box scores" style="background:#1d4ed8;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">📊 Results</button>
       <button class="admin-only" id="track-btn" onclick="openTrackRecord()" title="All-time + daily Win/Loss record across every graded day, by category" style="background:#7c3aed;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">🏆 Track Record</button>
       <button class="admin-only" id="mybets-btn" onclick="openMyBets()" title="Your personal logged bets — click Get Results to grade against box scores" style="background:#4338ca;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">💰 My Bets</button>
+      <button class="admin-only" onclick="_manualParlayForm()" title="Manually log a parlay — add legs one by one then save" style="background:#7e22ce;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">📋 Log Parlay</button>
     </div>
   </nav>
   <main class="flex-1 px-4 py-6 max-w-7xl mx-auto w-full space-y-6">
@@ -3609,6 +3610,161 @@ async function _saveParlay(){
     if(mb && !mb.classList.contains('hidden')) openMyBets();
   }catch(e){ msg.textContent=(e.message||'Save failed'); btn.disabled=false; btn.textContent='Log Parlay'; }
 }
+window._mpLegs=[];
+window._mpPhase=1;
+var _MP_TYPES=[['HIT','Hit'],['K','Strikeout'],['RUN','Run'],['UNDER_HITS','Under Hits'],
+  ['PHITS','Pitcher Hits Allowed'],['POUTS','Pitcher Outs'],['PER','Pitcher Earned Runs'],['OTHER','Other']];
+function _mpStatKey(t){return({HIT:'hits',K:'strikeOuts',RUN:'runs',UNDER_HITS:'hits',PHITS:'hits_allowed',POUTS:'outs',PER:'earnedRuns'})[t]||'';}
+function _mpSide(t){return t==='UNDER_HITS'?'UNDER':'OVER';}
+function _mpLegOddsDisplay(o){if(o==null) return '\u2014'; return (o>0?'+':'')+o;}
+function _mpCalcCombined(){
+  var dec=1;
+  window._mpLegs.forEach(function(l){
+    if(l.odds!=null){var d=l.odds>0?1+(l.odds/100):1-(100/l.odds); dec*=d;}
+  });
+  return _decToAm(dec);
+}
+function _mpGetModal(){
+  var m=document.getElementById('mp-modal');
+  if(!m){
+    m=document.createElement('div'); m.id='mp-modal';
+    m.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.88);z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px';
+    m.onclick=function(e){if(e.target===m){m.style.display='none';window._mpLegs=[];window._mpPhase=1;}};
+    document.body.appendChild(m);
+  }
+  m.style.display='flex'; return m;
+}
+function _mpRender(){
+  var m=_mpGetModal();
+  var legs=window._mpLegs;
+  var ph=window._mpPhase;
+  var legListHtml=legs.length===0?('<div style="color:#475569;font-size:.76rem;padding:8px 0;font-style:italic">No legs yet — add your first leg below.</div>')
+    :legs.map(function(l,i){
+      var od=_mpLegOddsDisplay(l.odds);
+      return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #1e293b">'
+        +'<span style="color:#f59e0b;font-weight:700;font-size:.78rem;min-width:18px">'+(i+1)+'.</span>'
+        +'<span style="color:#e2e8f0;font-weight:600;flex:1;font-size:.82rem">'+_esc(l.name)+'</span>'
+        +'<span style="color:#94a3b8;font-size:.76rem">'+_esc(l.side)+' '+l.line+' '+_esc(l.label)+'</span>'
+        +'<span style="font-family:monospace;color:#fbbf24;font-size:.78rem;min-width:38px;text-align:right">'+od+'</span>'
+        +(ph===1?('<button onclick="_mpRemoveLeg('+i+')" style="background:none;border:none;color:#475569;cursor:pointer;font-size:.9rem;padding:0 2px" title="Remove">\u2716</button>'):'')
+        +'</div>';
+    }).join('');
+  var inner='';
+  if(ph===1){
+    var typeOpts=_MP_TYPES.map(function(t){return '<option value="'+t[0]+'">'+t[1]+'</option>';}).join('');
+    inner='<div style="background:#0f172a;border:1px solid #4c1d95;border-radius:16px;max-width:420px;width:100%;max-height:92vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.65)">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;padding:15px 18px;border-bottom:1px solid #1e293b">'
+        +'<div style="font-weight:800;color:#c084fc;font-size:.95rem">&#128221; Log Parlay <span style="font-size:.72rem;color:#64748b;font-weight:400">Step 1 of 2 — Add Legs</span></div>'
+        +'<button onclick="document.getElementById(&#39;mp-modal&#39;).style.display=&#39;none&#39;;window._mpLegs=[];window._mpPhase=1" style="background:#1e293b;border:none;color:#94a3b8;width:28px;height:28px;border-radius:7px;cursor:pointer">\u00d7</button>'
+      +'</div>'
+      +'<div style="padding:12px 18px;border-bottom:1px solid #1e293b">'
+        +'<div style="font-size:.68rem;color:#64748b;font-weight:700;margin-bottom:6px;letter-spacing:.04em">LEGS ADDED ('+legs.length+')</div>'
+        +legListHtml
+      +'</div>'
+      +'<div style="padding:14px 18px;border-bottom:1px solid #1e293b;display:grid;gap:10px">'
+        +'<div style="font-size:.68rem;color:#64748b;font-weight:700;letter-spacing:.04em">ADD A LEG</div>'
+        +'<input id="mp-name" type="text" placeholder="Player name (e.g. Freddie Freeman)" autocomplete="off" style="background:#0b1120;border:1px solid #334155;border-radius:8px;padding:9px 11px;color:#f1f5f9;font-size:.88rem;width:100%">'
+        +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'
+          +'<select id="mp-type" style="background:#0b1120;border:1px solid #334155;border-radius:8px;padding:9px 10px;color:#f1f5f9;font-size:.82rem">'+typeOpts+'</select>'
+          +'<select id="mp-side" style="background:#0b1120;border:1px solid #334155;border-radius:8px;padding:9px 10px;color:#f1f5f9;font-size:.82rem"><option value="OVER">OVER</option><option value="UNDER">UNDER</option></select>'
+        +'</div>'
+        +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'
+          +'<label style="font-size:.7rem;color:#64748b">Line<input id="mp-line" type="number" step="0.5" value="0.5" style="display:block;margin-top:4px;width:100%;background:#0b1120;border:1px solid #334155;border-radius:8px;padding:8px 10px;color:#f1f5f9;font-size:.88rem"></label>'
+          +'<label style="font-size:.7rem;color:#64748b">Leg Odds (American)<input id="mp-odds" type="number" placeholder="-115" style="display:block;margin-top:4px;width:100%;background:#0b1120;border:1px solid #334155;border-radius:8px;padding:8px 10px;color:#fbbf24;font-family:monospace;font-size:.88rem"></label>'
+        +'</div>'
+        +'<div id="mp-add-err" style="color:#f87171;font-size:.74rem;min-height:.9em"></div>'
+        +'<button onclick="_mpAddLeg()" style="background:#7e22ce;color:#fff;border:none;border-radius:9px;padding:10px;font-weight:800;cursor:pointer;font-size:.88rem">+ Add Leg</button>'
+      +'</div>'
+      +'<div style="padding:14px 18px;display:flex;gap:10px;justify-content:flex-end">'
+        +'<button onclick="_mpAddLeg(true)" '+(legs.length<2?'disabled style="opacity:.35;cursor:not-allowed"':'')+'style="background:#4f46e5;color:#fff;border:none;border-radius:9px;padding:10px 20px;font-weight:800;cursor:pointer;font-size:.9rem">Done \u2192 Review &amp; Save</button>'
+      +'</div>'
+      +'</div>';
+  } else {
+    var autoOdds=_mpCalcCombined();
+    inner='<div style="background:#0f172a;border:1px solid #4c1d95;border-radius:16px;max-width:400px;width:100%;max-height:92vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.65)">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;padding:15px 18px;border-bottom:1px solid #1e293b">'
+        +'<div style="font-weight:800;color:#c084fc;font-size:.95rem">&#128221; Log Parlay <span style="font-size:.72rem;color:#64748b;font-weight:400">Step 2 of 2 — Confirm &amp; Save</span></div>'
+        +'<button onclick="document.getElementById(&#39;mp-modal&#39;).style.display=&#39;none&#39;;window._mpLegs=[];window._mpPhase=1" style="background:#1e293b;border:none;color:#94a3b8;width:28px;height:28px;border-radius:7px;cursor:pointer">\u00d7</button>'
+      +'</div>'
+      +'<div style="padding:12px 18px;border-bottom:1px solid #1e293b">'
+        +'<div style="font-size:.68rem;color:#64748b;font-weight:700;margin-bottom:6px;letter-spacing:.04em">'+legs.length+'-LEG PARLAY</div>'
+        +legListHtml
+      +'</div>'
+      +'<div style="padding:16px 18px;display:grid;gap:12px">'
+        +'<label style="font-size:.72rem;color:#94a3b8;font-weight:600">Combined Odds (American)'
+          +'<input id="mp-combined-odds" type="number" value="'+(autoOdds!=null?autoOdds:'')+'" placeholder="e.g. +650" style="display:block;width:100%;margin-top:5px;background:#0b1120;border:1px solid #334155;border-radius:8px;padding:9px 11px;color:#fbbf24;font-family:monospace;font-weight:700;font-size:.95rem">'
+        +'</label>'
+        +'<label style="font-size:.72rem;color:#94a3b8;font-weight:600">Bet size ($)'
+          +'<input id="mp-stake" type="number" min="0" step="0.01" placeholder="e.g. 25" style="display:block;width:100%;margin-top:5px;background:#0b1120;border:1px solid #334155;border-radius:8px;padding:9px 11px;color:#fff;font-weight:700;font-size:.95rem">'
+        +'</label>'
+        +'<div id="mp-pay-preview" style="font-size:.78rem;color:#64748b;min-height:1em"></div>'
+        +'<div id="mp-save-err" style="color:#f87171;font-size:.74rem;min-height:.9em"></div>'
+        +'<div style="display:flex;gap:8px">'
+          +'<button onclick="window._mpPhase=1;_mpRender()" style="background:#1e293b;color:#94a3b8;border:none;border-radius:9px;padding:10px 16px;font-weight:700;cursor:pointer;font-size:.85rem">\u2190 Back</button>'
+          +'<button id="mp-save-btn" onclick="_mpSave()" style="flex:1;background:#4f46e5;color:#fff;border:none;border-radius:9px;padding:11px;font-weight:800;cursor:pointer;font-size:.92rem">Log Parlay</button>'
+        +'</div>'
+      +'</div>'
+      +'</div>';
+  }
+  m.innerHTML=inner;
+  if(ph===2){
+    var oc=document.getElementById('mp-combined-odds'), os=document.getElementById('mp-stake');
+    function _pp(){ var o=parseFloat(oc.value),s=parseFloat(os.value);
+      var pv=document.getElementById('mp-pay-preview'); if(!pv) return;
+      if(!isFinite(o)||!isFinite(s)||s<=0){pv.textContent='';return;}
+      var win=o>0?s*(o/100):s*(100/Math.abs(o));
+      pv.innerHTML='To win <strong style="color:#4ade80">$'+win.toFixed(2)+'</strong> \u00b7 total $'+(s+win).toFixed(2);
+    }
+    oc.oninput=_pp; os.oninput=_pp; _pp();
+    setTimeout(function(){os.focus();},50);
+  }
+  if(ph===1){ setTimeout(function(){var n=document.getElementById('mp-name'); if(n) n.focus();},50); }
+}
+function _mpAddLeg(done){
+  var ne=document.getElementById('mp-add-err'); if(ne) ne.textContent='';
+  var name=(document.getElementById('mp-name')||{}).value||''; name=name.trim();
+  var type=(document.getElementById('mp-type')||{}).value||'HIT';
+  var side=(document.getElementById('mp-side')||{}).value||'OVER';
+  var lineEl=document.getElementById('mp-line'); var line=lineEl?parseFloat(lineEl.value):NaN;
+  var oddsEl=document.getElementById('mp-odds'); var odds=oddsEl&&oddsEl.value.trim()?parseInt(oddsEl.value,10):null;
+  if(!name){if(ne) ne.textContent='Enter a player name.'; return;}
+  if(!isFinite(line)){if(ne) ne.textContent='Enter a valid line.'; return;}
+  if(type!=='OTHER'&&odds!=null&&(odds>=-100&&odds<100)&&odds!==0){if(ne) ne.textContent='Odds look off \u2014 use American format (e.g. -115 or +250).'; return;}
+  var typeLbl=(_MP_TYPES.find(function(x){return x[0]===type;})||[type,type])[1];
+  window._mpLegs.push({name:name,type:type,label:typeLbl,side:side,line:line,odds:isFinite(odds)?odds:null,
+    stat_key:_mpStatKey(type)});
+  if(done&&window._mpLegs.length>=2){window._mpPhase=2;}
+  _mpRender();
+}
+function _mpRemoveLeg(i){ window._mpLegs.splice(i,1); _mpRender(); }
+async function _mpSave(){
+  var legs=window._mpLegs; if(!legs.length) return;
+  var o=parseFloat((document.getElementById('mp-combined-odds')||{}).value);
+  var s=parseFloat((document.getElementById('mp-stake')||{}).value);
+  var err=document.getElementById('mp-save-err');
+  if(!isFinite(o)){if(err) err.textContent='Enter combined odds.'; return;}
+  if(!isFinite(s)||s<=0){if(err) err.textContent='Enter a stake > 0.'; return;}
+  var btn=document.getElementById('mp-save-btn'); if(btn){btn.disabled=true; btn.textContent='Saving\u2026';}
+  var today=(window._lastResult&&window._lastResult.date)||new Date().toISOString().slice(0,10);
+  var legsData=legs.map(function(l){
+    return {name:l.name,team:'',opp:'',side:l.side,stat_key:l.stat_key,
+      stat_label:l.label,line:l.line,odds:l.odds,category:l.type,date:today};
+  });
+  var body={bet_type:'parlay',legs:legsData,odds:Math.round(o),stake:s,date:today,placed_at:new Date().toISOString()};
+  try{
+    var res=await fetch('/api/bets'+_betAuthQS(),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(!res.ok) throw new Error(await res.text());
+    var m=document.getElementById('mp-modal'); if(m) m.style.display='none';
+    window._mpLegs=[]; window._mpPhase=1;
+    _betToast('\u2705 Parlay logged \u2014 '+legs.length+' legs');
+    var mb=document.getElementById('mybets-card');
+    if(mb&&!mb.classList.contains('hidden')) openMyBets();
+  }catch(e){
+    if(err) err.textContent=(e.message||'Save failed');
+    if(btn){btn.disabled=false; btn.textContent='Log Parlay';}
+  }
+}
+function _manualParlayForm(){ window._mpLegs=[]; window._mpPhase=1; _mpRender(); }
 function _betToast(m){
   var t=document.getElementById('bet-toast');
   if(!t){ t=document.createElement('div'); t.id='bet-toast';
@@ -3800,6 +3956,11 @@ function downloadMyBetsCSV(){
 </body>
 </html>
 """
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    from fastapi.responses import Response
+    return Response(status_code=204)
 
 @app.get("/")
 async def serve_spa(admin: str = "", token: str = ""):
