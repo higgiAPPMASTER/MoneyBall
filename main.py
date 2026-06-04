@@ -2039,7 +2039,7 @@ function _propBestCard(p, key, rank) {
   var oppLabel=p.opp?`<span style="font-size:.62rem;color:#64748b">vs ${p.opp}</span>`:'';
   var gapHtml=gapDisp?`<div style="margin-top:4px;font-size:.66rem;color:#fbbf24">${gapDisp}</div>`:'';
   var oddsHtml=odds?`<div style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.85rem;margin-top:2px">${odds}</div>`:'';
-  var _propStatKey={pitcher_hits_allowed:'hitsAllowed',pitcher_outs:'outs',pitcher_earned_runs:'earnedRuns'}[p.market]||'prop';
+  var _propStatKey={pitcher_hits_allowed:'hits_allowed',pitcher_outs:'outs',pitcher_earned_runs:'earnedRuns',pitcher_walks:'walks'}[p.market]||'prop';
   var _propOdds=isOver?(p.over_odds!=null?p.over_odds:null):(p.under_odds!=null?p.under_odds:null);
   var rgbClr=p.market==='pitcher_hits_allowed'?'248,113,113':p.market==='pitcher_outs'?'167,139,250':'251,146,60';
   window.__PP_REG__=window.__PP_REG__||{}; window.__PP_REG__[key]=p;
