@@ -1053,7 +1053,7 @@ _HTML = """
     .btn-primary:disabled { opacity: .5; cursor: not-allowed; transform: none; }
     .flex { display: flex; } .flex-col { flex-direction: column; } .flex-1 { flex: 1; }
     .items-center { align-items: center; } .justify-between { justify-content: space-between; }
-    .gap-4 { gap: 16px; } .hidden { display: none; } .w-full { width: 100%; }
+    .gap-4 { gap: 16px; } .hidden { display: none !important; } .w-full { width: 100%; }
     .space-y-6 > * + * { margin-top: 24px; } .min-h-screen { min-height: 100vh; }
     .px-4 { padding-left: 16px; padding-right: 16px; } .py-6 { padding-top: 24px; padding-bottom: 24px; }
     .max-w-7xl { max-width: 1280px; } .mx-auto { margin-left: auto; margin-right: auto; }
