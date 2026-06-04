@@ -1761,6 +1761,8 @@ function _propBestCard(p, key, rank) {
   var oppLabel=p.opp?`<span style="font-size:.62rem;color:#64748b">vs ${p.opp}</span>`:'';
   var gapHtml=gapDisp?`<div style="margin-top:4px;font-size:.66rem;color:#fbbf24">${gapDisp}</div>`:'';
   var oddsHtml=odds?`<div style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.85rem;margin-top:2px">${odds}</div>`:'';
+  var _propStatKey={pitcher_hits_allowed:'hitsAllowed',pitcher_outs:'outs',pitcher_earned_runs:'earnedRuns'}[p.market]||'prop';
+  var _propOdds=isOver?(p.over_odds!=null?p.over_odds:null):(p.under_odds!=null?p.under_odds:null);
   var rgbClr=p.market==='pitcher_hits_allowed'?'248,113,113':p.market==='pitcher_outs'?'167,139,250':'251,146,60';
   window.__PP_REG__=window.__PP_REG__||{}; window.__PP_REG__[key]=p;
   return `<div class="mlb-pick-card" onclick="_ppForm('${key}')" title="Click for recent form" style="cursor:pointer">
@@ -1773,7 +1775,7 @@ function _propBestCard(p, key, rank) {
       ${teamLogo?`<img src="${teamLogo}" alt="${p.team||''}" style="height:30px;width:30px;object-fit:contain" onerror="this.style.display='none'"/>`:''}
     </div>
     <div class="mlb-card-name">${String(p.name||'')}</div>
-    <div style="padding:10px 14px">
+    <div style="padding:10px 14px;flex:1;display:flex;flex-direction:column">
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">${sideLabel}${oppLabel}</div>
       <div style="display:flex;align-items:center;justify-content:space-between;border-top:1px solid #1f2d3d;padding-top:6px;margin-top:2px">
         <span style="font-size:.7rem;color:#64748b">Line ${lineDisp} · Blend ${blendDisp}</span>
@@ -1781,6 +1783,7 @@ function _propBestCard(p, key, rank) {
       </div>
       ${gapHtml}
       ${oddsHtml}
+      ${_betBtn(p,'Pitcher Props',p.pick,_propStatKey,String(p.label||'Prop'),p.line,_propOdds)}
     </div>
   </div>`;
 }
@@ -2682,7 +2685,8 @@ function _platoonChip(p) {
   if (!pl || !pl.bat_hand || !pl.pit_hand) return '';
   var adv = pl.adv;
   var c   = adv ? '#34d399' : '#f87171';
-  var ba  = pl.ba != null ? ('.' + String(Math.round(pl.ba * 1000)).padStart(3, '0')) : 'N/A';
+  if (pl.ba == null) return '';
+  var ba  = '.' + String(Math.round(pl.ba * 1000)).padStart(3, '0');
   var ab  = pl.ab ? ' (' + pl.ab + 'AB)' : '';
   var tip = (adv ? 'Platoon advantage' : 'Platoon disadvantage') + ' \u2014 career BA ' + ba + ab + ' in this matchup';
   return `<div class="env-chip" title="${_esc(tip)}" style="border-color:${c}55;color:${c}">${_esc(pl.label)} \u00b7 ${ba}</div>`;
@@ -3312,7 +3316,7 @@ function _betBtn(p,cat,side,statKey,statLabel,line,odds){
   window.__BET_SRC__[k]={name:(p.full_name||p.name||''),team:(p.team||''),opp:(p.opp||''),
     category:cat,side:side,stat_key:statKey,stat_label:statLabel,line:line,
     odds:(odds!=null?odds:null),date:((window._lastResult&&window._lastResult.date)||'')};
-  return `<button class="admin-only" onclick="event.stopPropagation();_betForm('${k}')" style="margin-top:7px;width:100%;background:rgba(67,56,202,.18);border:1px solid rgba(129,140,248,.55);color:#c7d2fe;border-radius:7px;padding:5px 0;font-size:.72rem;font-weight:800;cursor:pointer;letter-spacing:.04em">＋ Track Bet</button>`;
+  return `<button class="admin-only" onclick="event.stopPropagation();_betForm('${k}')" style="margin-top:auto;padding-top:7px;width:100%;background:rgba(67,56,202,.18);border:1px solid rgba(129,140,248,.55);color:#c7d2fe;border-radius:7px;padding:5px 0;font-size:.72rem;font-weight:800;cursor:pointer;letter-spacing:.04em">＋ Track Bet</button>`;
 }
 function _betForm(key){
   var src=(window.__BET_SRC__||{})[key]; if(!src) return;
