@@ -756,10 +756,12 @@ async def delete_bet(bet_id: str, request: Request, token: str = "", admin: str 
 
 
 @app.get("/api/grade/{date_str}")
-async def grade_picks(date_str: str, request: Request, token: str = ""):
+async def grade_picks(date_str: str, request: Request, token: str = "", admin: str = ""):
     """Fetch actual MLB box scores and grade all picks for the given date."""
     tok = token or request.headers.get("Authorization", "").replace("Bearer ", "").strip()
-    if not _verify_hub_token(tok):
+    is_ok = _verify_hub_token(tok) or _is_admin_token(tok) or (
+        bool(admin) and admin == os.environ.get("INTERNAL_API_TOKEN", "__none__"))
+    if not is_ok:
         raise HTTPException(status_code=401, detail="Subscription required")
     if date_str not in _cache:
         disk = _load_disk_cache(date_str)
@@ -2889,7 +2891,8 @@ window.__GRADE_ROWS__ = [];
 async function checkResults() {
   var dateStr = document.getElementById('date-picker').value;
   if (!dateStr) { alert('Pick a date first'); return; }
-  var tok = localStorage.getItem('hub_token') || '';
+  var tok = localStorage.getItem('hub_token') || localStorage.getItem('__mpa_token') || '';
+  var adm = new URLSearchParams(location.search).get('admin') || '';
   var btn = document.getElementById('results-btn');
   btn.disabled = true; btn.textContent = 'Loading...';
   show('grade-card');
@@ -2898,7 +2901,7 @@ async function checkResults() {
   document.getElementById('grade-body').innerHTML = '';
   document.getElementById('grade-summary').innerHTML = '';
   try {
-    var res = await fetch('/api/grade/' + dateStr + '?token=' + encodeURIComponent(tok));
+    var res = await fetch('/api/grade/' + dateStr + '?token=' + encodeURIComponent(tok) + (adm ? ('&admin=' + encodeURIComponent(adm)) : ''));
     if (!res.ok) { var t = await res.text(); throw new Error(t); }
     renderGradeResults(await res.json());
   } catch(e) {
