@@ -1589,16 +1589,15 @@ _HTML = """
       </div>
       <div class="card p-6 hidden" id="pitcher-k-card" style="border-color:rgba(99,202,183,.25)">
         <div class="section-hdr" style="color:#63cab7">⚾ Pitcher Picks — Strikeouts, Hits, Outs, Earned Runs &amp; Walks</div>
-        <p class="text-xs text-slate-400 mb-3" style="margin-top:-4px">Top 10 per category. K cards below — click any for all 5 markets (K · Hits · Outs · ER · Walks). Each stat has its own pulldown below.</p>
-        <div id="pitcher-k-body" class="mlb-picks-grid"></div>
-        <div id="pitcher-k-more"></div>
-        <details class="mt-4" id="pitcher-k-nopick-details">
-          <summary class="cursor-pointer text-xs text-slate-500 select-none">▸ All today's pitchers (no qualifying pick)</summary>
-          <table class="results-table mt-2" id="pitcher-k-nopick-table">
-            <thead><tr><th>Pitcher</th><th>vs (H/A)</th><th>K Line</th><th>Avg K vr OPP</th><th>Note</th></tr></thead>
-            <tbody id="pitcher-k-nopick-body"></tbody>
-          </table>
-        </details>
+        <p class="text-xs text-slate-400 mb-3" style="margin-top:-4px">Click any pitcher for all 5 markets (K · Hits · Outs · ER · Walks). Each stat has its own pulldown below.</p>
+        <div style="font-size:.72rem;font-weight:800;letter-spacing:.1em;color:#63cab7;margin-bottom:10px;text-transform:uppercase">📋 All Today's Pitchers</div>
+        <div id="pitcher-all-body" class="mlb-picks-grid"></div>
+        <div id="pitcher-all-more"></div>
+        <div style="margin-top:24px;padding-top:20px;border-top:1px solid #1e293b">
+          <div style="font-size:.72rem;font-weight:800;letter-spacing:.1em;color:#63cab7;margin-bottom:10px;text-transform:uppercase">⚡ Pitcher K Picks</div>
+          <div id="pitcher-k-body" class="mlb-picks-grid"></div>
+          <div id="pitcher-k-more"></div>
+        </div>
         <p class="text-xs text-slate-500 mt-4 admin-only">
           <strong>K History</strong> = H/A starts vs today's opponent only &nbsp;|&nbsp;
           <strong>Pick</strong> = OVER/UNDER based on blended avg (50% career H/A vs opp + 50% last 5 starts). ⚠️ = signals conflict. Min 1 career start vs opp.
@@ -1889,24 +1888,19 @@ function showResults(result) {
     if(pkMoreEl) pkMoreEl.innerHTML=pkSorted.length>10
       ?'<details style="margin-top:10px"><summary class="more-btn" style="color:#63cab7;border-color:#63cab733">&#9655; '+(pkSorted.length-10)+' more K Picks</summary><div class="mlb-picks-grid mt-3">'+pkSorted.slice(10).map((p,_i)=>_pitcherCard(p,10+_i+1)).join('')+'</div></details>'
       :'';
-    const pkNoPick=pkAll.filter(p=>!p.pick);
-    const npDet=document.getElementById('pitcher-k-nopick-details');
-    if (npDet) {
-      if (pkNoPick.length>0) {
-        npDet.style.display='';
-        document.getElementById('pitcher-k-nopick-body').innerHTML=pkNoPick.map((p,_j)=>{
-          const sideCls2=p.side==='HOME'?'badge-home':'badge-away';
-          const _k2='pn'+_j; window.__PK_REG__[_k2]=p;
-          return `<tr onclick="_pkForm('${_k2}')" style="cursor:pointer" title="Click for recent form">
-            <td class="font-semibold">${p.name} <span style="color:#64748b;font-size:.7rem">▾</span></td>
-            <td><span class="badge ${sideCls2}">${p.side}</span> <span class="text-slate-400 text-xs">${p.opp||''}</span></td>
-            <td style="font-family:monospace;font-weight:700;color:#fff">${p.line!=null?p.line+' Ks':'—'}</td>
-            <td style="font-family:monospace;color:#94a3b8">${p.avg_k!=null?p.avg_k+' K':'—'}</td>
-            <td style="color:#94a3b8;font-size:.78rem">${p.pick_note||'—'}</td>
-          </tr>`;
-        }).join('');
-      } else { npDet.style.display='none'; }
-    }
+    // All Today's Pitchers cards — ranked by avg K desc
+    const pkAllSorted=[...pkAll].sort((a,b)=>{
+      const ka=a.blended_avg_k!=null?a.blended_avg_k:(a.avg_k||0);
+      const kb=b.blended_avg_k!=null?b.blended_avg_k:(b.avg_k||0);
+      return kb-ka;
+    });
+    document.getElementById('pitcher-all-body').innerHTML=pkAllSorted.length>0
+      ?pkAllSorted.slice(0,10).map((p,_i)=>_pitcherCard(p,_i+1,'pa')).join('')
+      :'<p class="text-slate-500 text-center" style="padding:16px">No pitchers today</p>';
+    const paMoreEl=document.getElementById('pitcher-all-more');
+    if(paMoreEl) paMoreEl.innerHTML=pkAllSorted.length>10
+      ?'<details style="margin-top:10px"><summary class="more-btn" style="color:#63cab7;border-color:#63cab733">&#9655; '+(pkAllSorted.length-10)+' more pitchers</summary><div class="mlb-picks-grid mt-3">'+pkAllSorted.slice(10).map((p,_i)=>_pitcherCard(p,10+_i+1,'pa')).join('')+'</div></details>'
+      :'';
   }
 
   const runsPicks = view.runs_picks || [];
@@ -3244,7 +3238,8 @@ function _runsCard(p, rank, pfx) {
   </div>`;
 }
 
-function _pitcherCard(p, rank) {
+function _pitcherCard(p, rank, keyPfx) {
+  keyPfx = keyPfx || 'pk';
   const abbr = _mlbTeamAbbr(p.team);
   const teamLogo = abbr ? `https://a.espncdn.com/i/teamlogos/mlb/500/${abbr}.png` : '';
   const rnkColors = rank===1?['#63cab7','#022']:rank===2?['#5eead4','#022']:rank===3?['#2dd4bf','#022']:['#1e1e1e','#63cab7'];
@@ -3268,8 +3263,8 @@ function _pitcherCard(p, rank) {
       +'<td style="padding:1px 5px;text-align:right;font-family:monospace;font-size:.6rem;'+s+'">'+t.k_per_g+' K/g</td></tr>';
   }).join(''):'';
   var tkSection=tkRows?'<details style="margin-top:5px"><summary style="cursor:pointer;font-size:.65rem;color:#64748b;list-style:none;user-select:none">&#9654; All Team K Rankings</summary><div style="max-height:120px;overflow-y:auto;margin-top:2px"><table style="width:100%;font-size:.62rem;border-collapse:collapse">'+tkRows+'</table></div></details>':'';
-  window.__PK_REG__=window.__PK_REG__||{}; window.__PK_REG__['pk'+rank]=p;
-  return `<div class="mlb-pick-card" onclick="_pkForm('pk${rank}')" title="Click for all 5 markets" style="cursor:pointer">
+  window.__PK_REG__=window.__PK_REG__||{}; window.__PK_REG__[keyPfx+rank]=p;
+  return `<div class="mlb-pick-card" onclick="_pkForm('${keyPfx}${rank}')" title="Click for all 5 markets" style="cursor:pointer">
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#0f2420 0%,#08160f 100%)">
       <div style="display:flex;align-items:center;gap:8px">
         <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
