@@ -246,17 +246,27 @@ async def get_results(date_str: str, request: Request, token: str = ""):
 
 # ── Grading core (shared by /api/grade and the Track Record ledger) ──────
 def _mlb_box_lookup(date_str: str):
-    """Fetch box scores for a date. Returns (player_stats, name_stats, any_game, all_final)."""
+    """Fetch box scores for a date. Returns (player_stats, name_stats, any_game, all_final).
+    MLB's /schedule hydrate=boxscore stopped embedding player stats (returns 0 players),
+    so we pull the schedule for game IDs + status, then fetch each started game's boxscore
+    from the dedicated /game/{gamePk}/boxscore endpoint (in parallel)."""
     import requests as _rq
+    from concurrent.futures import ThreadPoolExecutor as _TPE
     MLB_BASE = "https://statsapi.mlb.com/api/v1"
-    sched = _rq.get(f"{MLB_BASE}/schedule", params={
-        "sportId": 1, "date": date_str, "gameType": "R",
-        "hydrate": "boxscore,linescore"
-    }, timeout=30).json()
+    try:
+        sched = _rq.get(f"{MLB_BASE}/schedule", params={
+            "sportId": 1, "date": date_str, "gameType": "R",
+        }, timeout=30).json()
+    except Exception as e:
+        print(f"[box_lookup] schedule fetch failed {date_str}: {e}")
+        return {}, {}, False, True
     player_stats: dict = {}
     name_stats: dict   = {}
     any_game = False
     all_final = True
+    _NOT_STARTED = ("Scheduled", "Pre-Game", "Warmup", "Postponed",
+                    "Cancelled", "Delayed Start")
+    games = []
     for d in sched.get("dates", []):
         for game in d.get("games", []):
             any_game = True
@@ -264,31 +274,58 @@ def _mlb_box_lookup(date_str: str):
             final  = status in ("Final", "Game Over")
             if not final:
                 all_final = False
-            bs = game.get("boxscore", {})
-            for sd in ("home", "away"):
-                td = bs.get("teams", {}).get(sd, {})
-                for _key, pdata in td.get("players", {}).items():
-                    pid       = (pdata.get("person") or {}).get("id")
-                    full_name = (pdata.get("person") or {}).get("fullName", "")
-                    if not pid:
-                        continue
-                    bat = pdata.get("stats", {}).get("batting")  or {}
-                    pit = pdata.get("stats", {}).get("pitching") or {}
-                    entry = {
-                        "hits":         bat.get("hits"),
-                        "runs":         bat.get("runs"),
-                        "strikeOuts":   pit.get("strikeOuts"),
-                        "earnedRuns":   pit.get("earnedRuns"),
-                        "outs":         pit.get("outs"),
-                        "hits_allowed": pit.get("hits"),
-                        "walks":        pit.get("baseOnBalls"),
-                        "status": status,
-                        "final":  final,
-                        "name":   full_name,
-                    }
-                    player_stats[int(pid)] = entry
-                    if full_name:
-                        name_stats[full_name.lower()] = entry
+            pk = game.get("gamePk")
+            if pk and status not in _NOT_STARTED:
+                games.append((pk, status, final))
+
+    def _one(args):
+        pk, status, final = args
+        try:
+            bx = _rq.get(f"{MLB_BASE}/game/{pk}/boxscore", timeout=30).json()
+        except Exception as e:
+            print(f"[box_lookup] boxscore {pk} fetch failed: {e}")
+            return []
+        rows = []
+        for sd in ("home", "away"):
+            td = bx.get("teams", {}).get(sd, {})
+            for _key, pdata in td.get("players", {}).items():
+                pid       = (pdata.get("person") or {}).get("id")
+                full_name = (pdata.get("person") or {}).get("fullName", "")
+                if not pid:
+                    continue
+                bat = pdata.get("stats", {}).get("batting")  or {}
+                pit = pdata.get("stats", {}).get("pitching") or {}
+                rows.append((int(pid), full_name, {
+                    "hits":         bat.get("hits"),
+                    "runs":         bat.get("runs"),
+                    "strikeOuts":   pit.get("strikeOuts"),
+                    "earnedRuns":   pit.get("earnedRuns"),
+                    "outs":         pit.get("outs"),
+                    "hits_allowed": pit.get("hits"),
+                    "walks":        pit.get("baseOnBalls"),
+                    "status": status,
+                    "final":  final,
+                    "name":   full_name,
+                }))
+        return (final, rows)
+
+    if games:
+        try:
+            with _TPE(max_workers=min(8, len(games))) as ex:
+                results = list(ex.map(_one, games))
+        except Exception as e:
+            print(f"[box_lookup] parallel boxscore fetch failed {date_str}: {e}")
+            results = [_one(g) for g in games]
+        fetch_complete = True
+        for gfinal, rows in results:
+            if gfinal and not rows:
+                fetch_complete = False   # final game but boxscore fetch returned nothing
+            for pid, full_name, entry in rows:
+                player_stats[pid] = entry
+                if full_name:
+                    name_stats[full_name.lower()] = entry
+        if not fetch_complete:
+            all_final = False            # defer locking until a clean pass grades it
     return player_stats, name_stats, any_game, all_final
 
 
@@ -549,8 +586,8 @@ def _update_track_ledger() -> dict:
                 continue          # skip ledger file / non-date files
             if bn >= today:
                 continue          # today/future — games not final yet
-            need_led = bn not in led
-            need_det = bn not in det
+            need_led = bn not in led or not led.get(bn)
+            need_det = bn not in det or not det.get(bn)
             if not need_led and not need_det:
                 continue          # already locked — W/L and detail both present
             picks = _load_disk_cache(bn)
