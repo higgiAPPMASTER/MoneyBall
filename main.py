@@ -3028,11 +3028,17 @@ function _platoonChip(p) {
   if (!pl || !pl.bat_hand || !pl.pit_hand) return '';
   var adv = pl.adv;
   var c   = adv ? '#34d399' : '#f87171';
-  if (pl.ba == null) return '';
-  var ba  = '.' + String(Math.round(pl.ba * 1000)).padStart(3, '0');
-  var ab  = pl.ab ? ' (' + pl.ab + 'AB)' : '';
-  var tip = (adv ? 'Platoon advantage' : 'Platoon disadvantage') + ' \u2014 career BA ' + ba + ab + ' in this matchup';
-  return `<div class="env-chip" title="${_esc(tip)}" style="border-color:${c}55;color:${c}">${_esc(pl.label)} \u00b7 ${ba}</div>`;
+  var baStr = '';
+  var tip;
+  if (pl.ba != null) {
+    var ba = '.' + String(Math.round(pl.ba * 1000)).padStart(3, '0');
+    var ab = pl.ab ? ' (' + pl.ab + 'AB)' : '';
+    baStr = ' \u00b7 ' + ba;
+    tip = (adv ? 'Platoon advantage' : 'Platoon disadvantage') + ' \u2014 career BA ' + ba + ab + ' in this matchup';
+  } else {
+    tip = (adv ? 'Platoon advantage' : 'Platoon disadvantage') + ' \u2014 no career split data';
+  }
+  return `<div class="env-chip" title="${_esc(tip)}" style="border-color:${c}55;color:${c}">${_esc(pl.label)}${baStr}</div>`;
 }
 // Umpire-adjusted multiplier for the client-side pitcher-K sort: a wide-zone
 // ump (kFactor>1) lifts OVER picks and lowers UNDER picks; tight zone inverse.
