@@ -3854,7 +3854,7 @@ async function _saveBet(){
     document.getElementById('bet-modal').style.display='none';
     _betToast('✅ Bet logged');
     var mb=document.getElementById('mybets-card');
-    if(mb && !mb.classList.contains('hidden')) openMyBets();
+    if(mb && !mb.classList.contains('hidden')) openMyBets(false);
   }catch(e){ msg.textContent=(e.message||'Save failed'); btn.disabled=false; btn.textContent='Log Bet'; }
 }
 function _legStatKey(l){
@@ -3933,7 +3933,7 @@ async function _saveParlay(){
     _betToast('\u2705 Parlay logged');
     window._cartLegs=[]; _updateCartBar();
     var mb=document.getElementById('mybets-card');
-    if(mb && !mb.classList.contains('hidden')) openMyBets();
+    if(mb && !mb.classList.contains('hidden')) openMyBets(false);
   }catch(e){ msg.textContent=(e.message||'Save failed'); btn.disabled=false; btn.textContent='Log Parlay'; }
 }
 window._mpLegs=[];
@@ -4084,7 +4084,7 @@ async function _mpSave(){
     window._mpLegs=[]; window._mpPhase=1;
     _betToast('\u2705 Parlay logged \u2014 '+legs.length+' legs');
     var mb=document.getElementById('mybets-card');
-    if(mb&&!mb.classList.contains('hidden')) openMyBets();
+    if(mb&&!mb.classList.contains('hidden')) openMyBets(false);
   }catch(e){
     if(err) err.textContent=(e.message||'Save failed');
     if(btn){btn.disabled=false; btn.textContent='Log Parlay';}
@@ -4108,9 +4108,9 @@ function _betToast(m){
   clearTimeout(window.__betToastT__);
   window.__betToastT__=setTimeout(function(){ t.style.opacity='0'; },1800);
 }
-async function openMyBets(){
+async function openMyBets(scroll){
   show('mybets-card');
-  document.getElementById('mybets-card').scrollIntoView({behavior:'smooth',block:'start'});
+  if(scroll!==false) document.getElementById('mybets-card').scrollIntoView({behavior:'smooth',block:'start'});
   // Reset button state in case a previous getMyBetsResults call left it disabled
   var _rbtn=document.getElementById('mybets-results-btn');
   if(_rbtn){ _rbtn.disabled=false; _rbtn.textContent='🔄 Get Results'; }
@@ -4231,7 +4231,7 @@ async function _deleteBet(id){
   try{
     var res=await fetch('/api/bets/'+encodeURIComponent(id)+_betAuthQS(),{method:'DELETE'});
     if(!res.ok){ throw new Error(await res.text()); }
-    openMyBets();
+    openMyBets(false);
   }catch(e){ alert(e.message||'Delete failed'); }
 }
 function downloadMyBetsCSV(){
