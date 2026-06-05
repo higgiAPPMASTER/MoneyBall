@@ -368,9 +368,9 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "game_status": (st or {}).get("status", "—"),
         })
 
-    # Under 1.5 Hits
+    # Under 1.5 Hits — top 10 for Track Record
     hitter_unders = []
-    for p in (picks.get("under_picks") or []):
+    for p in (picks.get("under_picks") or [])[:10]:
         st = _lookup(p.get("batter_id"), p.get("name"))
         actual = st["hits"] if st else None
         pick_dir = p.get("pick", "UNDER")
@@ -387,9 +387,12 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "game_status": (st or {}).get("status", "—"),
         })
 
-    # Runs OVER/UNDER 0.5
+    # Runs OVER/UNDER 0.5 — top 10 per side for Track Record
+    _runs_all = picks.get("runs_picks") or []
+    _runs_capped = [p for p in _runs_all if p.get("pick") == "OVER"][:10] + \
+                   [p for p in _runs_all if p.get("pick") == "UNDER"][:10]
     runs = []
-    for p in (picks.get("runs_picks") or []):
+    for p in _runs_capped:
         st = _lookup(p.get("batter_id"), p.get("name"))
         actual = st["runs"] if st else None
         pick_dir = p.get("pick", "OVER")
@@ -406,9 +409,9 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "game_status": (st or {}).get("status", "—"),
         })
 
-    # Pitcher Ks (qualifying picks only)
+    # Pitcher Ks — top 10 for Track Record
     pitcher_ks = []
-    for p in (picks.get("pitcher_k") or {}).get("picks") or []:
+    for p in ((picks.get("pitcher_k") or {}).get("picks") or [])[:10]:
         if not p.get("pick"):
             continue
         st  = _lookup(None, p.get("name"))
@@ -435,11 +438,14 @@ def _grade_date(date_str: str, picks: dict) -> dict:
         "pitcher_hits_allowed": ("hits_allowed", "Hits Allowed"),
         "pitcher_outs":         ("outs",         "Outs"),
         "pitcher_earned_runs":  ("earnedRuns",   "Earned Runs"),
+        "pitcher_walks":        ("walks",        "Walks"),
     }
     pitcher_props = []
     for mkt, mdata in (picks.get("pitcher_props") or {}).items():
-        stat_key, stat_label = PROP_STAT_MAP.get(mkt, (None, mkt))
-        for p in (mdata.get("picks") or []):
+        stat_key, stat_label = PROP_STAT_MAP.get(mkt, (None, None))
+        if not stat_key:
+            continue   # skip unknown markets
+        for p in (mdata.get("picks") or [])[:10]:
             if not p.get("pick") or p.get("line") is None:
                 continue
             st     = _lookup(None, p.get("name"))
@@ -1585,6 +1591,7 @@ _HTML = """
         <div class="section-hdr" style="color:#63cab7">⚾ Pitcher Picks — Strikeouts, Hits, Outs, Earned Runs &amp; Walks</div>
         <p class="text-xs text-slate-400 mb-3" style="margin-top:-4px">Top 10 per category. K cards below — click any for all 5 markets (K · Hits · Outs · ER · Walks). Each stat has its own pulldown below.</p>
         <div id="pitcher-k-body" class="mlb-picks-grid"></div>
+        <div id="pitcher-k-more"></div>
         <details class="mt-4" id="pitcher-k-nopick-details">
           <summary class="cursor-pointer text-xs text-slate-500 select-none">▸ All today's pitchers (no qualifying pick)</summary>
           <table class="results-table mt-2" id="pitcher-k-nopick-table">
@@ -1852,12 +1859,17 @@ function showResults(result) {
   window.__HIT_REG__={};
   document.getElementById('picks-body').innerHTML = top9.map((p,i) => _mlbCard(p, i+1)).join('');
   const alsoRan = view.also_ran || [];
-  document.getElementById('also-ran-wrap').innerHTML = '';
+  document.getElementById('also-ran-wrap').innerHTML = alsoRan.length > 0
+    ? _moreWrap(alsoRan, function(p,r){ return _mlbCard(p, r, true); }, 11, 'More Hit Picks', '#f59e0b')
+    : '';
 
   const underPicks = view.under_picks || [];
   if (underPicks.length > 0) {
     show('under-picks-card');
     document.getElementById('under-picks-body').innerHTML = underPicks.slice(0, 10).map((p,i) => _underCard(p, i+1)).join('');
+    document.getElementById('under-more-wrap').innerHTML = underPicks.length > 10
+      ? _moreWrap(underPicks.slice(10), function(p,r){ return _underCard(p, r); }, 11, 'Under Picks', '#ff8a65')
+      : '';
   }
 
   const pkData=view.pitcher_k||{}, pkAll=pkData.all||[];
@@ -1873,6 +1885,10 @@ function showResults(result) {
     document.getElementById('pitcher-k-body').innerHTML = pkSorted.length > 0
       ? pkSorted.slice(0,10).map((p,_i) => _pitcherCard(p, _i+1)).join('')
       : '<p class="text-slate-500 text-center" style="padding:16px">No qualifying picks today</p>';
+    const pkMoreEl=document.getElementById('pitcher-k-more');
+    if(pkMoreEl) pkMoreEl.innerHTML=pkSorted.length>10
+      ?'<details style="margin-top:10px"><summary class="more-btn" style="color:#63cab7;border-color:#63cab733">&#9655; '+(pkSorted.length-10)+' more K Picks</summary><div class="mlb-picks-grid mt-3">'+pkSorted.slice(10).map((p,_i)=>_pitcherCard(p,10+_i+1)).join('')+'</div></details>'
+      :'';
     const pkNoPick=pkAll.filter(p=>!p.pick);
     const npDet=document.getElementById('pitcher-k-nopick-details');
     if (npDet) {
@@ -1900,8 +1916,14 @@ function showResults(result) {
     const runsOver = runsPicks.filter(function(p){ return p.pick==='OVER'; });
     const runsUnder = runsPicks.filter(function(p){ return p.pick==='UNDER'; });
     document.getElementById('runs-over-body').innerHTML = runsOver.slice(0,10).map(function(p,i){ return _runsCard(p, i+1, 'rno'); }).join('');
+    document.getElementById('runs-over-more').innerHTML = runsOver.length > 10
+      ? _moreWrap(runsOver.slice(10), function(p,r){ return _runsCard(p, r, 'rno'); }, 11, 'Runs Over', '#60a5fa')
+      : '';
     document.getElementById('runs-under-section').style.display = runsUnder.length ? '' : 'none';
     document.getElementById('runs-under-body').innerHTML = runsUnder.slice(0,10).map(function(p,i){ return _runsCard(p, i+1, 'rnu'); }).join('');
+    document.getElementById('runs-under-more').innerHTML = runsUnder.length > 10
+      ? _moreWrap(runsUnder.slice(10), function(p,r){ return _runsCard(p, r, 'rnu'); }, 11, 'Runs Under', '#ff8a65')
+      : '';
   }
 
   renderPitcherProps(view);
@@ -2106,26 +2128,54 @@ function renderPitcherProps(view){
       if(!_ex||(!_ex.obj.pick&&_p.pick)) window.__PP_BY_NAME__[_nm][_mkt]={obj:_p,key:_key};
     });
   });
-  // One collapsible pulldown per market — top 10 each, ranked by edge.
-  var html='';
+  // ── Combined "Best Pitching Props": top 10 by edge across all markets ──
+  var bestPicks=[];
+  PROP_ORDER.forEach(function(m){
+    ((props[m]||{}).picks||[]).forEach(function(p2){
+      var g=(p2.blended!=null&&p2.line!=null)?Math.abs(p2.blended-p2.line):0;
+      var k='bp'+(++_ppN); window.__PP_REG__[k]=p2;
+      bestPicks.push({p:p2,key:k,gap:g});
+    });
+  });
+  bestPicks.sort(function(a,b){return b.gap-a.gap;});
+  var combinedHtml='';
+  if(bestPicks.length){
+    var bp10=bestPicks.slice(0,10), bpRest=bestPicks.slice(10);
+    var bpTop=bp10.map(function(x,i){return _propBestCard(x.p,x.key,i+1);}).join('');
+    var bpMore='';
+    if(bpRest.length){
+      var bpRestCards=bpRest.map(function(x,i){ var k2='bpx'+(++_ppN); window.__PP_REG__[k2]=x.p; return _propBestCard(x.p,k2,11+i); }).join('');
+      bpMore='<details style="margin-top:12px"><summary class="more-btn" style="color:#94a3b8;border-color:#94a3b833">&#9655; '+bpRest.length+' more Pitching Props</summary><div class="mlb-picks-grid mt-3">'+bpRestCards+'</div></details>';
+    }
+    combinedHtml='<div class="section-card" style="margin-top:20px;padding:20px;background:linear-gradient(180deg,#0f1924 0%,#0a1118 100%);border-radius:16px;border:1px solid #1e293b">'
+      +'<div style="font-size:1.05rem;font-weight:800;color:#f8fafc;margin-bottom:14px">&#127919; Best Pitching Props <span style="font-size:.72rem;font-weight:400;color:#64748b">top picks by edge across all markets</span></div>'
+      +'<div class="mlb-picks-grid">'+bpTop+'</div>'
+      +bpMore
+      +'</div>';
+  }
+  // ── Per-market pulldowns: top 10 + overflow button each ──
+  var perMktHtml='';
   PROP_ORDER.forEach(function(m){
     var cfg=PROP_CFG[m];
-    var picks=((props[m]||{}).picks||[]).slice(0,10);
-    if(!picks.length) return;
-    var cards=picks.map(function(p2,i){
-      var k='bp'+(++_ppN); window.__PP_REG__[k]=p2;
-      return _propBestCard(p2,k,i+1);
-    }).join('');
-    html+='<details style="margin-top:14px">'
+    var allPicks=((props[m]||{}).picks)||[];
+    if(!allPicks.length) return;
+    var pm10=allPicks.slice(0,10), pmRest=allPicks.slice(10);
+    var pmCards=pm10.map(function(p2,i){ var k='pm'+(++_ppN); window.__PP_REG__[k]=p2; return _propBestCard(p2,k,i+1); }).join('');
+    var pmMore='';
+    if(pmRest.length){
+      var pmRestCards=pmRest.map(function(p2,i){ var k='pmx'+(++_ppN); window.__PP_REG__[k]=p2; return _propBestCard(p2,k,11+i); }).join('');
+      pmMore='<details style="margin-top:10px"><summary class="more-btn" style="color:'+cfg.color+';border-color:'+cfg.color+'33">&#9655; '+pmRest.length+' more '+cfg.label.replace('Pitcher ','')+'</summary><div class="mlb-picks-grid mt-3">'+pmRestCards+'</div></details>';
+    }
+    perMktHtml+='<details style="margin-top:14px">'
       +'<summary style="cursor:pointer;list-style:none;-webkit-appearance:none;display:flex;align-items:center;gap:8px;padding:13px 18px;background:linear-gradient(180deg,#0f1924 0%,#0a1118 100%);border-radius:14px;border:1px solid #1e293b;outline:none">'
       +'<span style="font-size:1rem;font-weight:800;color:'+cfg.color+'">'+cfg.icon+' '+cfg.label.replace('Pitcher ','')+'</span>'
-      +'<span style="font-size:.72rem;font-weight:600;color:#94a3b8;background:rgba(255,255,255,.07);border-radius:10px;padding:2px 8px">'+picks.length+'</span>'
+      +'<span style="font-size:.72rem;font-weight:600;color:#94a3b8;background:rgba(255,255,255,.07);border-radius:10px;padding:2px 8px">'+allPicks.length+'</span>'
       +'<span style="margin-left:auto;color:#64748b;font-size:.85rem">&#9660;</span>'
       +'</summary>'
-      +'<div class="mlb-picks-grid" style="margin-top:12px;padding:0 4px">'+cards+'</div>'
+      +'<div style="padding:0 4px"><div class="mlb-picks-grid" style="margin-top:12px">'+pmCards+'</div>'+pmMore+'</div>'
       +'</details>';
   });
-  wrap.innerHTML=html;
+  wrap.innerHTML=combinedHtml+perMktHtml;
 }
 // Generic prop recent-form popup (mirrors _pkForm, market-agnostic).
 function _ppForm(key){
