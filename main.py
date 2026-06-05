@@ -2900,7 +2900,7 @@ function gameKey(p){
 function renderByGame(result){
   var body=document.getElementById('by-game-body');
   if(!body) return;
-  var hitters=(result.top9||[]).map(function(p){return Object.assign({_kind:'HITTER'},p);});
+  var hitters=(result.top9||[]).concat(result.also_ran||[]).map(function(p){return Object.assign({_kind:'HITTER'},p);});
   var unders=(result.under_picks||[]).map(function(p){return Object.assign({_kind:'UNDER'},p);});
   var ks=((result.pitcher_k||{}).picks||[]).filter(function(p){return (p.starts||0)>0;}).map(function(p){return Object.assign({_kind:'PITCHER K'},p);});
   var runs=(result.runs_picks||[]).map(function(p){return Object.assign({_kind:'RUNS'},p);});
@@ -2939,8 +2939,8 @@ function renderByGame(result){
       var kindCls=kind==='HITTER'?'badge-home':(kind==='UNDER'?'badge-out':'badge-tbd');
       var sideBadge='<span class="badge '+(p.side==='HOME'?'badge-home':'badge-away')+'">'+(p.side||'')+'</span>';
       var note='';
-      if(kind==='HITTER') note='Top hitter pick';
-      else if(kind==='UNDER') note='UNDER — vs '+(p.pitcher||'TBD');
+      if(kind==='HITTER') note='OVER '+(p.line!=null?p.line:'0.5')+' Hits'+(p.hit_odds!=null?' · '+p.hit_odds:'');
+      else if(kind==='UNDER') note=(p.pick||'UNDER')+' '+(p.line!=null?p.line:'1.5')+' Hits vs '+(p.pitcher||'TBD');
       else if(kind==='PITCHER K') note=(p.sugg_line!=null?('OVER '+p.sugg_line+' Ks (line '+(p.line||'')+')'):((p.pick||'')+' '+(p.line||'')+' Ks'));
       else if(kind==='RUNS') note=(p.pick||'')+' '+(p.line!=null?p.line:0.5)+' runs ('+(p.rate_disp||'')+')';
       else if(isProp) note=(p.pick||'')+' '+(p.line!=null?p.line:'')+' '+(p.label||'').replace('Pitcher ','')+' · blend '+(p.blended!=null?(p.blended+_ppU(p)):'—');
@@ -4113,7 +4113,10 @@ async function openMyBets(){
   document.getElementById('mybets-body').innerHTML='<p style="color:#94a3b8;padding:8px 0;font-size:.85rem">Loading…</p>';
   try{
     var res=await fetch('/api/bets'+_betAuthQS()+'&settle=false');
-    if(!res.ok){ throw new Error(await res.text()); }
+    if(!res.ok){
+      if(res.status===403) throw new Error('Session expired \u2014 reopen the MLB app from the hub to refresh your login.');
+      throw new Error(await res.text());
+    }
     window.__MYBETS__=await res.json();
     renderMyBets(window.__MYBETS__);
   }catch(e){
