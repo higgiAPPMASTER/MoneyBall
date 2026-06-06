@@ -2354,7 +2354,11 @@ function _propBestCard(p, key, rank) {
   var isOver=(p.pick||'').toUpperCase()==='OVER';
   var odds=isOver?(p.over_odds!=null?(p.over_odds>0?'+':'')+p.over_odds:'')
                  :(p.under_odds!=null?(p.under_odds>0?'+':'')+p.under_odds:'');
-  var gap=p.blended!=null&&p.line!=null?Math.abs(p.blended-p.line):null;
+  var hasPP=p.proj!=null;
+  var ppf=p.proj_factors||{};
+  var ppDriver=hasPP?p.proj:p.blended;
+  var projDisp=hasPP?(p.proj+(p.unit?' '+p.unit:'')):'';
+  var gap=ppDriver!=null&&p.line!=null?Math.abs(ppDriver-p.line):null;
   var gapDisp=gap!=null?'edge +'+gap.toFixed(1)+(p.unit?' '+p.unit:''):'';
   var blendDisp=p.blended!=null?p.blended+(p.unit?' '+p.unit:''):'—';
   var lineDisp=p.line!=null?p.line+(p.unit?' '+p.unit:''):'—';
@@ -2381,11 +2385,12 @@ function _propBestCard(p, key, rank) {
     <div style="padding:10px 14px;flex:1;display:flex;flex-direction:column">
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">${sideLabel}${oppLabel}</div>
       <div style="display:flex;align-items:center;justify-content:space-between;border-top:1px solid #1f2d3d;padding-top:6px;margin-top:2px">
-        <span style="font-size:.7rem;color:#64748b">Line ${lineDisp} · Blend ${blendDisp}</span>
+        <span style="font-size:.7rem;color:#64748b">Line ${lineDisp} · ${hasPP?('Proj '+projDisp):('Blend '+blendDisp)}</span>
         <span style="color:${isOver?'#63cab7':'#ff8a65'};font-weight:900;font-size:.9rem">${p.pick||'—'}</span>
       </div>
       ${gapHtml}
       ${oddsHtml}
+      ${hasPP?`<div style="margin-top:2px;font-size:.6rem;color:#475569">blend ${blendDisp} · hand x${ppf.hand!=null?ppf.hand:1} · whiff x${ppf.whiff!=null?ppf.whiff:1}</div>`:''}
       <div style="margin-top:5px;display:flex;align-items:center;gap:5px"><span style="font-size:.6rem;color:#475569">day trend</span>${_dowChip(_propDowMkt,p.pick)}</div>
       ${p.market==='pitcher_walks'&&p.opp_bb_rank!=null?`<div style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap"><span style="font-size:.62rem;color:#94a3b8">Opp BB/G rank:</span><span style="font-size:.72rem;font-weight:800;color:#34d399">#${p.opp_bb_rank}<span style="color:#64748b;font-weight:400"> of ${p.opp_bb_total||30}</span></span><span style="font-size:.68rem;color:#cbd5e1;font-family:monospace">${p.opp_bb_pg!=null?p.opp_bb_pg+' BB/G':''}</span></div>`:''}
     </div>
