@@ -44,6 +44,9 @@ PROP_ODDS = {}
 # Full MLB team K/game ranking: key = team name, value = {rank, k_per_g, total}
 # rank 1 = most Ks (easiest matchup for pitcher), rank 30 = fewest Ks (toughest).
 TEAM_K_RANKS: dict = {}
+# Full MLB team BB/game ranking (walks DRAWN by offense).
+# rank 1 = most BBs drawn (hardest matchup for pitcher control), rank 30 = fewest.
+TEAM_BB_RANKS: dict = {}
 
 _pitcher_id_cache = {}
 _team_id_cache    = {}
@@ -77,27 +80,35 @@ def _ip_to_float(ip_str) -> float:
 
 
 def _get_bottom_k_teams(season: str, n: int = BOTTOM_K_TEAMS_N):
-    global TEAM_K_RANKS
+    global TEAM_K_RANKS, TEAM_BB_RANKS
     try:
         r = requests.get(f"{MLB_API}/teams/stats",
             params={"season": season, "sportId": 1, "group": "hitting", "stats": "season"},
             timeout=12)
         splits = r.json().get("stats", [{}])[0].get("splits", [])
         teams_data = []
+        bb_data = []
         for sp in splits:
             stat = sp.get("stat", {})
+            tname = sp.get("team", {}).get("name", "")
             ks = stat.get("strikeOuts", 0)
+            bb = stat.get("baseOnBalls", 0)
             gp = stat.get("gamesPlayed", 1)
             if gp < 5: continue
-            teams_data.append({"name": sp.get("team", {}).get("name", ""),
-                                "k_per_g": round(ks / gp, 2)})
+            teams_data.append({"name": tname, "k_per_g": round(ks / gp, 2)})
+            bb_data.append({"name": tname, "bb_per_g": round(bb / gp, 2)})
         teams_data.sort(key=lambda x: x["k_per_g"])
         bottom_n = teams_data[:n]
-        # Build full ranking: rank 1 = most Ks per game (easiest for pitchers)
+        # Build full K ranking: rank 1 = most Ks per game (easiest for pitchers)
         teams_desc = sorted(teams_data, key=lambda x: x["k_per_g"], reverse=True)
         total = len(teams_desc)
         TEAM_K_RANKS = {t["name"]: {"rank": i + 1, "k_per_g": t["k_per_g"], "total": total}
                         for i, t in enumerate(teams_desc)}
+        # Build BB ranking: rank 1 = most BBs drawn (hardest for pitcher command)
+        bb_desc = sorted(bb_data, key=lambda x: x["bb_per_g"], reverse=True)
+        bb_total = len(bb_desc)
+        TEAM_BB_RANKS = {t["name"]: {"rank": i + 1, "bb_per_g": t["bb_per_g"], "total": bb_total}
+                         for i, t in enumerate(bb_desc)}
         return {t["name"] for t in bottom_n}, bottom_n
     except Exception:
         return set(), []
@@ -289,6 +300,14 @@ def _get_pitcher_id(full_name: str):
         # Safe because we still require an exact full-name match.
         for p in candidates:
             if _normalize(p.get("fullName", "")) == norm and p.get("active"):
+                _pitcher_id_cache[key] = p["id"]
+                return p["id"]
+        # Pass 4: exact full name + pitcher/TWP, ignore active flag — catches IL/rehab
+        # pitchers who have an Odds API K line today but are still marked inactive in
+        # the MLB Stats API (e.g. McClanahan post-TJ, E. Rodriguez on IL start).
+        for p in candidates:
+            if (_normalize(p.get("fullName", "")) == norm and
+                    p.get("primaryPosition", {}).get("code") in ("1", "TWP")):
                 _pitcher_id_cache[key] = p["id"]
                 return p["id"]
     except Exception:
@@ -520,7 +539,7 @@ def _build_prop_picks(name, team, opp, side, hist, rf, pid=None) -> list:
         recent_log = [{"d": e.get("d", ""), "v": e.get(vfield), "ip": e.get("ip", ""),
                        "opp": e.get("opp", "")}
                       for e in ((rf.get("recent_k_log") if rf else None) or [])]
-        props.append({
+        pick_dict = {
             "market": market, "label": label, "unit": unit, "_prop": True,
             "name": name, "team": team, "opp": opp, "side": side,
             "pid": pid,
@@ -529,7 +548,13 @@ def _build_prop_picks(name, team, opp, side, hist, rf, pid=None) -> list:
             "blended": blended, "avg": blended, "blend_src": blend_src, "starts": starts,
             "vs_opp_log": vs_opp_log, "recent_log": recent_log,
             "hit_rate": hit_rate, "pick": pick, "pick_note": pick_note,
-        })
+        }
+        if market == "pitcher_walks":
+            _opp_bbr = next((v for k, v in TEAM_BB_RANKS.items() if _teams_match(k, opp)), None)
+            pick_dict["opp_bb_rank"]  = _opp_bbr["rank"]    if _opp_bbr else None
+            pick_dict["opp_bb_pg"]    = _opp_bbr["bb_per_g"] if _opp_bbr else None
+            pick_dict["opp_bb_total"] = _opp_bbr["total"]    if _opp_bbr else None
+        props.append(pick_dict)
     return props
 
 
