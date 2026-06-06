@@ -1712,6 +1712,14 @@ _HTML = """
         </div>
         <div id="parlayResult" style="margin-top:16px"></div>
       </div>
+      <div class="card p-6 hidden" id="top10-plays-card" style="border-color:rgba(250,204,21,.35)">
+        <div class="section-hdr" style="color:#facc15">⭐ Top 10 Plays Today</div>
+        <p class="text-xs text-slate-400 mb-3" style="margin-top:-4px">Best plays across all MLB categories ranked by Expected Value (Wilson edge × odds). Click any card for recent history. Track Bet logs it to My Bets.</p>
+        <div id="top10-plays-body" class="mlb-picks-grid"></div>
+        <p class="text-xs text-slate-500 mt-4 admin-only">
+          <strong>Score</strong> = Wilson lower-bound rate &#215; (decimal odds &#8722; 1) &#8722; (1 &#8722; Wilson). Min 3 games H/A vs opp. Picks with no odds posted are excluded.
+        </p>
+      </div>
       <div class="card p-6" id="top-picks-card">
         <div class="section-hdr">🏆 Top Picks — To Record a Hit</div>
         <div id="picks-body" class="mlb-picks-grid"></div>
@@ -1755,6 +1763,15 @@ _HTML = """
         <p class="text-xs text-slate-500 mt-4 admin-only">
           <strong>Rate</strong> = % of H/A games vs opp (min 3 games) with TB ≥ 2 &nbsp;|&nbsp;
           <strong>Threshold</strong> ≥60% over 1.5 TB &nbsp;|&nbsp; vs opponent only &nbsp;|&nbsp; ranked by Wilson lower-bound
+        </p>
+      </div>
+      <div class="card p-6 hidden" id="hrr-picks-card" style="border-color:rgba(251,146,60,.25)">
+        <div class="section-hdr" style="color:#fb923c">🔥 Over 1.5 Hits+Runs+RBI</div>
+        <div id="hrr-picks-body" class="mlb-picks-grid"></div>
+        <div id="hrr-picks-more-wrap"></div>
+        <p class="text-xs text-slate-500 mt-4 admin-only">
+          <strong>Rate</strong> = % of H/A games vs opp (min 3 games) with H+R+RBI &ge; 2 &nbsp;|&nbsp;
+          <strong>Threshold</strong> &ge;60% over 1.5 HRR &nbsp;|&nbsp; vs opponent only &nbsp;|&nbsp; ranked by Wilson lower-bound
         </p>
       </div>
       <div class="card p-6 hidden" id="pitcher-k-card" style="border-color:rgba(99,202,183,.25)">
@@ -1996,7 +2013,7 @@ function _filterStarted(result){
   if(!result) return result;
   var r=Object.assign({},result);
   function f(a){return (a||[]).filter(function(p){return !_started(p);});}
-  r.top9=f(r.top9); r.also_ran=f(r.also_ran); r.under_picks=f(r.under_picks); r.runs_picks=f(r.runs_picks); r.tb_picks=f(r.tb_picks); r.tb_over_picks=f(r.tb_over_picks||[]);
+  r.top9=f(r.top9); r.also_ran=f(r.also_ran); r.under_picks=f(r.under_picks); r.runs_picks=f(r.runs_picks); r.tb_picks=f(r.tb_picks); r.tb_over_picks=f(r.tb_over_picks||[]); r.hrr_picks=f(r.hrr_picks||[]); r.rbi_picks=f(r.rbi_picks||[]);
   if(r.pitcher_k){
     r.pitcher_k=Object.assign({},r.pitcher_k);
     r.pitcher_k.picks=f(r.pitcher_k.picks);
@@ -2042,13 +2059,15 @@ function showResults(result) {
       })
     : result;
   const { top9, stats, pitcher_k } = view;
-  hide('under-picks-card'); hide('tb-picks-card'); hide('tb-over-picks-card'); hide('pitcher-k-card'); hide('runs-picks-card'); hide('rbi-picks-card');
+  hide('top10-plays-card'); hide('under-picks-card'); hide('tb-picks-card'); hide('tb-over-picks-card'); hide('hrr-picks-card'); hide('pitcher-k-card'); hide('runs-picks-card'); hide('rbi-picks-card');
 
   document.getElementById('stats-row').innerHTML = [
+    statCard('⭐','Top 10 Plays',_buildTop10(view).length,'top10-plays-card'),
     statCard('🎯','Top Picks',top9.length,'top-picks-card'),
     statCard('⬇️','Under Picks',(view.under_picks||[]).length,'under-picks-card'),
     statCard('⬇️','TB Under',(view.tb_picks||[]).length,'tb-picks-card'),
     statCard('📈','TB Over',(view.tb_over_picks||[]).length,'tb-over-picks-card'),
+    statCard('🔥','HRR Picks',(view.hrr_picks||[]).length,'hrr-picks-card'),
     statCard('💥','RBI Picks',(view.rbi_picks||[]).length,'rbi-picks-card'),
     statCard('🏃','Runs Picks',(view.runs_picks||[]).length,'runs-picks-card'),
     statCard('⚾','Pitcher K',((view.pitcher_k||{}).all||[]).filter(p=>p.pick&&(p.starts||0)>0).length,'pitcher-k-card'),
@@ -2058,7 +2077,14 @@ function showResults(result) {
     statCard('⏱️','Time (s)',stats.elapsed),
   ].join('');
 
-  if (window.UNDERS_ONLY && window.IS_ADMIN) { hide('top-picks-card'); } else { show('top-picks-card'); }
+  const t10Plays = _buildTop10(view);
+  if (t10Plays.length > 0 && !(window.UNDERS_ONLY && window.IS_ADMIN)) {
+    show('top10-plays-card');
+    window.__T10_REG__={};
+    document.getElementById('top10-plays-body').innerHTML = t10Plays.map(function(p,i){ return _top10Card(p, i+1); }).join('');
+  }
+
+  if (window.UNDERS_ONLY && window.IS_ADMIN) { hide('top-picks-card'); hide('top10-plays-card'); } else { show('top-picks-card'); }
   window.__HIT_REG__={};
   document.getElementById('picks-body').innerHTML = top9.map((p,i) => _mlbCard(p, i+1)).join('');
   const alsoRan = view.also_ran || [];
@@ -2162,6 +2188,16 @@ function showResults(result) {
     document.getElementById('tb-over-picks-body').innerHTML = tbOverPicks.slice(0,10).map(function(p,i){ return _tbOverCard(p, i+1); }).join('');
     document.getElementById('tb-over-more-wrap').innerHTML = tbOverPicks.length > 10
       ? _moreWrap(tbOverPicks.slice(10), function(p,r){ return _tbOverCard(p, r); }, 11, 'TB Over', '#4ade80')
+      : '';
+  }
+
+  const hrrPicks = view.hrr_picks || [];
+  if (hrrPicks.length > 0) {
+    show('hrr-picks-card');
+    window.__HRR_REG__={};
+    document.getElementById('hrr-picks-body').innerHTML = hrrPicks.slice(0,10).map(function(p,i){ return _hrrCard(p, i+1); }).join('');
+    document.getElementById('hrr-picks-more-wrap').innerHTML = hrrPicks.length > 10
+      ? _moreWrap(hrrPicks.slice(10), function(p,r){ return _hrrCard(p, r); }, 11, 'HRR', '#fb923c')
       : '';
   }
 
@@ -2746,6 +2782,11 @@ function _mlbPool(){
       cands.push({type:'TBO',dir:'OVER',player:(p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'Total Bases',line:1.5,odds:p.tb_over_odds,conf:clampConf(88,i),reason:'📈 Over 1.5 TB · '+(p.rate_disp||'')+' rate vs '+(p.opp||''),src:p});
     }
   });
+  (r.hrr_picks||[]).forEach(function(p,i){
+    if(_underOk(p.hrr_over_odds)){
+      cands.push({type:'HRR',dir:'OVER',player:(p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'H+R+RBI',line:1.5,odds:p.hrr_over_odds,conf:clampConf(86,i),reason:'🔥 Over 1.5 HRR · '+(p.rate_disp||'')+' rate vs '+(p.opp||''),src:p});
+    }
+  });
   // Pitcher prop legs (Hits Allowed / Outs / Earned Runs) — one type per market.
   var _pp=(r.pitcher_props)||{};
   PROP_ORDER.forEach(function(mkt){
@@ -3176,6 +3217,7 @@ function renderByGame(result){
   var unders=(result.under_picks||[]).map(function(p){return Object.assign({_kind:'UNDER'},p);});
   var tbUnders=(result.tb_picks||[]).map(function(p){return Object.assign({_kind:'TB UNDER'},p);});
   var tbOvers=(result.tb_over_picks||[]).map(function(p){return Object.assign({_kind:'TB OVER'},p);});
+  var hrrs=(result.hrr_picks||[]).map(function(p){return Object.assign({_kind:'HRR'},p);});
   var ks=((result.pitcher_k||{}).picks||[]).filter(function(p){return (p.starts||0)>0;}).map(function(p){return Object.assign({_kind:'PITCHER K'},p);});
   var runs=(result.runs_picks||[]).map(function(p){return Object.assign({_kind:'RUNS'},p);});
   var propLegs=[];
@@ -3185,7 +3227,7 @@ function renderByGame(result){
     var statLbl=(cfg.label||'').replace('Pitcher ','').toUpperCase();
     picks.forEach(function(p){ propLegs.push(Object.assign({_kind:statLbl},p)); });
   });
-  var all=hitters.concat(unders, tbUnders, tbOvers, ks, runs, propLegs);
+  var all=hitters.concat(unders, tbUnders, tbOvers, hrrs, ks, runs, propLegs);
   if(!all.length){body.innerHTML='<div class="text-slate-500 text-sm">No picks yet.</div>';return;}
   var games={}, order=[];
   all.forEach(function(p){
@@ -3761,6 +3803,244 @@ function _tbOverForm(key){
       +'<th style="text-align:left;padding:4px 10px;font-size:.7rem;color:#64748b;font-weight:600;border-bottom:1px solid #1e293b">Opp</th>'
       +'<th style="text-align:right;padding:4px 10px;font-size:.7rem;color:#64748b;font-weight:600;border-bottom:1px solid #1e293b">Hits</th>'
       +'<th style="text-align:right;padding:4px 10px;font-size:.7rem;color:#64748b;font-weight:600;border-bottom:1px solid #1e293b">TB</th>'
+    +'</tr></thead><tbody>'+rows+'</tbody></table>'
+    +'</div></div>';
+  ov.style.display='flex';
+}
+
+// ── Top 10 Plays — helpers + card + form ───────────────────────────────
+function _wilsonLB(hits, games) {
+  if(!games||!hits) return 0;
+  var z=1.96, ph=hits/games;
+  var denom=1+z*z/games;
+  var num=ph+z*z/(2*games)-z*Math.sqrt(ph*(1-ph)/games+z*z/(4*games*games));
+  return num/denom;
+}
+function _amToDec2(o){ if(!o) return null; return o>0?1+o/100:1+100/Math.abs(o); }
+function _t10Score(p, kind) {
+  var w = 0;
+  if(kind==='HITTER'){
+    var s4=p.s4||{}; w = s4.games>0 ? _wilsonLB(s4.hits_games||0, s4.games) : 0;
+  } else {
+    w = p.wilson||0;
+  }
+  var od = _t10Odds(p, kind);
+  var dec = _amToDec2(od);
+  if(!dec) return -999;
+  return w*(dec-1)-(1-w);
+}
+function _t10Odds(p, kind) {
+  switch(kind) {
+    case 'HITTER':  return p.hit_odds;
+    case 'TB OVER': return p.tb_over_odds;
+    case 'HRR':     return p.hrr_over_odds;
+    case 'RBI':     return p.pick==='OVER'?p.over:p.under;
+    case 'RUNS':    return p.pick==='OVER'?p.over_odds:p.under_odds;
+    case 'UNDER':   return p.pick==='OVER'?p.over_odds:p.under_odds;
+    default: return null;
+  }
+}
+function _t10RateDisp(p, kind) {
+  if(kind==='HITTER'){ var s4=p.s4||{}; return s4.games>0?s4.hits_games+'/'+s4.games:(p.s4_display||'—'); }
+  return p.rate_disp||'—';
+}
+function _t10Label(kind, p) {
+  switch(kind) {
+    case 'HITTER':  return 'OVER 0.5 Hits';
+    case 'TB OVER': return 'OVER 1.5 Total Bases';
+    case 'HRR':     return 'OVER 1.5 H+R+RBI';
+    case 'RBI':     return (p.pick||'OVER')+' 0.5 RBI';
+    case 'RUNS':    return (p.pick||'OVER')+' 0.5 Runs';
+    case 'UNDER':   return (p.pick||'UNDER')+' 1.5 Hits';
+    default: return kind;
+  }
+}
+function _t10KindColor(kind) {
+  switch(kind) {
+    case 'HITTER':  return '#f59e0b';
+    case 'TB OVER': return '#4ade80';
+    case 'HRR':     return '#fb923c';
+    case 'RBI':     return '#fbbf24';
+    case 'RUNS':    return '#60a5fa';
+    case 'UNDER':   return '#ff8a65';
+    default: return '#94a3b8';
+  }
+}
+function _t10KindBadge(kind) {
+  var abbrs={'HITTER':'HIT','TB OVER':'TB\u2191','HRR':'HRR','RBI':'RBI','RUNS':'RUN','UNDER':'U-HIT'};
+  return abbrs[kind]||kind;
+}
+function _buildTop10(view) {
+  var plays = [];
+  function _add(arr, kind) {
+    (arr||[]).forEach(function(p){
+      var od = _t10Odds(p, kind);
+      if(od==null) return;
+      var ev = _t10Score(p, kind);
+      if(ev<=-999) return;
+      plays.push(Object.assign({}, p, {_t10kind:kind, _t10ev:ev}));
+    });
+  }
+  _add(view.top9,          'HITTER');
+  _add(view.tb_over_picks, 'TB OVER');
+  _add(view.hrr_picks,     'HRR');
+  _add(view.rbi_picks,     'RBI');
+  _add(view.runs_picks,    'RUNS');
+  plays.sort(function(a,b){ return b._t10ev - a._t10ev; });
+  return plays.slice(0, 10);
+}
+function _top10BetBtn(p, kind) {
+  switch(kind) {
+    case 'HITTER':  return _betBtn(p,'Hitter Hits','OVER','hits','Hits',0.5,p.hit_odds);
+    case 'TB OVER': return _betBtn(p,'TB Over','OVER','total_bases','Total Bases',1.5,p.tb_over_odds);
+    case 'HRR':     return _betBtn(p,'HRR','OVER','hrr','H+R+RBI',1.5,p.hrr_over_odds);
+    case 'RBI':     { var od=p.pick==='OVER'?p.over:p.under; return _betBtn(p,'RBI',(p.pick||'OVER'),'rbi','RBI',(p.line||0.5),od); }
+    case 'RUNS':    { var od2=p.pick==='OVER'?p.over_odds:p.under_odds; return _betBtn(p,'Runs',(p.pick||'OVER'),'runs','Runs',(p.line||0.5),od2); }
+    case 'UNDER':   { var od3=p.pick==='OVER'?p.over_odds:p.under_odds; return _betBtn(p,'Hitter Hits',(p.pick||'UNDER'),'hits','Hits',1.5,od3); }
+    default: return '';
+  }
+}
+function _top10Form(key) {
+  var rec=(window.__T10_REG__||{})[key]; if(!rec) return;
+  var p=rec.p, kind=rec.kind;
+  if(kind==='HITTER'||kind==='UNDER') { _hitForm(p); }
+  else if(kind==='TB OVER') { _tbOverForm(p); }
+  else if(kind==='HRR') { _hrrForm(p); }
+  else if(kind==='RBI') { if(typeof _rbiForm==='function') _rbiForm(p); }
+  else if(kind==='RUNS') { if(typeof _runsForm==='function') _runsForm(p); }
+}
+function _top10Card(p, rank) {
+  var kind = p._t10kind;
+  var abbr = _mlbTeamAbbr(p.team||'');
+  var teamLogo = abbr ? 'https://a.espncdn.com/i/teamlogos/mlb/500/'+abbr+'.png' : '';
+  var kc = _t10KindColor(kind);
+  var rnkColors = rank===1?['#facc15','#000']:rank===2?['#eab308','#000']:rank===3?['#ca8a04','#fff']:['#1e1e1e','#facc15'];
+  var sideCls = (p.side||'')==='HOME'?'badge-home':'badge-away';
+  var od = _t10Odds(p, kind);
+  var odDisp = od!=null?(od>0?'+':'')+od:'—';
+  var rate = _t10RateDisp(p, kind);
+  var label = _t10Label(kind, p);
+  var ev = p._t10ev!=null?(p._t10ev>0?'+':'')+p._t10ev.toFixed(3):'—';
+  var key = 't10r'+rank;
+  window.__T10_REG__=window.__T10_REG__||{}; window.__T10_REG__[key]={p:p,kind:kind};
+  return '<div class="mlb-pick-card" onclick="_top10Form(\''+key+'\')" title="Click for recent form" style="cursor:pointer">'
+    +'<div class="mlb-card-header" style="background:linear-gradient(135deg,#2d2600 0%,#0f0e00 100%)">'
+      +'<div style="display:flex;align-items:center;gap:8px">'
+        +'<div style="width:30px;height:30px;border-radius:50%;background:'+rnkColors[0]+';color:'+rnkColors[1]+';display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">'+rank+'</div>'
+        +(p.batter_id?_mlbHead(p.batter_id):'')
+        +'<span style="font-size:.66rem;letter-spacing:.1em;background:'+kc+';color:#000;padding:2px 6px;border-radius:4px;font-weight:900">'+_t10KindBadge(kind)+'</span>'
+      +'</div>'
+      +(teamLogo?'<img src="'+teamLogo+'" alt="'+(p.team||'')+'" style="height:34px;width:34px;object-fit:contain" onerror="this.style.display=\'none\'"/>':'')
+    +'</div>'
+    +'<div class="mlb-card-name">'+(p.name||p.full_name||'')+'</div>'
+    +'<div class="mlb-card-body">'
+      +'<div style="display:flex;align-items:center;justify-content:space-between">'
+        +'<span style="font-size:.82rem;color:#94a3b8">vs <strong style="color:#fff">'+(p.opp||'—')+'</strong></span>'
+        +(p.side?'<span class="badge '+sideCls+'">'+(p.side)+'</span>':'')
+      +'</div>'
+      +_envChip(p)+_umpChip(p)+_bpChip(p)
+      +'<div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">'
+        +'<span style="font-size:.78rem;color:#94a3b8">Rate vs opp</span>'
+        +'<span style="font-family:monospace;font-weight:700;color:#facc15">'+rate+'</span>'
+      +'</div>'
+      +'<div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">'
+        +'<span style="font-size:.8rem;color:'+kc+';font-weight:900">'+label+'</span>'
+        +'<span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">'+odDisp+'</span>'
+      +'</div>'
+      +'<div class="admin-only" style="display:none;font-size:.72rem;color:#64748b;margin-top:4px">EV <strong style="color:#facc15">'+ev+'</strong></div>'
+    +'</div>'
+    +_top10BetBtn(p, kind)
+    +'</div>';
+}
+
+function _hrrCard(p, rank) {
+  const abbr = _mlbTeamAbbr(p.team);
+  const teamLogo = abbr ? `https://a.espncdn.com/i/teamlogos/mlb/500/${abbr}.png` : '';
+  const rnkColors = rank===1?['#fb923c','#000']:rank===2?['#f97316','#000']:rank===3?['#ea580c','#fff']:['#1e1e1e','#fb923c'];
+  const sideCls = p.side==='HOME'?'badge-home':'badge-away';
+  const odDisp = p.hrr_over_odds!=null?(p.hrr_over_odds>0?'+':'')+p.hrr_over_odds:'—';
+  const scoreClr = p.score>=80?'#fb923c':p.score>=70?'#fbbf24':'#94a3b8';
+  const log = p.recent_hrr_log||[];
+  const overCnt = log.filter(g=>g.hrr>=2).length;
+  const adminStats = `<div class="admin-only" style="display:none;font-size:.72rem;color:#64748b;margin-top:4px;line-height:1.7">
+    <span>Rate <strong style="color:#fb923c">${p.score!=null?p.score+'%':'—'}</strong></span> &nbsp;
+    <span>Games <strong style="color:#94a3b8">${p.games||0}</strong></span> &nbsp;
+    <span>Wilson <strong style="color:#94a3b8">${p.wilson!=null?p.wilson:'—'}</strong></span>
+  </div>`;
+  window.__HRR_REG__=window.__HRR_REG__||{}; window.__HRR_REG__['hrr'+rank]=p;
+  return `<div class="mlb-pick-card" onclick="_hrrForm('hrr${rank}')" title="Click for recent form" style="cursor:pointer">
+    <div class="mlb-card-header" style="background:linear-gradient(135deg,#431407 0%,#1a0a00 100%)">
+      <div style="display:flex;align-items:center;gap:8px">
+        <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
+        ${_mlbHead(p.batter_id)}
+        <span style="font-size:.72rem;letter-spacing:.12em;color:#fb923c;font-weight:800">MLB · HRR</span>
+      </div>
+      ${teamLogo?`<img src="${teamLogo}" alt="${p.team}" style="height:34px;width:34px;object-fit:contain" onerror="this.style.display='none'"/>`:''}
+    </div>
+    <div class="mlb-card-name">${p.name}</div>
+    <div class="mlb-card-body">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <span style="font-size:.82rem;color:#94a3b8">vs <strong style="color:#fff">${p.opp||'—'}</strong></span>
+        <span class="badge ${sideCls}">${p.side}</span>
+      </div>
+      ${_envChip(p)}
+      ${_umpChip(p)}
+      ${_bpChip(p)}
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
+        <span style="font-size:.78rem;color:#94a3b8">HRR Over Rate <span style="color:#64748b;font-size:.68rem">vs opp</span></span>
+        <span style="font-family:monospace;font-weight:700;color:${scoreClr}">${p.rate_disp||'—'}</span>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
+        <span style="font-size:.72rem;color:#64748b">Recent</span>
+        <span style="font-size:.78rem;color:#cbd5e1">${log.length?overCnt+'/'+log.length+' over':'—'}</span>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
+        <span style="font-size:.8rem;color:#fb923c;font-weight:900">OVER 1.5 H+R+RBI</span>
+        <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}</span>
+      </div>
+      ${adminStats}
+    </div>
+  ${_betBtn(p,'HRR','OVER','hrr','H+R+RBI',1.5,p.hrr_over_odds)}
+  </div>`;
+}
+
+function _hrrForm(key){
+  var p=(key&&typeof key==='object')?key:(window.__HRR_REG__||{})[key]; if(!p) return;
+  var ov=document.getElementById('hrr-modal');
+  if(!ov){
+    ov=document.createElement('div');
+    ov.id='hrr-modal';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; };
+    document.body.appendChild(ov);
+  }
+  var log=p.recent_hrr_log||[];
+  var rows=log.length?log.map(function(g){
+    var good=(g.hrr>=2);
+    var clr=good?'#fb923c':'#94a3b8';
+    var oppTxt=g.opp?((g.ha==='H'?'vs ':'@ ')+g.opp):'';
+    return '<tr>'
+      +'<td style="padding:6px 10px;color:#94a3b8;font-family:monospace">'+(g.d||'\u2014')+'</td>'
+      +'<td style="padding:6px 10px;color:#cbd5e1;font-size:.8rem">'+oppTxt+'</td>'
+      +'<td style="padding:6px 10px;text-align:right;font-family:monospace;font-size:.8rem;color:#93c5fd">'+g.h+'H '+g.r+'R '+g.rbi+'RBI</td>'
+      +'<td style="padding:6px 10px;text-align:right;font-family:monospace;font-weight:800;color:'+clr+'">'+g.hrr+' HRR</td>'
+    +'</tr>';
+  }).join(''):'<tr><td colspan="4" style="padding:14px;color:#64748b;text-align:center">No recent games on record</td></tr>';
+  var name=p.name||'';
+  ov.innerHTML='<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:460px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid #1e293b">'
+      +'<div><div style="font-weight:800;font-size:1.05rem;color:#fff">'+name+'</div>'
+      +'<div style="color:#94a3b8;font-size:.78rem">'+(p.side||'')+' vs '+(p.opp||'')+' \u00b7 Over 1.5 H+R+RBI</div></div>'
+      +'<button onclick="document.getElementById(&#39;hrr-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem">\u2715</button>'
+    +'</div>'
+    +'<div style="padding:16px 18px">'
+    +'<div style="font-size:.72rem;color:#fb923c;font-weight:700;margin-bottom:8px">H+R+RBI \u2265 2 = OVER</div>'
+    +'<table style="width:100%;border-collapse:collapse">'
+    +'<thead><tr>'
+      +'<th style="text-align:left;padding:4px 10px;font-size:.7rem;color:#64748b;font-weight:600;border-bottom:1px solid #1e293b">Date</th>'
+      +'<th style="text-align:left;padding:4px 10px;font-size:.7rem;color:#64748b;font-weight:600;border-bottom:1px solid #1e293b">Opp</th>'
+      +'<th style="text-align:right;padding:4px 10px;font-size:.7rem;color:#64748b;font-weight:600;border-bottom:1px solid #1e293b">Breakdown</th>'
+      +'<th style="text-align:right;padding:4px 10px;font-size:.7rem;color:#64748b;font-weight:600;border-bottom:1px solid #1e293b">HRR</th>'
     +'</tr></thead><tbody>'+rows+'</tbody></table>'
     +'</div></div>';
   ov.style.display='flex';
