@@ -298,6 +298,8 @@ def _mlb_box_lookup(date_str: str):
                 rows.append((int(pid), full_name, {
                     "hits":         bat.get("hits"),
                     "runs":         bat.get("runs"),
+                    "total_bases":  bat.get("totalBases"),
+                    "rbi":          bat.get("rbi"),
                     "strikeOuts":   pit.get("strikeOuts"),
                     "earnedRuns":   pit.get("earnedRuns"),
                     "outs":         pit.get("outs"),
@@ -409,6 +411,47 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "game_status": (st or {}).get("status", "—"),
         })
 
+    # TB Under 1.5 — top 10 for Track Record
+    tb_under = []
+    for p in (picks.get("tb_picks") or [])[:10]:
+        st = _lookup(p.get("batter_id"), p.get("name"))
+        actual = st["total_bases"] if st else None
+        tb_under.append({
+            "name": p.get("name", ""),
+            "team": p.get("team", ""),
+            "category": "TB Under", "side": "UNDER",
+            "pick": "UNDER 1.5 Total Bases",
+            "odds": p.get("tb_under_odds"),
+            "line": 1.5,
+            "actual": actual,
+            "stat": "Total Bases",
+            "result": _grade("UNDER", 1.5, actual, (st or {}).get("final", False)),
+            "game_status": (st or {}).get("status", "—"),
+        })
+
+    # RBI OVER/UNDER — top 10 per side for Track Record
+    _rbi_all = picks.get("rbi_picks") or []
+    _rbi_capped = [p for p in _rbi_all if p.get("pick") == "OVER"][:10] + \
+                  [p for p in _rbi_all if p.get("pick") == "UNDER"][:10]
+    rbi_picks = []
+    for p in _rbi_capped:
+        st = _lookup(p.get("batter_id"), p.get("name"))
+        actual = st["rbi"] if st else None
+        pick_dir = p.get("pick", "OVER")
+        line = p.get("line") if p.get("line") is not None else 0.5
+        rbi_picks.append({
+            "name": p.get("name", ""),
+            "team": p.get("team", ""),
+            "category": "RBI", "side": pick_dir,
+            "pick": f"{pick_dir} {line} RBI",
+            "odds": p.get("over_odds") if pick_dir == "OVER" else p.get("under_odds"),
+            "line": line,
+            "actual": actual,
+            "stat": "RBI",
+            "result": _grade(pick_dir, line, actual, (st or {}).get("final", False)),
+            "game_status": (st or {}).get("status", "—"),
+        })
+
     # Pitcher Ks — top 10 for Track Record
     pitcher_ks = []
     for p in ((picks.get("pitcher_k") or {}).get("picks") or [])[:10]:
@@ -470,6 +513,8 @@ def _grade_date(date_str: str, picks: dict) -> dict:
         "hitter_overs":  hitter_overs,
         "hitter_unders": hitter_unders,
         "runs":          runs,
+        "tb_under":      tb_under,
+        "rbi":           rbi_picks,
         "pitcher_ks":    pitcher_ks,
         "pitcher_props": pitcher_props,
         "any_game":      any_game,
@@ -480,7 +525,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
 # ── Track Record: permanent W/L ledger across all graded days ────────────
 _TRACK_LEDGER_PATH = os.path.join(_CACHE_DIR, "_track_record.json")
 _TRACK_CAT_ORDER = [
-    "Hitter Hits", "Runs", "Pitcher Ks",
+    "Hitter Hits", "Runs", "TB Under", "RBI", "Pitcher Ks",
     "Pitcher Hits Allowed", "Pitcher Outs", "Pitcher Earned Runs",
 ]
 
@@ -526,7 +571,7 @@ def _save_detail(det: dict):
 def _aggregate_graded(graded: dict) -> dict:
     """Collapse a graded day into {category: {side: [W, L]}} counting only decided picks."""
     agg: dict = {}
-    for key in ("hitter_overs", "hitter_unders", "runs", "pitcher_ks", "pitcher_props"):
+    for key in ("hitter_overs", "hitter_unders", "runs", "tb_under", "rbi", "pitcher_ks", "pitcher_props"):
         for r in graded.get(key, []):
             res = r.get("result")
             if res not in ("WIN", "LOSS"):
@@ -545,7 +590,7 @@ def _detail_graded(graded: dict) -> list:
     fields an earnings sheet needs: player, team, category, side, pick, odds,
     line, result."""
     out = []
-    for key in ("hitter_overs", "hitter_unders", "runs", "pitcher_ks", "pitcher_props"):
+    for key in ("hitter_overs", "hitter_unders", "runs", "tb_under", "rbi", "pitcher_ks", "pitcher_props"):
         for r in graded.get(key, []):
             res = r.get("result")
             if res not in ("WIN", "LOSS"):
@@ -636,7 +681,7 @@ def _update_track_ledger() -> dict:
 # pick-cache file is gone.
 _BET_LOG_PATH = os.path.join(_CACHE_DIR, "_bet_log.json")
 _BET_LOCK = _trk_threading.Lock()
-_BET_STAT_KEYS = ("hits", "runs", "strikeOuts", "hits_allowed", "outs", "earnedRuns", "walks")
+_BET_STAT_KEYS = ("hits", "runs", "total_bases", "rbi", "strikeOuts", "hits_allowed", "outs", "earnedRuns", "walks")
 _BET_PITCH_STATS = ("strikeOuts", "hits_allowed", "outs", "earnedRuns", "walks")
 
 def _load_bets() -> dict:
@@ -3910,8 +3955,12 @@ function renderTrackRecord(d){
     'Pitcher Outs|UNDER':        {lbl:'Pitcher Outs (Under)',       icon:'🔢', abbr:'Outs-'},
     'Pitcher Earned Runs|OVER':  {lbl:'Earned Runs (Over)',         icon:'🔥', abbr:'ER+'},
     'Pitcher Earned Runs|UNDER': {lbl:'Earned Runs (Under)',        icon:'🔥', abbr:'ER-'},
+    'TB Under|UNDER':            {lbl:'TB Under 1.5',               icon:'📊', abbr:'TB-'},
+    'RBI|OVER':                  {lbl:'RBI (Over 0.5)',             icon:'💥', abbr:'RBI+'},
+    'RBI|UNDER':                 {lbl:'RBI (Under 0.5)',            icon:'💥', abbr:'RBI-'},
   };
   var CAT_ORDER=['Hitter Hits|OVER','Hitter Hits|UNDER','Runs|OVER','Runs|UNDER',
+    'TB Under|UNDER','RBI|OVER','RBI|UNDER',
     'Pitcher Ks|OVER','Pitcher Ks|UNDER','Pitcher Hits Allowed|OVER','Pitcher Hits Allowed|UNDER',
     'Pitcher Outs|OVER','Pitcher Outs|UNDER','Pitcher Earned Runs|OVER','Pitcher Earned Runs|UNDER'];
   function _rc(w,n){ if(!n) return '#64748b'; var p=w/n; return p>=0.70?'#4ade80':(p>=0.55?'#facc15':'#f87171'); }
