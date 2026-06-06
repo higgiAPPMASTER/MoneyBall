@@ -1587,6 +1587,15 @@ _HTML = """
           <strong>Ranked #1 → coldest bat (S2 + S3 + L7)</strong>
         </p>
       </div>
+      <div class="card p-6 hidden" id="tb-picks-card" style="border-color:rgba(167,139,250,.25)">
+        <div class="section-hdr" style="color:#a78bfa">⬇️ Under 1.5 Total Bases</div>
+        <div id="tb-picks-body" class="mlb-picks-grid"></div>
+        <div id="tb-more-wrap"></div>
+        <p class="text-xs text-slate-500 mt-4 admin-only">
+          <strong>Rate</strong> = % of H/A games vs opp (min 2 games) or any opp (min 5) with TB &lt; 2 &nbsp;|&nbsp;
+          <strong>Threshold</strong> ≥70% under 1.5 TB &nbsp;|&nbsp; ranked by Wilson lower-bound
+        </p>
+      </div>
       <div class="card p-6 hidden" id="pitcher-k-card" style="border-color:rgba(99,202,183,.25)">
         <div class="section-hdr" style="color:#63cab7">⚾ Pitcher Picks — Strikeouts, Hits, Outs, Earned Runs &amp; Walks</div>
         <p class="text-xs text-slate-400 mb-3" style="margin-top:-4px">Click any pitcher for all 5 markets (K · Hits · Outs · ER · Walks). Each stat has its own pulldown below.</p>
@@ -1594,9 +1603,14 @@ _HTML = """
         <div id="pitcher-all-body" class="mlb-picks-grid"></div>
         <div id="pitcher-all-more"></div>
         <div style="margin-top:24px;padding-top:20px;border-top:1px solid #1e293b">
-          <div style="font-size:.72rem;font-weight:800;letter-spacing:.1em;color:#63cab7;margin-bottom:10px;text-transform:uppercase">⚡ Pitcher K Picks</div>
-          <div id="pitcher-k-body" class="mlb-picks-grid"></div>
-          <div id="pitcher-k-more"></div>
+          <div style="font-size:.72rem;font-weight:800;letter-spacing:.1em;color:#63cab7;margin-bottom:10px;text-transform:uppercase">⚡ Top K Overs</div>
+          <div id="pitcher-k-over-body" class="mlb-picks-grid"></div>
+          <div id="pitcher-k-over-more"></div>
+        </div>
+        <div style="margin-top:20px;padding-top:16px;border-top:1px solid #1e293b">
+          <div style="font-size:.72rem;font-weight:800;letter-spacing:.1em;color:#ff8a65;margin-bottom:10px;text-transform:uppercase">⬇ Top K Unders</div>
+          <div id="pitcher-k-under-body" class="mlb-picks-grid"></div>
+          <div id="pitcher-k-under-more"></div>
         </div>
         <p class="text-xs text-slate-500 mt-4 admin-only">
           <strong>K History</strong> = H/A starts vs today's opponent only &nbsp;|&nbsp;
@@ -1795,7 +1809,7 @@ function _filterStarted(result){
   if(!result) return result;
   var r=Object.assign({},result);
   function f(a){return (a||[]).filter(function(p){return !_started(p);});}
-  r.top9=f(r.top9); r.also_ran=f(r.also_ran); r.under_picks=f(r.under_picks); r.runs_picks=f(r.runs_picks);
+  r.top9=f(r.top9); r.also_ran=f(r.also_ran); r.under_picks=f(r.under_picks); r.runs_picks=f(r.runs_picks); r.tb_picks=f(r.tb_picks);
   if(r.pitcher_k){
     r.pitcher_k=Object.assign({},r.pitcher_k);
     r.pitcher_k.picks=f(r.pitcher_k.picks);
@@ -1841,11 +1855,12 @@ function showResults(result) {
       })
     : result;
   const { top9, stats, pitcher_k } = view;
-  hide('under-picks-card'); hide('pitcher-k-card'); hide('runs-picks-card');
+  hide('under-picks-card'); hide('tb-picks-card'); hide('pitcher-k-card'); hide('runs-picks-card');
 
   document.getElementById('stats-row').innerHTML = [
     statCard('🎯','Top Picks',top9.length,'top-picks-card'),
     statCard('⬇️','Under Picks',(view.under_picks||[]).length,'under-picks-card'),
+    statCard('⬇️','TB Under',(view.tb_picks||[]).length,'tb-picks-card'),
     statCard('🏃','Runs Picks',(view.runs_picks||[]).length,'runs-picks-card'),
     statCard('⚾','Pitcher K',((view.pitcher_k||{}).all||[]).filter(p=>p.pick&&(p.starts||0)>0).length,'pitcher-k-card'),
     statCard('🧮','Pitcher Props',PROP_ORDER.reduce((n,m)=>n+(((view.pitcher_props||{})[m]||{}).picks||[]).length,0),'pitcher-k-card'),
@@ -1880,14 +1895,18 @@ function showResults(result) {
       const gb=Math.abs((b.blended_avg_k!=null?b.blended_avg_k:(b.avg_k||0))-(b.line||0))*_umpKMul(b);
       return gb-ga;
     });
+    const pkOvers=pkSorted.filter(p=>p.pick==='OVER');
+    const pkUnders=pkSorted.filter(p=>p.pick==='UNDER');
     window.__PK_REG__={};
-    document.getElementById('pitcher-k-body').innerHTML = pkSorted.length > 0
-      ? pkSorted.slice(0,10).map((p,_i) => _pitcherCard(p, _i+1)).join('')
-      : '<p class="text-slate-500 text-center" style="padding:16px">No qualifying picks today</p>';
-    const pkMoreEl=document.getElementById('pitcher-k-more');
-    if(pkMoreEl) pkMoreEl.innerHTML=pkSorted.length>10
-      ?'<details style="margin-top:10px"><summary class="more-btn" style="color:#63cab7;border-color:#63cab733">&#9655; '+(pkSorted.length-10)+' more K Picks</summary><div class="mlb-picks-grid mt-3">'+pkSorted.slice(10).map((p,_i)=>_pitcherCard(p,10+_i+1)).join('')+'</div></details>'
-      :'';
+    const _renderKSec=function(arr,bodyId,moreId,themeClr,label){
+      var el=document.getElementById(bodyId);
+      if(el) el.innerHTML=arr.length>0?arr.slice(0,10).map((p,_i)=>_pitcherCard(p,_i+1)).join('')
+        :'<p class="text-slate-500 text-center" style="padding:16px">No '+label+' today</p>';
+      var me=document.getElementById(moreId);
+      if(me) me.innerHTML=arr.length>10?'<details style="margin-top:10px"><summary class="more-btn" style="color:'+themeClr+';border-color:'+themeClr+'33">&#9655; '+(arr.length-10)+' more</summary><div class="mlb-picks-grid mt-3">'+arr.slice(10).map((p,_i)=>_pitcherCard(p,10+_i+1)).join('')+'</div></details>':'';
+    };
+    _renderKSec(pkOvers,'pitcher-k-over-body','pitcher-k-over-more','#63cab7','K Overs');
+    _renderKSec(pkUnders,'pitcher-k-under-body','pitcher-k-under-more','#ff8a65','K Unders');
     // All Today's Pitchers cards — ranked by avg K desc
     const pkAllSorted=[...pkAll].sort((a,b)=>{
       const ka=a.blended_avg_k!=null?a.blended_avg_k:(a.avg_k||0);
@@ -1917,6 +1936,16 @@ function showResults(result) {
     document.getElementById('runs-under-body').innerHTML = runsUnder.slice(0,10).map(function(p,i){ return _runsCard(p, i+1, 'rnu'); }).join('');
     document.getElementById('runs-under-more').innerHTML = runsUnder.length > 10
       ? _moreWrap(runsUnder.slice(10), function(p,r){ return _runsCard(p, r, 'rnu'); }, 11, 'Runs Under', '#ff8a65')
+      : '';
+  }
+
+  const tbPicks = view.tb_picks || [];
+  if (tbPicks.length > 0) {
+    show('tb-picks-card');
+    window.__TB_REG__={};
+    document.getElementById('tb-picks-body').innerHTML = tbPicks.slice(0,10).map(function(p,i){ return _tbCard(p, i+1); }).join('');
+    document.getElementById('tb-more-wrap').innerHTML = tbPicks.length > 10
+      ? _moreWrap(tbPicks.slice(10), function(p,r){ return _tbCard(p, r); }, 11, 'TB Under', '#a78bfa')
       : '';
   }
 
@@ -2352,6 +2381,7 @@ function _playerForm(key){
   var p=(window.__NAME_REG__||{})[key]; if(!p) return;
   if(p._prop){ _ppForm(p); }
   else if(p.recent_k_log!==undefined || p.avg_k!==undefined){ _pkForm(p); }
+  else if(p.recent_tb_log!==undefined){ _tbForm(p); }
   else if(p.recent_runs_log!==undefined && p.recent_hit_log===undefined){ _runsForm(p); }
   else { _hitForm(p); }
 }
@@ -2473,6 +2503,11 @@ function _mlbPool(){
     var isOver=p.pick==='OVER';
     var od=isOver?p.over_odds:p.under_odds;
     cands.push({type:'RUN',dir:p.pick,player:(p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'Runs',line:(p.line!=null?p.line:0.5),odds:(od!=null?od:''),conf:clampConf(80,i),reason:'🏃 '+p.pick+' '+(p.line!=null?p.line:0.5)+' runs · '+(p.rate_disp||'')+' vs '+(p.opp||''),src:p});
+  });
+  (r.tb_picks||[]).forEach(function(p,i){
+    if(_underOk(p.tb_under_odds)){
+      cands.push({type:'TB',dir:'UNDER',player:(p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'Total Bases',line:1.5,odds:p.tb_under_odds,conf:clampConf(88,i),reason:'⬇️ Under 1.5 TB · '+(p.rate_disp||'')+' rate vs '+(p.opp||''),src:p});
+    }
   });
   // Pitcher prop legs (Hits Allowed / Outs / Earned Runs) — one type per market.
   var _pp=(r.pitcher_props)||{};
@@ -2902,6 +2937,7 @@ function renderByGame(result){
   if(!body) return;
   var hitters=(result.top9||[]).concat(result.also_ran||[]).map(function(p){return Object.assign({_kind:'HITTER'},p);});
   var unders=(result.under_picks||[]).map(function(p){return Object.assign({_kind:'UNDER'},p);});
+  var tbUnders=(result.tb_picks||[]).map(function(p){return Object.assign({_kind:'TB UNDER'},p);});
   var ks=((result.pitcher_k||{}).picks||[]).filter(function(p){return (p.starts||0)>0;}).map(function(p){return Object.assign({_kind:'PITCHER K'},p);});
   var runs=(result.runs_picks||[]).map(function(p){return Object.assign({_kind:'RUNS'},p);});
   var propLegs=[];
@@ -2911,7 +2947,7 @@ function renderByGame(result){
     var statLbl=(cfg.label||'').replace('Pitcher ','').toUpperCase();
     picks.forEach(function(p){ propLegs.push(Object.assign({_kind:statLbl},p)); });
   });
-  var all=hitters.concat(unders, ks, runs, propLegs);
+  var all=hitters.concat(unders, tbUnders, ks, runs, propLegs);
   if(!all.length){body.innerHTML='<div class="text-slate-500 text-sm">No picks yet.</div>';return;}
   var games={}, order=[];
   all.forEach(function(p){
@@ -3242,6 +3278,95 @@ function _runsCard(p, rank, pfx) {
     </div>
   ${_betBtn(p,'Runs',p.pick,'runs','Runs',(p.line!=null?p.line:0.5),(p.pick==='OVER'?p.over_odds:p.under_odds))}
   </div>`;
+}
+
+function _tbCard(p, rank) {
+  const abbr = _mlbTeamAbbr(p.team);
+  const teamLogo = abbr ? `https://a.espncdn.com/i/teamlogos/mlb/500/${abbr}.png` : '';
+  const rnkColors = rank===1?['#a78bfa','#000']:rank===2?['#818cf8','#000']:rank===3?['#6366f1','#fff']:['#1e1e1e','#a78bfa'];
+  const sideCls = p.side==='HOME'?'badge-home':'badge-away';
+  const odDisp = p.tb_under_odds!=null?(p.tb_under_odds>0?'+':'')+p.tb_under_odds:'—';
+  const scoreClr = p.score>=80?'#63cab7':p.score>=70?'#fbbf24':'#ff8a65';
+  const log = p.recent_tb_log||[];
+  const underCnt = log.filter(g=>g.tb<2).length;
+  const adminStats = `<div class="admin-only" style="display:none;font-size:.72rem;color:#64748b;margin-top:4px;line-height:1.7">
+    <span>Rate <strong style="color:#a78bfa">${p.score!=null?p.score+'%':'—'}</strong></span> &nbsp;
+    <span>Games <strong style="color:#94a3b8">${p.games||0}</strong></span> &nbsp;
+    <span>Wilson <strong style="color:#94a3b8">${p.wilson!=null?p.wilson:'—'}</strong></span>
+  </div>`;
+  window.__TB_REG__=window.__TB_REG__||{}; window.__TB_REG__['tb'+rank]=p;
+  return `<div class="mlb-pick-card" onclick="_tbForm('tb${rank}')" title="Click for recent form" style="cursor:pointer">
+    <div class="mlb-card-header" style="background:linear-gradient(135deg,#1a1030 0%,#0e0820 100%)">
+      <div style="display:flex;align-items:center;gap:8px">
+        <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
+        ${_mlbHead(p.batter_id)}
+        <span style="font-size:.72rem;letter-spacing:.12em;color:#a78bfa;font-weight:800">MLB · TB</span>
+      </div>
+      ${teamLogo?`<img src="${teamLogo}" alt="${p.team}" style="height:34px;width:34px;object-fit:contain" onerror="this.style.display='none'"/>`:''}
+    </div>
+    <div class="mlb-card-name">${p.name}</div>
+    <div class="mlb-card-body">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <span style="font-size:.82rem;color:#94a3b8">vs <strong style="color:#fff">${p.opp||'—'}</strong></span>
+        <span class="badge ${sideCls}">${p.side}</span>
+      </div>
+      ${_envChip(p)}
+      ${_umpChip(p)}
+      ${_bpChip(p)}
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
+        <span style="font-size:.78rem;color:#94a3b8">TB Under Rate <span style="color:#64748b;font-size:.68rem">${p.basis||''}</span></span>
+        <span style="font-family:monospace;font-weight:700;color:${scoreClr}">${p.rate_disp||'—'}</span>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
+        <span style="font-size:.72rem;color:#64748b">Recent</span>
+        <span style="font-size:.78rem;color:#cbd5e1">${log.length?underCnt+'/'+log.length+' under':'—'}</span>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
+        <span style="font-size:.8rem;color:#a78bfa;font-weight:900">UNDER 1.5 Total Bases</span>
+        <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}</span>
+      </div>
+      ${adminStats}
+    </div>
+  ${_betBtn(p,'TB Under','UNDER','total_bases','Total Bases',1.5,p.tb_under_odds)}
+  </div>`;
+}
+
+function _tbForm(key){
+  var p=(key&&typeof key==='object')?key:(window.__TB_REG__||{})[key]; if(!p) return;
+  var ov=document.getElementById('tb-modal');
+  if(!ov){
+    ov=document.createElement('div');
+    ov.id='tb-modal';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; };
+    document.body.appendChild(ov);
+  }
+  var log=p.recent_tb_log||[];
+  var rows=log.length?log.map(function(g){
+    var good=(g.tb<2);
+    var clr=good?'#63cab7':'#ff8a65';
+    var oppTxt=g.opp?((g.ha==='H'?'vs ':'@ ')+g.opp):'';
+    return '<tr>'
+      +'<td style="padding:6px 10px;color:#94a3b8;font-family:monospace">'+(g.d||'\u2014')+'</td>'
+      +'<td style="padding:6px 10px;color:#cbd5e1;font-size:.8rem">'+oppTxt+'</td>'
+      +'<td style="padding:6px 10px;text-align:right;font-family:monospace;font-size:.8rem;color:#93c5fd">'+g.h+' H</td>'
+      +'<td style="padding:6px 10px;text-align:right;font-family:monospace;font-weight:800;color:'+clr+'">'+g.tb+' TB</td>'
+    +'</tr>';
+  }).join(''):'<tr><td colspan="4" style="padding:14px;color:#64748b;text-align:center">No recent games on record</td></tr>';
+  var name=p.name||'';
+  ov.innerHTML='<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:440px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid #1e293b">'
+      +'<div><div style="font-weight:800;font-size:1.05rem;color:#fff">'+name+'</div>'
+      +'<div style="color:#94a3b8;font-size:.78rem">'+(p.side||'')+' vs '+(p.opp||'')+' \u00b7 Under 1.5 Total Bases</div></div>'
+      +'<button onclick="document.getElementById(&#39;tb-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem">\u2715</button>'
+    +'</div>'
+    +'<div style="padding:14px 18px">'
+      +'<div style="font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase;margin-bottom:8px">TB Rate '+(p.rate_disp||'')+' \u00b7 Last '+log.length+' Games</div>'
+      +'<table style="width:100%;border-collapse:collapse;font-size:.85rem"><tbody>'+rows+'</tbody></table>'
+      +'<div style="margin-top:12px;border-top:1px solid #1e293b;padding-top:10px;color:#a78bfa;font-weight:800;font-size:.85rem">Pick: Under 1.5 Total Bases</div>'
+    +'</div>'
+  +'</div>';
+  ov.style.display='flex';
 }
 
 function _pitcherCard(p, rank, keyPfx) {
