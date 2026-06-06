@@ -1775,12 +1775,21 @@ _HTML = """
         </p>
       </div>
       <div class="card p-6 hidden" id="hrr-picks-card" style="border-color:rgba(251,146,60,.25)">
-        <div class="section-hdr" style="color:#fb923c">🔥 Over 1.5 Hits+Runs+RBI</div>
-        <div id="hrr-picks-body" class="mlb-picks-grid"></div>
-        <div id="hrr-picks-more-wrap"></div>
+        <div class="section-hdr" style="color:#fb923c">🔥 HRR Picks — Hits+Runs+RBI (Over / Under 1.5)</div>
+        <p class="text-xs text-slate-400 mb-3" style="margin-top:-4px">Combined hits + runs + RBI vs this opponent. Vs-opp only (min 3 games), ranked by Wilson confidence.</p>
+        <div id="hrr-over-section">
+          <div style="font-size:.72rem;font-weight:800;letter-spacing:.1em;color:#fb923c;margin-bottom:10px;text-transform:uppercase">⬆ HRR Over</div>
+          <div id="hrr-over-body" class="mlb-picks-grid"></div>
+          <div id="hrr-over-more"></div>
+        </div>
+        <div id="hrr-under-section" style="margin-top:24px;padding-top:20px;border-top:1px solid #1e293b">
+          <div style="font-size:.72rem;font-weight:800;letter-spacing:.1em;color:#ff8a65;margin-bottom:10px;text-transform:uppercase">⬇ HRR Under</div>
+          <div id="hrr-under-body" class="mlb-picks-grid"></div>
+          <div id="hrr-under-more"></div>
+        </div>
         <p class="text-xs text-slate-500 mt-4 admin-only">
-          <strong>Rate</strong> = % of H/A games vs opp (min 3 games) with H+R+RBI &ge; 2 &nbsp;|&nbsp;
-          <strong>Threshold</strong> &ge;60% over 1.5 HRR &nbsp;|&nbsp; vs opponent only &nbsp;|&nbsp; ranked by Wilson lower-bound
+          <strong>HRR Rate vr Opp</strong> = % of H/A games vs opp (min 3) with H+R+RBI &ge; 2 &nbsp;|&nbsp;
+          <strong>Pick</strong> = OVER &ge;60%, UNDER &le;30%, vs-opp only &nbsp;|&nbsp; ranked by Wilson lower-bound
         </p>
       </div>
       <div class="card p-6 hidden" id="pitcher-k-card" style="border-color:rgba(99,202,183,.25)">
@@ -2039,7 +2048,7 @@ function showResults(result) {
   // Money Ball, pitcher K OVERs) and keep only UNDER plays. window._lastResult
   // stays the FULL result so parlay/CSV/search are unaffected — we only filter a
   // local render copy.
-  const view = (window.UNDERS_ONLY && window.IS_ADMIN)
+  const _vBase = (window.UNDERS_ONLY && window.IS_ADMIN)
     ? Object.assign({}, result, {
         top9: [],
         also_ran: [],
@@ -2059,6 +2068,8 @@ function showResults(result) {
         })(),
       })
     : result;
+  // "+EV Only": filter EVERY category to ev>0 (render copy only; _lastResult stays full).
+  const view = window.EV_ONLY ? _evFilterView(_vBase) : _vBase;
   const { top9, stats, pitcher_k } = view;
   hide('top10-plays-card'); hide('under-picks-card'); hide('tb-picks-card'); hide('tb-over-picks-card'); hide('hrr-picks-card'); hide('pitcher-k-card'); hide('runs-picks-card'); hide('rbi-picks-card');
 
@@ -2201,9 +2212,15 @@ function showResults(result) {
   if (hrrPicks.length > 0) {
     show('hrr-picks-card');
     window.__HRR_REG__={};
-    document.getElementById('hrr-picks-body').innerHTML = hrrPicks.slice(0,10).map(function(p,i){ return _hrrCard(p, i+1); }).join('');
-    document.getElementById('hrr-picks-more-wrap').innerHTML = hrrPicks.length > 10
-      ? _moreWrap(hrrPicks.slice(10), function(p,r){ return _hrrCard(p, r); }, 11, 'HRR', '#fb923c')
+    const hrrOver = hrrPicks.filter(function(p){ return p.pick!=='UNDER'; });
+    const hrrUnder = hrrPicks.filter(function(p){ return p.pick==='UNDER'; });
+    document.getElementById('hrr-over-body').innerHTML = hrrOver.slice(0,10).map(function(p,i){ return _hrrCard(p, i+1, 'hro'); }).join('');
+    document.getElementById('hrr-over-more').innerHTML = hrrOver.length > 10
+      ? _moreWrap(hrrOver.slice(10), function(p,r){ return _hrrCard(p, r, 'hro'); }, 11, 'HRR Over', '#fb923c')
+      : '';
+    document.getElementById('hrr-under-body').innerHTML = hrrUnder.slice(0,10).map(function(p,i){ return _hrrCard(p, i+1, 'hru'); }).join('');
+    document.getElementById('hrr-under-more').innerHTML = hrrUnder.length > 10
+      ? _moreWrap(hrrUnder.slice(10), function(p,r){ return _hrrCard(p, r, 'hru'); }, 11, 'HRR Under', '#ff8a65')
       : '';
   }
 
@@ -2399,6 +2416,7 @@ function _propBestCard(p, key, rank) {
       ${hasPP?`<div style="margin-top:2px;font-size:.6rem;color:#475569">blend ${blendDisp} · hand x${ppf.hand!=null?ppf.hand:1} · whiff x${ppf.whiff!=null?ppf.whiff:1}</div>`:''}
       <div style="margin-top:5px;display:flex;align-items:center;gap:5px"><span style="font-size:.6rem;color:#475569">day trend</span>${_dowChip(_propDowMkt,p.pick)}</div>
       ${p.market==='pitcher_walks'&&p.opp_bb_rank!=null?`<div style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap"><span style="font-size:.62rem;color:#94a3b8">Opp BB/G rank:</span><span style="font-size:.72rem;font-weight:800;color:#34d399">#${p.opp_bb_rank}<span style="color:#64748b;font-weight:400"> of ${p.opp_bb_total||30}</span></span><span style="font-size:.68rem;color:#cbd5e1;font-family:monospace">${p.opp_bb_pg!=null?p.opp_bb_pg+' BB/G':''}</span></div>`:''}
+      ${_evBadge(p)}
     </div>
   ${_betBtn(p,'Pitcher Props',p.pick,_propStatKey,String(p.label||'Prop'),p.line,_propOdds)}
   </div>`;
@@ -2794,8 +2812,10 @@ function _mlbPool(){
     }
   });
   (r.hrr_picks||[]).forEach(function(p,i){
-    if(_underOk(p.hrr_over_odds)){
-      cands.push({type:'HRR',dir:'OVER',player:(p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'H+R+RBI',line:1.5,odds:p.hrr_over_odds,conf:clampConf(86,i),reason:'🔥 Over 1.5 HRR · '+(p.rate_disp||'')+' rate vs '+(p.opp||''),src:p});
+    var isOver=p.pick!=='UNDER';
+    var od=isOver?p.hrr_over_odds:p.hrr_under_odds;
+    if(_underOk(od)){
+      cands.push({type:'HRR',dir:(isOver?'OVER':'UNDER'),player:(p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'H+R+RBI',line:1.5,odds:od,conf:clampConf(86,i),reason:'🔥 '+(isOver?'Over':'Under')+' 1.5 HRR · '+(p.rate_disp||'')+' rate vs '+(p.opp||''),src:p});
     }
   });
   // Pitcher prop legs (Hits Allowed / Outs / Earned Runs) — one type per market.
@@ -3084,19 +3104,39 @@ function toggleUndersOnly(){
   if(window._lastResult) showResults(window._lastResult);
 }
 
-// Value re-rank of the hit list: orders by EV (book-beating edge) desc; picks
-// with no model fall to the bottom. "+EV Only" (window.EV_ONLY) filters to ev>0.
+// Hit-list filter. Default (EV_ONLY off) leaves order UNTOUCHED — no value
+// re-rank. "+EV Only" (window.EV_ONLY) filters to ev>0. Other categories use
+// _evFilterView (applied to the whole render view in showResults).
+function _evPos(p){ return !!(p && p.ev!=null && p.ev>0); }
 function _evSortFilter(arr){
   arr=(arr||[]).slice();
-  arr.sort(function(a,b){
-    var ea=(a&&a.ev), eb=(b&&b.ev);
-    if(ea==null&&eb==null) return ((b&&b.total)||0)-((a&&a.total)||0);
-    if(ea==null) return 1;
-    if(eb==null) return -1;
-    return eb-ea;
-  });
-  if(window.EV_ONLY) arr=arr.filter(function(p){return p&&p.ev!=null&&p.ev>0;});
+  if(window.EV_ONLY) arr=arr.filter(_evPos);
   return arr;
+}
+// Returns a shallow copy of the render view with EVERY category filtered to
+// +EV plays (ev>0). Used only when window.EV_ONLY is on.
+function _evFilterView(v){
+  var pk=v.pitcher_k, pp=v.pitcher_props||{};
+  return Object.assign({}, v, {
+    top9:(v.top9||[]).filter(_evPos),
+    also_ran:(v.also_ran||[]).filter(_evPos),
+    under_picks:(v.under_picks||[]).filter(_evPos),
+    tb_picks:(v.tb_picks||[]).filter(_evPos),
+    tb_over_picks:(v.tb_over_picks||[]).filter(_evPos),
+    hrr_picks:(v.hrr_picks||[]).filter(_evPos),
+    rbi_picks:(v.rbi_picks||[]).filter(_evPos),
+    runs_picks:(v.runs_picks||[]).filter(_evPos),
+    pitcher_k: pk?Object.assign({},pk,{
+      picks:(pk.picks||[]).filter(_evPos),
+      all:(pk.all||[]).filter(_evPos)
+    }):pk,
+    pitcher_props:(function(){
+      var o={}; Object.keys(pp).forEach(function(m){
+        var b=pp[m]||{};
+        o[m]={picks:(b.picks||[]).filter(_evPos), all:(b.all||[]).filter(_evPos)};
+      }); return o;
+    })()
+  });
 }
 
 // "+EV Only" toggle — keeps only hit picks where our matchup probability beats
@@ -3418,18 +3458,22 @@ function _umpKMul(p){
 // Matchup-value badge: our Log5 P(1+ hit) vs the book's implied price. Green
 // when +EV (book underpricing the hit), gray when no edge. Hidden if no model.
 function _evBadge(p){
-  if(p.ev==null||p.edge==null) return '';
+  if(p.ev==null) return '';
   var pos=p.ev>0;
-  var edgePct=(p.edge*100).toFixed(0);
+  var hasEdge=(p.edge!=null);
+  var edgePct=hasEdge?((p.edge>0?'+':'')+(p.edge*100).toFixed(0)+'%'):'';
   var bg=pos?'rgba(34,197,94,.14)':'rgba(148,163,184,.10)';
   var bd=pos?'#22c55e':'#475569';
   var fg=pos?'#4ade80':'#94a3b8';
-  var lbl=pos?('\u2713 +EV \u00b7 edge +'+edgePct+'%'):'\u2013 no edge';
-  var mp=p.matchup_prob!=null?(p.matchup_prob*100).toFixed(0)+'%':'';
-  var ip=p.impl_prob!=null?(p.impl_prob*100).toFixed(0)+'%':'?';
-  return '<div title="Our matchup win probability (Log5: your hitter vs this pitcher) compared to the price the book is offering. Positive edge means the book is underpricing this hit." style="margin-top:6px;display:flex;align-items:center;justify-content:space-between;gap:6px;background:'+bg+';border:1px solid '+bd+';border-radius:8px;padding:4px 8px">'
+  var lbl=pos?('\u2713 +EV'+(hasEdge?(' \u00b7 edge '+edgePct):'')):('\u2013 no edge'+(hasEdge?(' '+edgePct):''));
+  var prob=(p.ev_prob!=null?p.ev_prob:p.matchup_prob);
+  var mp=prob!=null?(prob*100).toFixed(0)+'%':'';
+  var ip=null;
+  if(p.impl_prob!=null) ip=(p.impl_prob*100).toFixed(0)+'%';
+  else if(prob!=null&&p.edge!=null) ip=((prob-p.edge)*100).toFixed(0)+'%';
+  return '<div title="Our model win probability for this pick vs the book&#39;s implied probability from the price. Positive edge means the book is underpricing it." style="margin-top:6px;display:flex;align-items:center;justify-content:space-between;gap:6px;background:'+bg+';border:1px solid '+bd+';border-radius:8px;padding:4px 8px">'
     +'<span style="font-size:.62rem;font-weight:800;letter-spacing:.03em;color:'+fg+'">'+lbl+'</span>'
-    +(mp?'<span style="font-size:.62rem;color:#cbd5e1;font-family:monospace">'+mp+' vs '+ip+'</span>':'')
+    +(mp?'<span style="font-size:.62rem;color:#cbd5e1;font-family:monospace">'+mp+(ip?(' vs '+ip):'')+'</span>':'')
     +'</div>';
 }
 
@@ -3540,6 +3584,7 @@ function _underCard(p, rank) {
         <span style="font-family:monospace;color:#63cab7;font-weight:700;font-size:.9rem">${tbOdds}</span>
       </div>
       <div style="margin-top:5px;display:flex;align-items:center;gap:5px"><span style="font-size:.6rem;color:#475569">day trend</span>${_dowChip('hits_under','UNDER')}</div>
+      ${_evBadge(p)}
       ${adminStats}
     </div>
   ${_betBtn(p,'Hitter Hits',(p.pick||'UNDER'),'hits','Hits',1.5,(p.pick==='OVER'?p.over_odds:p.under_odds))}
@@ -3615,6 +3660,7 @@ function _runsCard(p, rank, pfx) {
         <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}</span>
       </div>
       <div style="margin-top:5px;display:flex;align-items:center;gap:5px"><span style="font-size:.6rem;color:#475569">day trend</span>${_dowChip('runs',p.pick)}</div>
+      ${_evBadge(p)}
       ${adminStats}
     </div>
   ${_betBtn(p,'Runs',p.pick,'runs','Runs',(p.line!=null?p.line:0.5),(p.pick==='OVER'?p.over_odds:p.under_odds))}
@@ -3671,6 +3717,7 @@ function _rbiCard(p, rank, pfx) {
         <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}</span>
       </div>
       <div style="margin-top:5px;display:flex;align-items:center;gap:5px"><span style="font-size:.6rem;color:#475569">day trend</span>${_dowChip('rbi',p.pick)}</div>
+      ${_evBadge(p)}
       ${adminStats}
     </div>
   ${_betBtn(p,'RBI',p.pick,'rbi','RBI',(p.line!=null?p.line:0.5),(p.pick==='OVER'?p.over_odds:p.under_odds))}
@@ -3819,6 +3866,7 @@ function _tbOverCard(p, rank) {
         <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}</span>
       </div>
       <div style="margin-top:5px;display:flex;align-items:center;gap:5px"><span style="font-size:.6rem;color:#475569">day trend</span>${_dowChip('tb_over','OVER')}</div>
+      ${_evBadge(p)}
       ${adminStats}
     </div>
   ${_betBtn(p,'TB Over','OVER','total_bases','Total Bases',1.5,p.tb_over_odds)}
@@ -3891,7 +3939,7 @@ function _t10Odds(p, kind) {
   switch(kind) {
     case 'HITTER':  return p.hit_odds;
     case 'TB OVER': return p.tb_over_odds;
-    case 'HRR':     return p.hrr_over_odds;
+    case 'HRR':     return p.pick==='UNDER'?p.hrr_under_odds:p.hrr_over_odds;
     case 'RBI':     return p.pick==='OVER'?p.over:p.under;
     case 'RUNS':    return p.pick==='OVER'?p.over_odds:p.under_odds;
     case 'UNDER':   return p.pick==='OVER'?p.over_odds:p.under_odds;
@@ -3906,7 +3954,7 @@ function _t10Label(kind, p) {
   switch(kind) {
     case 'HITTER':  return 'OVER 0.5 Hits';
     case 'TB OVER': return 'OVER 1.5 Total Bases';
-    case 'HRR':     return 'OVER 1.5 H+R+RBI';
+    case 'HRR':     return (p.pick==='UNDER'?'UNDER':'OVER')+' 1.5 H+R+RBI';
     case 'RBI':     return (p.pick||'OVER')+' 0.5 RBI';
     case 'RUNS':    return (p.pick||'OVER')+' 0.5 Runs';
     case 'UNDER':   return (p.pick||'UNDER')+' 1.5 Hits';
@@ -3951,7 +3999,7 @@ function _top10BetBtn(p, kind) {
   switch(kind) {
     case 'HITTER':  return _betBtn(p,'Hitter Hits','OVER','hits','Hits',0.5,p.hit_odds);
     case 'TB OVER': return _betBtn(p,'TB Over','OVER','total_bases','Total Bases',1.5,p.tb_over_odds);
-    case 'HRR':     return _betBtn(p,'HRR','OVER','hrr','H+R+RBI',1.5,p.hrr_over_odds);
+    case 'HRR':     { var odh=p.pick==='UNDER'?p.hrr_under_odds:p.hrr_over_odds; return _betBtn(p,'HRR',(p.pick==='UNDER'?'UNDER':'OVER'),'hrr','H+R+RBI',1.5,odh); }
     case 'RBI':     { var od=p.pick==='OVER'?p.over:p.under; return _betBtn(p,'RBI',(p.pick||'OVER'),'rbi','RBI',(p.line||0.5),od); }
     case 'RUNS':    { var od2=p.pick==='OVER'?p.over_odds:p.under_odds; return _betBtn(p,'Runs',(p.pick||'OVER'),'runs','Runs',(p.line||0.5),od2); }
     case 'UNDER':   { var od3=p.pick==='OVER'?p.over_odds:p.under_odds; return _betBtn(p,'Hitter Hits',(p.pick||'UNDER'),'hits','Hits',1.5,od3); }
@@ -4011,22 +4059,27 @@ function _top10Card(p, rank) {
     +'</div>';
 }
 
-function _hrrCard(p, rank) {
+function _hrrCard(p, rank, pfx) {
+  pfx = pfx || 'hrr';
   const abbr = _mlbTeamAbbr(p.team);
   const teamLogo = abbr ? `https://a.espncdn.com/i/teamlogos/mlb/500/${abbr}.png` : '';
+  const isOver = p.pick!=='UNDER';
   const rnkColors = rank===1?['#fb923c','#000']:rank===2?['#f97316','#000']:rank===3?['#ea580c','#fff']:['#1e1e1e','#fb923c'];
   const sideCls = p.side==='HOME'?'badge-home':'badge-away';
-  const odDisp = p.hrr_over_odds!=null?(p.hrr_over_odds>0?'+':'')+p.hrr_over_odds:'—';
-  const scoreClr = p.score>=80?'#fb923c':p.score>=70?'#fbbf24':'#94a3b8';
+  const pickClr = isOver?'#fb923c':'#ff8a65';
+  const od = isOver?p.hrr_over_odds:p.hrr_under_odds;
+  const odDisp = od!=null?(od>0?'+':'')+od:'—';
+  const scoreClr = isOver?(p.score>=80?'#fb923c':p.score>=70?'#fbbf24':'#94a3b8'):(p.score<=20?'#63cab7':p.score<=30?'#fbbf24':'#94a3b8');
   const log = p.recent_hrr_log||[];
   const overCnt = log.filter(g=>g.hrr>=2).length;
+  const recDisp = log.length?(isOver?(overCnt+'/'+log.length+' over'):((log.length-overCnt)+'/'+log.length+' under')):'—';
   const adminStats = `<div class="admin-only" style="display:none;font-size:.72rem;color:#64748b;margin-top:4px;line-height:1.7">
     <span>Rate <strong style="color:#fb923c">${p.score!=null?p.score+'%':'—'}</strong></span> &nbsp;
     <span>Games <strong style="color:#94a3b8">${p.games||0}</strong></span> &nbsp;
     <span>Wilson <strong style="color:#94a3b8">${p.wilson!=null?p.wilson:'—'}</strong></span>
   </div>`;
-  window.__HRR_REG__=window.__HRR_REG__||{}; window.__HRR_REG__['hrr'+rank]=p;
-  return `<div class="mlb-pick-card" onclick="_hrrForm('hrr${rank}')" title="Click for recent form" style="cursor:pointer">
+  window.__HRR_REG__=window.__HRR_REG__||{}; window.__HRR_REG__[pfx+rank]=p;
+  return `<div class="mlb-pick-card" onclick="_hrrForm('${pfx}${rank}')" title="Click for recent form" style="cursor:pointer">
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#431407 0%,#1a0a00 100%)">
       <div style="display:flex;align-items:center;gap:8px">
         <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
@@ -4045,20 +4098,21 @@ function _hrrCard(p, rank) {
       ${_umpChip(p)}
       ${_bpChip(p)}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
-        <span style="font-size:.78rem;color:#94a3b8">HRR Over Rate <span style="color:#64748b;font-size:.68rem">vs opp</span></span>
+        <span style="font-size:.78rem;color:#94a3b8">HRR Rate <span style="color:#64748b;font-size:.68rem">vs opp</span></span>
         <span style="font-family:monospace;font-weight:700;color:${scoreClr}">${p.rate_disp||'—'}</span>
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
         <span style="font-size:.72rem;color:#64748b">Recent</span>
-        <span style="font-size:.78rem;color:#cbd5e1">${log.length?overCnt+'/'+log.length+' over':'—'}</span>
+        <span style="font-size:.78rem;color:#cbd5e1">${recDisp}</span>
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
-        <span style="font-size:.8rem;color:#fb923c;font-weight:900">OVER 1.5 H+R+RBI</span>
+        <span style="font-size:.8rem;color:${pickClr};font-weight:900">${isOver?'OVER':'UNDER'} 1.5 H+R+RBI</span>
         <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}</span>
       </div>
+      ${_evBadge(p)}
       ${adminStats}
     </div>
-  ${_betBtn(p,'HRR','OVER','hrr','H+R+RBI',1.5,p.hrr_over_odds)}
+  ${_betBtn(p,'HRR',(isOver?'OVER':'UNDER'),'hrr','H+R+RBI',1.5,od)}
   </div>`;
 }
 
@@ -4072,9 +4126,10 @@ function _hrrForm(key){
     ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; };
     document.body.appendChild(ov);
   }
+  var isUnder=(p.pick==='UNDER');
   var log=p.recent_hrr_log||[];
   var rows=log.length?log.map(function(g){
-    var good=(g.hrr>=2);
+    var good=isUnder?(g.hrr<2):(g.hrr>=2);
     var clr=good?'#fb923c':'#94a3b8';
     var oppTxt=g.opp?((g.ha==='H'?'vs ':'@ ')+g.opp):'';
     return '<tr>'
@@ -4088,11 +4143,11 @@ function _hrrForm(key){
   ov.innerHTML='<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:460px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">'
     +'<div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid #1e293b">'
       +'<div><div style="font-weight:800;font-size:1.05rem;color:#fff">'+name+'</div>'
-      +'<div style="color:#94a3b8;font-size:.78rem">'+(p.side||'')+' vs '+(p.opp||'')+' \u00b7 Over 1.5 H+R+RBI</div></div>'
+      +'<div style="color:#94a3b8;font-size:.78rem">'+(p.side||'')+' vs '+(p.opp||'')+' \u00b7 '+(isUnder?'Under':'Over')+' 1.5 H+R+RBI</div></div>'
       +'<button onclick="document.getElementById(&#39;hrr-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem">\u2715</button>'
     +'</div>'
     +'<div style="padding:16px 18px">'
-    +'<div style="font-size:.72rem;color:#fb923c;font-weight:700;margin-bottom:8px">H+R+RBI \u2265 2 = OVER</div>'
+    +'<div style="font-size:.72rem;color:#fb923c;font-weight:700;margin-bottom:8px">'+(isUnder?'H+R+RBI \u2264 1 = UNDER':'H+R+RBI \u2265 2 = OVER')+'</div>'
     +'<table style="width:100%;border-collapse:collapse">'
     +'<thead><tr>'
       +'<th style="text-align:left;padding:4px 10px;font-size:.7rem;color:#64748b;font-weight:600;border-bottom:1px solid #1e293b">Date</th>'
@@ -4203,6 +4258,7 @@ function _pitcherCard(p, rank, keyPfx) {
       ${hasProj?`<div style="margin-top:2px;font-size:.62rem;color:#475569">${factTxt}</div>`:''}
       <div style="margin-top:5px;font-size:.68rem;color:#94a3b8;line-height:1.6">K <strong style="color:#cbd5e1">${p.avg_k!=null?p.avg_k:'—'}</strong> · H <strong style="color:#cbd5e1">${p.avg_hits!=null?p.avg_hits:'—'}</strong> · ER <strong style="color:#cbd5e1">${p.avg_er!=null?p.avg_er:'—'}</strong> · Outs <strong style="color:#cbd5e1">${p.avg_outs!=null?p.avg_outs:'—'}</strong> · BB <strong style="color:#cbd5e1">${p.avg_bb!=null?p.avg_bb:'—'}</strong> · IP <strong style="color:#cbd5e1">${p.avg_ip!=null?p.avg_ip:'—'}</strong> · ERA <strong style="color:#cbd5e1">${p.era||'—'}</strong> <span style="color:#64748b">vr opp</span></div>
       <div style="margin-top:5px;display:flex;align-items:center;justify-content:space-between"><span style="display:flex;align-items:center;gap:5px"><span style="font-size:.6rem;color:#475569">day trend</span>${_dowChip('k',p.pick)}</span><span style="font-size:.66rem;color:#63cab7">all 5 markets →</span></div>
+      ${_evBadge(p)}
     </div>
   ${_betBtn(p,'Pitcher Ks',(hasSugg?'OVER':p.pick),'strikeOuts','Ks',(hasSugg?p.sugg_line:p.line),(hasSugg?p.sugg_odds:(isOver?p.over_odds:p.under_odds)))}
   </div>`;
