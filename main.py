@@ -1640,6 +1640,7 @@ _HTML = """
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-bottom:12px">
         <button class="btn-primary" id="get-btn" onclick="getPicks()">🎯 Get Picks</button>
+        <button class="btn-primary" id="ev-btn" onclick="toggleEvOnly()" style="background:#1f2937;color:#fff" title="Show only hit picks where our matchup model (your hitter vs this pitcher) beats the sportsbook price. Default off — all picks shown, ranked by value.">&#10003; +EV Only</button>
         <button class="btn-primary admin-only" id="run-btn" onclick="startRun()">Run Picks</button>
         <button class="btn-primary admin-only" id="force-btn" onclick="startRun(true)" style="background:#dc2626;color:#fff" title="Bypass cache and rebuild today's picks from scratch">Force Refresh</button>
       </div>
@@ -2086,10 +2087,15 @@ function showResults(result) {
 
   if (window.UNDERS_ONLY && window.IS_ADMIN) { hide('top-picks-card'); hide('top10-plays-card'); } else { show('top-picks-card'); }
   window.__HIT_REG__={};
-  document.getElementById('picks-body').innerHTML = top9.map((p,i) => _mlbCard(p, i+1)).join('');
-  const alsoRan = view.also_ran || [];
-  document.getElementById('also-ran-wrap').innerHTML = alsoRan.length > 0
-    ? _moreWrap(alsoRan, function(p,r){ return _mlbCard(p, r, true); }, 11, 'More Hit Picks', '#f59e0b')
+  // Value re-rank: merge Top Picks + More Hit Picks, order by EV (default keeps
+  // ALL plays), then re-split 10 / rest. "+EV Only" toggle filters to ev>0.
+  var _hitAll=_evSortFilter((top9||[]).concat(view.also_ran||[]));
+  var _hitTop=_hitAll.slice(0,10), _hitMore=_hitAll.slice(10);
+  document.getElementById('picks-body').innerHTML = _hitTop.length>0
+    ? _hitTop.map((p,i) => _mlbCard(p, i+1)).join('')
+    : '<p class="text-slate-500 text-center" style="padding:16px">No hit picks'+(window.EV_ONLY?' with a positive edge':'')+' today</p>';
+  document.getElementById('also-ran-wrap').innerHTML = _hitMore.length > 0
+    ? _moreWrap(_hitMore, function(p,r){ return _mlbCard(p, r, true); }, 11, 'More Hit Picks', '#f59e0b')
     : '';
 
   const underPicks = view.under_picks || [];
@@ -2931,6 +2937,7 @@ function _matchName(p, q){
 
 window._lastResult = null;
 window.UNDERS_ONLY = false;
+window.EV_ONLY = false;
 window.PARLAY_UNDERS = false;
 window.PARLAY_OVERS = false;
 window.PARLAY_MINUS = false;
@@ -3073,6 +3080,33 @@ function toggleUndersOnly(){
   if(b){
     if(window.UNDERS_ONLY){ b.style.background='#ff8a65'; b.style.color='#1a1a1a'; b.innerHTML='&#11015; Unders Only: ON'; }
     else { b.style.background='#1f2937'; b.style.color='#fff'; b.innerHTML='&#11015; Unders Only'; }
+  }
+  if(window._lastResult) showResults(window._lastResult);
+}
+
+// Value re-rank of the hit list: orders by EV (book-beating edge) desc; picks
+// with no model fall to the bottom. "+EV Only" (window.EV_ONLY) filters to ev>0.
+function _evSortFilter(arr){
+  arr=(arr||[]).slice();
+  arr.sort(function(a,b){
+    var ea=(a&&a.ev), eb=(b&&b.ev);
+    if(ea==null&&eb==null) return ((b&&b.total)||0)-((a&&a.total)||0);
+    if(ea==null) return 1;
+    if(eb==null) return -1;
+    return eb-ea;
+  });
+  if(window.EV_ONLY) arr=arr.filter(function(p){return p&&p.ev!=null&&p.ev>0;});
+  return arr;
+}
+
+// "+EV Only" toggle — keeps only hit picks where our matchup probability beats
+// the book's price. Default OFF (all plays shown, value-ranked).
+function toggleEvOnly(){
+  window.EV_ONLY=!window.EV_ONLY;
+  var b=document.getElementById('ev-btn');
+  if(b){
+    if(window.EV_ONLY){ b.style.background='#22c55e'; b.style.color='#06240f'; b.innerHTML='\u2713 +EV Only: ON'; }
+    else { b.style.background='#1f2937'; b.style.color='#fff'; b.innerHTML='\u2713 +EV Only'; }
   }
   if(window._lastResult) showResults(window._lastResult);
 }
@@ -3381,6 +3415,24 @@ function _umpKMul(p){
   var k=Number(u.kFactor); if(!k||k<=0) return 1;
   return p.pick==='UNDER'?(1/k):k;
 }
+// Matchup-value badge: our Log5 P(1+ hit) vs the book's implied price. Green
+// when +EV (book underpricing the hit), gray when no edge. Hidden if no model.
+function _evBadge(p){
+  if(p.ev==null||p.edge==null) return '';
+  var pos=p.ev>0;
+  var edgePct=(p.edge*100).toFixed(0);
+  var bg=pos?'rgba(34,197,94,.14)':'rgba(148,163,184,.10)';
+  var bd=pos?'#22c55e':'#475569';
+  var fg=pos?'#4ade80':'#94a3b8';
+  var lbl=pos?('\u2713 +EV \u00b7 edge +'+edgePct+'%'):'\u2013 no edge';
+  var mp=p.matchup_prob!=null?(p.matchup_prob*100).toFixed(0)+'%':'';
+  var ip=p.impl_prob!=null?(p.impl_prob*100).toFixed(0)+'%':'?';
+  return '<div title="Our matchup win probability (Log5: your hitter vs this pitcher) compared to the price the book is offering. Positive edge means the book is underpricing this hit." style="margin-top:6px;display:flex;align-items:center;justify-content:space-between;gap:6px;background:'+bg+';border:1px solid '+bd+';border-radius:8px;padding:4px 8px">'
+    +'<span style="font-size:.62rem;font-weight:800;letter-spacing:.03em;color:'+fg+'">'+lbl+'</span>'
+    +(mp?'<span style="font-size:.62rem;color:#cbd5e1;font-family:monospace">'+mp+' vs '+ip+'</span>':'')
+    +'</div>';
+}
+
 function _mlbCard(p, rank, dim) {
   const abbr = _mlbTeamAbbr(p.team);
   const teamLogo = abbr ? `https://a.espncdn.com/i/teamlogos/mlb/500/${abbr}.png` : '';
@@ -3429,6 +3481,7 @@ function _mlbCard(p, rank, dim) {
         <span style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">Hit Odds</span>
         <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odds}</span>
       </div>
+      ${_evBadge(p)}
       <div style="margin-top:5px;display:flex;align-items:center;gap:5px"><span style="font-size:.6rem;color:#475569">day trend</span>${_dowChip('hits_over','OVER')}</div>
       ${adminStats}
     </div>
