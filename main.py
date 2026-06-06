@@ -1712,6 +1712,14 @@ _HTML = """
         </div>
         <div id="parlayResult" style="margin-top:16px"></div>
       </div>
+      <div class="card p-6" id="player-search-card">
+        <div class="section-hdr">🔍 Player Lookup</div>
+        <p class="text-xs text-slate-400 mb-3">Type a hitter or pitcher's name — see where they rank and why.</p>
+        <input id="player-search-input" type="text" placeholder="e.g. Aaron Judge, Gerrit Cole..."
+               style="width:100%;padding:12px 16px;background:#0f0f0f;border:1px solid #262626;border-radius:10px;color:#fff;font-size:.95rem;outline:none"
+               oninput="runPlayerSearch(this.value)">
+        <div id="player-search-result" class="mt-3"></div>
+      </div>
       <div class="card p-6 hidden" id="top10-plays-card" style="border-color:rgba(250,204,21,.35)">
         <div class="section-hdr" style="color:#facc15">⭐ Top 10 Plays Today</div>
         <p class="text-xs text-slate-400 mb-3" style="margin-top:-4px">Best plays across all MLB categories ranked by Expected Value (Wilson edge × odds). Click any card for recent history. Track Bet logs it to My Bets.</p>
@@ -1831,14 +1839,6 @@ _HTML = """
           <strong>Runs Rate vr Opp</strong> = last 10 H/A games vs THIS opponent with 1+ run &nbsp;|&nbsp;
           <strong>Pick</strong> = OVER ≥70%, UNDER ≤30%, vs-opp only (min 3 games) &nbsp;|&nbsp; ranked by Wilson lower-bound.
         </p>
-      </div>
-      <div class="card p-6" id="player-search-card">
-        <div class="section-hdr">🔍 Player Lookup</div>
-        <p class="text-xs text-slate-400 mb-3">Type a hitter or pitcher's name — see where they rank and why.</p>
-        <input id="player-search-input" type="text" placeholder="e.g. Aaron Judge, Gerrit Cole..."
-               style="width:100%;padding:12px 16px;background:#0f0f0f;border:1px solid #262626;border-radius:10px;color:#fff;font-size:.95rem;outline:none"
-               oninput="runPlayerSearch(this.value)">
-        <div id="player-search-result" class="mt-3"></div>
       </div>
       <div class="card p-6" id="by-game-card">
         <div class="section-hdr" style="color:#f59e0b">🏟️ Picks by Game</div>
@@ -4268,15 +4268,29 @@ function renderGradeSection(title, rows, color) {
 
 function renderGradeResults(data) {
   window.__GRADE_ROWS__ = [];
-  var cats = [
+  // Fixed (non-pitcher-prop) categories, in display order.
+  var baseCats = [
     { key: 'hitter_overs',  label: 'Hitter OVER 0.5 Hits',  color: '#4ade80' },
     { key: 'hitter_unders', label: 'Hitter Under 1.5 Hits', color: '#ff8a65' },
     { key: 'runs',          label: 'Runs OVER / UNDER 0.5', color: '#60a5fa' },
-    { key: 'pitcher_ks',    label: 'Pitcher Strikeouts',     color: '#63cab7' },
-    { key: 'pitcher_props', label: 'Pitcher Props',          color: '#a78bfa' },
+    { key: 'tb_under',      label: 'TB Under 1.5',          color: '#a78bfa' },
+    { key: 'tb_over',       label: 'TB Over 1.5',           color: '#4ade80' },
+    { key: 'rbi',           label: 'RBI OVER / UNDER 0.5',  color: '#f59e0b' },
+    { key: 'pitcher_ks',    label: 'Pitcher Strikeouts',    color: '#63cab7' },
   ];
+  // Each section = {label, rows, color}. Pitcher props are split into one
+  // section per category (Hits Allowed / Outs / Earned Runs / Walks ...) so
+  // they are no longer lumped into a single blob.
+  var sections = baseCats.map(function(c){ return {label:c.label, rows:(data[c.key]||[]), color:c.color}; });
+  var propBuckets = {}, propOrder = [];
+  (data.pitcher_props || []).forEach(function(r){
+    var cat = r.category || 'Pitcher Props';
+    if(!propBuckets[cat]){ propBuckets[cat]=[]; propOrder.push(cat); }
+    propBuckets[cat].push(r);
+  });
+  propOrder.forEach(function(cat){ sections.push({label:cat, rows:propBuckets[cat], color:'#a78bfa'}); });
   var allRows = [];
-  cats.forEach(function(c) { allRows = allRows.concat(data[c.key] || []); });
+  sections.forEach(function(s){ allRows = allRows.concat(s.rows); });
   var wins    = allRows.filter(function(r) { return r.result === 'WIN'; }).length;
   var losses  = allRows.filter(function(r) { return r.result === 'LOSS'; }).length;
   var pending = allRows.filter(function(r) { return r.result !== 'WIN' && r.result !== 'LOSS'; }).length;
@@ -4287,8 +4301,8 @@ function renderGradeResults(data) {
     (pending > 0 ? ' <span style="color:#94a3b8;font-size:.85rem;margin-left:4px">' + pending + ' pending</span>' : '') + '</div>' +
     '<div style="margin-left:auto;font-size:.82rem;color:#94a3b8" id="grade-summary-stats">Enter bet amounts below to track P&L</div>' +
     '</div>';
-  var bodyHtml = cats.map(function(c) {
-    return renderGradeSection(c.label, data[c.key] || [], c.color);
+  var bodyHtml = sections.map(function(s) {
+    return renderGradeSection(s.label, s.rows, s.color);
   }).join('');
   document.getElementById('grade-body').innerHTML = bodyHtml ||
     '<p style="color:#94a3b8;padding:16px">No graded picks for this date.</p>';
@@ -5166,6 +5180,17 @@ function downloadMyBetsCSV(){
   <div>MLB MoneyBall &middot; Daily Picks</div>
   <div style="margin-top:8px;font-size:.7rem">For entertainment only. Not a betting service. Must be 18+. Please gamble responsibly.</div>
 </footer>
+<button id="back-to-top" onclick="window.scrollTo({top:0,behavior:'smooth'})" title="Back to top"
+  style="position:fixed;bottom:22px;right:22px;z-index:9999;display:none;width:48px;height:48px;border-radius:50%;border:none;cursor:pointer;background:#f59e0b;color:#0a0a0a;font-size:1.4rem;font-weight:900;box-shadow:0 4px 14px rgba(0,0,0,.45);line-height:1">&#8593;</button>
+<script>
+(function(){
+  var b=document.getElementById('back-to-top');
+  if(!b) return;
+  function _t(){ b.style.display = (window.pageYOffset||document.documentElement.scrollTop) > 400 ? 'block' : 'none'; }
+  window.addEventListener('scroll',_t,{passive:true});
+  _t();
+})();
+</script>
 </body>
 </html>
 """
