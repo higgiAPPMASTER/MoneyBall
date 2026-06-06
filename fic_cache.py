@@ -60,10 +60,12 @@ def _get_schedule_with_pitchers(run_date: str) -> list:
                 home_t = ht.get("team", {})
                 if hp and away_t.get("id"):
                     out.append({"team_id": away_t["id"],
+                                "team_name": away_t.get("name", ""),
                                 "pitcher_id": hp["id"],
                                 "pitcher_short": _short_name(hp["fullName"])})
                 if ap and home_t.get("id"):
                     out.append({"team_id": home_t["id"],
+                                "team_name": home_t.get("name", ""),
                                 "pitcher_id": ap["id"],
                                 "pitcher_short": _short_name(ap["fullName"])})
         return out
@@ -83,8 +85,10 @@ def _get_all_games(run_date: str) -> list:
                 ht = g["teams"]["home"]; at = g["teams"]["away"]
                 hp = ht.get("probablePitcher", {}); ap = at.get("probablePitcher", {})
                 out.append({
-                    "home_id": ht.get("team", {}).get("id"),
-                    "away_id": at.get("team", {}).get("id"),
+                    "home_id":   ht.get("team", {}).get("id"),
+                    "away_id":   at.get("team", {}).get("id"),
+                    "home_name": ht.get("team", {}).get("name", ""),
+                    "away_name": at.get("team", {}).get("name", ""),
                     "home_pitcher_id": hp.get("id"),
                     "away_pitcher_id": ap.get("id"),
                     "home_pitcher_short": _short_name(hp["fullName"]) if hp.get("fullName") else None,
@@ -106,7 +110,7 @@ def slate_has_tbd(run_date=None) -> bool:
 
 
 def _check_batter(batter_id, batter_name, pos, pitcher_id, pitcher_short,
-                  min_ab, min_ba) -> dict | None:
+                  min_ab, min_ba, team_name="") -> dict | None:
     """Check one batter vs one pitcher. Returns player dict or None."""
     try:
         r = requests.get(f"{MLB_API}/people/{batter_id}/stats",
@@ -122,9 +126,12 @@ def _check_batter(batter_id, batter_name, pos, pitcher_id, pitcher_short,
                     ba = _parse_avg(s.get("avg"))
                     if ab >= min_ab and ba >= min_ba:
                         return {
-                            "batter":  _short_name(batter_name),
-                            "pos":     pos,
-                            "pitcher": pitcher_short,
+                            "batter":    _short_name(batter_name),
+                            "full_name": batter_name,
+                            "player_id": batter_id,
+                            "team_name": team_name,
+                            "pos":       pos,
+                            "pitcher":   pitcher_short,
                             "ab": ab, "h": h, "hr": hr, "ba": ba,
                             "source": "mlb_api",
                         }
@@ -164,6 +171,7 @@ def _get_mlb_api_players(run_date: str, min_ab: int, min_ba: float,
                     pl.get("position", {}).get("abbreviation", ""),
                     m["pitcher_id"],
                     m["pitcher_short"],
+                    m.get("team_name", ""),
                 ))
         except Exception:
             pass
@@ -172,8 +180,8 @@ def _get_mlb_api_players(run_date: str, min_ab: int, min_ba: float,
     results = []
     with ThreadPoolExecutor(max_workers=8) as ex:
         futs = {
-            ex.submit(_check_batter, bid, name, pos, pid, pshort, min_ab, min_ba): None
-            for bid, name, pos, pid, pshort in tasks
+            ex.submit(_check_batter, bid, name, pos, pid, pshort, min_ab, min_ba, tname): None
+            for bid, name, pos, pid, pshort, tname in tasks
         }
         for fut in as_completed(futs, timeout=90):
             try:
@@ -190,7 +198,7 @@ def _get_mlb_api_players(run_date: str, min_ab: int, min_ba: float,
 # ── SOURCE 2: MLB Stats API — active hitting streaks (full team scan) ──
 
 def _check_streak(batter_id, batter_name, pos, pitcher_short,
-                  season, min_streak) -> dict | None:
+                  season, min_streak, team_name="") -> dict | None:
     """Compute current hit streak from the game log. Returns dict or None."""
     try:
         r = requests.get(f"{MLB_API}/people/{batter_id}/stats",
@@ -215,9 +223,12 @@ def _check_streak(batter_id, batter_name, pos, pitcher_short,
         if streak >= min_streak:
             ba = round(s_h / s_ab, 3) if s_ab else 0.0
             return {
-                "batter":  _short_name(batter_name),
-                "pos":     pos,
-                "pitcher": pitcher_short,
+                "batter":    _short_name(batter_name),
+                "full_name": batter_name,
+                "player_id": batter_id,
+                "team_name": team_name,
+                "pos":       pos,
+                "pitcher":   pitcher_short,
                 "ab": s_ab, "h": s_h, "hr": 0, "ba": ba,
                 "streak": streak,
                 "source": "mlb_streak",
@@ -239,13 +250,13 @@ def _get_streak_players(run_date: str, emit=None, min_streak=MIN_STREAK) -> list
     team_opp = []
     for g in _get_all_games(run_date):
         if g["home_id"]:
-            team_opp.append((g["home_id"], g["away_pitcher_short"] or ""))
+            team_opp.append((g["home_id"], g.get("home_name", ""), g["away_pitcher_short"] or ""))
         if g["away_id"]:
-            team_opp.append((g["away_id"], g["home_pitcher_short"] or ""))
+            team_opp.append((g["away_id"], g.get("away_name", ""), g["home_pitcher_short"] or ""))
 
     tasks = []
     seen  = set()
-    for team_id, opp_pitcher in team_opp:
+    for team_id, team_name, opp_pitcher in team_opp:
         try:
             r = requests.get(f"{MLB_API}/teams/{team_id}/roster",
                 params={"rosterType": "active"}, timeout=10)
@@ -261,6 +272,7 @@ def _get_streak_players(run_date: str, emit=None, min_streak=MIN_STREAK) -> list
                     pl["person"]["fullName"],
                     pl.get("position", {}).get("abbreviation", ""),
                     opp_pitcher,
+                    team_name,
                 ))
         except Exception:
             pass
@@ -269,8 +281,8 @@ def _get_streak_players(run_date: str, emit=None, min_streak=MIN_STREAK) -> list
     results = []
     with ThreadPoolExecutor(max_workers=8) as ex:
         futs = {
-            ex.submit(_check_streak, bid, name, pos, pshort, season, min_streak): None
-            for bid, name, pos, pshort in tasks
+            ex.submit(_check_streak, bid, name, pos, pshort, season, min_streak, tname): None
+            for bid, name, pos, pshort, tname in tasks
         }
         for fut in as_completed(futs, timeout=120):
             try:
@@ -339,13 +351,16 @@ def _get_recent_hot_hitters(run_date: str, emit=None) -> list:
             continue
         pos = sp.get("player", {}).get("primaryPosition", {}).get("abbreviation", "")
         results.append({
-            "batter":  _short_name(fname),
-            "pos":     pos,
-            "pitcher": pitcher_by_team.get(team_id, ""),
-            "ab":      ab, "h": h,
-            "hr":      int(stat.get("homeRuns", 0)),
-            "ba":      ba,
-            "source":  "mlb_recent_7d",
+            "batter":    _short_name(fname),
+            "full_name": fname,
+            "player_id": sp.get("player", {}).get("id"),
+            "team_name": sp.get("team", {}).get("name", ""),
+            "pos":       pos,
+            "pitcher":   pitcher_by_team.get(team_id, ""),
+            "ab":        ab, "h": h,
+            "hr":        int(stat.get("homeRuns", 0)),
+            "ba":        ba,
+            "source":    "mlb_recent_7d",
         })
 
     log(f"✅ Source 3: {len(results)} hot hitters playing today")
