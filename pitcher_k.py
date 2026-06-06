@@ -28,9 +28,13 @@ _UMP_K_CACHE: dict = {}         # {ump_name: ump_dict | None} — season-level c
 # ── Projection-model edges (handedness K% + whiff% + rest) ──────────────────
 LEAGUE_K_PCT   = 0.222   # MLB avg strikeout rate (SO / PA), 2024-2025
 LEAGUE_WHIFF   = 24.5    # MLB avg whiff% (whiffs / swings), Baseball Savant
+LEAGUE_AVG     = 0.243   # MLB avg batting average, 2024-2025 (hits projection)
+LEAGUE_BB_PCT  = 0.083   # MLB avg walk rate (BB / PA), 2024-2025 (walks projection)
+LEAGUE_OPS     = 0.711   # MLB avg OPS, 2024-2025 (earned-runs projection)
 _WHIFF_CACHE: dict = {}        # {year: {player_id: whiff_pct}}
 _PITCH_HAND_CACHE: dict = {}   # {pitcher_id: "R"/"L"}
 _OPP_KPCT_CACHE: dict = {}     # {(opp_id, hand, season): k_pct}
+_OPP_SPLIT_CACHE: dict = {}    # {(opp_id, hand, season): {k_pct,avg,bb_pct,ops}}
 
 # ── Pitcher prop O/U categories (real Odds API markets, parallel to K) ─────
 # Each is a true Over/Under betting line that feeds the parlay builder.
@@ -43,6 +47,15 @@ PROP_META = {
     "pitcher_outs":         ("Outs",         "outs", " outs"),
     "pitcher_earned_runs":  ("Earned Runs",  "er",   "ER"),
     "pitcher_walks":        ("Walks Allowed", "bb",  "BB"),
+}
+# Min projection-vs-line edge to post an O/U pick (thin coin-flips dropped).
+# Membership ALSO flags which markets get the opponent-adjusted projection;
+# "pitcher_outs" is intentionally absent — its projection is deferred (it needs a
+# volume/leash model, not the handedness-rate model used here).
+PROP_EDGE = {
+    "pitcher_hits_allowed": 0.6,
+    "pitcher_earned_runs":  0.5,
+    "pitcher_walks":        0.4,
 }
 # Populated by _fetch_pitcher_props each run (cleared at the start so a warm
 # process / 3×-day scheduler never serves a stale matchup):
@@ -591,6 +604,50 @@ def _get_opp_k_pct_vs_hand(opp_name: str, hand: str, season) -> float | None:
     return val
 
 
+def _get_opp_split_rates(opp_name: str, hand: str, season):
+    """Opponent team's hitting rates vs the pitcher's hand, in ONE statSplits call.
+    Returns {k_pct, avg, bb_pct, ops} (powers hits/walks/earned-runs projections),
+    or None on failure. Cached by (opp_id, hand, season)."""
+    opp_id = _get_team_id(opp_name)
+    if not opp_id:
+        return None
+    key = (opp_id, hand, str(season))
+    if key in _OPP_SPLIT_CACHE:
+        return _OPP_SPLIT_CACHE[key]
+    code = "vl" if hand == "L" else "vr"
+    rates = None
+    try:
+        r = requests.get(f"{MLB_API}/teams/{opp_id}/stats",
+            params={"stats": "statSplits", "sitCodes": code, "group": "hitting",
+                    "season": str(season), "gameType": "R"}, timeout=10)
+        for s in r.json().get("stats", []):
+            for sp in s.get("splits", []):
+                st = sp.get("stat", {})
+                pa = int(st.get("plateAppearances", 0) or 0)
+                ab = int(st.get("atBats", 0) or 0)
+                so = int(st.get("strikeOuts", 0) or 0)
+                bb = int(st.get("baseOnBalls", 0) or 0)
+                h  = int(st.get("hits", 0) or 0)
+                if not pa:
+                    continue
+                def _f(x):
+                    try:
+                        return float(x)
+                    except Exception:
+                        return None
+                avg = _f(st.get("avg"))
+                if avg is None and ab:
+                    avg = round(h / ab, 3)
+                rates = {"k_pct":  round(so / pa, 3),
+                         "bb_pct": round(bb / pa, 3),
+                         "avg":    avg,
+                         "ops":    _f(st.get("ops"))}
+    except Exception:
+        pass
+    _OPP_SPLIT_CACHE[key] = rates
+    return rates
+
+
 def _fetch_whiff_map(year: str) -> dict:
     """Bulk-fetch every pitcher's whiff% from Baseball Savant once per year. Cached.
     Savant throttles rapid requests with an EMPTY 200 body, so retry once on empty.
@@ -670,6 +727,37 @@ def _project_k(blended_avg, opp_k_pct, whiff_pct, days_rest):
     return proj, factors
 
 
+def _project_prop(market, blended, rates, whiff_pct):
+    """Opponent-adjusted projection for hits/walks/earned-runs (parallel to
+    _project_k). The dominant signal is the opponent's matchup rate vs the
+    pitcher's hand; whiff% is a smaller, inverse nudge (more whiffs → fewer balls
+    in play → fewer hits/runs). Days rest is NOT applied — it drives volume
+    (Ks/outs), not these per-start rates. Each factor clamped so one thin signal
+    can't swing the pick. Returns (proj, factors) or (None, {})."""
+    if blended is None or not rates:
+        return None, {}
+    hand_f, whiff_f = 1.0, 1.0
+    if market == "pitcher_hits_allowed":
+        if rates.get("avg"):
+            hand_f = max(0.85, min(1.15, rates["avg"] / LEAGUE_AVG))
+        if whiff_pct:
+            whiff_f = max(0.92, min(1.08, 1 - (whiff_pct - LEAGUE_WHIFF) * 0.006))
+    elif market == "pitcher_walks":
+        if rates.get("bb_pct"):
+            hand_f = max(0.85, min(1.15, rates["bb_pct"] / LEAGUE_BB_PCT))
+    elif market == "pitcher_earned_runs":
+        if rates.get("ops"):
+            hand_f = max(0.85, min(1.15, rates["ops"] / LEAGUE_OPS))
+        if whiff_pct:
+            whiff_f = max(0.94, min(1.06, 1 - (whiff_pct - LEAGUE_WHIFF) * 0.004))
+    else:
+        return None, {}
+    proj = round(blended * hand_f * whiff_f, 1)
+    factors = {"hand": round(hand_f, 3), "whiff": round(whiff_f, 3),
+               "rates": rates, "whiff_pct": whiff_pct}
+    return proj, factors
+
+
 def _blend(career_avg, recent_avg, recent_n):
     """50/50 blend of career-vs-opp avg + recent-form avg (mirrors the K logic)."""
     if career_avg is not None and recent_avg is not None:
@@ -695,6 +783,12 @@ def _build_prop_picks(name, team, opp, side, hist, rf, pid=None) -> list:
     Uniform dict so the frontend can render all 3 categories generically."""
     props = []
     nkey = _normalize(name)
+    # Computed lazily on the first projected market that has a posted line, so a
+    # pitcher with no prop lines costs zero extra API calls.
+    pit_hand   = _get_pitch_hand(pid) if pid else "R"
+    _whiff     = _whiff_lookup(pid) if pid else None
+    _opp_rates = None
+    _rates_done = False
     for market in PROP_MARKETS:
         odds = PROP_ODDS.get(market, {}).get(nkey)
         if not odds:
@@ -707,14 +801,31 @@ def _build_prop_picks(name, team, opp, side, hist, rf, pid=None) -> list:
         recent_n    = rf.get("recent_starts", 0) if rf else 0
         line = odds["line"]
         blended, blend_src = _blend(career_avg, recent_avg, recent_n)
-        if blended is None:
+
+        # ── Opponent-adjusted projection (hits/walks/ER only; outs excluded) ──
+        proj, proj_factors = None, {}
+        decision_val = blended
+        if blended is not None and market in PROP_EDGE:
+            if not _rates_done:
+                _opp_rates = _get_opp_split_rates(opp, pit_hand, SEASON)
+                _rates_done = True
+            proj, proj_factors = _project_prop(market, blended, _opp_rates, _whiff)
+            if proj is not None:
+                decision_val = proj
+                blend_src += (f" → proj {proj} [hand×{proj_factors['hand']}"
+                              f" whiff×{proj_factors['whiff']}]")
+        edge = PROP_EDGE.get(market, 0.0)
+
+        if decision_val is None:
             pick, pick_note = None, f"no data vs {opp}"
-        elif blended > line:
-            pick, pick_note = "OVER",  f"blend {blended} > line {line} ({blend_src})"
-        elif blended < line:
-            pick, pick_note = "UNDER", f"blend {blended} < line {line} ({blend_src})"
+        elif edge and abs(decision_val - line) < edge:
+            pick, pick_note = None, f"edge too thin (proj {decision_val} vs line {line}, need ≥{edge})"
+        elif decision_val > line:
+            pick, pick_note = "OVER",  f"proj {decision_val} > line {line} ({blend_src})"
+        elif decision_val < line:
+            pick, pick_note = "UNDER", f"proj {decision_val} < line {line} ({blend_src})"
         else:
-            pick, pick_note = None, f"blend {blended} exactly on line {line}"
+            pick, pick_note = None, f"proj {decision_val} exactly on line {line}"
         starts = hist.get("starts", 0) if hist else 0
         over_hits = sum(1 for v in career_list if v is not None and v > line)
         hit_rate = f"{over_hits}/{len(career_list)}" if career_list else "—"
@@ -730,6 +841,7 @@ def _build_prop_picks(name, team, opp, side, hist, rf, pid=None) -> list:
             "line": line, "over_odds": odds.get("over_odds"), "under_odds": odds.get("under_odds"),
             "career_avg": career_avg, "recent_avg": recent_avg, "recent_starts": recent_n,
             "blended": blended, "avg": blended, "blend_src": blend_src, "starts": starts,
+            "proj": proj, "proj_factors": proj_factors, "pit_hand": pit_hand,
             "vs_opp_log": vs_opp_log, "recent_log": recent_log,
             "hit_rate": hit_rate, "pick": pick, "pick_note": pick_note,
         }
