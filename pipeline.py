@@ -285,6 +285,45 @@ def _ml_ev(p, am):
     return p * (dec - 1.0) - (1.0 - p)
 
 
+def _set_ev(p, p_win, am):
+    """Attach ev / edge / ev_prob to pick `p` for win-prob `p_win` at odds `am`.
+    Always defines the three keys (None when not computable) so the frontend can
+    render uniformly. `edge` = our prob minus the book's implied prob."""
+    p["ev"] = None
+    p["edge"] = None
+    p["ev_prob"] = None
+    if p_win is None or am is None:
+        return
+    ev = _ml_ev(p_win, am)
+    if ev is None:
+        return
+    p["ev"] = round(ev, 4)
+    p["ev_prob"] = round(float(p_win), 4)
+    imp = _ml_implied(am)
+    if imp is not None:
+        p["edge"] = round(float(p_win) - imp, 4)
+
+
+def _pois_cdf(k, mean):
+    """P(X <= k) for X ~ Poisson(mean). Small means only (cheap loop). Used to
+    turn a pitcher count projection into an over/under win probability."""
+    try:
+        if mean is None or mean <= 0:
+            return None
+        if k < 0:
+            return 0.0
+        import math
+        k = int(k)
+        term = math.exp(-mean)
+        cum = term
+        for i in range(1, k + 1):
+            term *= mean / i
+            cum += term
+        return min(cum, 1.0)
+    except Exception:
+        return None
+
+
 def _log5(B, P, Lg):
     """Log5 matchup-adjusted batting average (Bill James)."""
     try:
@@ -998,6 +1037,88 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         hrr_picks_list = []
     for _hp in hrr_picks_list:
         _hp["game_start"] = _game_start_for(_hp.get("team", ""))
+
+    # ── EV enrichment for ALL non-hit categories ────────────────────────
+    # Each pick gets ev / edge / ev_prob from our model probability vs the
+    # posted price for the SIDE we picked. Binary 0.5/1.5 batter markets use the
+    # empirical vs-opp rate (score); Under-1.5-hits uses a binomial off season
+    # BA; pitcher count markets use a Poisson off the opponent-adjusted
+    # projection. Frontend shows a badge; the "+EV only" toggle filters on
+    # ev>0. No play is dropped server-side. Hit picks already enriched above.
+    try:
+        _SY = str(run_date)[:4]
+
+        def _ev_ou(p, p_over, over_am, under_am):
+            """Two-sided market: P(OVER)=p_over, attach for the picked side."""
+            if p.get("pick") == "UNDER":
+                _set_ev(p, (1.0 - p_over) if p_over is not None else None, under_am)
+            else:
+                _set_ev(p, p_over, over_am)
+
+        for _p in rbi_picks_list:
+            _s = _p.get("score")
+            _ev_ou(_p, (_s / 100.0) if _s is not None else None,
+                   _p.get("over_odds"), _p.get("under_odds"))
+        for _p in runs_picks_list:
+            _s = _p.get("score")
+            _ev_ou(_p, (_s / 100.0) if _s is not None else None,
+                   _p.get("over_odds"), _p.get("under_odds"))
+        for _p in hrr_picks_list:
+            _s = _p.get("score")
+            _ev_ou(_p, (_s / 100.0) if _s is not None else None,
+                   _p.get("hrr_over_odds"), _p.get("hrr_under_odds"))
+        for _p in tb_over_picks_list:                 # OVER only
+            _s = _p.get("score")
+            _set_ev(_p, (_s / 100.0) if _s is not None else None,
+                    _p.get("tb_over_odds"))
+        for _p in tb_picks_list:                      # TB UNDER (score = % OVER)
+            _s = _p.get("score")
+            _po = (_s / 100.0) if _s is not None else None
+            _set_ev(_p, (1.0 - _po) if _po is not None else None,
+                    _p.get("tb_under_odds"))
+
+        # Under-1.5-hits: P(<=1 hit) = binomial(0)+binomial(1) off season BA.
+        for _p in under_picks_list:
+            _br = _get_batter_season_rate(_p.get("batter_id"), _SY)
+            if _br:
+                _b, _n = _br["ba"], _br["est_ab"]
+                _pu = (1.0 - _b) ** _n + _n * _b * (1.0 - _b) ** (_n - 1)
+                _set_ev(_p, min(max(_pu, 0.0), 1.0), _p.get("under_odds"))
+            else:
+                _set_ev(_p, None, None)
+
+        # Pitcher count markets — Poisson off the projection (fallback blend).
+        import math as _math
+        def _ev_pois(p, mean):
+            ln = p.get("line")
+            if mean is None or ln is None:
+                _set_ev(p, None, None)
+                return
+            if p.get("pick") == "UNDER":
+                _cdf = _pois_cdf(int(_math.floor(ln)), mean)
+                _set_ev(p, _cdf, p.get("under_odds"))
+            else:
+                _alt = p.get("sugg_line")
+                if _alt is not None and p.get("pick") == "OVER":
+                    _c = _pois_cdf(int(_math.floor(_alt)), mean)
+                    _set_ev(p, (1.0 - _c) if _c is not None else None,
+                            p.get("sugg_odds") or p.get("over_odds"))
+                else:
+                    _c = _pois_cdf(int(_math.floor(ln)), mean)
+                    _set_ev(p, (1.0 - _c) if _c is not None else None,
+                            p.get("over_odds"))
+
+        for _pk in (pitcher_k_result.get("picks", [])
+                    + pitcher_k_result.get("all", [])):
+            _ev_pois(_pk, _pk.get("proj_k") if _pk.get("proj_k") is not None
+                     else _pk.get("blended_avg_k"))
+        for _mkt, _bk in pitcher_props.items():
+            for _pp in _bk.get("picks", []):
+                _ev_pois(_pp, _pp.get("proj") if _pp.get("proj") is not None
+                         else _pp.get("blended"))
+        emit({"type": "log", "msg": "  ✅ EV computed for all non-hit categories"})
+    except Exception as _exc:
+        emit({"type": "log", "msg": f"⚠️ Category EV enrichment skipped: {_exc}"})
 
     # ── Game-environment re-ranking inputs (weather + home-plate umpire) ──
     # Build the shared target list ONCE; ballpark/weather and umpire each stamp
