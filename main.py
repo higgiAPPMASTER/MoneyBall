@@ -1618,6 +1618,24 @@ _HTML = """
         </p>
       </div>
       <div id="pitcher-props-wrap"></div>
+      <div class="card p-6 hidden" id="rbi-picks-card" style="border-color:rgba(245,158,11,.25)">
+        <div class="section-hdr" style="color:#f59e0b">💥 RBI Picks — Drive In a Run (Over / Under 0.5)</div>
+        <p class="text-xs text-slate-400 mb-3" style="margin-top:-4px">Who drives in runs vs this opponent. Vs-opp only (min 3 games), ranked by Wilson confidence.</p>
+        <div id="rbi-over-section">
+          <div style="font-size:.72rem;font-weight:800;letter-spacing:.1em;color:#f59e0b;margin-bottom:10px;text-transform:uppercase">⬆ RBI Over</div>
+          <div id="rbi-over-body" class="mlb-picks-grid"></div>
+          <div id="rbi-over-more"></div>
+        </div>
+        <div id="rbi-under-section" style="margin-top:24px;padding-top:20px;border-top:1px solid #1e293b">
+          <div style="font-size:.72rem;font-weight:800;letter-spacing:.1em;color:#ff8a65;margin-bottom:10px;text-transform:uppercase">⬇ RBI Under</div>
+          <div id="rbi-under-body" class="mlb-picks-grid"></div>
+          <div id="rbi-under-more"></div>
+        </div>
+        <p class="text-xs text-slate-500 mt-4 admin-only">
+          <strong>RBI Rate vr Opp</strong> = last 10 H/A games vs THIS opponent with 1+ RBI &nbsp;|&nbsp;
+          <strong>Pick</strong> = OVER ≥70%, UNDER ≤30%, vs-opp only (min 3 games) &nbsp;|&nbsp; ranked by Wilson lower-bound.
+        </p>
+      </div>
       <div class="card p-6 hidden" id="runs-picks-card" style="border-color:rgba(96,165,250,.25)">
         <div class="section-hdr" style="color:#60a5fa">🏃 Runs Picks — Score a Run (Over / Under 0.5)</div>
         <p class="text-xs text-slate-400 mb-3" style="margin-top:-4px">Who's likely to cross the plate. Runs are lower-frequency than hits — higher-variance plays.</p>
@@ -1855,12 +1873,13 @@ function showResults(result) {
       })
     : result;
   const { top9, stats, pitcher_k } = view;
-  hide('under-picks-card'); hide('tb-picks-card'); hide('pitcher-k-card'); hide('runs-picks-card');
+  hide('under-picks-card'); hide('tb-picks-card'); hide('pitcher-k-card'); hide('runs-picks-card'); hide('rbi-picks-card');
 
   document.getElementById('stats-row').innerHTML = [
     statCard('🎯','Top Picks',top9.length,'top-picks-card'),
     statCard('⬇️','Under Picks',(view.under_picks||[]).length,'under-picks-card'),
     statCard('⬇️','TB Under',(view.tb_picks||[]).length,'tb-picks-card'),
+    statCard('💥','RBI Picks',(view.rbi_picks||[]).length,'rbi-picks-card'),
     statCard('🏃','Runs Picks',(view.runs_picks||[]).length,'runs-picks-card'),
     statCard('⚾','Pitcher K',((view.pitcher_k||{}).all||[]).filter(p=>p.pick&&(p.starts||0)>0).length,'pitcher-k-card'),
     statCard('🧮','Pitcher Props',PROP_ORDER.reduce((n,m)=>n+(((view.pitcher_props||{})[m]||{}).picks||[]).length,0),'pitcher-k-card'),
@@ -1920,6 +1939,23 @@ function showResults(result) {
     if(paMoreEl) paMoreEl.innerHTML=pkAllSorted.length>10
       ?'<details style="margin-top:10px"><summary class="more-btn" style="color:#63cab7;border-color:#63cab733">&#9655; '+(pkAllSorted.length-10)+' more pitchers</summary><div class="mlb-picks-grid mt-3">'+pkAllSorted.slice(10).map((p,_i)=>_pitcherCard(p,10+_i+1,'pa')).join('')+'</div></details>'
       :'';
+  }
+
+  const rbiPicks = view.rbi_picks || [];
+  if (rbiPicks.length > 0) {
+    show('rbi-picks-card');
+    window.__RBI_REG__={};
+    const rbiOver = rbiPicks.filter(function(p){ return p.pick==='OVER'; });
+    const rbiUnder = rbiPicks.filter(function(p){ return p.pick==='UNDER'; });
+    document.getElementById('rbi-over-body').innerHTML = rbiOver.slice(0,10).map(function(p,i){ return _rbiCard(p, i+1, 'rbo'); }).join('');
+    document.getElementById('rbi-over-more').innerHTML = rbiOver.length > 10
+      ? _moreWrap(rbiOver.slice(10), function(p,r){ return _rbiCard(p, r, 'rbo'); }, 11, 'RBI Over', '#f59e0b')
+      : '';
+    document.getElementById('rbi-under-section').style.display = rbiUnder.length ? '' : 'none';
+    document.getElementById('rbi-under-body').innerHTML = rbiUnder.slice(0,10).map(function(p,i){ return _rbiCard(p, i+1, 'rbu'); }).join('');
+    document.getElementById('rbi-under-more').innerHTML = rbiUnder.length > 10
+      ? _moreWrap(rbiUnder.slice(10), function(p,r){ return _rbiCard(p, r, 'rbu'); }, 11, 'RBI Under', '#ff8a65')
+      : '';
   }
 
   const runsPicks = view.runs_picks || [];
@@ -2382,6 +2418,7 @@ function _playerForm(key){
   if(p._prop){ _ppForm(p); }
   else if(p.recent_k_log!==undefined || p.avg_k!==undefined){ _pkForm(p); }
   else if(p.recent_tb_log!==undefined){ _tbForm(p); }
+  else if(p.recent_rbi_log!==undefined && p.recent_hit_log===undefined && p.recent_runs_log===undefined){ _rbiForm(p); }
   else if(p.recent_runs_log!==undefined && p.recent_hit_log===undefined){ _runsForm(p); }
   else { _hitForm(p); }
 }
@@ -2418,6 +2455,12 @@ function downloadPicksCSV(){
     var detail=(p.tb_under_odds!=null?('TB U1.5 '+_csvOdds(p.tb_under_odds)):'');
     rows.push(['Under Pick', i+1, p.name||'', p.team||'', '', p.side||'', p.opp||'', p.pitcher||'',
       'Under 1.5 Hits', '1.5', _csvOdds(p.under_odds), _csvLineup(p.lineup_status), detail]);
+  });
+  (r.rbi_picks||[]).forEach(function(p,i){
+    var isOver=p.pick==='OVER';
+    var od=isOver?p.over_odds:p.under_odds;
+    rows.push(['RBI Pick', i+1, p.name||'', p.team||'', '', p.side||'', p.opp||'', '',
+      (isOver?'Over':'Under')+' '+(p.line!=null?p.line:0.5)+' RBI', (p.line!=null?p.line:0.5), _csvOdds(od), '', (p.rate_disp||'')+(p.basis?(' '+p.basis):'')]);
   });
   (r.runs_picks||[]).forEach(function(p,i){
     var isOver=p.pick==='OVER';
@@ -2498,6 +2541,11 @@ function _mlbPool(){
     var line=hasSugg?p.sugg_line:p.line;
     var odds=hasSugg?p.sugg_odds:(p.pick==='OVER'?p.over_odds:p.under_odds);
     cands.push({type:'K',dir:dir,player:(p.name||''),team:'',opp:(p.opp||''),stat:'Ks',line:line,odds:(odds!=null?odds:''),conf:clampConf(90,i),reason:'⚾ '+dir+' '+(line!=null?line:'')+' Ks · avg '+(p.avg_k!=null?p.avg_k+'K':'—')+(p.era?(' · ERA '+p.era):''),src:p});
+  });
+  (r.rbi_picks||[]).forEach(function(p,i){
+    var isOver=p.pick==='OVER';
+    var od=isOver?p.over_odds:p.under_odds;
+    cands.push({type:'RBI',dir:p.pick,player:(p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'RBI',line:(p.line!=null?p.line:0.5),odds:(od!=null?od:''),conf:clampConf(80,i),reason:'💥 '+p.pick+' '+(p.line!=null?p.line:0.5)+' RBI · '+(p.rate_disp||'')+' vs '+(p.opp||''),src:p});
   });
   (r.runs_picks||[]).forEach(function(p,i){
     var isOver=p.pick==='OVER';
@@ -3278,6 +3326,105 @@ function _runsCard(p, rank, pfx) {
     </div>
   ${_betBtn(p,'Runs',p.pick,'runs','Runs',(p.line!=null?p.line:0.5),(p.pick==='OVER'?p.over_odds:p.under_odds))}
   </div>`;
+}
+
+function _rbiCard(p, rank, pfx) {
+  pfx = pfx || 'rb';
+  const abbr = _mlbTeamAbbr(p.team);
+  const teamLogo = abbr ? `https://a.espncdn.com/i/teamlogos/mlb/500/${abbr}.png` : '';
+  const isOver = p.pick==='OVER';
+  const rnkColors = rank===1?['#f59e0b','#000']:rank===2?['#fbbf24','#000']:rank===3?['#d97706','#fff']:['#1e1e1e','#f59e0b'];
+  const sideCls = p.side==='HOME'?'badge-home':'badge-away';
+  const pickClr = isOver?'#63cab7':'#ff8a65';
+  const od = isOver?p.over_odds:p.under_odds;
+  const odDisp = od!=null?(od>0?'+':'')+od:'—';
+  const scoreClr = p.score>=70?'#63cab7':p.score>=50?'#fbbf24':'#ff8a65';
+  const log = p.recent_rbi_log||[];
+  const recCnt = log.filter(g=>g.rbi>=1).length;
+  const adminStats = `<div class="admin-only" style="display:none;font-size:.72rem;color:#64748b;margin-top:4px;line-height:1.7">
+    <span>Score <strong style="color:#f59e0b">${p.score!=null?p.score+'%':'—'}</strong></span> &nbsp;
+    <span>Games <strong style="color:#94a3b8">${p.games||0}</strong></span> &nbsp;
+    <span>Wilson <strong style="color:#94a3b8">${p.wilson!=null?p.wilson:'—'}</strong></span>
+  </div>`;
+  window.__RBI_REG__=window.__RBI_REG__||{}; window.__RBI_REG__[pfx+rank]=p;
+  return `<div class="mlb-pick-card" onclick="_rbiForm('${pfx}${rank}')" title="Click for recent form" style="cursor:pointer">
+    <div class="mlb-card-header" style="background:linear-gradient(135deg,#1a1200 0%,#0d0900 100%)">
+      <div style="display:flex;align-items:center;gap:8px">
+        <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
+        ${_mlbHead(p.batter_id)}
+        <span style="font-size:.72rem;letter-spacing:.12em;color:#f59e0b;font-weight:800">MLB · RBI</span>
+      </div>
+      ${teamLogo?`<img src="${teamLogo}" alt="${p.team}" style="height:34px;width:34px;object-fit:contain" onerror="this.style.display='none'"/>`:''}
+    </div>
+    <div class="mlb-card-name">${p.name}</div>
+    <div class="mlb-card-body">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <span style="font-size:.82rem;color:#94a3b8">vs <strong style="color:#fff">${p.opp||'—'}</strong></span>
+        <span class="badge ${sideCls}">${p.side}</span>
+      </div>
+      ${_envChip(p)}
+      ${_umpChip(p)}
+      ${_bpChip(p)}
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
+        <span style="font-size:.78rem;color:#94a3b8">RBI Rate vr Opp</span>
+        <span style="font-family:monospace;font-weight:700;color:${scoreClr}">${p.rate_disp||'—'} <span style="color:#64748b;font-size:.68rem">${p.basis||''}</span></span>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
+        <span style="font-size:.72rem;color:#64748b">Recent</span>
+        <span style="font-size:.78rem;color:#cbd5e1">${log.length?recCnt+'/'+log.length:'—'}</span>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
+        <span style="font-size:.8rem;color:${pickClr};font-weight:900">${p.pick} ${p.line!=null?p.line:0.5} RBI</span>
+        <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}</span>
+      </div>
+      ${adminStats}
+    </div>
+  ${_betBtn(p,'RBI',p.pick,'rbi','RBI',(p.line!=null?p.line:0.5),(p.pick==='OVER'?p.over_odds:p.under_odds))}
+  </div>`;
+}
+
+function _rbiForm(key){
+  var p=(key&&typeof key==='object')?key:(window.__RBI_REG__||{})[key]; if(!p) return;
+  var ov=document.getElementById('rbi-modal');
+  if(!ov){
+    ov=document.createElement('div');
+    ov.id='rbi-modal';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; };
+    document.body.appendChild(ov);
+  }
+  var log=p.recent_rbi_log||[];
+  var isOver=(p.pick==='OVER');
+  var goal=isOver?'Over 0.5 RBI (drive in a run)':'Under 0.5 RBI (no RBI)';
+  var rows=log.length?log.map(function(g){
+    var hit=g.rbi>=1;
+    var good=isOver?hit:!hit;
+    var clr=good?'#63cab7':'#ff8a65';
+    var oppTxt=g.opp?((g.ha==='H'?'vs ':'@ ')+g.opp):'';
+    return `<tr>
+      <td style="padding:6px 10px;color:#94a3b8;font-family:monospace">${g.d||'—'}</td>
+      <td style="padding:6px 10px;color:#cbd5e1;font-size:.8rem">${oppTxt}</td>
+      <td style="padding:6px 10px;text-align:right;font-family:monospace;font-size:.8rem;color:#93c5fd">${g.h} H</td>
+      <td style="padding:6px 10px;text-align:right;font-family:monospace;font-weight:800;color:${clr}">${g.rbi} RBI</td>
+    </tr>`;
+  }).join(''):'<tr><td colspan="4" style="padding:14px;color:#64748b;text-align:center">No recent games on record</td></tr>';
+  var name=p.full_name||p.name||'';
+  var pickClr=isOver?'#63cab7':'#ff8a65';
+  ov.innerHTML=`<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:440px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid #1e293b">
+      <div>
+        <div style="font-weight:800;font-size:1.05rem;color:#fff">${name}</div>
+        <div style="color:#94a3b8;font-size:.78rem">${p.side||''} vs ${p.opp||''} · ${goal}</div>
+      </div>
+      <button onclick="document.getElementById('rbi-modal').style.display='none'" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem">✕</button>
+    </div>
+    <div style="padding:14px 18px">
+      <div style="font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase;margin-bottom:8px">RBI Rate ${p.rate_disp||''} · Last ${log.length||0} Games</div>
+      <table style="width:100%;border-collapse:collapse;font-size:.85rem"><tbody>${rows}</tbody></table>
+      <div style="margin-top:12px;border-top:1px solid #1e293b;padding-top:10px;color:${pickClr};font-weight:800;font-size:.85rem">Pick: ${goal}</div>
+    </div>
+  </div>`;
+  ov.style.display='flex';
 }
 
 function _tbCard(p, rank) {
