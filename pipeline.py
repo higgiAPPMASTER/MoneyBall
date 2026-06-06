@@ -822,6 +822,16 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     for _tp in tb_picks_list:
         _tp["game_start"] = _game_start_for(_tp.get("team", ""))
 
+    # ── TB Over Picks (batter total bases Over 1.5) ───────────────────────
+    try:
+        from under_picks import run_tb_over_picks
+        tb_over_picks_list = run_tb_over_picks(run_date, team_schedule, emit=emit)
+    except Exception as exc:
+        emit({"type": "log", "msg": f"⚠️ TB Over picks skipped: {exc}"})
+        tb_over_picks_list = []
+    for _tov in tb_over_picks_list:
+        _tov["game_start"] = _game_start_for(_tov.get("team", ""))
+
     # ── RBI Picks (Batter RBIs, Over/Under 0.5) ───────────────────────────
     try:
         from under_picks import run_rbi_picks
@@ -837,7 +847,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     # onto it (Phase A), then a single combined Phase B re-ranks every category
     # (reorder only — qualification gates are never touched, so the same picks
     # appear, just in a different order). Either factor missing -> neutral 1.0.
-    _rr_targets = list(top9) + list(also_ran) + list(under_picks_list) + list(runs_picks_list) + list(tb_picks_list) + list(rbi_picks_list)
+    _rr_targets = list(top9) + list(also_ran) + list(under_picks_list) + list(runs_picks_list) + list(tb_picks_list) + list(tb_over_picks_list) + list(rbi_picks_list)
     _rr_targets += pitcher_k_result.get("picks", []) + pitcher_k_result.get("all", [])
     for _b in pitcher_props.values():
         _rr_targets += _b.get("picks", []) + _b.get("all", [])
@@ -1015,7 +1025,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     elapsed = round(time.time() - t_start, 1)
     result = {
         "date": run_date, "top9": top9, "also_ran": also_ran,
-        "under_picks": under_picks_list, "runs_picks": runs_picks_list, "tb_picks": tb_picks_list, "rbi_picks": rbi_picks_list,
+        "under_picks": under_picks_list, "runs_picks": runs_picks_list, "tb_picks": tb_picks_list, "tb_over_picks": tb_over_picks_list, "rbi_picks": rbi_picks_list,
         "all_qualified": era_qualified,
         "dq_s1_s3": [x for x in results if x["dq"] and x not in dn_dq and x not in era_dq and x not in dq_lineup and x not in s4_dq],
         "dq_step4": dn_dq, "dq_step5": era_dq, "dq_lineup": dq_lineup, "dq_s4": s4_dq, "pitcher_k": pitcher_k_result,
@@ -1025,6 +1035,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                   "under_count": len(under_picks_list),
                   "runs_count": len(runs_picks_list),
                   "tb_count": len(tb_picks_list),
+                  "tb_over_count": len(tb_over_picks_list),
                   "rbi_count": len(rbi_picks_list),
                   "pitcher_k_count": len(pitcher_k_result.get("picks", [])),
                   "prop_counts": {m: len(b.get("picks", [])) for m, b in pitcher_props.items()},
