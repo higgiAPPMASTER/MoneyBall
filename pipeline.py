@@ -427,7 +427,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
 
     # ── STEPS 2 & 3 ───────────────────────────────────────────────────
     emit({"type": "section", "msg": "Steps 2 & 3 — Fetching MLB Stats API H/A game logs"})
-    all_player_ids = [roster.get(p["batter"], {}).get("player_id") for p in top30]
+    all_player_ids = [roster.get(p["batter"], {}).get("player_id") or p.get("player_id") for p in top30]
     log(f"  Pre-fetching game logs for {len(all_player_ids)} players (parallel)...")
     prefetch_game_logs(all_player_ids)
     log("  ✅ Game logs cached — running splits...")
@@ -436,6 +436,15 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     for i, p in enumerate(top30):
         name  = p["batter"]
         info  = roster.get(name, {})
+        # Fallback: fic_cache already resolved player_id + team_name. Use them
+        # when build_player_roster failed to match the abbreviated name (e.g.
+        # "H. Lee", "A. Rosario" — common surnames with multiple MLB players).
+        if not info.get("player_id") and p.get("player_id"):
+            info = dict(info)
+            info["player_id"] = p["player_id"]
+        if not info.get("team_name") and p.get("team_name"):
+            info = dict(info)
+            info["team_name"] = p.get("team_name", "")
         slug  = info.get("slug", "")
         team  = info.get("team_name", "")
         sched = team_schedule.get(team, {})
@@ -569,7 +578,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         lineup_qualified = []
         for r in era_qualified:
             info      = roster.get(r["name"], {})
-            player_id = info.get("player_id")
+            player_id = info.get("player_id") or r.get("player_id")
             full_name = r.get("full_name") or info.get("full_name", r["name"])
             team_name = info.get("team_name", "")
             status    = get_lineup_status(player_id, full_name, team_name,
@@ -644,7 +653,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     s4_qualified, s4_dq = [], []
     for r in lineup_qualified:
         info       = roster.get(r["name"], {})
-        player_id  = info.get("player_id")
+        player_id  = info.get("player_id") or r.get("player_id")
         s4         = fetch_step4_consistency(player_id, r["side"], r.get("opp", ""))
         r["s4"]    = s4
         # DQ if S4 has qualifying games but hit rate < 60%
