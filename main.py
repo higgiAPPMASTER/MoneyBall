@@ -429,6 +429,24 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "game_status": (st or {}).get("status", "—"),
         })
 
+    # TB Over 1.5 — top 10 for Track Record
+    tb_over = []
+    for p in (picks.get("tb_over_picks") or [])[:10]:
+        st = _lookup(p.get("batter_id"), p.get("name"))
+        actual = st["total_bases"] if st else None
+        tb_over.append({
+            "name": p.get("name", ""),
+            "team": p.get("team", ""),
+            "category": "TB Over", "side": "OVER",
+            "pick": "OVER 1.5 Total Bases",
+            "odds": p.get("tb_over_odds"),
+            "line": 1.5,
+            "actual": actual,
+            "stat": "Total Bases",
+            "result": _grade("OVER", 1.5, actual, (st or {}).get("final", False)),
+            "game_status": (st or {}).get("status", "—"),
+        })
+
     # RBI OVER/UNDER — top 10 per side for Track Record
     _rbi_all = picks.get("rbi_picks") or []
     _rbi_capped = [p for p in _rbi_all if p.get("pick") == "OVER"][:10] + \
@@ -514,6 +532,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
         "hitter_unders": hitter_unders,
         "runs":          runs,
         "tb_under":      tb_under,
+        "tb_over":       tb_over,
         "rbi":           rbi_picks,
         "pitcher_ks":    pitcher_ks,
         "pitcher_props": pitcher_props,
@@ -525,7 +544,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
 # ── Track Record: permanent W/L ledger across all graded days ────────────
 _TRACK_LEDGER_PATH = os.path.join(_CACHE_DIR, "_track_record.json")
 _TRACK_CAT_ORDER = [
-    "Hitter Hits", "Runs", "TB Under", "RBI", "Pitcher Ks",
+    "Hitter Hits", "Runs", "TB Under", "TB Over", "RBI", "Pitcher Ks",
     "Pitcher Hits Allowed", "Pitcher Outs", "Pitcher Earned Runs",
 ]
 
@@ -571,7 +590,7 @@ def _save_detail(det: dict):
 def _aggregate_graded(graded: dict) -> dict:
     """Collapse a graded day into {category: {side: [W, L]}} counting only decided picks."""
     agg: dict = {}
-    for key in ("hitter_overs", "hitter_unders", "runs", "tb_under", "rbi", "pitcher_ks", "pitcher_props"):
+    for key in ("hitter_overs", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "pitcher_ks", "pitcher_props"):
         for r in graded.get(key, []):
             res = r.get("result")
             if res not in ("WIN", "LOSS"):
@@ -590,7 +609,7 @@ def _detail_graded(graded: dict) -> list:
     fields an earnings sheet needs: player, team, category, side, pick, odds,
     line, result."""
     out = []
-    for key in ("hitter_overs", "hitter_unders", "runs", "tb_under", "rbi", "pitcher_ks", "pitcher_props"):
+    for key in ("hitter_overs", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "pitcher_ks", "pitcher_props"):
         for r in graded.get(key, []):
             res = r.get("result")
             if res not in ("WIN", "LOSS"):
@@ -1729,6 +1748,15 @@ _HTML = """
           <strong>Threshold</strong> ≥70% under 1.5 TB &nbsp;|&nbsp; ranked by Wilson lower-bound
         </p>
       </div>
+      <div class="card p-6 hidden" id="tb-over-picks-card" style="border-color:rgba(74,222,128,.25)">
+        <div class="section-hdr" style="color:#4ade80">📈 Over 1.5 Total Bases</div>
+        <div id="tb-over-picks-body" class="mlb-picks-grid"></div>
+        <div id="tb-over-more-wrap"></div>
+        <p class="text-xs text-slate-500 mt-4 admin-only">
+          <strong>Rate</strong> = % of H/A games vs opp (min 3 games) with TB ≥ 2 &nbsp;|&nbsp;
+          <strong>Threshold</strong> ≥60% over 1.5 TB &nbsp;|&nbsp; vs opponent only &nbsp;|&nbsp; ranked by Wilson lower-bound
+        </p>
+      </div>
       <div class="card p-6 hidden" id="pitcher-k-card" style="border-color:rgba(99,202,183,.25)">
         <div class="section-hdr" style="color:#63cab7">⚾ Pitcher Picks — Strikeouts, Hits, Outs, Earned Runs &amp; Walks</div>
         <p class="text-xs text-slate-400 mb-3" style="margin-top:-4px">Click any pitcher for all 5 markets (K · Hits · Outs · ER · Walks). Each stat has its own pulldown below.</p>
@@ -1968,7 +1996,7 @@ function _filterStarted(result){
   if(!result) return result;
   var r=Object.assign({},result);
   function f(a){return (a||[]).filter(function(p){return !_started(p);});}
-  r.top9=f(r.top9); r.also_ran=f(r.also_ran); r.under_picks=f(r.under_picks); r.runs_picks=f(r.runs_picks); r.tb_picks=f(r.tb_picks);
+  r.top9=f(r.top9); r.also_ran=f(r.also_ran); r.under_picks=f(r.under_picks); r.runs_picks=f(r.runs_picks); r.tb_picks=f(r.tb_picks); r.tb_over_picks=f(r.tb_over_picks||[]);
   if(r.pitcher_k){
     r.pitcher_k=Object.assign({},r.pitcher_k);
     r.pitcher_k.picks=f(r.pitcher_k.picks);
@@ -2014,12 +2042,13 @@ function showResults(result) {
       })
     : result;
   const { top9, stats, pitcher_k } = view;
-  hide('under-picks-card'); hide('tb-picks-card'); hide('pitcher-k-card'); hide('runs-picks-card'); hide('rbi-picks-card');
+  hide('under-picks-card'); hide('tb-picks-card'); hide('tb-over-picks-card'); hide('pitcher-k-card'); hide('runs-picks-card'); hide('rbi-picks-card');
 
   document.getElementById('stats-row').innerHTML = [
     statCard('🎯','Top Picks',top9.length,'top-picks-card'),
     statCard('⬇️','Under Picks',(view.under_picks||[]).length,'under-picks-card'),
     statCard('⬇️','TB Under',(view.tb_picks||[]).length,'tb-picks-card'),
+    statCard('📈','TB Over',(view.tb_over_picks||[]).length,'tb-over-picks-card'),
     statCard('💥','RBI Picks',(view.rbi_picks||[]).length,'rbi-picks-card'),
     statCard('🏃','Runs Picks',(view.runs_picks||[]).length,'runs-picks-card'),
     statCard('⚾','Pitcher K',((view.pitcher_k||{}).all||[]).filter(p=>p.pick&&(p.starts||0)>0).length,'pitcher-k-card'),
@@ -2123,6 +2152,16 @@ function showResults(result) {
     document.getElementById('tb-picks-body').innerHTML = tbPicks.slice(0,10).map(function(p,i){ return _tbCard(p, i+1); }).join('');
     document.getElementById('tb-more-wrap').innerHTML = tbPicks.length > 10
       ? _moreWrap(tbPicks.slice(10), function(p,r){ return _tbCard(p, r); }, 11, 'TB Under', '#a78bfa')
+      : '';
+  }
+
+  const tbOverPicks = view.tb_over_picks || [];
+  if (tbOverPicks.length > 0) {
+    show('tb-over-picks-card');
+    window.__TBO_REG__={};
+    document.getElementById('tb-over-picks-body').innerHTML = tbOverPicks.slice(0,10).map(function(p,i){ return _tbOverCard(p, i+1); }).join('');
+    document.getElementById('tb-over-more-wrap').innerHTML = tbOverPicks.length > 10
+      ? _moreWrap(tbOverPicks.slice(10), function(p,r){ return _tbOverCard(p, r); }, 11, 'TB Over', '#4ade80')
       : '';
   }
 
@@ -2701,6 +2740,11 @@ function _mlbPool(){
       cands.push({type:'TB',dir:'UNDER',player:(p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'Total Bases',line:1.5,odds:p.tb_under_odds,conf:clampConf(88,i),reason:'⬇️ Under 1.5 TB · '+(p.rate_disp||'')+' rate vs '+(p.opp||''),src:p});
     }
   });
+  (r.tb_over_picks||[]).forEach(function(p,i){
+    if(_underOk(p.tb_over_odds)){
+      cands.push({type:'TBO',dir:'OVER',player:(p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'Total Bases',line:1.5,odds:p.tb_over_odds,conf:clampConf(88,i),reason:'📈 Over 1.5 TB · '+(p.rate_disp||'')+' rate vs '+(p.opp||''),src:p});
+    }
+  });
   // Pitcher prop legs (Hits Allowed / Outs / Earned Runs) — one type per market.
   var _pp=(r.pitcher_props)||{};
   PROP_ORDER.forEach(function(mkt){
@@ -3024,9 +3068,9 @@ function runPlayerSearch(raw){
   });
 
   if(!hits.length){
-    box.innerHTML='<div class="text-slate-500 text-sm" style="margin-bottom:10px">"<strong>'+raw+'</strong>" is not in today\\'s analyzed picks. Check any hitter in today\\'s games for a quick hit verdict:</div>'
+    box.innerHTML='<div class="text-slate-500 text-sm" style="margin-bottom:10px">"<strong>'+raw+'</strong>" is not in today&#39;s analyzed picks. Check any hitter in today&#39;s games for a quick hit verdict:</div>'
       +'<button onclick="lookupAnyPlayer()" style="background:#fbbf24;color:#111;border:none;border-radius:8px;padding:8px 16px;font-weight:700;cursor:pointer">Look up this player →</button>'
-      +'<div class="text-slate-600 text-xs" style="margin-top:8px">Searching a pitcher? Expand "All today\\'s pitchers" below the K Picks table.</div>'
+      +'<div class="text-slate-600 text-xs" style="margin-top:8px">Searching a pitcher? Expand "All today&#39;s pitchers" below the K Picks table.</div>'
       +'<div id="lookup-any-result" style="margin-top:12px"></div>';
     return;
   }
@@ -3057,13 +3101,13 @@ function runPlayerSearch(raw){
       if(p.lineup_status) html+='<span><strong style="color:#94a3b8">Lineup</strong> '+_lineupTxt(p.lineup_status)+'</span>';
       html+='</div>';
       if(kind==='HITTER-DQ' && p.dq_reason){
-        html+='<div style="margin-top:8px;color:#fca5a5;font-size:.82rem"><strong>Why DQ\\'d:</strong> '+p.dq_reason+'</div>';
+        html+='<div style="margin-top:8px;color:#fca5a5;font-size:.82rem"><strong>Why DQ&#39;d:</strong> '+p.dq_reason+'</div>';
       } else if(h.bucket==='Top Picks'){
         html+='<div style="margin-top:8px;color:#cbd5e1;font-size:.82rem">Cleared every filter and ranks in the top 9 by total score.</div>';
       } else if(h.bucket==='Money Ball Picks'){
         html+='<div style="margin-top:8px;color:#cbd5e1;font-size:.82rem">Passed all 5 filters — solid play just outside the Top 9.</div>';
       } else if(h.bucket==='Under Picks'){
-        html+='<div style="margin-top:8px;color:#cbd5e1;font-size:.82rem">Cold bat vs today\\'s pitcher \u2014 model likes the UNDER.</div>';
+        html+='<div style="margin-top:8px;color:#cbd5e1;font-size:.82rem">Cold bat vs today&#39;s pitcher \u2014 model likes the UNDER.</div>';
       }
     } else if(kind==='PITCHER'){
       html+='<div style="display:flex;flex-wrap:wrap;gap:14px;font-size:.82rem;color:#cbd5e1">';
@@ -3089,7 +3133,7 @@ async function lookupAnyPlayer(){
   if(!out) return;
   if(name.length<3){ out.innerHTML='<div class="text-slate-500 text-sm">Type at least 3 letters.</div>'; return; }
   var date=(window._lastResult&&window._lastResult.date)||'';
-  out.innerHTML='<div class="text-slate-500 text-sm">Checking '+name+' across today\\'s games\u2026</div>';
+  out.innerHTML='<div class="text-slate-500 text-sm">Checking '+name+' across today&#39;s games&#8230;</div>';
   try{
     var r=await fetch('/api/lookup?name='+encodeURIComponent(name)+'&date_str='+encodeURIComponent(date));
     var d=await r.json();
@@ -3130,6 +3174,7 @@ function renderByGame(result){
   var hitters=(result.top9||[]).concat(result.also_ran||[]).map(function(p){return Object.assign({_kind:'HITTER'},p);});
   var unders=(result.under_picks||[]).map(function(p){return Object.assign({_kind:'UNDER'},p);});
   var tbUnders=(result.tb_picks||[]).map(function(p){return Object.assign({_kind:'TB UNDER'},p);});
+  var tbOvers=(result.tb_over_picks||[]).map(function(p){return Object.assign({_kind:'TB OVER'},p);});
   var ks=((result.pitcher_k||{}).picks||[]).filter(function(p){return (p.starts||0)>0;}).map(function(p){return Object.assign({_kind:'PITCHER K'},p);});
   var runs=(result.runs_picks||[]).map(function(p){return Object.assign({_kind:'RUNS'},p);});
   var propLegs=[];
@@ -3139,7 +3184,7 @@ function renderByGame(result){
     var statLbl=(cfg.label||'').replace('Pitcher ','').toUpperCase();
     picks.forEach(function(p){ propLegs.push(Object.assign({_kind:statLbl},p)); });
   });
-  var all=hitters.concat(unders, tbUnders, ks, runs, propLegs);
+  var all=hitters.concat(unders, tbUnders, tbOvers, ks, runs, propLegs);
   if(!all.length){body.innerHTML='<div class="text-slate-500 text-sm">No picks yet.</div>';return;}
   var games={}, order=[];
   all.forEach(function(p){
@@ -3627,6 +3672,99 @@ function _tbCard(p, rank) {
   </div>`;
 }
 
+function _tbOverCard(p, rank) {
+  const abbr = _mlbTeamAbbr(p.team);
+  const teamLogo = abbr ? `https://a.espncdn.com/i/teamlogos/mlb/500/${abbr}.png` : '';
+  const rnkColors = rank===1?['#4ade80','#000']:rank===2?['#22c55e','#000']:rank===3?['#16a34a','#fff']:['#1e1e1e','#4ade80'];
+  const sideCls = p.side==='HOME'?'badge-home':'badge-away';
+  const odDisp = p.tb_over_odds!=null?(p.tb_over_odds>0?'+':'')+p.tb_over_odds:'—';
+  const scoreClr = p.score>=80?'#4ade80':p.score>=70?'#fbbf24':'#94a3b8';
+  const log = p.recent_tb_log||[];
+  const overCnt = log.filter(g=>g.tb>=2).length;
+  const adminStats = `<div class="admin-only" style="display:none;font-size:.72rem;color:#64748b;margin-top:4px;line-height:1.7">
+    <span>Rate <strong style="color:#4ade80">${p.score!=null?p.score+'%':'—'}</strong></span> &nbsp;
+    <span>Games <strong style="color:#94a3b8">${p.games||0}</strong></span> &nbsp;
+    <span>Wilson <strong style="color:#94a3b8">${p.wilson!=null?p.wilson:'—'}</strong></span>
+  </div>`;
+  window.__TBO_REG__=window.__TBO_REG__||{}; window.__TBO_REG__['tbo'+rank]=p;
+  return `<div class="mlb-pick-card" onclick="_tbOverForm('tbo${rank}')" title="Click for recent form" style="cursor:pointer">
+    <div class="mlb-card-header" style="background:linear-gradient(135deg,#052e16 0%,#0a1a0a 100%)">
+      <div style="display:flex;align-items:center;gap:8px">
+        <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
+        ${_mlbHead(p.batter_id)}
+        <span style="font-size:.72rem;letter-spacing:.12em;color:#4ade80;font-weight:800">MLB · TBO</span>
+      </div>
+      ${teamLogo?`<img src="${teamLogo}" alt="${p.team}" style="height:34px;width:34px;object-fit:contain" onerror="this.style.display='none'"/>`:''}
+    </div>
+    <div class="mlb-card-name">${p.name}</div>
+    <div class="mlb-card-body">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <span style="font-size:.82rem;color:#94a3b8">vs <strong style="color:#fff">${p.opp||'—'}</strong></span>
+        <span class="badge ${sideCls}">${p.side}</span>
+      </div>
+      ${_envChip(p)}
+      ${_umpChip(p)}
+      ${_bpChip(p)}
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
+        <span style="font-size:.78rem;color:#94a3b8">TB Over Rate <span style="color:#64748b;font-size:.68rem">vs opp</span></span>
+        <span style="font-family:monospace;font-weight:700;color:${scoreClr}">${p.rate_disp||'—'}</span>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
+        <span style="font-size:.72rem;color:#64748b">Recent</span>
+        <span style="font-size:.78rem;color:#cbd5e1">${log.length?overCnt+'/'+log.length+' over':'—'}</span>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
+        <span style="font-size:.8rem;color:#4ade80;font-weight:900">OVER 1.5 Total Bases</span>
+        <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}</span>
+      </div>
+      <div style="margin-top:5px;display:flex;align-items:center;gap:5px"><span style="font-size:.6rem;color:#475569">day trend</span>${_dowChip('tb_over','OVER')}</div>
+      ${adminStats}
+    </div>
+  ${_betBtn(p,'TB Over','OVER','total_bases','Total Bases',1.5,p.tb_over_odds)}
+  </div>`;
+}
+
+function _tbOverForm(key){
+  var p=(key&&typeof key==='object')?key:(window.__TBO_REG__||{})[key]; if(!p) return;
+  var ov=document.getElementById('tb-over-modal');
+  if(!ov){
+    ov=document.createElement('div');
+    ov.id='tb-over-modal';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; };
+    document.body.appendChild(ov);
+  }
+  var log=p.recent_tb_log||[];
+  var rows=log.length?log.map(function(g){
+    var good=(g.tb>=2);
+    var clr=good?'#4ade80':'#ff8a65';
+    var oppTxt=g.opp?((g.ha==='H'?'vs ':'@ ')+g.opp):'';
+    return '<tr>'
+      +'<td style="padding:6px 10px;color:#94a3b8;font-family:monospace">'+(g.d||'\u2014')+'</td>'
+      +'<td style="padding:6px 10px;color:#cbd5e1;font-size:.8rem">'+oppTxt+'</td>'
+      +'<td style="padding:6px 10px;text-align:right;font-family:monospace;font-size:.8rem;color:#93c5fd">'+g.h+' H</td>'
+      +'<td style="padding:6px 10px;text-align:right;font-family:monospace;font-weight:800;color:'+clr+'">'+g.tb+' TB</td>'
+    +'</tr>';
+  }).join(''):'<tr><td colspan="4" style="padding:14px;color:#64748b;text-align:center">No recent games on record</td></tr>';
+  var name=p.name||'';
+  ov.innerHTML='<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:440px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid #1e293b">'
+      +'<div><div style="font-weight:800;font-size:1.05rem;color:#fff">'+name+'</div>'
+      +'<div style="color:#94a3b8;font-size:.78rem">'+(p.side||'')+' vs '+(p.opp||'')+' \u00b7 Over 1.5 Total Bases</div></div>'
+      +'<button onclick="document.getElementById(&#39;tb-over-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem">\u2715</button>'
+    +'</div>'
+    +'<div style="padding:16px 18px">'
+    +'<table style="width:100%;border-collapse:collapse">'
+    +'<thead><tr>'
+      +'<th style="text-align:left;padding:4px 10px;font-size:.7rem;color:#64748b;font-weight:600;border-bottom:1px solid #1e293b">Date</th>'
+      +'<th style="text-align:left;padding:4px 10px;font-size:.7rem;color:#64748b;font-weight:600;border-bottom:1px solid #1e293b">Opp</th>'
+      +'<th style="text-align:right;padding:4px 10px;font-size:.7rem;color:#64748b;font-weight:600;border-bottom:1px solid #1e293b">Hits</th>'
+      +'<th style="text-align:right;padding:4px 10px;font-size:.7rem;color:#64748b;font-weight:600;border-bottom:1px solid #1e293b">TB</th>'
+    +'</tr></thead><tbody>'+rows+'</tbody></table>'
+    +'</div></div>';
+  ov.style.display='flex';
+}
+
 function _tbForm(key){
   var p=(key&&typeof key==='object')?key:(window.__TB_REG__||{})[key]; if(!p) return;
   var ov=document.getElementById('tb-modal');
@@ -3956,11 +4094,12 @@ function renderTrackRecord(d){
     'Pitcher Earned Runs|OVER':  {lbl:'Earned Runs (Over)',         icon:'🔥', abbr:'ER+'},
     'Pitcher Earned Runs|UNDER': {lbl:'Earned Runs (Under)',        icon:'🔥', abbr:'ER-'},
     'TB Under|UNDER':            {lbl:'TB Under 1.5',               icon:'📊', abbr:'TB-'},
+    'TB Over|OVER':              {lbl:'TB Over 1.5',                icon:'📈', abbr:'TB+'},
     'RBI|OVER':                  {lbl:'RBI (Over 0.5)',             icon:'💥', abbr:'RBI+'},
     'RBI|UNDER':                 {lbl:'RBI (Under 0.5)',            icon:'💥', abbr:'RBI-'},
   };
   var CAT_ORDER=['Hitter Hits|OVER','Hitter Hits|UNDER','Runs|OVER','Runs|UNDER',
-    'TB Under|UNDER','RBI|OVER','RBI|UNDER',
+    'TB Under|UNDER','TB Over|OVER','RBI|OVER','RBI|UNDER',
     'Pitcher Ks|OVER','Pitcher Ks|UNDER','Pitcher Hits Allowed|OVER','Pitcher Hits Allowed|UNDER',
     'Pitcher Outs|OVER','Pitcher Outs|UNDER','Pitcher Earned Runs|OVER','Pitcher Earned Runs|UNDER'];
   function _rc(w,n){ if(!n) return '#64748b'; var p=w/n; return p>=0.70?'#4ade80':(p>=0.55?'#facc15':'#f87171'); }
@@ -4209,7 +4348,7 @@ function _updateCartBar(){
     return '<span style="display:inline-flex;align-items:center;gap:4px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);border-radius:6px;padding:3px 8px;font-size:.7rem;white-space:nowrap">'
       +'<span style="color:#e2e8f0;font-weight:700">'+_esc(l.player)+'</span>'
       +'<span style="color:#a5b4fc">'+_esc(l.dir+' '+l.line)+'</span>'
-      +'<button onclick="event.stopPropagation();_removeFromCart(\\''+l._key+'\\')" style="background:none;border:none;color:#f87171;cursor:pointer;font-size:.75rem;padding:0 1px;line-height:1">\u2715</button>'
+      +'<button onclick="event.stopPropagation();_removeFromCart(&#39;'+l._key+'&#39;)" style="background:none;border:none;color:#f87171;cursor:pointer;font-size:.75rem;padding:0 1px;line-height:1">\u2715</button>'
       +'</span>';
   }).join('');
   bar.innerHTML='<div style="display:flex;flex-wrap:wrap;gap:5px;align-items:center;flex:1;min-width:0">'
@@ -4653,7 +4792,7 @@ function renderMyBets(d){
           +'<span style="font-weight:700;color:'+_resColor(lr)+';min-width:46px;text-align:right">'+(lr==='pending'?'pend':lr)+at+'</span>'
           +'</div>';
       }).join('');
-      return '<tr onclick="var e=document.getElementById(\\''+lid+'\\');e.style.display=e.style.display===\\'none\\'?\\'table-row\\':\\'none\\'" style="cursor:pointer">'
+      return '<tr onclick="var e=document.getElementById(&#39;'+lid+'&#39;);e.style.display=e.style.display===&#39;none&#39;?&#39;table-row&#39;:&#39;none&#39;" style="cursor:pointer">'
         +'<td style="white-space:nowrap;color:#94a3b8;font-family:monospace;font-size:.76rem">'+(b.date||'')+'</td>'
         +'<td style="font-weight:700;color:#fbbf24">'+n+'-Leg Parlay <span style="font-size:.66rem;color:#475569;font-weight:400">&#9658; expand</span></td>'
         +'<td style="font-size:.78rem;color:#64748b">Combined</td>'
