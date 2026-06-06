@@ -4099,6 +4099,10 @@ function _pitcherCard(p, rank, keyPfx) {
     :(isOver?(p.over_odds!=null?(p.over_odds>0?'+':'')+p.over_odds:''):(p.under_odds!=null?(p.under_odds>0?'+':'')+p.under_odds:''));
   const conflict = p.avg_k!=null&&p.recent_avg_k!=null&&p.line!=null&&((p.avg_k>p.line)!==(p.recent_avg_k>p.line));
   const blDisp = p.blended_avg_k!=null?p.blended_avg_k+'K'+(conflict?' ⚠️':''):'—';
+  const pf = p.proj_factors||{};
+  const hasProj = p.proj_k!=null;
+  const projDisp = hasProj?(p.proj_k+'K'):'—';
+  const factTxt = hasProj?('Hand x'+(pf.hand!=null?pf.hand:1)+' · Whiff x'+(pf.whiff!=null?pf.whiff:1)+' · Rest x'+(pf.rest!=null?pf.rest:1)):'';
   var tkr=window.__TEAM_K_RANKS__||[];
   var tkRows=tkr.length?tkr.map(function(t){
     var hi=_teamMatchJS(t.name,p.opp||'');
@@ -4135,9 +4139,10 @@ function _pitcherCard(p, rank, keyPfx) {
         <span style="color:${pickClr};font-weight:900;font-size:1rem">${pickLabel}</span>
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:3px">
-        <span style="font-size:.72rem;color:#64748b">Blend ${blDisp}</span>
+        <span style="font-size:.72rem;color:#64748b">${hasProj?('Proj '+projDisp+' · blend '+blDisp):('Blend '+blDisp)}</span>
         <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.9rem">${odds||'—'}</span>
       </div>
+      ${hasProj?`<div style="margin-top:2px;font-size:.62rem;color:#475569">${factTxt}</div>`:''}
       <div style="margin-top:5px;font-size:.68rem;color:#94a3b8;line-height:1.6">K <strong style="color:#cbd5e1">${p.avg_k!=null?p.avg_k:'—'}</strong> · H <strong style="color:#cbd5e1">${p.avg_hits!=null?p.avg_hits:'—'}</strong> · ER <strong style="color:#cbd5e1">${p.avg_er!=null?p.avg_er:'—'}</strong> · Outs <strong style="color:#cbd5e1">${p.avg_outs!=null?p.avg_outs:'—'}</strong> · BB <strong style="color:#cbd5e1">${p.avg_bb!=null?p.avg_bb:'—'}</strong> · IP <strong style="color:#cbd5e1">${p.avg_ip!=null?p.avg_ip:'—'}</strong> · ERA <strong style="color:#cbd5e1">${p.era||'—'}</strong> <span style="color:#64748b">vr opp</span></div>
       <div style="margin-top:5px;display:flex;align-items:center;justify-content:space-between"><span style="display:flex;align-items:center;gap:5px"><span style="font-size:.6rem;color:#475569">day trend</span>${_dowChip('k',p.pick)}</span><span style="font-size:.66rem;color:#63cab7">all 5 markets →</span></div>
     </div>
