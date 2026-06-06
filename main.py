@@ -3923,14 +3923,14 @@ function _top10Card(p, rank) {
   var ev = p._t10ev!=null?(p._t10ev>0?'+':'')+p._t10ev.toFixed(3):'—';
   var key = 't10r'+rank;
   window.__T10_REG__=window.__T10_REG__||{}; window.__T10_REG__[key]={p:p,kind:kind};
-  return '<div class="mlb-pick-card" onclick="_top10Form(\''+key+'\')" title="Click for recent form" style="cursor:pointer">'
+  return '<div class="mlb-pick-card" onclick="_top10Form(\\''+key+'\\')" title="Click for recent form" style="cursor:pointer">'
     +'<div class="mlb-card-header" style="background:linear-gradient(135deg,#2d2600 0%,#0f0e00 100%)">'
       +'<div style="display:flex;align-items:center;gap:8px">'
         +'<div style="width:30px;height:30px;border-radius:50%;background:'+rnkColors[0]+';color:'+rnkColors[1]+';display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">'+rank+'</div>'
         +(p.batter_id?_mlbHead(p.batter_id):'')
         +'<span style="font-size:.66rem;letter-spacing:.1em;background:'+kc+';color:#000;padding:2px 6px;border-radius:4px;font-weight:900">'+_t10KindBadge(kind)+'</span>'
       +'</div>'
-      +(teamLogo?'<img src="'+teamLogo+'" alt="'+(p.team||'')+'" style="height:34px;width:34px;object-fit:contain" onerror="this.style.display=\'none\'"/>':'')
+      +(teamLogo?'<img src="'+teamLogo+'" alt="'+(p.team||'')+'" style="height:34px;width:34px;object-fit:contain" onerror="this.style.display=\\'none\\'"/>':'')
     +'</div>'
     +'<div class="mlb-card-name">'+(p.name||p.full_name||'')+'</div>'
     +'<div class="mlb-card-body">'
