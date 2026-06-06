@@ -2058,15 +2058,15 @@ function showResults(result) {
     const pkOvers=pkSorted.filter(p=>p.pick==='OVER');
     const pkUnders=pkSorted.filter(p=>p.pick==='UNDER');
     window.__PK_REG__={};
-    const _renderKSec=function(arr,bodyId,moreId,themeClr,label){
+    const _renderKSec=function(arr,bodyId,moreId,themeClr,label,kpfx){
       var el=document.getElementById(bodyId);
-      if(el) el.innerHTML=arr.length>0?arr.slice(0,10).map((p,_i)=>_pitcherCard(p,_i+1)).join('')
+      if(el) el.innerHTML=arr.length>0?arr.slice(0,10).map((p,_i)=>_pitcherCard(p,_i+1,kpfx)).join('')
         :'<p class="text-slate-500 text-center" style="padding:16px">No '+label+' today</p>';
       var me=document.getElementById(moreId);
-      if(me) me.innerHTML=arr.length>10?'<details style="margin-top:10px"><summary class="more-btn" style="color:'+themeClr+';border-color:'+themeClr+'33">&#9655; '+(arr.length-10)+' more</summary><div class="mlb-picks-grid mt-3">'+arr.slice(10).map((p,_i)=>_pitcherCard(p,10+_i+1)).join('')+'</div></details>':'';
+      if(me) me.innerHTML=arr.length>10?'<details style="margin-top:10px"><summary class="more-btn" style="color:'+themeClr+';border-color:'+themeClr+'33">&#9655; '+(arr.length-10)+' more</summary><div class="mlb-picks-grid mt-3">'+arr.slice(10).map((p,_i)=>_pitcherCard(p,10+_i+1,kpfx)).join('')+'</div></details>':'';
     };
-    _renderKSec(pkOvers,'pitcher-k-over-body','pitcher-k-over-more','#63cab7','K Overs');
-    _renderKSec(pkUnders,'pitcher-k-under-body','pitcher-k-under-more','#ff8a65','K Unders');
+    _renderKSec(pkOvers,'pitcher-k-over-body','pitcher-k-over-more','#63cab7','K Overs','pk');
+    _renderKSec(pkUnders,'pitcher-k-under-body','pitcher-k-under-more','#ff8a65','K Unders','pu');
     // All Today's Pitchers cards — ranked by avg K desc
     const pkAllSorted=[...pkAll].sort((a,b)=>{
       const ka=a.blended_avg_k!=null?a.blended_avg_k:(a.avg_k||0);
