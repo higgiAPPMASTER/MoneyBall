@@ -22,6 +22,15 @@ MIN_IP_START     = 3.0
 K_SEASONS        = [2021, 2022, 2023, 2024, 2025, 2026]
 SEASON           = "2026"
 BOTTOM_K_TEAMS_N = 0  # disabled — show all teams
+MIN_K_EDGE       = 1.0  # blend must beat the line by ≥1 K or pick is dropped
+LEAGUE_AVG_K_PER_GAME = 16.5   # 2024-2026 MLB avg Ks per game (both teams combined)
+_UMP_K_CACHE: dict = {}         # {ump_name: ump_dict | None} — season-level cache
+# ── Projection-model edges (handedness K% + whiff% + rest) ──────────────────
+LEAGUE_K_PCT   = 0.222   # MLB avg strikeout rate (SO / PA), 2024-2025
+LEAGUE_WHIFF   = 24.5    # MLB avg whiff% (whiffs / swings), Baseball Savant
+_WHIFF_CACHE: dict = {}        # {year: {player_id: whiff_pct}}
+_PITCH_HAND_CACHE: dict = {}   # {pitcher_id: "R"/"L"}
+_OPP_KPCT_CACHE: dict = {}     # {(opp_id, hand, season): k_pct}
 
 # ── Pitcher prop O/U categories (real Odds API markets, parallel to K) ─────
 # Each is a true Over/Under betting line that feeds the parlay builder.
@@ -382,6 +391,7 @@ def _get_recent_k_form(pitcher_id: int, n: int = 5) -> dict:
         "recent_k_list": k_list,
         "recent_starts": len(k_list),
         "recent_k_log": k_log,
+        "last_start_date": (recent[-1].get("date") or "") if recent else "",
         "recent_avg_hits": round(sum(h_list) / len(h_list), 1) if h_list else None,
         "recent_hits_list": h_list,
         "recent_avg_er": round(sum(er_list) / len(er_list), 1) if er_list else None,
@@ -484,6 +494,180 @@ def _fetch_probable_starters(run_date: str) -> list:
         return starters
     except Exception:
         return []
+
+
+def _fetch_game_umps(run_date: str) -> dict:
+    """Return {(norm_home, norm_away): ump_name} for today's games via MLB officials hydration."""
+    try:
+        r = requests.get(
+            f"{MLB_API}/schedule",
+            params={"sportId": 1, "date": run_date,
+                    "hydrate": "team,officials", "gameType": "R"},
+            timeout=12)
+        result = {}
+        for d in r.json().get("dates", []):
+            for game in d.get("games", []):
+                officials = game.get("officials", [])
+                hp = next((o.get("official", {}).get("fullName", "")
+                           for o in officials if o.get("officialType") == "Home Plate"), None)
+                if hp:
+                    home = _normalize(game.get("teams", {}).get("home", {}).get("team", {}).get("name", ""))
+                    away = _normalize(game.get("teams", {}).get("away", {}).get("team", {}).get("name", ""))
+                    result[(home, away)] = hp
+        return result
+    except Exception:
+        return {}
+
+
+def _fetch_ump_stats(ump_name: str) -> dict | None:
+    """Fetch ump K-rate from umpscorecards.com; return chip dict or None on failure."""
+    try:
+        import datetime
+        year = str(datetime.date.today().year)
+        r = requests.get("https://umpscorecards.com/api/umpires/",
+                         params={"year": year}, timeout=8)
+        data = r.json()
+        items = data if isinstance(data, list) else (data.get("umpires") or data.get("data") or [])
+        norm_target = _normalize(ump_name)
+        for u in items:
+            uname = u.get("name") or u.get("umpire_name") or u.get("fullName") or ""
+            if _normalize(uname) != norm_target:
+                continue
+            games   = int(u.get("games") or u.get("game_count") or 0)
+            k_total = float(u.get("total_strikeouts") or u.get("strikeouts")
+                            or u.get("k_total") or u.get("totalStrikeouts") or 0)
+            k_pg    = float(u.get("k_per_game") or u.get("kPerGame") or 0) or (
+                      round(k_total / games, 2) if games else 0)
+            if not k_pg:
+                continue
+            factor = round(k_pg / LEAGUE_AVG_K_PER_GAME, 3)
+            zone   = "WIDE" if factor >= 1.03 else ("TIGHT" if factor <= 0.97 else "NORMAL")
+            zone_lbl = {"WIDE": "Wide Zone", "TIGHT": "Tight Zone", "NORMAL": "Normal Zone"}[zone]
+            return {"name": ump_name, "summary": f"{ump_name} \u00b7 {zone_lbl}",
+                    "zone": zone, "games": games, "k_per_game": k_pg, "kFactor": factor}
+        return None
+    except Exception:
+        return None
+
+
+def _get_pitch_hand(pitcher_id: int) -> str:
+    """Pitcher's throwing hand ('R'/'L'), cached. Defaults 'R' on failure."""
+    if pitcher_id in _PITCH_HAND_CACHE:
+        return _PITCH_HAND_CACHE[pitcher_id]
+    hand = "R"
+    try:
+        r = requests.get(f"{MLB_API}/people", params={"personIds": pitcher_id}, timeout=8)
+        hand = ((r.json().get("people", [{}]) or [{}])[0].get("pitchHand", {}) or {}).get("code", "R") or "R"
+    except Exception:
+        pass
+    _PITCH_HAND_CACHE[pitcher_id] = hand
+    return hand
+
+
+def _get_opp_k_pct_vs_hand(opp_name: str, hand: str, season) -> float | None:
+    """Opponent team's strikeout rate (SO/PA) vs the pitcher's hand. Cached."""
+    opp_id = _get_team_id(opp_name)
+    if not opp_id:
+        return None
+    key = (opp_id, hand, str(season))
+    if key in _OPP_KPCT_CACHE:
+        return _OPP_KPCT_CACHE[key]
+    code = "vl" if hand == "L" else "vr"
+    val = None
+    try:
+        r = requests.get(f"{MLB_API}/teams/{opp_id}/stats",
+            params={"stats": "statSplits", "sitCodes": code, "group": "hitting",
+                    "season": str(season), "gameType": "R"}, timeout=10)
+        for s in r.json().get("stats", []):
+            for sp in s.get("splits", []):
+                st = sp.get("stat", {})
+                pa = int(st.get("plateAppearances", 0) or 0)
+                so = int(st.get("strikeOuts", 0) or 0)
+                if pa:
+                    val = round(so / pa, 3)
+    except Exception:
+        pass
+    _OPP_KPCT_CACHE[key] = val
+    return val
+
+
+def _fetch_whiff_map(year: str) -> dict:
+    """Bulk-fetch every pitcher's whiff% from Baseball Savant once per year. Cached.
+    Savant throttles rapid requests with an EMPTY 200 body, so retry once on empty.
+    Only caches a NON-empty result — an empty fetch stays uncached so a later
+    pitcher eval can re-try rather than serving a permanently blank map."""
+    if _WHIFF_CACHE.get(year):
+        return _WHIFF_CACHE[year]
+    import csv, io
+    hdrs = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"}
+    out = {}
+    for _attempt in range(2):
+        try:
+            r = requests.get("https://baseballsavant.mlb.com/leaderboard/custom",
+                params={"year": str(year), "type": "pitcher", "filter": "", "min": "10",
+                        "selections": "whiff_percent", "csv": "true"},
+                headers=hdrs, timeout=15)
+            for row in csv.DictReader(io.StringIO(r.text)):
+                try:
+                    pid = int(row.get("player_id") or 0)
+                    wp = row.get("whiff_percent")
+                    if pid and wp not in (None, ""):
+                        out[pid] = float(wp)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        if out:
+            break
+        time.sleep(1.0)
+    if out:
+        _WHIFF_CACHE[year] = out
+    return out
+
+
+def _whiff_lookup(pitcher_id: int) -> float | None:
+    """This pitcher's whiff% — current season, falling back to prior year."""
+    cur = _WHIFF_CACHE.get(SEASON, {})
+    if pitcher_id in cur:
+        return cur[pitcher_id]
+    prev = _WHIFF_CACHE.get(str(int(SEASON) - 1), {})
+    return prev.get(pitcher_id)
+
+
+def _days_rest(last_date: str, run_date: str) -> int | None:
+    """Days between the pitcher's last start and tonight's game."""
+    try:
+        import datetime
+        d1 = datetime.date.fromisoformat(last_date[:10])
+        d2 = datetime.date.fromisoformat(run_date[:10])
+        diff = (d2 - d1).days
+        return diff if diff >= 0 else None
+    except Exception:
+        return None
+
+
+def _project_k(blended_avg, opp_k_pct, whiff_pct, days_rest):
+    """Opponent-adjusted K projection: blend × handedness × whiff × rest factors.
+    Each factor is clamped so a single thin signal can't swing the pick wildly."""
+    if blended_avg is None:
+        return None, {}
+    hand_f = 1.0
+    if opp_k_pct:
+        hand_f = max(0.85, min(1.15, opp_k_pct / LEAGUE_K_PCT))
+    whiff_f = 1.0
+    if whiff_pct:
+        whiff_f = max(0.90, min(1.12, 1 + (whiff_pct - LEAGUE_WHIFF) * 0.008))
+    rest_f = 1.0
+    if days_rest is not None:
+        if days_rest >= 6:
+            rest_f = 1.03
+        elif days_rest <= 3:
+            rest_f = 0.97
+    proj = round(blended_avg * hand_f * whiff_f * rest_f, 1)
+    factors = {"hand": round(hand_f, 3), "whiff": round(whiff_f, 3), "rest": round(rest_f, 3),
+               "opp_k_pct": opp_k_pct, "whiff_pct": whiff_pct, "days_rest": days_rest}
+    return proj, factors
 
 
 def _blend(career_avg, recent_avg, recent_n):
@@ -639,10 +823,11 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
         recent_k_list = rf["recent_k_list"]
         recent_starts = rf["recent_starts"]
 
-        # Blended average: 50/50 career H/A vs opp + recent form
+        # Blended average: 60% recent form + 40% career H/A vs opp.
+        # Recent stuff/form is more predictive of Ks than a thin career-vs-team sample.
         if avg_k is not None and recent_avg_k is not None:
-            blended_avg = round((avg_k + recent_avg_k) / 2, 1)
-            blend_src   = f"career {avg_k} · L{recent_starts} {recent_avg_k}"
+            blended_avg = round(avg_k * 0.4 + recent_avg_k * 0.6, 1)
+            blend_src   = f"career {avg_k} · L{recent_starts} {recent_avg_k} (60/40 recent)"
         elif avg_k is not None:
             blended_avg = avg_k
             blend_src   = f"career {avg_k} only"
@@ -653,30 +838,50 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
             blended_avg = None
             blend_src   = "no data"
 
+        # ── Opponent-adjusted projection: handedness K% + whiff% + days rest ──
+        pit_hand  = _get_pitch_hand(pid) if blended_avg is not None else "R"
+        opp_k_pct = _get_opp_k_pct_vs_hand(opp, pit_hand, SEASON) if blended_avg is not None else None
+        whiff_pct = _whiff_lookup(pid)
+        d_rest    = _days_rest(rf.get("last_start_date", ""), run_date)
+        proj_k, proj_factors = _project_k(blended_avg, opp_k_pct, whiff_pct, d_rest)
+        # The pick decides off the PROJECTION (falls back to blend if no factors).
+        decision_val = proj_k if proj_k is not None else blended_avg
+        if proj_factors:
+            blend_src += (f" → proj {proj_k} [hand×{proj_factors['hand']}"
+                          f" whiff×{proj_factors['whiff']} rest×{proj_factors['rest']}]")
+
         sugg_line, sugg_odds = None, None
-        if blended_avg is None:
+        if decision_val is None:
             pick, pick_note = None, f"N/A — {starts} starts vs {opp}, no recent data"
-        elif blended_avg > line:
-            pick, pick_note = "OVER",  f"blend {blended_avg} > line {line} ({blend_src})"
-            logs.append(f"    ✅ OVER blend {blended_avg} > {line} ({blend_src})")
-        elif blended_avg < line:
-            pick, pick_note = "UNDER", f"blend {blended_avg} < line {line} ({blend_src})"
-            logs.append(f"    ✅ UNDER blend {blended_avg} < {line} ({blend_src})")
+        elif abs(decision_val - line) < MIN_K_EDGE:
+            pick, pick_note = None, f"edge too thin (proj {decision_val} vs line {line}, need ≥{MIN_K_EDGE}K edge — {blend_src})"
+            logs.append(f"    ⚠️ skip thin edge {decision_val} vs {line} ({blend_src})")
+        elif decision_val > line:
+            pick, pick_note = "OVER",  f"proj {decision_val} > line {line} ({blend_src})"
+            logs.append(f"    ✅ OVER proj {decision_val} > {line} ({blend_src})")
+        elif decision_val < line:
+            pick, pick_note = "UNDER", f"proj {decision_val} < line {line} ({blend_src})"
+            logs.append(f"    ✅ UNDER proj {decision_val} < {line} ({blend_src})")
         else:
-            # blended exactly on line → try alt line from career k_list floor
+            # projection exactly on line → try alt line from career k_list floor
             sugg_line = (min(k_list) - 0.5) if k_list else None
             k_ladder  = pl.get("over_ladder") or {}
             sugg_odds = k_ladder.get(sugg_line) if sugg_line is not None else None
             if sugg_line is not None and sugg_line < line:
                 pick = "OVER"
-                pick_note = (f"blend {blended_avg} on line {line} → floor OVER {sugg_line} ({blend_src})")
-                logs.append(f"    ✅ OVER {sugg_line} (alt) blend on line")
+                pick_note = (f"proj {decision_val} on line {line} → floor OVER {sugg_line} ({blend_src})")
+                logs.append(f"    ✅ OVER {sugg_line} (alt) proj on line")
             else:
-                pick, pick_note = None, f"blend {blended_avg} exactly on line"
+                pick, pick_note = None, f"proj {decision_val} exactly on line"
                 sugg_line, sugg_odds = None, None
 
         hits_over = sum(1 for k in k_list if k > line) if k_list else 0
         k_hit_rate = f"{hits_over}/{starts}" if starts else "—"
+        _ump_data = None
+        for (_nh, _na), _uname in game_ump_map.items():
+            if _teams_match(_nh, pitcher_team) or _teams_match(_na, pitcher_team):
+                _ump_data = _UMP_K_CACHE.get(_uname)
+                break
         return ({"name": name, "team": pitcher_team, "opp": opp, "side": side,
                  "line": line, "over_odds": pl.get("over_odds"),
                  "under_odds": pl.get("under_odds"), "avg_k": avg_k,
@@ -695,9 +900,13 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                  "recent_avg_k": recent_avg_k, "recent_k_list": recent_k_list,
                  "recent_starts": recent_starts, "recent_k_log": rf["recent_k_log"],
                  "blended_avg_k": blended_avg, "blend_src": blend_src,
+                 "proj_k": proj_k, "proj_factors": proj_factors,
+                 "pit_hand": pit_hand, "days_rest": d_rest,
+                 "whiff_pct": whiff_pct, "opp_k_pct_hand": opp_k_pct,
                  "opp_k_rank": opp_k_rank, "opp_k_pg": opp_k_pg, "opp_k_total": opp_k_total,
                  "pid": pid,
                  "props": _build_prop_picks(name, pitcher_team, opp, side, hist, rf, pid),
+                 "ump": _ump_data,
                  "pick": pick, "pick_note": pick_note}), logs
 
     # Today's probable starters — used to map each pitcher to his big-league club
@@ -705,6 +914,18 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
     # below for no-K-line starters (avoids a second schedule API call).
     prob_starters = _fetch_probable_starters(run_date)
     prob_team_map = {_normalize(s["name"]): s["team"] for s in prob_starters if s.get("team")}
+
+    # Pre-load whiff% leaderboards once (current season + prior-year fallback).
+    _fetch_whiff_map(SEASON)
+    _fetch_whiff_map(str(int(SEASON) - 1))
+
+    # Fetch HP umpires for tonight's games; pre-load K-rate stats per ump.
+    game_ump_map = _fetch_game_umps(run_date)
+    for _uname in set(game_ump_map.values()):
+        if _uname not in _UMP_K_CACHE:
+            _UMP_K_CACHE[_uname] = _fetch_ump_stats(_uname)
+    emit({"type": "log", "msg": f"  ⚖️ Umpires: {len(game_ump_map)} games · "
+          + ", ".join(f"{v} ({'W' if (_UMP_K_CACHE.get(v) or {}).get('zone')=='WIDE' else 'T' if (_UMP_K_CACHE.get(v) or {}).get('zone')=='TIGHT' else 'N'})" for v in set(game_ump_map.values()))})
 
     with ThreadPoolExecutor(max_workers=8) as _ex:
         _futs = [_ex.submit(_eval_pitcher, pl) for pl in all_lines]
@@ -733,6 +954,10 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
             k_history2 = ", ".join(str(k) for k in k_list2) if k_list2 else "—"
             rf2 = _get_recent_k_form(pid2) if pid2 else {"recent_avg_k": None, "recent_k_list": [], "recent_starts": 0, "recent_k_log": []}
             _opp_kr2 = next((v for k, v in TEAM_K_RANKS.items() if _teams_match(k, st["opp"])), None)
+            _hand2  = _get_pitch_hand(pid2) if pid2 else "R"
+            _whiff2 = _whiff_lookup(pid2) if pid2 else None
+            _rest2  = _days_rest(rf2.get("last_start_date", ""), run_date)
+            _oppkp2 = _get_opp_k_pct_vs_hand(st["opp"], _hand2, SEASON) if pid2 else None
             return {
                 "name": st["name"], "team": st["team"], "opp": st["opp"],
                 "side": st["side"], "line": None,
@@ -751,6 +976,9 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                 "recent_avg_k": rf2["recent_avg_k"], "recent_k_list": rf2["recent_k_list"],
                 "recent_starts": rf2["recent_starts"], "recent_k_log": rf2["recent_k_log"],
                 "blended_avg_k": None, "blend_src": None,
+                "proj_k": None, "proj_factors": {},
+                "pit_hand": _hand2, "days_rest": _rest2,
+                "whiff_pct": _whiff2, "opp_k_pct_hand": _oppkp2,
                 "opp_k_rank": _opp_kr2["rank"]    if _opp_kr2 else None,
                 "opp_k_pg":   _opp_kr2["k_per_g"] if _opp_kr2 else None,
                 "opp_k_total": _opp_kr2["total"]  if _opp_kr2 else None,
@@ -759,6 +987,8 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                 # build their prop picks too so the parlay pool is as deep as possible.
                 "props": _build_prop_picks(st["name"], st["team"], st["opp"], st["side"], hist2, rf2, pid2),
                 "pick": None, "pick_note": "No K line posted today",
+                "ump": next((_UMP_K_CACHE.get(un) for (nh, na), un in game_ump_map.items()
+                             if _teams_match(nh, st["team"]) or _teams_match(na, st["team"])), None),
             }
 
         with ThreadPoolExecutor(max_workers=8) as _ex:
