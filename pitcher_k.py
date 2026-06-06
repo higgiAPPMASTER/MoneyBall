@@ -22,7 +22,7 @@ MIN_IP_START     = 3.0
 K_SEASONS        = [2021, 2022, 2023, 2024, 2025, 2026]
 SEASON           = "2026"
 BOTTOM_K_TEAMS_N = 0  # disabled — show all teams
-MIN_K_EDGE       = 1.0  # blend must beat the line by ≥1 K or pick is dropped
+MIN_K_EDGE       = 0.5  # projection must beat the line by ≥0.5 K or pick is dropped
 LEAGUE_AVG_K_PER_GAME = 16.5   # 2024-2026 MLB avg Ks per game (both teams combined)
 _UMP_K_CACHE: dict = {}         # {ump_name: ump_dict | None} — season-level cache
 # ── Projection-model edges (handedness K% + whiff% + rest) ──────────────────
