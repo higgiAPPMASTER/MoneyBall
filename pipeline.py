@@ -257,6 +257,90 @@ def _wilson_lb(hits: int, games: int, z: float = 1.96) -> float:
     return (centre - margin) / den
 
 
+# ── Matchup-value (Log5 + EV) helpers ──────────────────────────────────────
+# Blend a batter's season hit ability with the OPPOSING pitcher's hits-allowed
+# level (Log5), convert to P(1+ hit), and compare to the posted "to record a
+# hit" price to surface +EV value. Frontend uses ev/edge for the green badge,
+# the value re-rank (default), and the +EV-only toggle.
+_BATTER_RATE_CACHE = {}
+_PITCHER_BAA_CACHE = {}
+
+
+def _ml_implied(am):
+    """Implied probability from American odds."""
+    try:
+        am = float(am)
+    except Exception:
+        return None
+    return (-am) / ((-am) + 100.0) if am < 0 else 100.0 / (am + 100.0)
+
+
+def _ml_ev(p, am):
+    """Expected value per 1u stake at American odds `am` given win prob `p`."""
+    try:
+        am = float(am)
+    except Exception:
+        return None
+    dec = 1.0 + (100.0 / (-am)) if am < 0 else 1.0 + (am / 100.0)
+    return p * (dec - 1.0) - (1.0 - p)
+
+
+def _log5(B, P, Lg):
+    """Log5 matchup-adjusted batting average (Bill James)."""
+    try:
+        n = B * P / Lg
+        d = n + ((1 - B) * (1 - P) / (1 - Lg))
+        return n / d if d > 0 else B
+    except Exception:
+        return B
+
+
+def _get_batter_season_rate(pid, season):
+    """Season BA + expected AB/game for a batter, cached. Returns dict or None."""
+    key = (pid, season)
+    if key in _BATTER_RATE_CACHE:
+        return _BATTER_RATE_CACHE[key]
+    out = None
+    try:
+        r = requests.get(
+            f"https://statsapi.mlb.com/api/v1/people/{pid}/stats",
+            params={"stats": "season", "season": season, "group": "hitting"},
+            timeout=12,
+        )
+        st = r.json()["stats"][0]["splits"][0]["stat"]
+        ba = float(st.get("avg") or 0)
+        ab = int(st.get("atBats") or 0)
+        g = int(st.get("gamesPlayed") or 0)
+        est_ab = round(ab / g, 2) if g > 0 else 3.9
+        if ba > 0:
+            out = {"ba": ba, "est_ab": est_ab}
+    except Exception:
+        out = None
+    _BATTER_RATE_CACHE[key] = out
+    return out
+
+
+def _get_pitcher_baa(pid, season):
+    """Opposing pitcher's batting-average-against (season), cached. float or None."""
+    key = (pid, season)
+    if key in _PITCHER_BAA_CACHE:
+        return _PITCHER_BAA_CACHE[key]
+    baa = None
+    try:
+        r = requests.get(
+            f"https://statsapi.mlb.com/api/v1/people/{pid}/stats",
+            params={"stats": "season", "season": season, "group": "pitching"},
+            timeout=12,
+        )
+        v = r.json()["stats"][0]["splits"][0]["stat"].get("avg")
+        if v not in (None, "-", ".---", ""):
+            baa = float(v)
+    except Exception:
+        baa = None
+    _PITCHER_BAA_CACHE[key] = baa
+    return baa
+
+
 def _fetch_bullpen_fatigue(run_date: str) -> dict:
     """
     Returns {team_full_name: {"bp_ip": float, "games": int, "taxed": bool}}
@@ -758,6 +842,69 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         emit({"type": "log", "msg": f"  ✅ Hit odds matched for {sum(1 for p in top9+also_ran if p.get('hit_odds') is not None)}/{len(top9)+len(also_ran)} picks"})
     except Exception as _exc:
         emit({"type": "log", "msg": f"⚠️ Hit odds enrichment skipped: {_exc}"})
+
+    # ── Matchup-value (Log5 + EV) enrichment for hit picks ──────────────
+    # Adds matchup_prob / season_ba / proj_baa / impl_prob / ev / edge to every
+    # hit pick. Frontend re-ranks by ev (default keeps ALL plays) + shows a green
+    # edge badge, with a "+EV only" toggle. No play is dropped server-side.
+    try:
+        _SEASON_YR = str(run_date)[:4]
+        _LG_BA = 0.244
+        _pid_map = {tn: pi.get("id") for tn, pi in mlb_probable.items() if pi.get("id")}
+        _stopw = {"the", "of", "los", "san", "new", "de"}
+
+        def _opp_pid(opp):
+            ol = (opp or "").lower()
+            if not ol:
+                return None
+            for tn, pid in _pid_map.items():
+                if tn.lower() == ol:
+                    return pid
+            for tn, pid in _pid_map.items():
+                if (set(tn.lower().split()) - _stopw) & (set(ol.split()) - _stopw):
+                    return pid
+            return None
+
+        _ev_pool = list(top9) + list(also_ran)
+        _bids = {p.get("player_id") for p in _ev_pool if p.get("player_id")}
+        _opids = {x for x in (_opp_pid(p.get("opp", "")) for p in _ev_pool) if x}
+        with _TPEx(max_workers=8) as _ex:
+            list(_ex.map(lambda i: _get_batter_season_rate(i, _SEASON_YR), _bids))
+        with _TPEx(max_workers=8) as _ex:
+            list(_ex.map(lambda i: _get_pitcher_baa(i, _SEASON_YR), _opids))
+
+        _ev_n = 0
+        for _p in _ev_pool:
+            _p["matchup_prob"] = None
+            _p["ev"] = None
+            _p["edge"] = None
+            _p["impl_prob"] = None
+            _p["proj_baa"] = None
+            _br = _get_batter_season_rate(_p.get("player_id"), _SEASON_YR)
+            if not _br:
+                continue
+            _opid = _opp_pid(_p.get("opp", ""))
+            _baa = _get_pitcher_baa(_opid, _SEASON_YR) if _opid else None
+            _ba, _est_ab = _br["ba"], _br["est_ab"]
+            _adj = _log5(_ba, _baa, _LG_BA) if _baa else _ba
+            _mp = 1.0 - (1.0 - _adj) ** _est_ab
+            _p["matchup_prob"] = round(_mp, 4)
+            _p["season_ba"] = round(_ba, 3)
+            _p["est_ab"] = _est_ab
+            if _baa:
+                _p["proj_baa"] = round(_baa, 3)
+            _am = _p.get("hit_odds")
+            if _am is not None:
+                _imp = _ml_implied(_am)
+                _e = _ml_ev(_mp, _am)
+                _p["impl_prob"] = round(_imp, 4) if _imp is not None else None
+                _p["ev"] = round(_e, 4) if _e is not None else None
+                _p["edge"] = round(_mp - _imp, 4) if _imp is not None else None
+                _ev_n += 1
+        emit({"type": "log", "msg": f"  ✅ Matchup EV computed for {_ev_n}/{len(_ev_pool)} hit picks"})
+    except Exception as _exc:
+        emit({"type": "log", "msg": f"⚠️ Matchup EV enrichment skipped: {_exc}"})
+
     # Inject team + first-pitch time into each under pick (reverse-lookup from team_schedule)
     for _up in under_picks_list:
         _side, _opp = _up.get("side", ""), _up.get("opp", "")
@@ -842,12 +989,22 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     for _xp in rbi_picks_list:
         _xp["game_start"] = _game_start_for(_xp.get("team", ""))
 
+    # ── HRR Picks (Hits+Runs+RBI Over 1.5) ────────────────────────────────
+    try:
+        from under_picks import run_hrr_picks
+        hrr_picks_list = run_hrr_picks(run_date, team_schedule, emit=emit)
+    except Exception as exc:
+        emit({"type": "log", "msg": f"⚠️ HRR picks skipped: {exc}"})
+        hrr_picks_list = []
+    for _hp in hrr_picks_list:
+        _hp["game_start"] = _game_start_for(_hp.get("team", ""))
+
     # ── Game-environment re-ranking inputs (weather + home-plate umpire) ──
     # Build the shared target list ONCE; ballpark/weather and umpire each stamp
     # onto it (Phase A), then a single combined Phase B re-ranks every category
     # (reorder only — qualification gates are never touched, so the same picks
     # appear, just in a different order). Either factor missing -> neutral 1.0.
-    _rr_targets = list(top9) + list(also_ran) + list(under_picks_list) + list(runs_picks_list) + list(tb_picks_list) + list(tb_over_picks_list) + list(rbi_picks_list)
+    _rr_targets = list(top9) + list(also_ran) + list(under_picks_list) + list(runs_picks_list) + list(tb_picks_list) + list(tb_over_picks_list) + list(rbi_picks_list) + list(hrr_picks_list)
     _rr_targets += pitcher_k_result.get("picks", []) + pitcher_k_result.get("all", [])
     for _b in pitcher_props.values():
         _rr_targets += _b.get("picks", []) + _b.get("all", [])
@@ -1025,7 +1182,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     elapsed = round(time.time() - t_start, 1)
     result = {
         "date": run_date, "top9": top9, "also_ran": also_ran,
-        "under_picks": under_picks_list, "runs_picks": runs_picks_list, "tb_picks": tb_picks_list, "tb_over_picks": tb_over_picks_list, "rbi_picks": rbi_picks_list,
+        "under_picks": under_picks_list, "runs_picks": runs_picks_list, "tb_picks": tb_picks_list, "tb_over_picks": tb_over_picks_list, "rbi_picks": rbi_picks_list, "hrr_picks": hrr_picks_list,
         "all_qualified": era_qualified,
         "dq_s1_s3": [x for x in results if x["dq"] and x not in dn_dq and x not in era_dq and x not in dq_lineup and x not in s4_dq],
         "dq_step4": dn_dq, "dq_step5": era_dq, "dq_lineup": dq_lineup, "dq_s4": s4_dq, "pitcher_k": pitcher_k_result,
@@ -1037,6 +1194,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                   "tb_count": len(tb_picks_list),
                   "tb_over_count": len(tb_over_picks_list),
                   "rbi_count": len(rbi_picks_list),
+                  "hrr_count": len(hrr_picks_list),
                   "pitcher_k_count": len(pitcher_k_result.get("picks", [])),
                   "prop_counts": {m: len(b.get("picks", [])) for m, b in pitcher_props.items()},
                   "has_tbd": slate_has_tbd(run_date)},
