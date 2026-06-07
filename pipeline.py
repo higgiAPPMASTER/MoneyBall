@@ -12,6 +12,123 @@ from fic_cache        import get_step1_players_or_scrape, slate_has_tbd
 from mlb_roster       import build_player_roster
 from mlb_stats_splits import fetch_step2_ba, fetch_step3_ba, prefetch_game_logs
 
+# ── BvP pitch-type matchup ────────────────────────────────────────────────
+# For each opposing pitcher: load their pitch-usage % from Statcast.
+# For each hitter: load their wOBA vs each pitch type from Statcast.
+# Compute a weighted wOBA (weighted by pitcher's usage %) → ranking nudge.
+# All data is season-level (cached once per run); silently skipped on Savant
+# throttle so no picks are lost when the endpoint returns an empty 200.
+
+_PITCH_TYPES    = ["FF", "SL", "SI", "CH", "CU", "FC", "FS", "ST"]
+_ARSENAL_CACHE: dict = {}   # pitcher_id (int) -> {pitch_type: usage_pct}
+_BATTER_PITCH_CACHE: dict = {}  # batter_id (int) -> {pitch_type: woba}
+_PITCH_LOADED:  set  = set()   # years already fetched
+
+_SAVANT_HDRS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"
+}
+
+def _fetch_one_pt(args):
+    """Fetch one (pitch_type, player_type, year) combination from Savant."""
+    import csv, io
+    pt, ptype, year = args
+    try:
+        r = requests.get(
+            "https://baseballsavant.mlb.com/leaderboard/pitch-arsenal-stats",
+            params={"type": ptype, "pitchType": pt, "year": str(year),
+                    "position": "", "team": "", "min": "1",
+                    "stat": "p_run_exp", "sort": "1", "sortDir": "desc", "csv": "true"},
+            headers=_SAVANT_HDRS, timeout=15)
+        txt = r.text.strip()
+        if not txt or txt.startswith("<"):
+            return  # throttled / HTML error
+        for row in csv.DictReader(io.StringIO(txt)):
+            try:
+                pid = int(row.get("player_id") or 0)
+                if not pid:
+                    continue
+                if ptype == "pitcher":
+                    pct = float(row.get("pitch_percent") or 0)
+                    _ARSENAL_CACHE.setdefault(pid, {})[pt] = pct
+                else:
+                    w = row.get("woba") or row.get("est_woba") or ""
+                    if w:
+                        _BATTER_PITCH_CACHE.setdefault(pid, {})[pt] = float(w)
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+def _load_pitch_data(year: str) -> None:
+    """Parallel-fetch pitcher arsenal + batter-vs-pitch-type wOBA for `year`.
+    Capped at 4 workers to be gentle on Savant. No-op if already loaded."""
+    if year in _PITCH_LOADED:
+        return
+    combos = [(pt, ptype, year)
+              for pt in _PITCH_TYPES
+              for ptype in ("pitcher", "batter")]
+    with _TPEx(max_workers=4) as ex:
+        list(ex.map(_fetch_one_pt, combos))
+    _PITCH_LOADED.add(year)
+
+def _fetch_batting_order(run_date: str) -> dict:
+    """Fetch today's confirmed lineups from MLB Stats API.
+    Returns {player_id (int): batting_spot (1-9)}.
+    Lineup order = position in homePlayers/awayPlayers array (0-indexed → +1).
+    Returns {} silently on any error or when lineups aren't posted yet."""
+    try:
+        r = requests.get(
+            "https://statsapi.mlb.com/api/v1/schedule",
+            params={"sportId": 1, "date": run_date, "hydrate": "lineups"},
+            timeout=12)
+        out = {}
+        for date_entry in r.json().get("dates", []):
+            for game in date_entry.get("games", []):
+                lu = game.get("lineups", {})
+                for side in ("homePlayers", "awayPlayers"):
+                    for idx, p in enumerate(lu.get(side, [])):
+                        pid = p.get("id")
+                        if pid:
+                            out[int(pid)] = idx + 1   # 1-indexed batting spot
+        return out
+    except Exception:
+        return {}
+
+def _lineup_adj(spot) -> int:
+    """Ranking-only nudge based on batting order spot.
+    More PAs and protection = higher. Never affects displayed total."""
+    if spot is None:
+        return 0
+    if spot == 1:   return  75   # leadoff — most PAs
+    if spot == 2:   return  50
+    if spot <= 5:   return  25   # heart of order
+    if spot <= 7:   return -25   # bottom third
+    return -75                   # 8-9 hole
+
+def _pitch_adj(batter_id, pitcher_id) -> int:
+    """Ranking-only nudge [-150, +150] from BvP pitch-type matchup.
+    High = batter excels vs pitcher's primary pitches; Low = struggles.
+    Returns 0 when data is missing for either player (no penalty applied)."""
+    if not batter_id or not pitcher_id:
+        return 0
+    arsenal = _ARSENAL_CACHE.get(int(pitcher_id), {})
+    splits  = _BATTER_PITCH_CACHE.get(int(batter_id), {})
+    if not arsenal or not splits:
+        return 0
+    # Weighted avg batter wOBA over pitcher's top-3 pitch types by usage
+    total_wgt = wgt_woba = 0.0
+    for pt, pct in sorted(arsenal.items(), key=lambda x: -x[1])[:3]:
+        w = splits.get(pt)
+        if w is not None and pct > 0:
+            total_wgt += pct
+            wgt_woba  += pct * w
+    if total_wgt < 5:   # not enough shared pitch-type data
+        return 0
+    weighted_woba = wgt_woba / total_wgt
+    # League-avg wOBA ~.310; scale deviation to ±150 ranking pts
+    return int(max(-150, min(150, round((weighted_woba - 0.310) * 1500))))
+
 
 
 
@@ -723,6 +840,26 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         for r in lineup_qualified:
             r.setdefault("lineup_status", "TBD")
 
+    _bat_order: dict = {}   # player_id -> batting spot (1-9); populated below
+    # ── Batting Order Position ─────────────────────────────────────────────
+    emit({"type": "section", "msg": "Lineup context — fetching batting order spots"})
+    try:
+        _bat_order = _fetch_batting_order(run_date)
+        _spot_n = 0
+        for r in lineup_qualified:
+            pid   = r.get("player_id")
+            spot  = _bat_order.get(int(pid)) if pid else None
+            r["lineup_spot"] = spot
+            r["lineup_adj"]  = _lineup_adj(spot)
+            if spot:
+                _spot_n += 1
+        emit({"type": "log", "msg": f"  Batting order: {_spot_n}/{len(lineup_qualified)} hitters placed"})
+    except Exception as _exc:
+        emit({"type": "log", "msg": f"  Batting order skipped: {_exc}"})
+        for r in lineup_qualified:
+            r.setdefault("lineup_spot", None)
+            r.setdefault("lineup_adj", 0)
+
     # ── Platoon Splits ─────────────────────────────────────────────────────
     emit({"type": "section", "msg": "Platoon — Fetching batter/pitcher handedness"})
     try:
@@ -746,6 +883,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         for r in lineup_qualified:
             batter_id = r.get("player_id")
             pit_id    = _match_opp(r.get("opp", ""))
+            r["pit_id"] = pit_id   # stored for pitch-type matchup ranking
             pl        = _get_batter_platoon(batter_id)
             bat_hand  = pl.get("bat_hand")
             pit_hand  = _get_pitcher_hand(pit_id) if pit_id else None
@@ -770,6 +908,24 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         emit({"type": "log", "msg": f"⚠️ Platoon enrichment skipped: {_exc}"})
         for r in lineup_qualified:
             r.setdefault("platoon", None)
+
+    # ── BvP pitch-type matchup ranking nudge ──────────────────────────
+    # Loads Statcast pitch-arsenal + batter-vs-pitch-type wOBA once per season.
+    # Silently skipped on Savant throttle — no picks are lost.
+    emit({"type": "section", "msg": "BvP pitch-type matchup — loading Statcast arsenal"})
+    try:
+        _load_pitch_data(run_date[:4])
+        _adj_n = 0
+        for r in lineup_qualified:
+            adj = _pitch_adj(r.get("player_id"), r.get("pit_id"))
+            r["pitch_adj"] = adj
+            if adj != 0:
+                _adj_n += 1
+        emit({"type": "log", "msg": f"  Pitch-type adj applied to {_adj_n}/{len(lineup_qualified)} hitters"})
+    except Exception as _exc:
+        emit({"type": "log", "msg": f"  Pitch-type adj skipped: {_exc}"})
+        for r in lineup_qualified:
+            r.setdefault("pitch_adj", 0)
 
     # ── S4 (L10 H/A consistency ≥50%) — filter then re-rank ──────────
     emit({"type": "section", "msg": "S4 (L10 H/A consistency ≥50%) + S5 (D/N BA) — filter & re-rank"})
@@ -805,7 +961,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     # consistency reference only and does not affect ordering.
     all_ranked = sorted(
         s4_qualified,
-        key=lambda x: x.get("total", 0),
+        key=lambda x: x.get("total", 0) + x.get("pitch_adj", 0) + x.get("lineup_adj", 0),
         reverse=True,
     )
     top9     = all_ranked[:10]
@@ -1232,6 +1388,61 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     except Exception as _bp_exc:
         emit({"type": "log", "msg": f"⚠️ Bullpen fatigue skipped: {_bp_exc}"})
 
+    # ── Platoon adj for hits picks ────────────────────────────────────────
+    # Favorable handedness matchup: LHB vs RHP or RHB vs LHP → +50 boost.
+    # Unfavorable: -25 drag. 0 when data absent.
+    def _plat_adj(r):
+        pl = r.get("platoon") or {}
+        adv = pl.get("adv")
+        if adv is True:   return 50
+        if adv is False:  return -25
+        return 0
+    for _hp in list(top9) + list(also_ran):
+        _hp["platoon_adj"] = _plat_adj(_hp)
+
+    # ── Attach pitch_adj + lineup_adj to ALL non-hits hitter categories ──
+    # Each non-hits pick already carries batter_id from under_picks.py.
+    # We look up the opp probable pitcher from mlb_probable to get pit_id,
+    # then call the same _pitch_adj / _lineup_adj functions used for hits.
+    # Falls back to 0 when data is absent (cache miss, no probable pitcher).
+    def _opp_pit_id(opp_name: str):
+        """Return probable pitcher MLB id for opp team, or None."""
+        if not opp_name:
+            return None
+        ol = opp_name.lower()
+        sw = {"the", "of", "los", "san", "new", "de"}
+        for tn, pi in mlb_probable.items():
+            if not pi.get("id"):
+                continue
+            if tn.lower() == ol:
+                return pi["id"]
+        for tn, pi in mlb_probable.items():
+            if not pi.get("id"):
+                continue
+            twords = set(tn.lower().split()) - sw
+            owords = set(ol.split()) - sw
+            if twords and owords and twords & owords:
+                return pi["id"]
+        return None
+
+    _nonhit_all = (
+        under_picks_list + runs_picks_list +
+        tb_picks_list + tb_over_picks_list +
+        rbi_picks_list + hrr_picks_list
+    )
+    _nh_enriched = 0
+    for _np in _nonhit_all:
+        bid  = _np.get("batter_id")
+        pit  = _opp_pit_id(_np.get("opp", ""))
+        padj = _pitch_adj(bid, pit) if bid else 0
+        spot = _bat_order.get(int(bid)) if bid else None
+        ladj = _lineup_adj(spot)
+        _np.setdefault("pitch_adj",  padj)
+        _np.setdefault("lineup_adj", ladj)
+        if padj or ladj:
+            _nh_enriched += 1
+    emit({"type": "log", "msg": f"  ✅ Pitch/lineup adj attached to {_nh_enriched}/{len(_nonhit_all)} non-hits picks"})
+
     # ── Phase B: combined env + umpire RE-RANKING (reorder only) ──
     # Offense axis = weather/park env × umpire RUN factor (a wide strike zone
     # suppresses offense; a tight zone inflates it). Pitcher Walks uses the
@@ -1255,29 +1466,79 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     def _offf(p):                       # combined offense multiplier
         return _envf(p) * _umpf(p, "rFactor")
 
-    # Hitters ("to record a hit", all OVER): points × offense factor, then
-    # re-split the headline Top-10 vs Money Ball from the same pool.
+    # Hitters ("to record a hit", all OVER): points × offense factor, plus
+    # pitch-type BvP, lineup-spot, and platoon-matchup adjustments.
+    # Re-split the headline Top-10 vs Money Ball from the same pool.
     _hit_pool = list(top9) + list(also_ran)
     _hit_pool.sort(
-        key=lambda x: x.get("total", 0) * _offf(x),
+        key=lambda x: (
+            x.get("total", 0)
+            + x.get("pitch_adj", 0)
+            + x.get("lineup_adj", 0)
+            + x.get("platoon_adj", 0)
+        ) * _offf(x),
         reverse=True,
     )
     top9     = _hit_pool[:10]
     also_ran = _hit_pool[10:]
 
-    # Under 1.5 hits / TB (all UNDER): under_score is lower=colder=better, so
-    # × offense factor pushes hitter-park / tight-zone unders DOWN the board.
-    under_picks_list.sort(key=lambda p: (p.get("under_score", 0) * _offf(p),
-                                         p.get("name", "")))
+    # Under 1.5 hits (all UNDER): under_score lower=colder=better.
+    # Good BvP (high pitch_adj) or high lineup spot = more PAs = worse under
+    # → ADD adj to push those picks DOWN the board.
+    under_picks_list.sort(key=lambda p: (
+        (p.get("under_score", 0) + p.get("pitch_adj", 0) + p.get("lineup_adj", 0)) * _offf(p),
+        p.get("name", ""),
+    ))
 
-    # Runs 0.5: OVERs boosted (-wilson × offense), UNDERs penalized (score ×
-    # offense). OVER block stays ahead of UNDER block, same as run_runs_picks.
+    # Runs 0.5: OVERs boosted (-wilson × offense - adjs), UNDERs penalized
+    # (score × offense + adjs). OVER block stays ahead of UNDER block.
     runs_picks_list.sort(key=lambda p: (
         0 if p.get("pick") == "OVER" else 1,
-        (-p.get("wilson", 0) * _offf(p)) if p.get("pick") == "OVER"
-        else (p.get("score", 0) * _offf(p)),
+        (-(p.get("wilson", 0) * _offf(p))
+         - p.get("pitch_adj", 0) - p.get("lineup_adj", 0))
+        if p.get("pick") == "OVER"
+        else (p.get("score", 0) * _offf(p)
+              + p.get("pitch_adj", 0) + p.get("lineup_adj", 0)),
         -p.get("games", 0),
     ))
+
+    # RBI 0.5: OVERs ranked by wilson × offense + adjs; UNDERs by score × offense + adjs.
+    rbi_picks_list.sort(key=lambda p: (
+        0 if p.get("pick") == "OVER" else 1,
+        -((p.get("wilson", 0) * _offf(p))
+          + p.get("pitch_adj", 0) + p.get("lineup_adj", 0))
+        if p.get("pick") == "OVER"
+        else (p.get("score", 0) * _offf(p)
+              + p.get("pitch_adj", 0) + p.get("lineup_adj", 0)),
+        -p.get("games", 0),
+    ))
+
+    # HRR 1.5: same signed-adj pattern as RBI.
+    hrr_picks_list.sort(key=lambda p: (
+        0 if p.get("pick") == "OVER" else 1,
+        -((p.get("wilson", 0) * _offf(p))
+          + p.get("pitch_adj", 0) + p.get("lineup_adj", 0))
+        if p.get("pick") == "OVER"
+        else (p.get("score", 0) * _offf(p)
+              + p.get("pitch_adj", 0) + p.get("lineup_adj", 0)),
+        -p.get("games", 0),
+    ))
+
+    # TB Over 1.5 (all OVER): wilson × offense + adjs, best at top.
+    tb_over_picks_list.sort(
+        key=lambda p: (
+            p.get("wilson", 0) * _offf(p)
+            + p.get("pitch_adj", 0) + p.get("lineup_adj", 0)
+        ),
+        reverse=True,
+    )
+
+    # TB Under 1.5 (all UNDER): score + adjs × offense; lower = colder = better.
+    tb_picks_list.sort(
+        key=lambda p: (
+            p.get("score", 0) + p.get("pitch_adj", 0) + p.get("lineup_adj", 0)
+        ) * _offf(p),
+    )
 
     # Pitcher props — Hits Allowed + Earned Runs use the offense axis; Walks use
     # the umpire walk factor (wide zone -> fewer walks -> Under boosted). Outs +
