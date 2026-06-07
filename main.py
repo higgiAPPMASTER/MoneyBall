@@ -4420,27 +4420,36 @@ function renderGradeSection(title, rows, color) {
 
 function renderGradeResults(data) {
   window.__GRADE_ROWS__ = [];
-  // Fixed (non-pitcher-prop) categories, in display order.
-  var baseCats = [
-    { key: 'hitter_overs',  label: 'Hitter OVER 0.5 Hits',  color: '#4ade80' },
-    { key: 'hitter_unders', label: 'Hitter Under 1.5 Hits', color: '#ff8a65' },
-    { key: 'runs',          label: 'Runs OVER / UNDER 0.5', color: '#60a5fa' },
-    { key: 'tb_under',      label: 'TB Under 1.5',          color: '#a78bfa' },
-    { key: 'tb_over',       label: 'TB Over 1.5',           color: '#4ade80' },
-    { key: 'rbi',           label: 'RBI OVER / UNDER 0.5',  color: '#f59e0b' },
-    { key: 'pitcher_ks',    label: 'Pitcher Strikeouts',    color: '#63cab7' },
-  ];
-  // Each section = {label, rows, color}. Pitcher props are split into one
-  // section per category (Hits Allowed / Outs / Earned Runs / Walks ...) so
-  // they are no longer lumped into a single blob.
-  var sections = baseCats.map(function(c){ return {label:c.label, rows:(data[c.key]||[]), color:c.color}; });
+  // EVERY category renders as its OWN top-10 OVER section and its OWN top-10
+  // UNDER section \u2014 never combined \u2014 so wins/losses read cleanly per side.
+  var C_OVER = '#4ade80', C_UNDER = '#ff8a65';
+  function _gside(rows, sd){
+    return (rows||[]).filter(function(r){ return (r.side||'').toUpperCase()===sd; }).slice(0,10);
+  }
+  var sections = [];
+  function pushOne(rows, label, color){
+    if((rows||[]).length) sections.push({label:label+' (top '+rows.length+')', rows:rows, color:color});
+  }
+  function pushPair(rows, label){
+    pushOne(_gside(rows,'OVER'),  label+' \u2014 OVER',  C_OVER);
+    pushOne(_gside(rows,'UNDER'), label+' \u2014 UNDER', C_UNDER);
+  }
+  // Hitter hits arrive pre-split as separate keys.
+  pushOne((data.hitter_overs ||[]).slice(0,10), 'Hitter Hits \u2014 OVER 0.5',  C_OVER);
+  pushOne((data.hitter_unders||[]).slice(0,10), 'Hitter Hits \u2014 UNDER 1.5', C_UNDER);
+  pushPair(data.runs, 'Runs 0.5');
+  pushOne((data.tb_over ||[]).slice(0,10), 'Total Bases \u2014 OVER 1.5',  C_OVER);
+  pushOne((data.tb_under||[]).slice(0,10), 'Total Bases \u2014 UNDER 1.5', C_UNDER);
+  pushPair(data.rbi, 'RBI 0.5');
+  pushPair(data.hrr, 'HRR 1.5 (H+R+RBI)');
+  pushPair(data.pitcher_ks, 'Pitcher Strikeouts');
   var propBuckets = {}, propOrder = [];
   (data.pitcher_props || []).forEach(function(r){
     var cat = r.category || 'Pitcher Props';
     if(!propBuckets[cat]){ propBuckets[cat]=[]; propOrder.push(cat); }
     propBuckets[cat].push(r);
   });
-  propOrder.forEach(function(cat){ sections.push({label:cat, rows:propBuckets[cat], color:'#a78bfa'}); });
+  propOrder.forEach(function(cat){ pushPair(propBuckets[cat], cat); });
   var allRows = [];
   sections.forEach(function(s){ allRows = allRows.concat(s.rows); });
   var wins    = allRows.filter(function(r) { return r.result === 'WIN'; }).length;
@@ -4451,13 +4460,33 @@ function renderGradeResults(data) {
     '<div><span style="color:#4ade80;font-weight:700;font-size:1.1rem">' + wins + 'W</span> ' +
     '<span style="color:#f87171;font-weight:700;font-size:1.1rem">' + losses + 'L</span>' +
     (pending > 0 ? ' <span style="color:#94a3b8;font-size:.85rem;margin-left:4px">' + pending + ' pending</span>' : '') + '</div>' +
-    '<div style="margin-left:auto;font-size:.82rem;color:#94a3b8" id="grade-summary-stats">Enter bet amounts below to track P&L</div>' +
+    '<div style="margin-left:auto;display:flex;gap:10px;align-items:center">' +
+      '<span style="font-size:.82rem;color:#94a3b8" id="grade-summary-stats">Enter bet amounts below to track P&L</span>' +
+      '<button onclick="downloadGradeCSV()" style="background:#7c3aed;color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:.78rem;font-weight:600;cursor:pointer;white-space:nowrap">\u2b07 Results CSV</button>' +
+    '</div>' +
     '</div>';
   var bodyHtml = sections.map(function(s) {
     return renderGradeSection(s.label, s.rows, s.color);
   }).join('');
   document.getElementById('grade-body').innerHTML = bodyHtml ||
     '<p style="color:#94a3b8;padding:16px">No graded picks for this date.</p>';
+}
+
+// Results CSV \u2014 one row per graded pick (mirrors the Track Record daily CSV).
+function downloadGradeCSV(){
+  var rows=window.__GRADE_ROWS__||[];
+  if(!rows.length){ alert('No results to export yet \u2014 run Results for a date first.'); return; }
+  var dateStr=(document.getElementById('date-picker')||{}).value||'';
+  var out=[['Date','Category','Side','Player','Pick','Odds','Actual','Result']];
+  rows.forEach(function(r){
+    out.push([dateStr, r.category||'', r.side||'', r.name||'', r.pick||'',
+              (r.odds!=null?r.odds:''), (r.actual!=null?r.actual:''), r.result||'']);
+  });
+  var csv=out.map(function(row){return row.map(_csvCell).join(',');}).join(String.fromCharCode(13)+String.fromCharCode(10));
+  var blob=new Blob([String.fromCharCode(65279)+csv],{type:'text/csv;charset=utf-8;'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a'); a.href=url; a.download='mlb-results-'+(dateStr||'today')+'.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
 }
 
 function recalcPL() {
@@ -4571,13 +4600,21 @@ function renderTrackRecord(d){
     +'<button onclick="downloadTrackDailyCSV()" style="background:#1d4ed8;color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:.78rem;font-weight:600;cursor:pointer">\u2b07 Daily CSV</button>'
     +'</div>'
     +'</div>';
+  // Show EVERY category (both sides), even at 0-0, so the full slate of what's
+  // winning/losing is always visible. Graded rows fill in their W/L; the rest
+  // render as 0/0 placeholders until a slate goes Final.
+  var rowMap={};
+  rows.forEach(function(r){ rowMap[r.category+'|'+r.side]=r; });
+  var fullAll=[];
   var catRows='';
-  rows.forEach(function(r){
-    var key=r.category+'|'+r.side;
+  CAT_ORDER.forEach(function(key){
+    var parts=key.split('|');
+    var r=rowMap[key]||{category:parts[0],side:parts[1],wins:0,losses:0};
     var cfg=CAT_CFG[key]||{lbl:r.category+' ('+r.side+')',icon:'📊',abbr:r.side};
     var n=r.wins+r.losses;
     var clr=_rc(r.wins,n);
     var pctStr=n?Math.round(r.wins/n*100)+'%':'—';
+    fullAll.push({category:r.category,side:r.side,label:cfg.lbl,wins:r.wins,losses:r.losses});
     catRows+='<div style="display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid #1e293b">'
       +'<span style="font-size:1.1rem;width:22px;text-align:center;flex-shrink:0">'+cfg.icon+'</span>'
       +'<span style="color:#e2e8f0;font-weight:600;min-width:195px;font-size:.87rem;flex-shrink:0">'+cfg.lbl+'</span>'
@@ -4586,15 +4623,15 @@ function renderTrackRecord(d){
       +'<span style="font-family:monospace;font-size:.87rem;font-weight:700;color:'+clr+';min-width:40px;text-align:right;flex-shrink:0">'+pctStr+'</span>'
       +'</div>';
   });
-  var catSection=rows.length
-    ?'<div style="border:1px solid #1e293b;border-radius:12px;overflow:hidden;margin-bottom:16px">'
+  window.__TRACK_ALLTIME_FULL__=fullAll;
+  var catSection='<div style="border:1px solid #1e293b;border-radius:12px;overflow:hidden;margin-bottom:16px">'
       +'<div style="display:flex;align-items:center;padding:7px 14px;background:#0c1829;border-bottom:1px solid #1e293b">'
       +'<span style="font-size:.68rem;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.07em;min-width:217px">Category</span>'
       +'<span style="font-size:.68rem;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.07em;min-width:54px;text-align:right">W/N</span>'
       +'<span style="font-size:.68rem;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.07em;flex:1;margin:0 10px">Hit Rate</span>'
       +'<span style="font-size:.68rem;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.07em;min-width:40px;text-align:right">%</span>'
       +'</div>'+catRows+'</div>'
-    :'<p style="color:#94a3b8;padding:16px">No graded days yet \u2014 fills in automatically as slates go Final.</p>';
+    +((d.days||0)?'':'<p style="color:#64748b;font-size:.78rem;padding:4px 2px 12px">No graded days yet \u2014 records fill in automatically as slates go Final.</p>');
   var det=d.detail||[];
   var earnHtml='<div style="background:#0a1f14;border:1px solid #16432c;border-radius:10px;padding:14px 18px;margin-bottom:16px;display:flex;flex-wrap:wrap;gap:14px;align-items:center">'
     +'<div style="font-weight:800;font-size:.92rem;color:#6ee7b7">💰 Potential Earnings</div>'
@@ -4718,49 +4755,24 @@ function _trackCSV(which){
   var d=window.__TRACK__; if(!d){ alert('Open Track Record first.'); return; }
   var rows;
   var DAYS=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-  var CAT_COLS=[
-    ['Hitter Hits','OVER','Hits W','Hits L'],
-    ['Hitter Hits','UNDER','Unders W','Unders L'],
-    ['Runs','OVER','Runs+ W','Runs+ L'],
-    ['Runs','UNDER','Runs- W','Runs- L'],
-    ['TB Under','UNDER','TB- W','TB- L'],
-    ['TB Over','OVER','TB+ W','TB+ L'],
-    ['RBI','OVER','RBI+ W','RBI+ L'],
-    ['RBI','UNDER','RBI- W','RBI- L'],
-    ['HRR','OVER','HRR+ W','HRR+ L'],
-    ['HRR','UNDER','HRR- W','HRR- L'],
-    ['Pitcher Ks','OVER','Ks+ W','Ks+ L'],
-    ['Pitcher Ks','UNDER','Ks- W','Ks- L'],
-    ['Pitcher Hits Allowed','OVER','H-All+ W','H-All+ L'],
-    ['Pitcher Hits Allowed','UNDER','H-All- W','H-All- L'],
-    ['Pitcher Outs','OVER','Outs+ W','Outs+ L'],
-    ['Pitcher Outs','UNDER','Outs- W','Outs- L'],
-    ['Pitcher Earned Runs','OVER','ER+ W','ER+ L'],
-    ['Pitcher Earned Runs','UNDER','ER- W','ER- L'],
-    ['Pitcher Walks','OVER','BB+ W','BB+ L'],
-    ['Pitcher Walks','UNDER','BB- W','BB- L'],
-  ];
   if(which==='daily'){
-    var hdr=['Date','Day'];
-    CAT_COLS.forEach(function(c){ hdr.push(c[2],c[3]); });
-    hdr.push('Total W','Total L','Win %');
-    rows=[hdr];
-    (d.daily||[]).forEach(function(x){
+    // One row per graded pick (long & narrow) \u2014 mirrors the Results CSV
+    // instead of a 20-column-wide per-day pivot.
+    rows=[['Date','Day','Category','Side','Player','Pick','Odds','Actual','Result']];
+    (d.detail||[]).forEach(function(r){
       var dow='';
-      try{ var dt=new Date(x.date+'T12:00:00'); dow=DAYS[dt.getDay()]||''; }catch(e){}
-      var row=[x.date,dow];
-      var cats=x.cats||{};
-      CAT_COLS.forEach(function(c){
-        var wl=(cats[c[0]]||{})[c[1]];
-        row.push(wl?wl[0]:'', wl?wl[1]:'');
-      });
-      var n=x.wins+x.losses;
-      row.push(x.wins, x.losses, n?(x.wins/n*100).toFixed(1):'');
-      rows.push(row);
+      try{ var dt=new Date(r.date+'T12:00:00'); dow=DAYS[dt.getDay()]||''; }catch(e){}
+      rows.push([r.date,dow,r.category||'',r.side||'',r.name||'',r.pick||'',
+                 (r.odds!=null?r.odds:''), (r.actual!=null?r.actual:''), r.result||'']);
     });
   } else {
     rows=[['Category','Side','Wins','Losses','Win %']];
-    (d.alltime||[]).forEach(function(r){ var n=r.wins+r.losses; rows.push([r.category,r.side,r.wins,r.losses, n?(r.wins/n*100).toFixed(1):'']); });
+    var full=window.__TRACK_ALLTIME_FULL__;
+    if(full&&full.length){
+      full.forEach(function(r){ var n=r.wins+r.losses; rows.push([r.label,r.side,r.wins,r.losses, n?(r.wins/n*100).toFixed(1):'']); });
+    } else {
+      (d.alltime||[]).forEach(function(r){ var n=r.wins+r.losses; rows.push([r.category,r.side,r.wins,r.losses, n?(r.wins/n*100).toFixed(1):'']); });
+    }
   }
   var csv=rows.map(function(row){return row.map(_csvCell).join(',');}).join(String.fromCharCode(13)+String.fromCharCode(10));
   var blob=new Blob([String.fromCharCode(65279)+csv],{type:'text/csv;charset=utf-8;'});
