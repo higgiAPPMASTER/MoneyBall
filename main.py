@@ -295,11 +295,13 @@ def _mlb_box_lookup(date_str: str):
                     continue
                 bat = pdata.get("stats", {}).get("batting")  or {}
                 pit = pdata.get("stats", {}).get("pitching") or {}
+                _hrr = ((bat.get("hits") or 0) + (bat.get("runs") or 0) + (bat.get("rbi") or 0)) if bat else None
                 rows.append((int(pid), full_name, {
                     "hits":         bat.get("hits"),
                     "runs":         bat.get("runs"),
                     "total_bases":  bat.get("totalBases"),
                     "rbi":          bat.get("rbi"),
+                    "hrr":          _hrr,
                     "strikeOuts":   pit.get("strikeOuts"),
                     "earnedRuns":   pit.get("earnedRuns"),
                     "outs":         pit.get("outs"),
@@ -470,6 +472,28 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "game_status": (st or {}).get("status", "—"),
         })
 
+    # HRR (Hits+Runs+RBI) OVER/UNDER 1.5 — top 10 per side for Track Record
+    _hrr_all = picks.get("hrr_picks") or []
+    _hrr_capped = [p for p in _hrr_all if p.get("pick") == "OVER"][:10] + \
+                  [p for p in _hrr_all if p.get("pick") == "UNDER"][:10]
+    hrr_rows = []
+    for p in _hrr_capped:
+        st = _lookup(p.get("batter_id"), p.get("name"))
+        actual = st["hrr"] if st else None
+        pick_dir = p.get("pick", "OVER")
+        hrr_rows.append({
+            "name": p.get("name", ""),
+            "team": p.get("team", ""),
+            "category": "HRR", "side": pick_dir,
+            "pick": f"{pick_dir} 1.5 H+R+RBI",
+            "odds": p.get("hrr_over_odds") if pick_dir == "OVER" else p.get("hrr_under_odds"),
+            "line": 1.5,
+            "actual": actual,
+            "stat": "H+R+RBI",
+            "result": _grade(pick_dir, 1.5, actual, (st or {}).get("final", False)),
+            "game_status": (st or {}).get("status", "—"),
+        })
+
     # Pitcher Ks — top 10 for Track Record
     pitcher_ks = []
     for p in ((picks.get("pitcher_k") or {}).get("picks") or [])[:10]:
@@ -534,6 +558,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
         "tb_under":      tb_under,
         "tb_over":       tb_over,
         "rbi":           rbi_picks,
+        "hrr":           hrr_rows,
         "pitcher_ks":    pitcher_ks,
         "pitcher_props": pitcher_props,
         "any_game":      any_game,
@@ -544,8 +569,8 @@ def _grade_date(date_str: str, picks: dict) -> dict:
 # ── Track Record: permanent W/L ledger across all graded days ────────────
 _TRACK_LEDGER_PATH = os.path.join(_CACHE_DIR, "_track_record.json")
 _TRACK_CAT_ORDER = [
-    "Hitter Hits", "Runs", "TB Under", "TB Over", "RBI", "Pitcher Ks",
-    "Pitcher Hits Allowed", "Pitcher Outs", "Pitcher Earned Runs",
+    "Hitter Hits", "Runs", "TB Under", "TB Over", "RBI", "HRR", "Pitcher Ks",
+    "Pitcher Hits Allowed", "Pitcher Outs", "Pitcher Earned Runs", "Pitcher Walks",
 ]
 
 def _load_ledger() -> dict:
@@ -590,7 +615,7 @@ def _save_detail(det: dict):
 def _aggregate_graded(graded: dict) -> dict:
     """Collapse a graded day into {category: {side: [W, L]}} counting only decided picks."""
     agg: dict = {}
-    for key in ("hitter_overs", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "pitcher_ks", "pitcher_props"):
+    for key in ("hitter_overs", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "hrr", "pitcher_ks", "pitcher_props"):
         for r in graded.get(key, []):
             res = r.get("result")
             if res not in ("WIN", "LOSS"):
@@ -609,7 +634,7 @@ def _detail_graded(graded: dict) -> list:
     fields an earnings sheet needs: player, team, category, side, pick, odds,
     line, result."""
     out = []
-    for key in ("hitter_overs", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "pitcher_ks", "pitcher_props"):
+    for key in ("hitter_overs", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "hrr", "pitcher_ks", "pitcher_props"):
         for r in graded.get(key, []):
             res = r.get("result")
             if res not in ("WIN", "LOSS"):
@@ -622,6 +647,8 @@ def _detail_graded(graded: dict) -> list:
                 "pick": r.get("pick", ""),
                 "odds": r.get("odds"),
                 "line": r.get("line"),
+                "actual": r.get("actual"),
+                "stat": r.get("stat", ""),
                 "result": res,
             })
     return out
@@ -700,7 +727,7 @@ def _update_track_ledger() -> dict:
 # pick-cache file is gone.
 _BET_LOG_PATH = os.path.join(_CACHE_DIR, "_bet_log.json")
 _BET_LOCK = _trk_threading.Lock()
-_BET_STAT_KEYS = ("hits", "runs", "total_bases", "rbi", "strikeOuts", "hits_allowed", "outs", "earnedRuns", "walks")
+_BET_STAT_KEYS = ("hits", "runs", "total_bases", "rbi", "hrr", "strikeOuts", "hits_allowed", "outs", "earnedRuns", "walks")
 _BET_PITCH_STATS = ("strikeOuts", "hits_allowed", "outs", "earnedRuns", "walks")
 
 def _load_bets() -> dict:
@@ -896,7 +923,7 @@ def _summarize_bets(bets: list) -> dict:
             stake = float(b.get("stake") or 0)
         except Exception:
             stake = 0.0
-        c = cats.setdefault(b.get("category", "?"),
+        c = cats.setdefault((b.get("category", "?"), (b.get("side") or "OVER").strip().upper()),
                             {"wins": 0, "losses": 0, "push": 0, "pending": 0,
                              "staked": 0.0, "profit": 0.0})
         if res == "WIN":
@@ -913,14 +940,20 @@ def _summarize_bets(bets: list) -> dict:
             tot_profit += prof;  c["profit"] += prof
     roi = (tot_profit / tot_staked * 100.0) if tot_staked > 0 else None
     by_cat = []
-    ordered = _TRACK_CAT_ORDER + [k for k in cats if k not in _TRACK_CAT_ORDER]
-    for cat in ordered:
-        c = cats.get(cat)
+    _ord_idx = {c: i for i, c in enumerate(_TRACK_CAT_ORDER)}
+    def _ck(k):
+        cat, side = k
+        return (_ord_idx.get(cat, 999), 0 if side == "OVER" else 1, cat, side)
+    for key in sorted(cats.keys(), key=_ck):
+        cat, side = key
+        c = cats.get(key)
         if not c:
             continue
         st = c["staked"]; pr = c["profit"]
         by_cat.append({
-            "category": cat, "wins": c["wins"], "losses": c["losses"],
+            "category": cat, "side": side,
+            "label": cat + (" Over" if side == "OVER" else " Under"),
+            "wins": c["wins"], "losses": c["losses"],
             "push": c["push"], "pending": c["pending"],
             "staked": round(st, 2), "profit": round(pr, 2),
             "roi": round(pr / st * 100, 1) if st > 0 else None,
@@ -4511,11 +4544,16 @@ function renderTrackRecord(d){
     'TB Over|OVER':              {lbl:'TB Over 1.5',                icon:'📈', abbr:'TB+'},
     'RBI|OVER':                  {lbl:'RBI (Over 0.5)',             icon:'💥', abbr:'RBI+'},
     'RBI|UNDER':                 {lbl:'RBI (Under 0.5)',            icon:'💥', abbr:'RBI-'},
+    'HRR|OVER':                  {lbl:'HRR (Over 1.5 H+R+RBI)',     icon:'🔥', abbr:'HRR+'},
+    'HRR|UNDER':                 {lbl:'HRR (Under 1.5 H+R+RBI)',    icon:'🔥', abbr:'HRR-'},
+    'Pitcher Walks|OVER':        {lbl:'Walks Allowed (Over)',       icon:'🚶', abbr:'BB+'},
+    'Pitcher Walks|UNDER':       {lbl:'Walks Allowed (Under)',      icon:'🚶', abbr:'BB-'},
   };
   var CAT_ORDER=['Hitter Hits|OVER','Hitter Hits|UNDER','Runs|OVER','Runs|UNDER',
-    'TB Under|UNDER','TB Over|OVER','RBI|OVER','RBI|UNDER',
+    'TB Under|UNDER','TB Over|OVER','RBI|OVER','RBI|UNDER','HRR|OVER','HRR|UNDER',
     'Pitcher Ks|OVER','Pitcher Ks|UNDER','Pitcher Hits Allowed|OVER','Pitcher Hits Allowed|UNDER',
-    'Pitcher Outs|OVER','Pitcher Outs|UNDER','Pitcher Earned Runs|OVER','Pitcher Earned Runs|UNDER'];
+    'Pitcher Outs|OVER','Pitcher Outs|UNDER','Pitcher Earned Runs|OVER','Pitcher Earned Runs|UNDER',
+    'Pitcher Walks|OVER','Pitcher Walks|UNDER'];
   function _rc(w,n){ if(!n) return '#64748b'; var p=w/n; return p>=0.70?'#4ade80':(p>=0.55?'#facc15':'#f87171'); }
   function _bar(w,n,clr){
     var pct=n?Math.round(w/n*100):0;
@@ -4566,31 +4604,51 @@ function renderTrackRecord(d){
     +'</div>';
   document.getElementById('track-alltime').innerHTML=sumHtml+earnHtml+catSection;
   _recalcEarnings();
-  var dRows=daily.slice().reverse().map(function(x){
-    var cats=x.cats||{};
-    var pills='';
-    CAT_ORDER.forEach(function(key){
-      var parts=key.split('|'); var cat=parts[0],side=parts[1];
-      var wl=(cats[cat]||{})[side];
-      if(!wl) return;
-      var w=wl[0],l=wl[1],n=w+l;
-      if(!n) return;
-      var cfg2=CAT_CFG[key]||{abbr:cat,icon:''};
-      var clr2=_rc(w,n);
-      pills+='<span style="display:inline-block;background:#1e293b;border-radius:6px;padding:3px 8px;font-size:.76rem;color:'+clr2+';font-weight:700;margin:2px 3px 2px 0">'+cfg2.icon+' '+cfg2.abbr+' '+w+'/'+n+'</span>';
+  // Daily — every graded day expands to its full per-pick lists, grouped by
+  // category, so the user can show exactly which plays hit and which missed.
+  var detByDate={};
+  (d.detail||[]).forEach(function(r){ (detByDate[r.date]=detByDate[r.date]||[]).push(r); });
+  function _catRank(k){ var i=CAT_ORDER.indexOf(k); return i<0?999:i; }
+  var dayBlocks=daily.slice().reverse().map(function(x){
+    var groups={};
+    (detByDate[x.date]||[]).forEach(function(r){
+      var k=(r.category||'?')+'|'+(r.side||'OVER');
+      (groups[k]=groups[k]||[]).push(r);
     });
-    return '<tr>'
-      +'<td style="white-space:nowrap;color:#94a3b8;font-weight:600">'+x.date+'</td>'
-      +'<td style="font-family:monospace;color:#4ade80;font-weight:700">'+x.wins+'</td>'
-      +'<td style="font-family:monospace;color:#f87171;font-weight:700">'+x.losses+'</td>'
-      +'<td style="font-family:monospace;font-weight:700;color:'+_twColor(x.wins,x.losses)+'">'+_twPct(x.wins,x.losses)+'</td>'
-      +'<td style="padding-left:8px;padding-top:3px;padding-bottom:3px">'+pills+'</td></tr>';
+    var gkeys=Object.keys(groups).sort(function(a,b){ return _catRank(a)-_catRank(b); });
+    var inner='';
+    gkeys.forEach(function(k){
+      var cfg=CAT_CFG[k]||{lbl:k.split('|').join(' '),icon:'📊'};
+      var picks=groups[k];
+      var gw=picks.filter(function(p){return p.result==='WIN';}).length;
+      var gn=picks.length;
+      var gclr=_rc(gw,gn);
+      inner+='<div style="margin:10px 0 4px;font-weight:800;font-size:.81rem;color:#cbd5e1">'+cfg.icon+' '+cfg.lbl
+        +' <span style="color:'+gclr+';font-family:monospace;font-weight:900">'+gw+'/'+gn+'</span></div>';
+      picks.forEach(function(p){
+        var win=p.result==='WIN';
+        var mk=win?'<span style="color:#4ade80">\u2713</span>':'<span style="color:#f87171">\u2717</span>';
+        var act=(p.actual!=null)?('<span style="color:#cbd5e1">\u2192 '+p.actual+(p.stat?(' '+p.stat):'')+'</span>'):'';
+        var odd=(p.odds!=null&&p.odds!=='')?('<span style="color:#64748b;font-family:monospace">'+((Number(p.odds)>0?'+':'')+p.odds)+'</span>'):'';
+        inner+='<div style="display:flex;gap:8px;align-items:center;padding:2px 0 2px 6px;font-size:.79rem">'
+          +mk
+          +'<span style="color:#e2e8f0;min-width:150px">'+p.name+'</span>'
+          +'<span style="color:#94a3b8;min-width:120px">'+p.pick+'</span>'
+          +act+odd
+          +'<span style="margin-left:auto;font-weight:800;color:'+(win?'#4ade80':'#f87171')+'">'+p.result+'</span>'
+          +'</div>';
+      });
+    });
+    if(!inner) inner='<div style="color:#64748b;font-size:.79rem;padding:4px 6px">No decided picks recorded this day.</div>';
+    return '<details style="border-bottom:1px solid #1f2937;padding:7px 0">'
+      +'<summary style="cursor:pointer;font-weight:800;color:#e2e8f0;font-size:.88rem">'
+      +x.date+' \u2014 <span style="color:#4ade80">'+x.wins+'W</span> <span style="color:#f87171">'+x.losses+'L</span> '
+      +'<span style="color:'+_twColor(x.wins,x.losses)+'">('+_twPct(x.wins,x.losses)+')</span></summary>'
+      +'<div style="padding:2px 0 12px">'+inner+'</div></details>';
   }).join('');
   document.getElementById('track-daily').innerHTML=daily.length
-    ?'<details style="margin-top:0"><summary style="cursor:pointer;font-weight:700;color:#a78bfa;padding:10px 0;border-bottom:1px solid #1f2937">📅 Daily Breakdown ('+daily.length+' days)</summary>'
-      +'<div style="overflow-x:auto;margin-top:8px"><table class="grade-table">'
-      +'<thead><tr><th>Date</th><th>W</th><th>L</th><th>%</th><th style="text-align:left">By Category</th></tr></thead>'
-      +'<tbody>'+dRows+'</tbody></table></div></details>'
+    ?'<details open style="margin-top:0"><summary style="cursor:pointer;font-weight:700;color:#a78bfa;padding:10px 0;border-bottom:1px solid #1f2937">📅 Daily \u2014 every pick by category ('+daily.length+' day'+(daily.length===1?'':'s')+')</summary>'
+      +'<div style="margin-top:6px">'+dayBlocks+'</div></details>'
     :'';
 }
 
@@ -4665,6 +4723,12 @@ function _trackCSV(which){
     ['Hitter Hits','UNDER','Unders W','Unders L'],
     ['Runs','OVER','Runs+ W','Runs+ L'],
     ['Runs','UNDER','Runs- W','Runs- L'],
+    ['TB Under','UNDER','TB- W','TB- L'],
+    ['TB Over','OVER','TB+ W','TB+ L'],
+    ['RBI','OVER','RBI+ W','RBI+ L'],
+    ['RBI','UNDER','RBI- W','RBI- L'],
+    ['HRR','OVER','HRR+ W','HRR+ L'],
+    ['HRR','UNDER','HRR- W','HRR- L'],
     ['Pitcher Ks','OVER','Ks+ W','Ks+ L'],
     ['Pitcher Ks','UNDER','Ks- W','Ks- L'],
     ['Pitcher Hits Allowed','OVER','H-All+ W','H-All+ L'],
@@ -5181,7 +5245,7 @@ function renderMyBets(d){
   var bc=(s.by_category||[]).map(function(c){
     var croi=c.roi!=null?((c.roi>0?'+':'')+c.roi+'%'):'—';
     var cclr=c.roi==null?'#94a3b8':(c.roi>0?'#4ade80':(c.roi<0?'#f87171':'#facc15'));
-    return '<tr><td style="font-weight:600">'+c.category+'</td>'
+    return '<tr><td style="font-weight:600">'+(c.label||c.category)+'</td>'
       +'<td style="font-family:monospace">'+c.wins+'-'+c.losses+(c.push?('-'+c.push+'P'):'')+'</td>'
       +'<td style="font-family:monospace;color:#94a3b8">'+(c.pending||0)+'</td>'
       +'<td style="font-family:monospace">'+_money(c.staked)+'</td>'
