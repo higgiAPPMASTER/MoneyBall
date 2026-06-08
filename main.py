@@ -14,6 +14,57 @@ from typing import Optional
 _CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".pick_cache")
 os.makedirs(_CACHE_DIR, exist_ok=True)
 
+# ── Supabase (permanent bet log + track ledger) ─────────────────────────
+_SB_URL_RAW = os.environ.get("SUPABASE_URL", "").strip().rstrip("/")
+_SB_URL = (f"https://{_SB_URL_RAW}.supabase.co"
+           if _SB_URL_RAW and not _SB_URL_RAW.startswith("http")
+           else _SB_URL_RAW)
+_SB_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
+_SB_HDRS = {
+    "apikey": _SB_KEY,
+    "Authorization": f"Bearer {_SB_KEY}",
+    "Content-Type": "application/json",
+}
+
+def _sb_get(table, params=None, timeout=10):
+    import requests as _r
+    try:
+        rsp = _r.get(f"{_SB_URL}/rest/v1/{table}", headers=_SB_HDRS,
+                     params=params, timeout=timeout)
+        if rsp.status_code == 200:
+            return rsp.json()
+        print(f"[sb] GET {table} {rsp.status_code}: {rsp.text[:120]}")
+    except Exception as e:
+        print(f"[sb] GET {table} failed: {e}")
+    return None
+
+def _sb_upsert(table, rows, timeout=10):
+    import requests as _r
+    if not rows:
+        return True
+    h = {**_SB_HDRS, "Prefer": "resolution=merge-duplicates,return=minimal"}
+    payload = rows if isinstance(rows, list) else [rows]
+    try:
+        rsp = _r.post(f"{_SB_URL}/rest/v1/{table}", headers=h,
+                      json=payload, timeout=timeout)
+        if rsp.status_code not in (200, 201, 204):
+            print(f"[sb] UPSERT {table} {rsp.status_code}: {rsp.text[:120]}")
+            return False
+        return True
+    except Exception as e:
+        print(f"[sb] UPSERT {table} failed: {e}")
+        return False
+
+def _sb_delete(table, params, timeout=10):
+    import requests as _r
+    try:
+        rsp = _r.delete(f"{_SB_URL}/rest/v1/{table}", headers=_SB_HDRS,
+                        params=params, timeout=timeout)
+        return rsp.status_code in (200, 204)
+    except Exception as e:
+        print(f"[sb] DELETE {table} failed: {e}")
+        return False
+
 def _disk_cache_path(date_str: str) -> str:
     return os.path.join(_CACHE_DIR, f"{date_str}.json")
 
@@ -574,6 +625,17 @@ _TRACK_CAT_ORDER = [
 ]
 
 def _load_ledger() -> dict:
+    if _SB_URL and _SB_KEY:
+        rows = _sb_get("mpa_track_ledger", {
+            "app": "eq.mlb", "category": "not.eq.__detail__",
+            "locked": "eq.true",
+            "select": "date,category,side,wins,losses",
+        })
+        if rows is not None:
+            led: dict = {}
+            for r in rows:
+                led.setdefault(r["date"], {}).setdefault(r["category"], {})[r["side"]] = [r["wins"], r["losses"]]
+            return led
     try:
         with open(_TRACK_LEDGER_PATH) as f:
             return json.load(f)
@@ -581,6 +643,18 @@ def _load_ledger() -> dict:
         return {}
 
 def _save_ledger(led: dict):
+    if _SB_URL and _SB_KEY:
+        import datetime as _dt
+        now = _dt.datetime.utcnow().isoformat() + "Z"
+        rows = []
+        for date_str, cats in led.items():
+            for cat, sides in cats.items():
+                for side, wl in sides.items():
+                    rows.append({"app": "mlb", "date": date_str, "category": cat,
+                                 "side": side, "wins": wl[0], "losses": wl[1],
+                                 "locked": True, "locked_at": now})
+        _sb_upsert("mpa_track_ledger", rows)
+        return
     try:
         tmp = f"{_TRACK_LEDGER_PATH}.{os.getpid()}.tmp"
         with open(tmp, "w") as f:
@@ -597,6 +671,13 @@ def _save_ledger(led: dict):
 _TRACK_DETAIL_PATH = os.path.join(_CACHE_DIR, "_track_detail.json")
 
 def _load_detail() -> dict:
+    if _SB_URL and _SB_KEY:
+        rows = _sb_get("mpa_track_ledger", {
+            "app": "eq.mlb", "category": "eq.__detail__", "side": "eq.ALL",
+            "select": "date,detail",
+        })
+        if rows is not None:
+            return {r["date"]: (r.get("detail") or []) for r in rows}
     try:
         with open(_TRACK_DETAIL_PATH) as f:
             return json.load(f)
@@ -604,6 +685,15 @@ def _load_detail() -> dict:
         return {}
 
 def _save_detail(det: dict):
+    if _SB_URL and _SB_KEY:
+        import datetime as _dt
+        now = _dt.datetime.utcnow().isoformat() + "Z"
+        rows = [{"app": "mlb", "date": d, "category": "__detail__", "side": "ALL",
+                 "wins": 0, "losses": 0, "locked": True, "locked_at": now,
+                 "detail": picks}
+                for d, picks in det.items()]
+        _sb_upsert("mpa_track_ledger", rows)
+        return
     try:
         tmp = f"{_TRACK_DETAIL_PATH}.{os.getpid()}.tmp"
         with open(tmp, "w") as f:
@@ -731,6 +821,16 @@ _BET_STAT_KEYS = ("hits", "runs", "total_bases", "rbi", "hrr", "strikeOuts", "hi
 _BET_PITCH_STATS = ("strikeOuts", "hits_allowed", "outs", "earnedRuns", "walks")
 
 def _load_bets() -> dict:
+    if _SB_URL and _SB_KEY:
+        rows = _sb_get("mpa_bet_log", {"app": "eq.mlb", "order": "logged_at.asc"})
+        if rows is not None:
+            data: dict = {}
+            for r in rows:
+                email = r.pop("email", "__admin__")
+                r.pop("app", None)
+                r.pop("logged_at", None)
+                data.setdefault(email, []).append(r)
+            return data
     try:
         with open(_BET_LOG_PATH) as f:
             return json.load(f)
@@ -738,6 +838,13 @@ def _load_bets() -> dict:
         return {}
 
 def _save_bets(data: dict):
+    if _SB_URL and _SB_KEY:
+        rows = []
+        for email, bets in data.items():
+            for b in bets:
+                rows.append({**b, "email": email, "app": "mlb"})
+        _sb_upsert("mpa_bet_log", rows)
+        return
     try:
         tmp = f"{_BET_LOG_PATH}.{os.getpid()}.tmp"
         with open(tmp, "w") as f:
@@ -1093,13 +1200,16 @@ async def delete_bet(bet_id: str, request: Request, token: str = "", admin: str 
     if not _bet_admin_ok(tok, admin):
         raise HTTPException(status_code=403, detail="Admin only")
     with _BET_LOCK:
-        data = _load_bets()
-        key = _bet_user_key(tok, admin)
-        bets = data.get(key, [])
-        new = [b for b in bets if b.get("id") != bet_id]
-        if len(new) != len(bets):
-            data[key] = new
-            _save_bets(data)
+        if _SB_URL and _SB_KEY:
+            _sb_delete("mpa_bet_log", {"id": f"eq.{bet_id}", "app": "eq.mlb"})
+        else:
+            data = _load_bets()
+            key = _bet_user_key(tok, admin)
+            bets = data.get(key, [])
+            new = [b for b in bets if b.get("id") != bet_id]
+            if len(new) != len(bets):
+                data[key] = new
+                _save_bets(data)
     return {"ok": True}
 
 
@@ -4508,15 +4618,21 @@ function renderGradeResults(data) {
   var losses  = allRows.filter(function(r) { return r.result === 'LOSS'; }).length;
   var pending = allRows.filter(function(r) { return r.result !== 'WIN' && r.result !== 'LOSS'; }).length;
   document.getElementById('grade-summary').innerHTML =
-    '<div style="background:#111;border-radius:10px;padding:14px 18px;margin-bottom:20px;display:flex;flex-wrap:wrap;gap:12px;align-items:center">' +
+    '<div style="background:#111;border-radius:10px;padding:14px 18px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:12px;align-items:center">' +
     '<div><span style="color:#4ade80;font-weight:700;font-size:1.1rem">' + wins + 'W</span> ' +
     '<span style="color:#f87171;font-weight:700;font-size:1.1rem">' + losses + 'L</span>' +
     (pending > 0 ? ' <span style="color:#94a3b8;font-size:.85rem;margin-left:4px">' + pending + ' pending</span>' : '') + '</div>' +
     '<div style="margin-left:auto;display:flex;gap:10px;align-items:center">' +
-      '<span style="font-size:.82rem;color:#94a3b8" id="grade-summary-stats">Enter bet amounts below to track P&L</span>' +
       '<button onclick="downloadGradeCSV()" style="background:#7c3aed;color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:.78rem;font-weight:600;cursor:pointer;white-space:nowrap">\u2b07 Results CSV</button>' +
     '</div>' +
+    '</div>' +
+    '<div style="background:#0a1f14;border:1px solid #16432c;border-radius:10px;padding:14px 18px;margin-bottom:16px;display:flex;flex-wrap:wrap;gap:14px;align-items:center">' +
+    '<div style="font-weight:800;font-size:.92rem;color:#6ee7b7">&#x1F4B0; Potential Earnings</div>' +
+    '<label style="font-size:.82rem;color:#94a3b8">Flat bet $ <input id="resBet" type="number" min="1" step="1" value="100" oninput="_recalcResEarnings()" style="width:84px;margin-left:4px;background:#020617;border:1px solid #334155;color:#fff;border-radius:6px;padding:5px 8px;font-size:.82rem"></label>' +
+    '<div id="resNet" style="font-size:.88rem;font-weight:700;color:#e2e8f0"></div>' +
+    '<button onclick="downloadResEarningsCSV()" style="margin-left:auto;background:#16a34a;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:.78rem;font-weight:700;cursor:pointer">\u2b07 Earnings CSV (Excel)</button>' +
     '</div>';
+  setTimeout(_recalcResEarnings, 0);
   var bodyHtml = sections.map(function(s) {
     return renderGradeSection(s.label, s.rows, s.color);
   }).join('');
@@ -4538,6 +4654,52 @@ function downloadGradeCSV(){
   var blob=new Blob([String.fromCharCode(65279)+csv],{type:'text/csv;charset=utf-8;'});
   var url=URL.createObjectURL(blob);
   var a=document.createElement('a'); a.href=url; a.download='mlb-results-'+(dateStr||'today')+'.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+function _resStake(){
+  var inp=document.getElementById('resBet');
+  var s=inp?Number(inp.value):100;
+  if(!isFinite(s)||s<=0) s=100;
+  return s;
+}
+function _recalcResEarnings(){
+  var el=document.getElementById('resNet'); if(!el) return;
+  var rows=window.__GRADE_ROWS__||[];
+  var decided=rows.filter(function(r){ return r.result==='WIN'||r.result==='LOSS'; });
+  if(!decided.length){ el.innerHTML='<span style="color:#64748b">No decided picks yet.</span>'; return; }
+  var stake=_resStake(), net=0, counted=0, skipped=0;
+  decided.forEach(function(r){
+    var pl=_amProfit(r.odds, stake, (r.result==='WIN'));
+    if(pl===null){ skipped++; return; }
+    net+=pl; counted++;
+  });
+  var risk=counted*stake;
+  var roi=risk?(net/risk*100):0;
+  var clr=net>=0?'#4ade80':'#f87171';
+  el.innerHTML='Net P/L across '+counted+' plays: <span style="color:'+clr+';font-weight:900;font-size:1.05rem">'+(net>=0?'+':'\u2212')+'$'+Math.abs(net).toFixed(0)+'</span> '
+    +'<span style="color:#64748b">(ROI '+(roi>=0?'+':'\u2212')+Math.abs(roi).toFixed(1)+'% on $'+risk.toFixed(0)+' risked)</span>'
+    +(skipped?(' <span style="color:#facc15">\u00b7 '+skipped+' win'+(skipped===1?'':'s')+' had no odds (excluded)</span>'):'');
+}
+function downloadResEarningsCSV(){
+  var rows=window.__GRADE_ROWS__||[];
+  if(!rows.length){ alert('No results to export yet.'); return; }
+  var dateStr=(document.getElementById('date-picker')||{}).value||'';
+  var stake=_resStake();
+  var out=[['Date','Category','Side','Player','Pick','Odds','Result','Bet Size','Profit/Loss']];
+  var net=0, counted=0;
+  rows.forEach(function(r){
+    var pl=_amProfit(r.odds, stake, (r.result==='WIN'));
+    var plStr='';
+    if(pl!==null){ plStr=pl.toFixed(2); net+=pl; counted++; }
+    out.push([dateStr, r.category||'', r.side||'', r.name||'', r.pick||'',
+      (r.odds!=null?((r.odds>0?'+':'')+r.odds):''), r.result||'', stake, plStr]);
+  });
+  out.push([]);
+  out.push(['','','','','','','TOTALS ('+counted+' graded)', (counted*stake), net.toFixed(2)]);
+  var csv=out.map(function(row){return row.map(_csvCell).join(',');}).join(String.fromCharCode(13)+String.fromCharCode(10));
+  var blob=new Blob([String.fromCharCode(65279)+csv],{type:'text/csv;charset=utf-8;'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a'); a.href=url; a.download='mlb-earnings-'+dateStr+'-flat'+stake+'.csv';
   document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
 }
 
