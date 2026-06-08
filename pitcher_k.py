@@ -81,6 +81,9 @@ PROP_ODDS = {}
 # Full MLB team K/game ranking: key = team name, value = {rank, k_per_g, total}
 # rank 1 = most Ks (easiest matchup for pitcher), rank 30 = fewest Ks (toughest).
 TEAM_K_RANKS: dict = {}
+# Home/away split K rankings (rank 1 = most Ks = easiest matchup for pitcher)
+TEAM_K_RANKS_HOME: dict = {}   # opponent's rank when playing at HOME
+TEAM_K_RANKS_AWAY: dict = {}   # opponent's rank when playing AWAY (road)
 # Full MLB team BB/game ranking (walks DRAWN by offense).
 # rank 1 = most BBs drawn (hardest matchup for pitcher control), rank 30 = fewest.
 TEAM_BB_RANKS: dict = {}
@@ -117,7 +120,7 @@ def _ip_to_float(ip_str) -> float:
 
 
 def _get_bottom_k_teams(season: str, n: int = BOTTOM_K_TEAMS_N):
-    global TEAM_K_RANKS, TEAM_BB_RANKS
+    global TEAM_K_RANKS, TEAM_BB_RANKS, TEAM_K_RANKS_HOME, TEAM_K_RANKS_AWAY
     try:
         r = requests.get(f"{MLB_API}/teams/stats",
             params={"season": season, "sportId": 1, "group": "hitting", "stats": "season"},
@@ -146,6 +149,36 @@ def _get_bottom_k_teams(season: str, n: int = BOTTOM_K_TEAMS_N):
         bb_total = len(bb_desc)
         TEAM_BB_RANKS = {t["name"]: {"rank": i + 1, "bb_per_g": t["bb_per_g"], "total": bb_total}
                          for i, t in enumerate(bb_desc)}
+        # ── Home / Away K split rankings ─────────────────────────────────────
+        try:
+            rha = requests.get(f"{MLB_API}/teams/stats",
+                params={"season": season, "sportId": 1, "group": "hitting", "stats": "homeAndAway"},
+                timeout=12)
+            ha_splits = rha.json().get("stats", [{}])[0].get("splits", [])
+            home_data, away_data = [], []
+            for sp in ha_splits:
+                stat = sp.get("stat", {})
+                tname = sp.get("team", {}).get("name", "")
+                ks = stat.get("strikeOuts", 0)
+                gp = stat.get("gamesPlayed", 1)
+                code = (sp.get("split") or {}).get("code", "")
+                if gp < 3: continue
+                entry = {"name": tname, "k_per_g": round(ks / gp, 2)}
+                if code == "H":
+                    home_data.append(entry)
+                elif code in ("A", "R"):
+                    away_data.append(entry)
+            for data, is_home in ((home_data, True), (away_data, False)):
+                desc = sorted(data, key=lambda x: x["k_per_g"], reverse=True)
+                tot = len(desc)
+                ranks = {t["name"]: {"rank": i + 1, "k_per_g": t["k_per_g"], "total": tot}
+                         for i, t in enumerate(desc)}
+                if is_home:
+                    TEAM_K_RANKS_HOME = ranks
+                else:
+                    TEAM_K_RANKS_AWAY = ranks
+        except Exception as e:
+            print(f"[pitcher_k] home/away K ranks failed: {e}")
         return {t["name"] for t in bottom_n}, bottom_n
     except Exception:
         return set(), []
@@ -1251,6 +1284,12 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
         opp_k_rank = _opp_kr["rank"]   if _opp_kr else None
         opp_k_pg   = _opp_kr["k_per_g"] if _opp_kr else None
         opp_k_total = _opp_kr["total"] if _opp_kr else None
+        # H/A split: pitcher HOME → opp is traveling (road); pitcher AWAY → opp at home
+        _ha_tbl = TEAM_K_RANKS_AWAY if side == "HOME" else TEAM_K_RANKS_HOME
+        _opp_kr_ha = next((v for k, v in _ha_tbl.items() if _teams_match(k, opp)), None)
+        opp_k_rank_ha = _opp_kr_ha["rank"]    if _opp_kr_ha else None
+        opp_k_pg_ha   = _opp_kr_ha["k_per_g"] if _opp_kr_ha else None
+        opp_k_context = "road" if side == "HOME" else "home"
 
         opp_k_info = next((t for t in bottom_k_list if _teams_match(t["name"], opp)), None)
         if bottom_k_set and opp_k_info:
@@ -1365,6 +1404,7 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                  "pit_hand": pit_hand, "days_rest": d_rest,
                  "whiff_pct": whiff_pct, "opp_k_pct_hand": opp_k_pct,
                  "opp_k_rank": opp_k_rank, "opp_k_pg": opp_k_pg, "opp_k_total": opp_k_total,
+                 "opp_k_rank_ha": opp_k_rank_ha, "opp_k_pg_ha": opp_k_pg_ha, "opp_k_context": opp_k_context,
                  "gb_pct": _gb_pct, "xwoba_against": _xwoba, "implied_total": _implied,
                  "velo_avg": _velo, "stuff_plus": _stuff, "arsenal_f": round(_ars_f, 3),
                  "pid": pid,
@@ -1436,6 +1476,8 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
             k_history2 = ", ".join(str(k) for k in k_list2) if k_list2 else "—"
             rf2 = _get_recent_k_form(pid2) if pid2 else {"recent_avg_k": None, "recent_k_list": [], "recent_starts": 0, "recent_k_log": []}
             _opp_kr2 = next((v for k, v in TEAM_K_RANKS.items() if _teams_match(k, st["opp"])), None)
+            _ha_tbl2 = TEAM_K_RANKS_AWAY if st["side"] == "HOME" else TEAM_K_RANKS_HOME
+            _opp_kr2_ha = next((v for k, v in _ha_tbl2.items() if _teams_match(k, st["opp"])), None)
             _hand2  = _get_pitch_hand(pid2) if pid2 else "R"
             _whiff2 = _whiff_lookup(pid2) if pid2 else None
             _rest2  = _days_rest(rf2.get("last_start_date", ""), run_date)
@@ -1469,6 +1511,9 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                 "opp_k_rank": _opp_kr2["rank"]    if _opp_kr2 else None,
                 "opp_k_pg":   _opp_kr2["k_per_g"] if _opp_kr2 else None,
                 "opp_k_total": _opp_kr2["total"]  if _opp_kr2 else None,
+                "opp_k_rank_ha": _opp_kr2_ha["rank"]    if _opp_kr2_ha else None,
+                "opp_k_pg_ha":   _opp_kr2_ha["k_per_g"] if _opp_kr2_ha else None,
+                "opp_k_context": "road" if st["side"] == "HOME" else "home",
                 "pid": pid2,
                 # Pitchers with NO K line may still have hits/outs/ER lines posted —
                 # build their prop picks too so the parlay pool is as deep as possible.
