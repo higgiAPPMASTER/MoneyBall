@@ -601,6 +601,92 @@ def _grade_date(date_str: str, picks: dict) -> dict:
                 "game_status": (st or {}).get("status", "—"),
             })
 
+    # Top 10 Batter — combine all batter categories, rank by EV, take top 10
+    _bat_cands = []
+    for p in (picks.get("top9") or []):
+        _bat_cands.append({"name": p.get("full_name") or p.get("name",""), "team": p.get("team",""),
+            "side":"OVER","stat_key":"hits","stat_label":"Hits","line":0.5,
+            "odds":p.get("hit_odds"),"ev":p.get("ev") or 0,
+            "pid":p.get("player_id"),"fname":p.get("full_name") or p.get("name")})
+    for p in (picks.get("under_picks") or []):
+        pd = p.get("pick","UNDER")
+        _bat_cands.append({"name":p.get("name",""),"team":p.get("team",""),
+            "side":pd,"stat_key":"hits","stat_label":"Hits","line":1.5,
+            "odds":p.get("under_odds") if pd=="UNDER" else p.get("over_odds"),
+            "ev":p.get("ev") or 0,"pid":p.get("batter_id"),"fname":p.get("name")})
+    for p in (picks.get("tb_over_picks") or []):
+        _bat_cands.append({"name":p.get("name",""),"team":p.get("team",""),
+            "side":"OVER","stat_key":"total_bases","stat_label":"Total Bases","line":1.5,
+            "odds":p.get("tb_over_odds"),"ev":p.get("ev") or 0,
+            "pid":p.get("batter_id"),"fname":p.get("name")})
+    for p in (picks.get("runs_picks") or []):
+        pd = p.get("pick","OVER")
+        _bat_cands.append({"name":p.get("name",""),"team":p.get("team",""),
+            "side":pd,"stat_key":"runs","stat_label":"Runs","line":0.5,
+            "odds":p.get("over_odds") if pd=="OVER" else p.get("under_odds"),
+            "ev":p.get("ev") or 0,"pid":p.get("batter_id"),"fname":p.get("name")})
+    for p in (picks.get("rbi_picks") or []):
+        pd = p.get("pick","OVER"); ln = p.get("line") if p.get("line") is not None else 0.5
+        _bat_cands.append({"name":p.get("name",""),"team":p.get("team",""),
+            "side":pd,"stat_key":"rbi","stat_label":"RBI","line":ln,
+            "odds":p.get("over_odds") if pd=="OVER" else p.get("under_odds"),
+            "ev":p.get("ev") or 0,"pid":p.get("batter_id"),"fname":p.get("name")})
+    for p in (picks.get("hrr_picks") or []):
+        pd = p.get("pick","OVER")
+        _bat_cands.append({"name":p.get("name",""),"team":p.get("team",""),
+            "side":pd,"stat_key":"hrr","stat_label":"H+R+RBI","line":1.5,
+            "odds":p.get("hrr_over_odds") if pd=="OVER" else p.get("hrr_under_odds"),
+            "ev":p.get("ev") or 0,"pid":p.get("batter_id"),"fname":p.get("name")})
+    _bat_cands.sort(key=lambda x: -(x.get("ev") or 0))
+    top10_batter = []
+    for c in _bat_cands[:10]:
+        st = _lookup(c.get("pid"), c.get("fname") or c["name"])
+        actual = st[c["stat_key"]] if (st and c["stat_key"] in st) else None
+        top10_batter.append({
+            "name": c["name"], "team": c["team"],
+            "category": "Top 10 Batter", "side": c["side"],
+            "pick": f"{c['side']} {c['line']} {c['stat_label']}",
+            "odds": c["odds"], "line": c["line"], "actual": actual, "stat": c["stat_label"],
+            "result": _grade(c["side"], c["line"], actual, (st or {}).get("final", False)),
+            "game_status": (st or {}).get("status", "—"),
+        })
+
+    # Top 10 Pitcher — combine Ks + all pitcher props, rank by blended gap, take top 10
+    _pit_cands = []
+    for p in ((picks.get("pitcher_k") or {}).get("picks") or []):
+        if not p.get("pick"): continue
+        ln = p.get("sugg_line") if p.get("sugg_line") is not None else p.get("line")
+        if ln is None: continue
+        pd = p.get("pick")
+        bl = p.get("proj") or p.get("blended")
+        gap = abs(bl - ln) if (bl is not None) else 0
+        _pit_cands.append({"name":p.get("name",""),"team":p.get("team",""),
+            "side":pd,"stat_key":"strikeOuts","stat_label":"Ks","line":ln,
+            "odds":p.get("over_odds") if pd=="OVER" else p.get("under_odds"),"gap":gap})
+    for mkt, mdata in (picks.get("pitcher_props") or {}).items():
+        sk, sl = PROP_STAT_MAP.get(mkt, (None, None))
+        if not sk: continue
+        for p in (mdata.get("picks") or []):
+            if not p.get("pick") or p.get("line") is None: continue
+            pd = p.get("pick"); ln = p.get("line"); bl = p.get("blended")
+            gap = abs(bl - ln) if (bl is not None) else 0
+            _pit_cands.append({"name":p.get("name",""),"team":p.get("team",""),
+                "side":pd,"stat_key":sk,"stat_label":sl,"line":ln,
+                "odds":p.get("over_odds") if pd=="OVER" else p.get("under_odds"),"gap":gap})
+    _pit_cands.sort(key=lambda x: -x.get("gap", 0))
+    top10_pitcher = []
+    for c in _pit_cands[:10]:
+        st = _lookup(None, c["name"])
+        actual = st[c["stat_key"]] if (st and c["stat_key"] in st) else None
+        top10_pitcher.append({
+            "name": c["name"], "team": c["team"],
+            "category": "Top 10 Pitcher", "side": c["side"],
+            "pick": f"{c['side']} {c['line']} {c['stat_label']}",
+            "odds": c["odds"], "line": c["line"], "actual": actual, "stat": c["stat_label"],
+            "result": _grade(c["side"], c["line"], actual, (st or {}).get("final", False)),
+            "game_status": (st or {}).get("status", "—"),
+        })
+
     return {
         "date": date_str,
         "hitter_overs":  hitter_overs,
@@ -612,6 +698,8 @@ def _grade_date(date_str: str, picks: dict) -> dict:
         "hrr":           hrr_rows,
         "pitcher_ks":    pitcher_ks,
         "pitcher_props": pitcher_props,
+        "top10_batter":  top10_batter,
+        "top10_pitcher": top10_pitcher,
         "any_game":      any_game,
         "all_final":     all_final,
     }
@@ -620,6 +708,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
 # ── Track Record: permanent W/L ledger across all graded days ────────────
 _TRACK_LEDGER_PATH = os.path.join(_CACHE_DIR, "_track_record.json")
 _TRACK_CAT_ORDER = [
+    "Top 10 Batter", "Top 10 Pitcher",
     "Hitter Hits", "Runs", "TB Under", "TB Over", "RBI", "HRR", "Pitcher Ks",
     "Pitcher Hits Allowed", "Pitcher Outs", "Pitcher Earned Runs", "Pitcher Walks",
 ]
@@ -705,7 +794,7 @@ def _save_detail(det: dict):
 def _aggregate_graded(graded: dict) -> dict:
     """Collapse a graded day into {category: {side: [W, L]}} counting only decided picks."""
     agg: dict = {}
-    for key in ("hitter_overs", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "hrr", "pitcher_ks", "pitcher_props"):
+    for key in ("hitter_overs", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "hrr", "pitcher_ks", "pitcher_props", "top10_batter", "top10_pitcher"):
         for r in graded.get(key, []):
             res = r.get("result")
             if res not in ("WIN", "LOSS"):
@@ -724,7 +813,7 @@ def _detail_graded(graded: dict) -> list:
     fields an earnings sheet needs: player, team, category, side, pick, odds,
     line, result."""
     out = []
-    for key in ("hitter_overs", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "hrr", "pitcher_ks", "pitcher_props"):
+    for key in ("hitter_overs", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "hrr", "pitcher_ks", "pitcher_props", "top10_batter", "top10_pitcher"):
         for r in graded.get(key, []):
             res = r.get("result")
             if res not in ("WIN", "LOSS"):
@@ -2585,7 +2674,7 @@ function _propBestCard(p, key, rank) {
       ${p.market==='pitcher_walks'&&p.opp_bb_rank!=null?`<div style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap"><span style="font-size:.62rem;color:#94a3b8">Opp BB/G rank:</span><span style="font-size:.72rem;font-weight:800;color:#34d399">#${p.opp_bb_rank}<span style="color:#64748b;font-weight:400"> of ${p.opp_bb_total||30}</span></span><span style="font-size:.68rem;color:#cbd5e1;font-family:monospace">${p.opp_bb_pg!=null?p.opp_bb_pg+' BB/G':''}</span></div>`:''}
       ${_evBadge(p)}
     </div>
-  ${_betBtn(p,'Pitcher Props',p.pick,_propStatKey,String(p.label||'Prop'),p.line,_propOdds)}
+  ${_betBtn(p,'Top 10 Pitcher',p.pick,_propStatKey,String(p.label||'Prop'),p.line,_propOdds)}
   </div>`;
 }
 function renderPitcherProps(view){
@@ -4217,12 +4306,12 @@ function _buildTop10(view) {
 }
 function _top10BetBtn(p, kind) {
   switch(kind) {
-    case 'HITTER':  return _betBtn(p,'Hitter Hits','OVER','hits','Hits',0.5,p.hit_odds);
-    case 'TB OVER': return _betBtn(p,'TB Over','OVER','total_bases','Total Bases',1.5,p.tb_over_odds);
-    case 'HRR':     { var odh=p.pick==='UNDER'?p.hrr_under_odds:p.hrr_over_odds; return _betBtn(p,'HRR',(p.pick==='UNDER'?'UNDER':'OVER'),'hrr','H+R+RBI',1.5,odh); }
-    case 'RBI':     { var od=p.pick==='OVER'?p.over:p.under; return _betBtn(p,'RBI',(p.pick||'OVER'),'rbi','RBI',(p.line||0.5),od); }
-    case 'RUNS':    { var od2=p.pick==='OVER'?p.over_odds:p.under_odds; return _betBtn(p,'Runs',(p.pick||'OVER'),'runs','Runs',(p.line||0.5),od2); }
-    case 'UNDER':   { var od3=p.pick==='OVER'?p.over_odds:p.under_odds; return _betBtn(p,'Hitter Hits',(p.pick||'UNDER'),'hits','Hits',1.5,od3); }
+    case 'HITTER':  return _betBtn(p,'Top 10 Batter','OVER','hits','Hits',0.5,p.hit_odds);
+    case 'TB OVER': return _betBtn(p,'Top 10 Batter','OVER','total_bases','Total Bases',1.5,p.tb_over_odds);
+    case 'HRR':     { var odh=p.pick==='UNDER'?p.hrr_under_odds:p.hrr_over_odds; return _betBtn(p,'Top 10 Batter',(p.pick==='UNDER'?'UNDER':'OVER'),'hrr','H+R+RBI',1.5,odh); }
+    case 'RBI':     { var od=p.pick==='OVER'?p.over:p.under; return _betBtn(p,'Top 10 Batter',(p.pick||'OVER'),'rbi','RBI',(p.line||0.5),od); }
+    case 'RUNS':    { var od2=p.pick==='OVER'?p.over_odds:p.under_odds; return _betBtn(p,'Top 10 Batter',(p.pick||'OVER'),'runs','Runs',(p.line||0.5),od2); }
+    case 'UNDER':   { var od3=p.pick==='OVER'?p.over_odds:p.under_odds; return _betBtn(p,'Top 10 Batter',(p.pick||'UNDER'),'hits','Hits',1.5,od3); }
     default: return '';
   }
 }
@@ -4788,6 +4877,10 @@ function renderTrackRecord(d){
   var tw=0,tl=0;
   rows.forEach(function(r){ tw+=r.wins; tl+=r.losses; });
   var CAT_CFG={
+    'Top 10 Batter|OVER':        {lbl:'Top 10 Batter (Over)',       icon:'⭐', abbr:'T10B+'},
+    'Top 10 Batter|UNDER':       {lbl:'Top 10 Batter (Under)',      icon:'⭐', abbr:'T10B-'},
+    'Top 10 Pitcher|OVER':       {lbl:'Top 10 Pitcher (Over)',      icon:'🎯', abbr:'T10P+'},
+    'Top 10 Pitcher|UNDER':      {lbl:'Top 10 Pitcher (Under)',     icon:'🎯', abbr:'T10P-'},
     'Hitter Hits|OVER':          {lbl:'Top Picks (Over 0.5 Hits)', icon:'🎯', abbr:'Hits'},
     'Hitter Hits|UNDER':         {lbl:'Under 1.5 Hits',            icon:'📉', abbr:'Unders'},
     'Runs|OVER':                 {lbl:'Runs (Over 0.5)',            icon:'🏃', abbr:'Runs+'},
@@ -4809,7 +4902,8 @@ function renderTrackRecord(d){
     'Pitcher Walks|OVER':        {lbl:'Walks Allowed (Over)',       icon:'🚶', abbr:'BB+'},
     'Pitcher Walks|UNDER':       {lbl:'Walks Allowed (Under)',      icon:'🚶', abbr:'BB-'},
   };
-  var CAT_ORDER=['Hitter Hits|OVER','Hitter Hits|UNDER','Runs|OVER','Runs|UNDER',
+  var CAT_ORDER=['Top 10 Batter|OVER','Top 10 Batter|UNDER','Top 10 Pitcher|OVER','Top 10 Pitcher|UNDER',
+    'Hitter Hits|OVER','Hitter Hits|UNDER','Runs|OVER','Runs|UNDER',
     'TB Under|UNDER','TB Over|OVER','RBI|OVER','RBI|UNDER','HRR|OVER','HRR|UNDER',
     'Pitcher Ks|OVER','Pitcher Ks|UNDER','Pitcher Hits Allowed|OVER','Pitcher Hits Allowed|UNDER',
     'Pitcher Outs|OVER','Pitcher Outs|UNDER','Pitcher Earned Runs|OVER','Pitcher Earned Runs|UNDER',
