@@ -1623,7 +1623,30 @@ _HTML = """
         <span id="bc-arrow" style="color:#64748b;font-size:.74rem">&#9658; expand</span>
       </div>
       <div id="betting-context-body" class="hidden" style="padding:0 14px 16px">
-        <div style="display:flex;gap:8px;margin:10px 0 12px">
+        <div id="bc-today-lean" style="border-radius:8px;padding:8px 12px;background:rgba(245,158,11,.07);border:1px solid rgba(245,158,11,.2);margin:10px 0 10px;display:none">
+          <span style="font-size:.68rem;color:#fbbf24;font-weight:800;letter-spacing:.06em;text-transform:uppercase">Today&#39;s Matrix Lean</span>
+          <div id="bc-lean-text" style="font-size:.72rem;color:#e2e8f0;margin-top:4px;line-height:1.7"></div>
+        </div>
+        <script>
+        (function(){
+          var SIG=[[\'U\',\'U\',\'U\',\'U\',\'U\',\'U\',\'U\'],[\'U\',\'U\',\'U\',\'U\',\'U\',\'O\',\'O\'],[\'O\',\'O\',\'O\',\'O\',\'O\',\'U\',\'O\'],[\'O\',\'O\',\'O\',\'O\',\'O\',\'O\',\'U\'],[\'U\',\'U\',\'U\',\'U\',\'U\',\'U\',\'U\'],[\'O\',\'O\',\'O\',\'O\',\'O\',\'O\',\'O\'],[\'O\',\'O\',\'O\',\'O\',\'O\',\'U\',\'U\']];
+          var LABELS=[\'Series Finales\',\'Series Openers\',\'Mid-Series G2\',\'Mid-Series G3\',\'Travel Days\',\'Weekend Openers\',\'Weekend G2\'];
+          var NAMES=[\'Sunday\',\'Monday\',\'Tuesday\',\'Wednesday\',\'Thursday\',\'Friday\',\'Saturday\'];
+          var d=new Date().getDay();
+          var s=SIG[d]; var oc=function(v){return v===\'O\'?\'<b style="color:#4ade80">OVER</b>\':\'<b style="color:#ff8a65">UNDER</b>\';};
+          var el=document.getElementById(\'bc-today-lean\'), tx=document.getElementById(\'bc-lean-text\');
+          if(el&&tx){
+            el.style.display=\'block\';
+            tx.innerHTML=NAMES[d]+\' \u2014 \'+LABELS[d]
+              +\'<br><span style="color:#94a3b8">Batters:</span> Hits \'+oc(s[0])+\' \u00b7 TB \'+oc(s[1])+\' \u00b7 HRR \'+oc(s[2])+\' \u00b7 Runs \'+oc(s[3])+\' \u00b7 RBI \'+oc(s[4])
+              +\'<br><span style="color:#94a3b8">Pitchers:</span> K \'+oc(s[5])+\' \u00b7 Outs \'+oc([\'U\',\'O\',\'O\',\'U\',\'U\',\'O\',\'U\'][d])+\' \u00b7 Hits Allowed \'+oc([\'O\',\'U\',\'O\',\'O\',\'U\',\'U\',\'O\'][d])+\' \u00b7 ER \'+oc([\'O\',\'U\',\'O\',\'O\',\'O\',\'U\',\'O\'][d])+\' \u00b7 BB \'+oc([\'O\',\'U\',\'O\',\'O\',\'U\',\'U\',\'O\'][d]);
+          }
+          document.querySelectorAll(\'[data-dow]\').forEach(function(tr){
+            tr.style.background=tr.dataset.dow===String(d)?\'rgba(245,158,11,.08)\':tr.style.background||\'\'
+          });
+        })();
+        </script>
+        <div style="display:flex;gap:8px;margin:4px 0 12px">
           <button id="bc-tab-bat" onclick="_bcTab('bat')" style="padding:5px 16px;border-radius:8px;border:1px solid #4ade80;background:rgba(74,222,128,.1);color:#4ade80;font-weight:800;font-size:.74rem;cursor:pointer;letter-spacing:.04em">&#9918; BATTERS</button>
           <button id="bc-tab-pit" onclick="_bcTab('pit')" style="padding:5px 16px;border-radius:8px;border:1px solid #334155;background:transparent;color:#64748b;font-weight:800;font-size:.74rem;cursor:pointer;letter-spacing:.04em">&#128142; PITCHERS</button>
         </div>
@@ -1633,69 +1656,69 @@ _HTML = """
             <thead>
               <tr style="border-bottom:2px solid #1e293b">
                 <th style="text-align:left;padding:7px 8px;color:#94a3b8;font-size:.62rem;letter-spacing:.06em;white-space:nowrap;font-weight:700;width:9%">DAY &amp; TREND</th>
-                <th style="text-align:left;padding:7px 8px;color:#4ade80;font-size:.62rem;letter-spacing:.06em;font-weight:700;width:18%">&#128994; TOP PICKS + MONEY BALL<br><span style="color:#64748b;font-weight:400">Hits O 0.5</span></th>
-                <th style="text-align:left;padding:7px 8px;color:#ff8a65;font-size:.62rem;letter-spacing:.06em;font-weight:700;width:18%">&#128308; UNDER PICKS<br><span style="color:#64748b;font-weight:400">Hits U 1.5</span></th>
-                <th style="text-align:left;padding:7px 8px;color:#a78bfa;font-size:.62rem;letter-spacing:.06em;font-weight:700;width:18%">&#128995; TB UNDER<br><span style="color:#64748b;font-weight:400">TB U 1.5</span></th>
-                <th style="text-align:left;padding:7px 8px;color:#60a5fa;font-size:.62rem;letter-spacing:.06em;font-weight:700;width:18%">&#128309; RUNS PICKS<br><span style="color:#64748b;font-weight:400">Runs O/U 0.5</span></th>
-                <th style="text-align:left;padding:7px 8px;color:#fbbf24;font-size:.62rem;letter-spacing:.06em;font-weight:700;width:19%">&#128993; RBI PICKS<br><span style="color:#64748b;font-weight:400">RBI O/U 0.5</span></th>
+                <th style="text-align:left;padding:7px 8px;color:#4ade80;font-size:.62rem;letter-spacing:.06em;font-weight:700;width:18%">&#9918; HITS<br><span style="color:#64748b;font-weight:400">O/U 0.5</span></th>
+                <th style="text-align:left;padding:7px 8px;color:#a78bfa;font-size:.62rem;letter-spacing:.06em;font-weight:700;width:18%">&#128995; TOTAL BASES<br><span style="color:#64748b;font-weight:400">O/U 1.5</span></th>
+                <th style="text-align:left;padding:7px 8px;color:#fb923c;font-size:.62rem;letter-spacing:.06em;font-weight:700;width:18%">&#128293; HRR &middot; H+R+RBI<br><span style="color:#64748b;font-weight:400">O/U 1.5</span></th>
+                <th style="text-align:left;padding:7px 8px;color:#60a5fa;font-size:.62rem;letter-spacing:.06em;font-weight:700;width:18%">&#128309; RUNS SCORED<br><span style="color:#64748b;font-weight:400">O/U 0.5</span></th>
+                <th style="text-align:left;padding:7px 8px;color:#fbbf24;font-size:.62rem;letter-spacing:.06em;font-weight:700;width:19%">&#128993; RBIs RECORDED<br><span style="color:#64748b;font-weight:400">O/U 0.5</span></th>
               </tr>
             </thead>
             <tbody>
-              <tr style="border-bottom:1px solid #1e1e1e">
+              <tr data-dow="1" style="border-bottom:1px solid #1e1e1e">
                 <td style="padding:8px 8px;color:#e2e8f0;font-weight:700;white-space:nowrap;vertical-align:top">Monday<br><span style="font-size:.66rem;color:#64748b;font-weight:400">Series Openers</span></td>
-                <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> High-contact leadoff hitters vs. rusty #4/#5 back-rotation starters.</td>
-                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Cold hitters facing an elite Ace opener with a fresh pitch mix.</td>
-                <td style="padding:8px 8px;color:#c4b5fd;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Extreme pull-hitters facing a starter with an elite heavy sinker.</td>
-                <td style="padding:8px 8px;color:#93c5fd;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Target under on teams traveling long distances across time zones.</td>
-                <td style="padding:8px 8px;color:#fde68a;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Offenses start slow adjusting to a new series.</td>
+                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Hitters suffer from high unfamiliarity against fresh, top-tier Ace spin metrics.</td>
+                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Slowed timing on Game 1 profiles prevents barrels, driving down extra-base power.</td>
+                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Aces stifle all three categories simultaneously; hard to scratch together multi-stat games.</td>
+                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Fresh starting pitching restricts walk rates and limits top-of-lineup baserunners.</td>
+                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Clean defensive setups and lack of ducks on the pond stunt run production.</td>
               </tr>
-              <tr style="border-bottom:1px solid #1e1e1e;background:rgba(255,255,255,.015)">
+              <tr data-dow="2" style="border-bottom:1px solid #1e1e1e;background:rgba(255,255,255,.015)">
                 <td style="padding:8px 8px;color:#e2e8f0;font-weight:700;white-space:nowrap;vertical-align:top">Tuesday<br><span style="font-size:.66rem;color:#64748b;font-weight:400">Mid-Series G2</span></td>
-                <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Elite hitters who tracked this starter well in past head-to-heads.</td>
-                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Low-walk hitters facing a high-spin pitcher with elite deception.</td>
-                <td style="padding:8px 8px;color:#c4b5fd;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Flyball hitters facing a high-strikeout starter in cold weather.</td>
-                <td style="padding:8px 8px;color:#93c5fd;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Target high-scoring home teams against low-strikeout pitchers.</td>
-                <td style="padding:8px 8px;color:#fde68a;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Clean-up hitters facing a starting pitcher with a high WHIP metric.</td>
+                <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Batters adjust instantly to visual pitch releases and velocity tracked on Monday.</td>
+                <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Isolate flyball pitchers playing in small venues to drive multi-base hits.</td>
+                <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> A single base hit combined with tired bullpens easily pushes this combo line over 1.5.</td>
+                <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Degraded, taxed bullpens from Game 1 long stretches allow late-inning scores.</td>
+                <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Middle-of-the-order bats leverage high situational wOBA metrics with runners on.</td>
               </tr>
-              <tr style="border-bottom:1px solid #1e1e1e">
+              <tr data-dow="3" style="border-bottom:1px solid #1e1e1e">
                 <td style="padding:8px 8px;color:#e2e8f0;font-weight:700;white-space:nowrap;vertical-align:top">Wednesday<br><span style="font-size:.66rem;color:#64748b;font-weight:400">Mid-Series G3</span></td>
-                <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Contact-first batters facing a starter with low chase-rates (&lt;25%).</td>
-                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Hitters facing a starter who dominates with opposite-handed splits.</td>
-                <td style="padding:8px 8px;color:#c4b5fd;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Groundball hitters facing a starter with a high-ride fastball.</td>
-                <td style="padding:8px 8px;color:#93c5fd;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Lineups with high OPS metrics facing an injury-return starter.</td>
-                <td style="padding:8px 8px;color:#fde68a;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Power hitters facing a starter prone to giving up home runs.</td>
+                <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Maximum visual comfort established; batters easily time single-pitch archetypes.</td>
+                <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Exploit vulnerable, back-of-rotation spot starters with high hard-hit rates allowed.</td>
+                <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Familiarity creates multi-hit games, triggering automated runs and RBI combos.</td>
+                <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Deep counts and high pitch counts yield frequent walks and base deployment.</td>
+                <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Target cleanup spots facing pitchers experiencing steep command/walk drops.</td>
               </tr>
-              <tr style="border-bottom:1px solid #1e1e1e;background:rgba(255,255,255,.015)">
+              <tr data-dow="4" style="border-bottom:1px solid #1e1e1e;background:rgba(255,255,255,.015)">
                 <td style="padding:8px 8px;color:#e2e8f0;font-weight:700;white-space:nowrap;vertical-align:top">Thursday<br><span style="font-size:.66rem;color:#64748b;font-weight:400">Travel Days</span></td>
-                <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Hungry utility players or backup hitters getting spot starts.</td>
-                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Star players who risk an early pull to rest for travel.</td>
-                <td style="padding:8px 8px;color:#c4b5fd;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> High-contact hitters facing an elite groundball specialist.</td>
-                <td style="padding:8px 8px;color:#93c5fd;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Mixed lineups filled with bench players resting key stars.</td>
-                <td style="padding:8px 8px;color:#fde68a;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Clean-up hitters if the primary on-base runners are sitting.</td>
+                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Heavy getaway fatigue and morning schedule changes ruin overall eye discipline.</td>
+                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Slower bat speeds from late-night cross-country flights cap exit velocity metrics.</td>
+                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Low-scoring, fast games mean batters rarely compile more than a single lonely hit.</td>
+                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Managers pull high-profile stars early for rest, severely capping run opportunities.</td>
+                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Bottom-of-the-order hitting spots (7-9) receive fewer game-wide plate appearances.</td>
               </tr>
-              <tr style="border-bottom:1px solid #1e1e1e">
+              <tr data-dow="5" style="border-bottom:1px solid #1e1e1e">
                 <td style="padding:8px 8px;color:#e2e8f0;font-weight:700;white-space:nowrap;vertical-align:top">Friday<br><span style="font-size:.66rem;color:#64748b;font-weight:400">Weekend Openers</span></td>
-                <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Dynamic baserunners in high-altitude/hot home stadiums.</td>
-                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Hitters facing a rested, top-tier Friday night Ace.</td>
-                <td style="padding:8px 8px;color:#c4b5fd;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Pull-heavy hitters facing an elite starter with a sharp slider.</td>
-                <td style="padding:8px 8px;color:#93c5fd;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Elite offenses playing against a starter with a high away-ERA.</td>
-                <td style="padding:8px 8px;color:#fde68a;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> RBI leaders facing a starter who panics with runners on base.</td>
+                <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Home lineups react with aggressive adrenaline boosts via rowdy, packed home crowds.</td>
+                <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Attack No. 4 and No. 5 rotation options who throw flat fastballs over the plate.</td>
+                <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> High-energy park environments inflate individual hit totals and team-wide run generation.</td>
+                <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> High team-wide wRC+ surges over past days signal easy scoring stacks.</td>
+                <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Target hot stacks in hitters&#39; parks; avoid elite Aces in vast, pitcher-friendly parks.</td>
               </tr>
-              <tr style="border-bottom:1px solid #1e1e1e;background:rgba(255,255,255,.015)">
+              <tr data-dow="6" style="border-bottom:1px solid #1e1e1e;background:rgba(255,255,255,.015)">
                 <td style="padding:8px 8px;color:#e2e8f0;font-weight:700;white-space:nowrap;vertical-align:top">Saturday<br><span style="font-size:.66rem;color:#64748b;font-weight:400">Weekend G2</span></td>
-                <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Hitters with a documented history of crushing this starter.</td>
-                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Cold hitters facing a starter with an elite sweeping breaking ball.</td>
-                <td style="padding:8px 8px;color:#c4b5fd;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Low-power hitters facing a starter with high physical extension.</td>
-                <td style="padding:8px 8px;color:#93c5fd;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Target high-walk offenses facing a wild starting pitcher.</td>
-                <td style="padding:8px 8px;color:#fde68a;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Middle-of-the-order hitters vs. low-velocity starters.</td>
+                <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Disciplined, high-contact lineups excel at timing up mid-tier rotation pitching.</td>
+                <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> High BABIP-matched hitters find grass against tired, middle-inning long-relievers.</td>
+                <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Consistent team contact fills the bases, offering heavy RBI and Run equity for top hitters.</td>
+                <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Furious, emotional division matchups force high walks and consecutive base hits.</td>
+                <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Protect core runners by targeting hitters paired behind high On-Base Percentage stars.</td>
               </tr>
-              <tr>
+              <tr data-dow="0">
                 <td style="padding:8px 8px;color:#e2e8f0;font-weight:700;white-space:nowrap;vertical-align:top">Sunday<br><span style="font-size:.66rem;color:#64748b;font-weight:400">Series Finales</span></td>
-                <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Hitters facing a starter they have completely solved all weekend.</td>
-                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Hitters facing an elite high-strikeout stopper pitcher.</td>
-                <td style="padding:8px 8px;color:#c4b5fd;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Soft-contact hitters facing a high-heat fastball starter.</td>
-                <td style="padding:8px 8px;color:#93c5fd;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> High-scoring teams capitalizing on a worn-down pitching staff.</td>
-                <td style="padding:8px 8px;color:#fde68a;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Power hitters facing a starter with poor late-inning stamina.</td>
+                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Day-game schedules trigger heavy structural lineup changes, removing protection.</td>
+                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Substituted bats disrupt game-to-game flow and suppress collective output.</td>
+                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Benched superstars ruin the scoring engine, killing the run and RBI potential of remaining bats.</td>
+                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Fragmented, weak lower orders mean fewer total baserunners across 9 frames.</td>
+                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Hammer individual hitter Unders the exact second starting stars are confirmed benched.</td>
               </tr>
             </tbody>
           </table>
@@ -1714,61 +1737,61 @@ _HTML = """
               </tr>
             </thead>
             <tbody>
-              <tr style="border-bottom:1px solid #1e1e1e">
+              <tr data-dow="1" style="border-bottom:1px solid #1e1e1e">
                 <td style="padding:8px 8px;color:#e2e8f0;font-weight:700;white-space:nowrap;vertical-align:top">Monday<br><span style="font-size:.66rem;color:#64748b;font-weight:400">Series Openers</span></td>
-                <td style="padding:8px 8px;color:#a7f3d0;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Elite Aces facing aggressive, high-strikeout road teams.</td>
-                <td style="padding:8px 8px;color:#bfdbfe;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Unfamiliarity favors fresh starters; bet under on mid-tier arms.</td>
-                <td style="padding:8px 8px;color:#cbd5e1;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Managers push Aces deeper to preserve bullpen early.</td>
-                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Target under on home starters with an ERA under 3.50.</td>
-                <td style="padding:8px 8px;color:#fde68a;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> High-command starters with a career walk-rate under 7%.</td>
+                <td style="padding:8px 8px;color:#a7f3d0;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Elite Aces leverage rest to dominate; target fields with &gt;23% hitter K rates.</td>
+                <td style="padding:8px 8px;color:#bfdbfe;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Aces maintain maximum movement, preventing hard contact and clean base hits.</td>
+                <td style="padding:8px 8px;color:#cbd5e1;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Managers leave starting stars in longer to save bullpen energy for the long week.</td>
+                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Target starting arms maintaining a sub-3.50 ERA and strong control profiles.</td>
+                <td style="padding:8px 8px;color:#fde68a;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Sharp, rested release points allow pitch command to dwell consistently in the zone.</td>
               </tr>
-              <tr style="border-bottom:1px solid #1e1e1e;background:rgba(255,255,255,.015)">
+              <tr data-dow="2" style="border-bottom:1px solid #1e1e1e;background:rgba(255,255,255,.015)">
                 <td style="padding:8px 8px;color:#e2e8f0;font-weight:700;white-space:nowrap;vertical-align:top">Tuesday<br><span style="font-size:.66rem;color:#64748b;font-weight:400">Mid-Series G2</span></td>
-                <td style="padding:8px 8px;color:#a7f3d0;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Batters adjust quickly to team pitch shapes; avoid high lines.</td>
-                <td style="padding:8px 8px;color:#bfdbfe;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Target over on flyball pitchers playing in small stadiums.</td>
-                <td style="padding:8px 8px;color:#cbd5e1;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Workhorse mid-rotation starters facing a slumping lineup.</td>
-                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Sub-par starters with high hard-hit rates allowed (&gt;40%).</td>
-                <td style="padding:8px 8px;color:#fde68a;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Erratic starters facing highly disciplined, high-BB% teams.</td>
+                <td style="padding:8px 8px;color:#a7f3d0;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Batters handle velocity profiles cleaner; tracking metrics push line value down.</td>
+                <td style="padding:8px 8px;color:#bfdbfe;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Hitters adjust to spin profiles from Game 1, increasing solid visual tracking.</td>
+                <td style="padding:8px 8px;color:#cbd5e1;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Workhorse mid-rotation arms are explicitly ordered to chew up frames to save assets.</td>
+                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Sub-par rotation options with hard-hit rates above 40% surrender easy scores.</td>
+                <td style="padding:8px 8px;color:#fde68a;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Erratic pitchers facing highly disciplined, patient batting eyes slip into deep walk counts.</td>
               </tr>
-              <tr style="border-bottom:1px solid #1e1e1e">
+              <tr data-dow="3" style="border-bottom:1px solid #1e1e1e">
                 <td style="padding:8px 8px;color:#e2e8f0;font-weight:700;white-space:nowrap;vertical-align:top">Wednesday<br><span style="font-size:.66rem;color:#64748b;font-weight:400">Mid-Series G3</span></td>
-                <td style="padding:8px 8px;color:#a7f3d0;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> High-whiff pitchers facing bottom-tier, high-strikeout teams.</td>
-                <td style="padding:8px 8px;color:#bfdbfe;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Pitchers who rely heavily on a single pitch type (predictable).</td>
-                <td style="padding:8px 8px;color:#cbd5e1;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Target under on starters facing a lineup for the 3rd time in a year.</td>
-                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Pitchers with a high FIP (Fielding Independent Pitching).</td>
-                <td style="padding:8px 8px;color:#fde68a;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Young starters who rely heavily on pitching to the edges.</td>
+                <td style="padding:8px 8px;color:#a7f3d0;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> High-whiff rotation weapons easily exploit aggressive, low-tier batting orders.</td>
+                <td style="padding:8px 8px;color:#bfdbfe;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Familiarity peaks by Game 3, letting batters jump on predictable sequencing.</td>
+                <td style="padding:8px 8px;color:#cbd5e1;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Pitchers face the Third Time Through Order penalty; lineups anticipate patterns.</td>
+                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Target arms displaying high FIP metrics that indicate luck regressions are due.</td>
+                <td style="padding:8px 8px;color:#fde68a;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Young starters who lean heavily on edge-painting struggle with strict plate umpires.</td>
               </tr>
-              <tr style="border-bottom:1px solid #1e1e1e;background:rgba(255,255,255,.015)">
+              <tr data-dow="4" style="border-bottom:1px solid #1e1e1e;background:rgba(255,255,255,.015)">
                 <td style="padding:8px 8px;color:#e2e8f0;font-weight:700;white-space:nowrap;vertical-align:top">Thursday<br><span style="font-size:.66rem;color:#64748b;font-weight:400">Travel Days</span></td>
-                <td style="padding:8px 8px;color:#a7f3d0;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Managers use quick hooks to avoid blowout fatigue.</td>
-                <td style="padding:8px 8px;color:#bfdbfe;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Weak spot-starters or emergency call-ups filling in.</td>
-                <td style="padding:8px 8px;color:#cbd5e1;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Shortest leash of the week; top target for UNDER bets.</td>
-                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Emergency call-up pitchers or long-relief spot-starters.</td>
-                <td style="padding:8px 8px;color:#fde68a;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Quick hooks pull starters before stacking up walks.</td>
+                <td style="padding:8px 8px;color:#a7f3d0;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Quick hooks by managers to save arms from blowout fatigue reduce raw strikeout limits.</td>
+                <td style="padding:8px 8px;color:#bfdbfe;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Heavy getaway fatigue and slow bat speeds minimize hard outfield line drives.</td>
+                <td style="padding:8px 8px;color:#cbd5e1;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Shortest leash of the entire week; any early multi-runner jams trigger immediate yanks.</td>
+                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Emergency call-up options or long-relievers yield heavy run value over short stretches.</td>
+                <td style="padding:8px 8px;color:#fde68a;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Managers pull struggling pitchers long before they can rack up consecutive walk sequences.</td>
               </tr>
-              <tr style="border-bottom:1px solid #1e1e1e">
+              <tr data-dow="5" style="border-bottom:1px solid #1e1e1e">
                 <td style="padding:8px 8px;color:#e2e8f0;font-weight:700;white-space:nowrap;vertical-align:top">Friday<br><span style="font-size:.66rem;color:#64748b;font-weight:400">Weekend Openers</span></td>
-                <td style="padding:8px 8px;color:#a7f3d0;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Home Aces backed by loud, energized weekend crowds.</td>
-                <td style="padding:8px 8px;color:#bfdbfe;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Friday night elite Aces playing in large, deep ballparks.</td>
-                <td style="padding:8px 8px;color:#cbd5e1;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Friday night workhorses expected to carry the bulk of the game.</td>
-                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Top-tier Aces with low home-stadium home-run rates.</td>
-                <td style="padding:8px 8px;color:#fde68a;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Confident home starters who attack the strike zone early.</td>
+                <td style="padding:8px 8px;color:#a7f3d0;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Top-tier weekend rotation weapons aggressively challenge bats to command tempo.</td>
+                <td style="padding:8px 8px;color:#bfdbfe;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Rested front-end arms squeeze the zone, frustrating aggressive weekend swingers.</td>
+                <td style="padding:8px 8px;color:#cbd5e1;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Friday workhorses are heavily expected to shoulder the bulk of the weekend opening game.</td>
+                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Front-end rotation arms limit deep homers in high-wall, pitcher-friendly environments.</td>
+                <td style="padding:8px 8px;color:#fde68a;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Confident starters rely on high first-pitch strike percentages to get ahead early.</td>
               </tr>
-              <tr style="border-bottom:1px solid #1e1e1e;background:rgba(255,255,255,.015)">
+              <tr data-dow="6" style="border-bottom:1px solid #1e1e1e;background:rgba(255,255,255,.015)">
                 <td style="padding:8px 8px;color:#e2e8f0;font-weight:700;white-space:nowrap;vertical-align:top">Saturday<br><span style="font-size:.66rem;color:#64748b;font-weight:400">Weekend G2</span></td>
-                <td style="padding:8px 8px;color:#a7f3d0;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Smart contact lineups facing a mid-tier starting pitcher.</td>
-                <td style="padding:8px 8px;color:#bfdbfe;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Starters facing a lineup that is hitting well all weekend.</td>
-                <td style="padding:8px 8px;color:#cbd5e1;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Fast managerial hooks to secure a critical weekend win.</td>
-                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> High-contact starters facing an offense on a hot streak.</td>
-                <td style="padding:8px 8px;color:#fde68a;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Pitchers who struggle to find their release points under pressure.</td>
+                <td style="padding:8px 8px;color:#a7f3d0;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> High-contact hitters spoil tough pitch shapes, draining pitcher stamina quickly.</td>
+                <td style="padding:8px 8px;color:#bfdbfe;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Pesky contact offenses consistently find grass against tired middle-innings relievers.</td>
+                <td style="padding:8px 8px;color:#cbd5e1;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Aggressive bullpen handling to secure crucial weekend series wins forces quick hooks.</td>
+                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> High-contact batting strategies easily exploit pitchers who show elevated WHIP tallies.</td>
+                <td style="padding:8px 8px;color:#fde68a;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Vulnerable pitchers lose release point shapes when forced into high-stress rivalry jams.</td>
               </tr>
-              <tr>
+              <tr data-dow="0">
                 <td style="padding:8px 8px;color:#e2e8f0;font-weight:700;white-space:nowrap;vertical-align:top">Sunday<br><span style="font-size:.66rem;color:#64748b;font-weight:400">Series Finales</span></td>
-                <td style="padding:8px 8px;color:#a7f3d0;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Batters have maximum familiarity with pitches; avoid high lines.</td>
-                <td style="padding:8px 8px;color:#bfdbfe;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Exhausted starters who are tipping pitches by late afternoon.</td>
-                <td style="padding:8px 8px;color:#cbd5e1;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Shortest leash of the weekend; managers pull starters early.</td>
-                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Starters facing an offense that scored heavily in games 1 and 2.</td>
-                <td style="padding:8px 8px;color:#fde68a;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Tired starters losing their command and walking batters early.</td>
+                <td style="padding:8px 8px;color:#a7f3d0;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Afternoon heat limits movement profiles; ball breaks are suppressed on day games.</td>
+                <td style="padding:8px 8px;color:#bfdbfe;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Flattened break profiles due to afternoon heat lead to high multi-hit counts.</td>
+                <td style="padding:8px 8px;color:#cbd5e1;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Tired pitchers with fading endurance are pulled early as Monday rest cycles approach.</td>
+                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Lineups that scored heavily in Games 1 and 2 maintain high confidence vs. weak arms.</td>
+                <td style="padding:8px 8px;color:#fde68a;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Exhausted starters lose muscle command early, dropping overall zone percentage rates.</td>
               </tr>
             </tbody>
           </table>
@@ -3531,15 +3554,19 @@ function _umpChip(p){
   return '<div class="env-chip" title="'+_esc(tip)+'" style="border-color:'+c+'55;color:'+c+'">'+_esc(u.summary)+'</div>';
 }
 function _kRankChip(p) {
-  if (p.opp_k_rank == null || p.opp_k_pg == null) return '';
-  var rank = p.opp_k_rank, total = p.opp_k_total || 30, kg = p.opp_k_pg;
+  var rank = (p.opp_k_rank_ha != null) ? p.opp_k_rank_ha : p.opp_k_rank;
+  var kg   = (p.opp_k_pg_ha  != null) ? p.opp_k_pg_ha  : p.opp_k_pg;
+  var ctx  = p.opp_k_context || '';
+  var total = p.opp_k_total || 30;
+  if (rank == null || kg == null) return '';
+  var ctxTxt = ctx ? (' ' + ctx) : '';
   if (rank <= 10) {
-    return '<div class="env-chip" style="border-color:#22c55e44;color:#22c55e">&#9650; High-K Lineup &middot; ' + kg + ' K/g &middot; #' + rank + ' of ' + total + '</div>';
+    return '<div class="env-chip" style="border-color:#22c55e44;color:#22c55e">&#9650; High-K Lineup &middot; ' + kg + ' K/g' + ctxTxt + ' &middot; #' + rank + '</div>';
   }
   if (rank >= total - 9) {
-    return '<div class="env-chip" style="border-color:#ef444444;color:#ef4444">&#9660; Low-K Lineup &middot; ' + kg + ' K/g &middot; #' + rank + ' of ' + total + '</div>';
+    return '<div class="env-chip" style="border-color:#ef444444;color:#ef4444">&#9660; Low-K Lineup &middot; ' + kg + ' K/g' + ctxTxt + ' &middot; #' + rank + '</div>';
   }
-  return '';
+  return '<div class="env-chip" style="border-color:#64748b55;color:#94a3b8">#' + rank + ctxTxt + ' &middot; ' + kg + ' K/g</div>';
 }
 function _bpChip(p){
   // hitter cards carry bp_opp (opponent bullpen); pitcher cards carry bp_own
@@ -4290,6 +4317,7 @@ function _hrrCard(p, rank, pfx) {
       ${_envChip(p)}
       ${_umpChip(p)}
       ${_bpChip(p)}
+      <div style="margin-top:5px;display:flex;align-items:center;gap:5px"><span style="font-size:.6rem;color:#475569">day trend</span>${_dowChip('hrr',p.pick)}</div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
         <span style="font-size:.78rem;color:#94a3b8">HRR Rate <span style="color:#64748b;font-size:.68rem">vs opp</span></span>
         <span style="font-family:monospace;font-weight:700;color:${scoreClr}">${p.rate_disp||'—'}</span>
@@ -4409,16 +4437,6 @@ function _pitcherCard(p, rank, keyPfx) {
   const hasProj = p.proj_k!=null;
   const projDisp = hasProj?(p.proj_k+'K'):'—';
   const factTxt = hasProj?('Hand x'+(pf.hand!=null?pf.hand:1)+' · Whiff x'+(pf.whiff!=null?pf.whiff:1)+' · Rest x'+(pf.rest!=null?pf.rest:1)):'';
-  var tkr=window.__TEAM_K_RANKS__||[];
-  var tkRows=tkr.length?tkr.map(function(t){
-    var hi=_teamMatchJS(t.name,p.opp||'');
-    var s=hi?'color:#63cab7;font-weight:800':'color:#64748b';
-    var bg=hi?'background:rgba(99,202,183,.1)':'';
-    return '<tr style="'+bg+'"><td style="padding:1px 5px;'+s+'">#'+t.rank+'</td>'
-      +'<td style="padding:1px 5px;font-size:.62rem;'+s+'">'+t.name+'</td>'
-      +'<td style="padding:1px 5px;text-align:right;font-family:monospace;font-size:.6rem;'+s+'">'+t.k_per_g+' K/g</td></tr>';
-  }).join(''):'';
-  var tkSection=tkRows?'<details style="margin-top:5px"><summary style="cursor:pointer;font-size:.65rem;color:#64748b;list-style:none;user-select:none">&#9654; All Team K Rankings</summary><div style="max-height:120px;overflow-y:auto;margin-top:2px"><table style="width:100%;font-size:.62rem;border-collapse:collapse">'+tkRows+'</table></div></details>':'';
   window.__PK_REG__=window.__PK_REG__||{}; window.__PK_REG__[keyPfx+rank]=p;
   return `<div class="mlb-pick-card" onclick="_pkForm('${keyPfx}${rank}')" title="Click for all 5 markets" style="cursor:pointer">
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#0f2420 0%,#08160f 100%)">
@@ -4439,7 +4457,6 @@ function _pitcherCard(p, rank, keyPfx) {
       ${_umpChip(p)}
       ${_bpChip(p)}
       ${_kRankChip(p)}
-      ${tkSection}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
         <span style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">K Line ${p.line!=null?p.line:'—'}</span>
         <span style="color:${pickClr};font-weight:900;font-size:1rem">${pickLabel}</span>
@@ -5366,16 +5383,18 @@ function _bcToggle(){
   b.classList.toggle('hidden');
   if(a) a.textContent=wasHidden?'\u25bc collapse':'\u25b6 expand';
 }
+// Matrix: [0=Sun,1=Mon,2=Tue,3=Wed,4=Thu,5=Fri,6=Sat]
+// Indices: hits=0,tb=1,hrr=2,runs=3,rbi=4,k=5,outs=6,hits_allowed=7,er=8,walks=9
 var _DOW_SIG={
-  0:['O','U','U','O','O','U','O','U','O','O'],
-  1:['O','U','U','U','U','O','U','O','U','U'],
-  2:['O','U','U','O','O','U','O','O','O','O'],
-  3:['O','U','U','O','O','O','O','U','O','O'],
-  4:['O','U','U','U','U','U','O','U','O','U'],
-  5:['O','U','U','O','O','O','U','O','U','U'],
-  6:['O','U','U','O','O','U','O','U','O','O']
+  0:['U','U','U','U','U','U','U','O','O','O'],
+  1:['U','U','U','U','U','O','O','U','U','U'],
+  2:['O','O','O','O','O','U','O','O','O','O'],
+  3:['O','O','O','O','O','O','U','O','O','O'],
+  4:['U','U','U','U','U','U','U','U','O','U'],
+  5:['O','O','O','O','O','O','O','U','U','U'],
+  6:['O','O','O','O','O','U','U','O','O','O']
 };
-var _DOW_IDX={hits_over:0,hits_under:1,tb_under:2,runs:3,rbi:4,k:5,hits_allowed:6,outs:7,er:8,walks:9};
+var _DOW_IDX={hits:0,hits_over:0,hits_under:0,tb:1,tb_under:1,tb_over:1,hrr:2,runs:3,rbi:4,k:5,outs:6,hits_allowed:7,er:8,walks:9};
 function _dowChip(mkt,pickDir){
   var day=new Date().getDay();
   var idx=_DOW_IDX[mkt]; if(idx===undefined) return '';
