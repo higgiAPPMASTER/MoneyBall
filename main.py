@@ -2447,6 +2447,7 @@ function _propBestCard(p, key, rank) {
       ${gapHtml}
       ${oddsHtml}
       ${hasPP?`<div style="margin-top:2px;font-size:.6rem;color:#475569">blend ${blendDisp} · hand x${ppf.hand!=null?ppf.hand:1} · whiff x${ppf.whiff!=null?ppf.whiff:1}</div>`:''}
+      ${_veloBadge(p)}
       <div style="margin-top:5px;display:flex;align-items:center;gap:5px"><span style="font-size:.6rem;color:#475569">day trend</span>${_dowChip(_propDowMkt,p.pick)}</div>
       ${p.market==='pitcher_walks'&&p.opp_bb_rank!=null?`<div style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap"><span style="font-size:.62rem;color:#94a3b8">Opp BB/G rank:</span><span style="font-size:.72rem;font-weight:800;color:#34d399">#${p.opp_bb_rank}<span style="color:#64748b;font-weight:400"> of ${p.opp_bb_total||30}</span></span><span style="font-size:.68rem;color:#cbd5e1;font-family:monospace">${p.opp_bb_pg!=null?p.opp_bb_pg+' BB/G':''}</span></div>`:''}
       ${_evBadge(p)}
@@ -3509,6 +3510,54 @@ function _evBadge(p){
     +(mp?'<span style="font-size:.62rem;color:#cbd5e1;font-family:monospace">'+mp+(ip?(' vs '+ip):'')+'</span>':'')
     +'</div>';
 }
+function _stuffBadge(p){
+  var sp=p.stuff_plus; if(sp==null) return '';
+  var diff=sp-100;
+  if(Math.abs(diff)<5) return '';
+  var hi=diff>=0;
+  var bg=hi?'rgba(99,202,183,.10)':'rgba(248,113,113,.10)';
+  var bd=hi?'#22c55e':'#f87171';
+  var fg=hi?'#4ade80':'#fca5a5';
+  var lbl='Stuff+ '+sp.toFixed(0)+(hi?' &#8679; elite stuff':' &#8681; below avg');
+  return '<div style="margin-top:4px;display:flex;align-items:center;gap:6px;background:'+bg+';border:1px solid '+bd+';border-radius:6px;padding:3px 8px">'
+    +'<span style="font-size:.60rem;font-weight:700;color:'+fg+'">'+lbl+'</span></div>';
+}
+function _veloBadge(p){
+  var v=p.velo_avg; if(v==null) return '';
+  var diff=v-93.3;
+  var hi=diff>=1.5, lo=diff<=-1.5;
+  if(!hi&&!lo) return '';
+  var bg=hi?'rgba(34,197,94,.10)':'rgba(248,113,113,.10)';
+  var bd=hi?'#22c55e':'#f87171';
+  var fg=hi?'#4ade80':'#fca5a5';
+  var lbl=hi?('Velo '+v.toFixed(1)+' mph &#8679; K boost'):('Velo '+v.toFixed(1)+' mph &#8681; K drag');
+  return '<div style="margin-top:4px;display:flex;align-items:center;gap:6px;background:'+bg+';border:1px solid '+bd+';border-radius:6px;padding:3px 8px">'
+    +'<span style="font-size:.60rem;font-weight:700;color:'+fg+'">'+lbl+'</span></div>';
+}
+function _xbaBadge(p){
+  var xba=p.xba; var hh=p.hard_hit_pct; var s1=p.s1;
+  if(xba==null&&hh==null) return '';
+  var parts=[];
+  if(xba!=null&&s1!=null){
+    var gap=xba-s1;
+    if(Math.abs(gap)>=0.020){
+      var pos=gap>0;
+      var fg2=pos?'#4ade80':'#fca5a5';
+      var gapPt=(gap*1000)|0;
+      parts.push('<span style="color:'+fg2+';font-weight:700">'+(pos?'+':'')+gapPt+'pt xBA '+(pos?'&#8679; due':'&#8681; fade')+'</span>');
+    }
+  }
+  if(hh!=null){
+    var dev=hh-35;
+    if(Math.abs(dev)>=3){
+      var fgh=dev>0?'#34d399':'#f87171';
+      parts.push('<span style="color:'+fgh+'">HH '+(dev>0?'+':'')+dev.toFixed(0)+'%</span>');
+    }
+  }
+  if(!parts.length) return '';
+  return '<div style="margin-top:4px;display:flex;align-items:center;gap:6px;background:rgba(148,163,184,.07);border:1px solid #334155;border-radius:6px;padding:3px 8px;font-size:.60rem;flex-wrap:wrap">'
+    +parts.join('<span style="color:#475569"> &#183; </span>')+'</div>';
+}
 
 function _mlbCard(p, rank, dim) {
   const abbr = _mlbTeamAbbr(p.team);
@@ -3559,6 +3608,7 @@ function _mlbCard(p, rank, dim) {
         <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odds}</span>
       </div>
       ${_evBadge(p)}
+      ${_xbaBadge(p)}
       <div style="margin-top:5px;display:flex;align-items:center;gap:5px"><span style="font-size:.6rem;color:#475569">day trend</span>${_dowChip('hits_over','OVER')}</div>
       ${adminStats}
     </div>
@@ -4291,6 +4341,8 @@ function _pitcherCard(p, rank, keyPfx) {
       ${hasProj?`<div style="margin-top:2px;font-size:.62rem;color:#475569">${factTxt}</div>`:''}
       <div style="margin-top:5px;font-size:.68rem;color:#94a3b8;line-height:1.6">K <strong style="color:#cbd5e1">${p.avg_k!=null?p.avg_k:'—'}</strong> · H <strong style="color:#cbd5e1">${p.avg_hits!=null?p.avg_hits:'—'}</strong> · ER <strong style="color:#cbd5e1">${p.avg_er!=null?p.avg_er:'—'}</strong> · Outs <strong style="color:#cbd5e1">${p.avg_outs!=null?p.avg_outs:'—'}</strong> · BB <strong style="color:#cbd5e1">${p.avg_bb!=null?p.avg_bb:'—'}</strong> · IP <strong style="color:#cbd5e1">${p.avg_ip!=null?p.avg_ip:'—'}</strong> · ERA <strong style="color:#cbd5e1">${p.era||'—'}</strong> <span style="color:#64748b">vr opp</span></div>
       <div style="margin-top:5px;display:flex;align-items:center;justify-content:space-between"><span style="display:flex;align-items:center;gap:5px"><span style="font-size:.6rem;color:#475569">day trend</span>${_dowChip('k',p.pick)}</span><span style="font-size:.66rem;color:#63cab7">all 5 markets →</span></div>
+      ${_stuffBadge(p)}
+      ${_veloBadge(p)}
       ${_evBadge(p)}
     </div>
   ${_betBtn(p,'Pitcher Ks',(hasSugg?'OVER':p.pick),'strikeOuts','Ks',(hasSugg?p.sugg_line:p.line),(hasSugg?p.sugg_odds:(isOver?p.over_odds:p.under_odds)))}
