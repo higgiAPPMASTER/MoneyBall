@@ -58,6 +58,54 @@ RBI_ODDS: dict = {}
 # 1.5 price. Read by run_hrr_picks. Cleared each call.
 HRR_ODDS: dict = {}
 
+_BATTER_SAV_CACHE_UP: dict = {}  # {year: {player_id: {xba, hard_hit_pct}}}
+LEAGUE_HARD_HIT_UP   = 35.0      # MLB avg hard-hit rate %, 2024-2025
+
+def _fetch_batter_savant_up(year: str) -> dict:
+    """Bulk-fetch hitter xBA + hard-hit% from Savant for under ranking signal. Cached."""
+    if _BATTER_SAV_CACHE_UP.get(year):
+        return _BATTER_SAV_CACHE_UP[year]
+    import csv, io
+    hdrs = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"}
+    out = {}
+    for _attempt in range(2):
+        try:
+            r = requests.get("https://baseballsavant.mlb.com/leaderboard/custom",
+                params={"year": str(year), "type": "batter", "filter": "", "min": "30",
+                        "selections": "xba,hard_hit_percent", "csv": "true"},
+                headers=hdrs, timeout=15)
+            for row in csv.DictReader(io.StringIO(r.text)):
+                try:
+                    pid  = int(row.get("player_id") or 0)
+                    xba  = row.get("xba") or ""
+                    hh   = (row.get("hard_hit_percent") or row.get("hard_hit_pct") or "")
+                    if not pid: continue
+                    entry: dict = {}
+                    if xba not in (None, ""): entry["xba"]          = float(xba)
+                    if hh  not in (None, ""): entry["hard_hit_pct"] = float(hh)
+                    if entry: out[pid] = entry
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        if out: break
+        time.sleep(1.0)
+    if out:
+        _BATTER_SAV_CACHE_UP[year] = out
+    return out
+
+def _batter_sav_lookup_up(player_id) -> dict:
+    """Return {xba, hard_hit_pct} for this batter — current season, prior-year fallback."""
+    if not player_id: return {}
+    from datetime import date as _d
+    yr = str(_d.today().year)
+    pid = int(player_id)
+    cur = _BATTER_SAV_CACHE_UP.get(yr, {})
+    if pid in cur: return cur[pid]
+    prev = _BATTER_SAV_CACHE_UP.get(str(int(yr) - 1), {})
+    return prev.get(pid, {})
+
 
 def _log(emit, msg, type_="log"):
     if emit:
@@ -474,6 +522,11 @@ def run_under_picks(run_date: str, team_schedule: dict, emit=None,
     _build_player_map(season)
     _log(emit, f"  ✅ {len(_PLAYER_MAP)} active players indexed")
 
+    # Pre-load batter Savant xBA + hard-hit% for quality-of-contact ranking signal.
+    _yr_u = run_date[:4]
+    _fetch_batter_savant_up(_yr_u)
+    _fetch_batter_savant_up(str(int(_yr_u) - 1))
+
     id_map: dict = {}
     for c in candidates:
         pid = _resolve_id(c["name"])
@@ -536,12 +589,17 @@ def run_under_picks(run_date: str, team_schedule: dict, emit=None,
         def _ba(x, fb=0.250): return x["ba"] if x and x["ba"] is not None else fb
         l7_ba = l7["ba"] if l7["ba"] is not None else _ba(s3, _ba(s1))
         under_score = round((_ba(s2) + _ba(s3) + l7_ba) * 1000)
+        # Quality-of-contact penalty: hard-hitters are harder to fade — push them down the board.
+        _sav_u = _batter_sav_lookup_up(batter_id)
+        if _sav_u.get("hard_hit_pct") is not None:
+            under_score += int(max(-20, min(30, round((_sav_u["hard_hit_pct"] - LEAGUE_HARD_HIT_UP) * 1.5))))
         return {"name": name, "team": player_team, "pos": "—", "side": side, "opp": opp_name,
                 "pitcher": pitcher_name, "s1_disp": s1["display"],
                 "s1_ab": s1["ab"], "s2": s2, "s3": s3, "l7": l7,
                 "lineup_status": "TBD", "under_score": under_score,
                 "batter_id": batter_id, "under_basis": "vs-ace" if ace else "recent",
                 "ace_era": ace_era,
+                "xba": _sav_u.get("xba"), "hard_hit_pct": _sav_u.get("hard_hit_pct"),
                 "under_odds": c.get("under_odds"), "over_odds": c.get("over_odds"),
                 "tb_under_odds": c.get("tb_under_odds")}
 
