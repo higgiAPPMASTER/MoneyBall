@@ -35,6 +35,11 @@ _WHIFF_CACHE: dict = {}        # {year: {player_id: whiff_pct}}
 _PITCH_HAND_CACHE: dict = {}   # {pitcher_id: "R"/"L"}
 _OPP_KPCT_CACHE: dict = {}     # {(opp_id, hand, season): k_pct}
 _OPP_SPLIT_CACHE: dict = {}    # {(opp_id, hand, season): {k_pct,avg,bb_pct,ops}}
+LEAGUE_GB_PCT  = 43.0    # MLB avg groundball rate %, 2024-2025
+LEAGUE_XWOBA   = 0.315   # MLB avg xwOBA-against (pitcher), 2024-2025
+LEAGUE_TOTAL   = 8.5     # MLB avg game O/U total, 2024-2025
+_GB_XWOBA_CACHE: dict = {}     # {year: {player_id: {gb_pct, xwoba}}}
+_GAME_TOTALS:   dict = {}      # {(norm_home, norm_away): total_line}
 
 # ── Pitcher prop O/U categories (real Odds API markets, parallel to K) ─────
 # Each is a true Over/Under betting line that feeds the parlay builder.
@@ -692,6 +697,106 @@ def _whiff_lookup(pitcher_id: int) -> float | None:
     return prev.get(pitcher_id)
 
 
+def _fetch_gb_xwoba_map(year: str) -> dict:
+    """Bulk-fetch pitcher GB% and xwOBA-against from Baseball Savant. Cached per year.
+    Returns {player_id: {gb_pct: float, xwoba: float}}. Falls back to {} on error."""
+    if _GB_XWOBA_CACHE.get(year):
+        return _GB_XWOBA_CACHE[year]
+    import csv, io
+    hdrs = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"}
+    out = {}
+    for _attempt in range(2):
+        try:
+            r = requests.get("https://baseballsavant.mlb.com/leaderboard/custom",
+                params={"year": str(year), "type": "pitcher", "filter": "", "min": "10",
+                        "selections": "gb_percent,xwoba", "csv": "true"},
+                headers=hdrs, timeout=15)
+            for row in csv.DictReader(io.StringIO(r.text)):
+                try:
+                    pid = int(row.get("player_id") or 0)
+                    if not pid:
+                        continue
+                    gb_raw = (row.get("gb_percent") or row.get("groundballs_percent") or
+                              row.get("gb%") or "")
+                    xw_raw = (row.get("xwoba") or row.get("est_woba") or "")
+                    entry: dict = {}
+                    if gb_raw not in (None, ""):
+                        entry["gb_pct"] = float(gb_raw)
+                    if xw_raw not in (None, ""):
+                        entry["xwoba"] = float(xw_raw)
+                    if entry:
+                        out[pid] = entry
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        if out:
+            break
+        time.sleep(1.0)
+    if out:
+        _GB_XWOBA_CACHE[year] = out
+    return out
+
+
+def _gb_xwoba_lookup(pitcher_id: int) -> dict:
+    """Return {gb_pct, xwoba} for this pitcher — current season with prior-year fallback."""
+    cur = _GB_XWOBA_CACHE.get(SEASON, {})
+    if pitcher_id in cur:
+        return cur[pitcher_id]
+    prev = _GB_XWOBA_CACHE.get(str(int(SEASON) - 1), {})
+    return prev.get(pitcher_id, {})
+
+
+def _fetch_game_totals(run_date: str) -> dict:
+    """Fetch today's MLB game O/U totals from the Odds API.
+    Returns {(norm_home, norm_away): total_line}. Cached for the run."""
+    global _GAME_TOTALS
+    if _GAME_TOTALS:
+        return _GAME_TOTALS
+    try:
+        r = requests.get(f"{ODDS_BASE}/sports/baseball_mlb/odds",
+            params={"apiKey": ODDS_API_KEY, "regions": "us", "markets": "totals",
+                    "dateFormat": "iso", "oddsFormat": "american"},
+            timeout=15)
+        out = {}
+        for ev in r.json():
+            ht = _normalize(ev.get("home_team", ""))
+            at = _normalize(ev.get("away_team", ""))
+            for bk in ev.get("bookmakers", []):
+                for mkt in bk.get("markets", []):
+                    if mkt.get("key") != "totals":
+                        continue
+                    for oc in mkt.get("outcomes", []):
+                        if oc.get("name") == "Over":
+                            try:
+                                pt = float(oc.get("point", 0))
+                                if pt > 0:
+                                    out[(ht, at)] = pt
+                            except Exception:
+                                pass
+                    if (ht, at) in out:
+                        break
+                if (ht, at) in out:
+                    break
+        _GAME_TOTALS = out
+    except Exception:
+        pass
+    return _GAME_TOTALS
+
+
+def _lookup_game_total(pitcher_team: str, opp: str) -> float | None:
+    """Return the game O/U total line for this pitcher's matchup, or None."""
+    pt = _normalize(pitcher_team)
+    op = _normalize(opp)
+    for (ht, at), total in _GAME_TOTALS.items():
+        if (pt in ht or ht in pt) and (op in at or at in op):
+            return total
+        if (pt in at or at in pt) and (op in ht or ht in op):
+            return total
+    return None
+
+
 def _days_rest(last_date: str, run_date: str) -> int | None:
     """Days between the pitcher's last start and tonight's game."""
     try:
@@ -704,9 +809,13 @@ def _days_rest(last_date: str, run_date: str) -> int | None:
         return None
 
 
-def _project_k(blended_avg, opp_k_pct, whiff_pct, days_rest):
-    """Opponent-adjusted K projection: blend × handedness × whiff × rest factors.
-    Each factor is clamped so a single thin signal can't swing the pick wildly."""
+def _project_k(blended_avg, opp_k_pct, whiff_pct, days_rest,
+               gb_pct=None, xwoba_pct=None, implied_total=None):
+    """Opponent-adjusted K projection: blend × handedness × whiff × rest × GB × xwOBA × total.
+    Each factor is clamped so a single thin signal can't swing the pick wildly.
+    gb_pct: pitcher's groundball rate — groundballers miss fewer bats (slight K drag).
+    xwoba_pct: pitcher's xwOBA-against — low xwOBA = limits hard contact = quality pitcher → more Ks.
+    implied_total: today's game O/U line — low total = pitcher dominance expected → boost Ks."""
     if blended_avg is None:
         return None, {}
     hand_f = 1.0
@@ -721,40 +830,68 @@ def _project_k(blended_avg, opp_k_pct, whiff_pct, days_rest):
             rest_f = 1.03
         elif days_rest <= 3:
             rest_f = 0.97
-    proj = round(blended_avg * hand_f * whiff_f * rest_f, 1)
+    gb_f = 1.0
+    if gb_pct is not None:
+        gb_f = max(0.97, min(1.03, 1.0 - (gb_pct - LEAGUE_GB_PCT) * 0.002))
+    xwoba_f = 1.0
+    if xwoba_pct is not None:
+        xwoba_f = max(0.94, min(1.06, 1.0 + (LEAGUE_XWOBA - xwoba_pct) * 1.5))
+    implied_f = 1.0
+    if implied_total is not None:
+        implied_f = max(0.94, min(1.06, 1.0 + (LEAGUE_TOTAL - implied_total) * 0.02))
+    proj = round(blended_avg * hand_f * whiff_f * rest_f * gb_f * xwoba_f * implied_f, 1)
     factors = {"hand": round(hand_f, 3), "whiff": round(whiff_f, 3), "rest": round(rest_f, 3),
-               "opp_k_pct": opp_k_pct, "whiff_pct": whiff_pct, "days_rest": days_rest}
+               "gb": round(gb_f, 3), "xwoba": round(xwoba_f, 3), "implied": round(implied_f, 3),
+               "opp_k_pct": opp_k_pct, "whiff_pct": whiff_pct, "days_rest": days_rest,
+               "gb_pct": gb_pct, "xwoba_pct": xwoba_pct, "implied_total": implied_total}
     return proj, factors
 
 
-def _project_prop(market, blended, rates, whiff_pct):
+def _project_prop(market, blended, rates, whiff_pct,
+                  gb_pct=None, xwoba_pct=None, implied_total=None):
     """Opponent-adjusted projection for hits/walks/earned-runs (parallel to
-    _project_k). The dominant signal is the opponent's matchup rate vs the
-    pitcher's hand; whiff% is a smaller, inverse nudge (more whiffs → fewer balls
-    in play → fewer hits/runs). Days rest is NOT applied — it drives volume
-    (Ks/outs), not these per-start rates. Each factor clamped so one thin signal
-    can't swing the pick. Returns (proj, factors) or (None, {})."""
+    _project_k). Dominant signal = opp matchup rate vs pitcher hand; whiff% is a
+    smaller inverse nudge; GB%, xwOBA-against, and implied total add further
+    context. Each factor clamped so one thin signal can't swing the pick wildly.
+    Returns (proj, factors) or (None, {})."""
     if blended is None or not rates:
         return None, {}
-    hand_f, whiff_f = 1.0, 1.0
+    hand_f, whiff_f, gb_f, xwoba_f, implied_f = 1.0, 1.0, 1.0, 1.0, 1.0
     if market == "pitcher_hits_allowed":
         if rates.get("avg"):
             hand_f = max(0.85, min(1.15, rates["avg"] / LEAGUE_AVG))
         if whiff_pct:
             whiff_f = max(0.92, min(1.08, 1 - (whiff_pct - LEAGUE_WHIFF) * 0.006))
+        if gb_pct is not None:
+            gb_f = max(0.90, min(1.10, 1.0 - (gb_pct - LEAGUE_GB_PCT) * 0.004))
+        if xwoba_pct is not None:
+            xwoba_f = max(0.90, min(1.10, 1.0 + (xwoba_pct - LEAGUE_XWOBA) * 2.0))
+        if implied_total is not None:
+            implied_f = max(0.90, min(1.10, 1.0 + (implied_total - LEAGUE_TOTAL) * 0.025))
     elif market == "pitcher_walks":
         if rates.get("bb_pct"):
             hand_f = max(0.85, min(1.15, rates["bb_pct"] / LEAGUE_BB_PCT))
+        if implied_total is not None:
+            implied_f = max(0.97, min(1.03, 1.0 + (implied_total - LEAGUE_TOTAL) * 0.01))
     elif market == "pitcher_earned_runs":
         if rates.get("ops"):
             hand_f = max(0.85, min(1.15, rates["ops"] / LEAGUE_OPS))
         if whiff_pct:
             whiff_f = max(0.94, min(1.06, 1 - (whiff_pct - LEAGUE_WHIFF) * 0.004))
+        if gb_pct is not None:
+            gb_f = max(0.88, min(1.12, 1.0 - (gb_pct - LEAGUE_GB_PCT) * 0.005))
+        if xwoba_pct is not None:
+            xwoba_f = max(0.88, min(1.12, 1.0 + (xwoba_pct - LEAGUE_XWOBA) * 2.5))
+        if implied_total is not None:
+            implied_f = max(0.88, min(1.12, 1.0 + (implied_total - LEAGUE_TOTAL) * 0.03))
     else:
         return None, {}
-    proj = round(blended * hand_f * whiff_f, 1)
+    proj = round(blended * hand_f * whiff_f * gb_f * xwoba_f * implied_f, 1)
     factors = {"hand": round(hand_f, 3), "whiff": round(whiff_f, 3),
-               "rates": rates, "whiff_pct": whiff_pct}
+               "gb": round(gb_f, 3), "xwoba": round(xwoba_f, 3),
+               "implied": round(implied_f, 3),
+               "rates": rates, "whiff_pct": whiff_pct,
+               "gb_pct": gb_pct, "xwoba_pct": xwoba_pct, "implied_total": implied_total}
     return proj, factors
 
 
@@ -778,7 +915,8 @@ _PROP_SRC = {
 }
 
 
-def _build_prop_picks(name, team, opp, side, hist, rf, pid=None) -> list:
+def _build_prop_picks(name, team, opp, side, hist, rf, pid=None,
+                      gb_pct=None, xwoba_pct=None, implied_total=None) -> list:
     """One Over/Under pick per prop market that has a posted line in PROP_ODDS.
     Uniform dict so the frontend can render all 3 categories generically."""
     props = []
@@ -809,11 +947,16 @@ def _build_prop_picks(name, team, opp, side, hist, rf, pid=None) -> list:
             if not _rates_done:
                 _opp_rates = _get_opp_split_rates(opp, pit_hand, SEASON)
                 _rates_done = True
-            proj, proj_factors = _project_prop(market, blended, _opp_rates, _whiff)
+            proj, proj_factors = _project_prop(
+                market, blended, _opp_rates, _whiff,
+                gb_pct=gb_pct, xwoba_pct=xwoba_pct, implied_total=implied_total)
             if proj is not None:
                 decision_val = proj
                 blend_src += (f" → proj {proj} [hand×{proj_factors['hand']}"
-                              f" whiff×{proj_factors['whiff']}]")
+                              f" whiff×{proj_factors['whiff']}"
+                              f" gb×{proj_factors['gb']}"
+                              f" xwoba×{proj_factors['xwoba']}"
+                              f" total×{proj_factors['implied']}]")
         edge = PROP_EDGE.get(market, 0.0)
 
         if decision_val is None:
@@ -844,6 +987,7 @@ def _build_prop_picks(name, team, opp, side, hist, rf, pid=None) -> list:
             "proj": proj, "proj_factors": proj_factors, "pit_hand": pit_hand,
             "vs_opp_log": vs_opp_log, "recent_log": recent_log,
             "hit_rate": hit_rate, "pick": pick, "pick_note": pick_note,
+            "gb_pct": gb_pct, "xwoba_against": xwoba_pct, "implied_total": implied_total,
         }
         if market == "pitcher_walks":
             _opp_bbr = next((v for k, v in TEAM_BB_RANKS.items() if _teams_match(k, opp)), None)
@@ -955,7 +1099,13 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
         opp_k_pct = _get_opp_k_pct_vs_hand(opp, pit_hand, SEASON) if blended_avg is not None else None
         whiff_pct = _whiff_lookup(pid)
         d_rest    = _days_rest(rf.get("last_start_date", ""), run_date)
-        proj_k, proj_factors = _project_k(blended_avg, opp_k_pct, whiff_pct, d_rest)
+        _gbx      = _gb_xwoba_lookup(pid) if pid else {}
+        _gb_pct   = _gbx.get("gb_pct")
+        _xwoba    = _gbx.get("xwoba")
+        _implied  = _lookup_game_total(pitcher_team, opp)
+        proj_k, proj_factors = _project_k(blended_avg, opp_k_pct, whiff_pct, d_rest,
+                                          gb_pct=_gb_pct, xwoba_pct=_xwoba,
+                                          implied_total=_implied)
         # The pick decides off the PROJECTION (falls back to blend if no factors).
         decision_val = proj_k if proj_k is not None else blended_avg
         if proj_factors:
@@ -1016,8 +1166,11 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                  "pit_hand": pit_hand, "days_rest": d_rest,
                  "whiff_pct": whiff_pct, "opp_k_pct_hand": opp_k_pct,
                  "opp_k_rank": opp_k_rank, "opp_k_pg": opp_k_pg, "opp_k_total": opp_k_total,
+                 "gb_pct": _gb_pct, "xwoba_against": _xwoba, "implied_total": _implied,
                  "pid": pid,
-                 "props": _build_prop_picks(name, pitcher_team, opp, side, hist, rf, pid),
+                 "props": _build_prop_picks(name, pitcher_team, opp, side, hist, rf, pid,
+                                            gb_pct=_gb_pct, xwoba_pct=_xwoba,
+                                            implied_total=_implied),
                  "ump": _ump_data,
                  "pick": pick, "pick_note": pick_note}), logs
 
@@ -1027,9 +1180,15 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
     prob_starters = _fetch_probable_starters(run_date)
     prob_team_map = {_normalize(s["name"]): s["team"] for s in prob_starters if s.get("team")}
 
-    # Pre-load whiff% leaderboards once (current season + prior-year fallback).
+    # Pre-load whiff%, GB%, xwOBA leaderboards once (current + prior-year fallback).
     _fetch_whiff_map(SEASON)
     _fetch_whiff_map(str(int(SEASON) - 1))
+    _fetch_gb_xwoba_map(SEASON)
+    _fetch_gb_xwoba_map(str(int(SEASON) - 1))
+    # Pre-fetch today's game O/U totals (one Odds API call, cached for the run).
+    _fetch_game_totals(run_date)
+    emit({"type": "log", "msg": f"  ✅ GB/xwOBA loaded for {len(_GB_XWOBA_CACHE.get(SEASON, {}))} pitchers · "
+          f"{len(_GAME_TOTALS)} game totals fetched"})
 
     # Fetch HP umpires for tonight's games; pre-load K-rate stats per ump.
     game_ump_map = _fetch_game_umps(run_date)
@@ -1091,6 +1250,9 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                 "proj_k": None, "proj_factors": {},
                 "pit_hand": _hand2, "days_rest": _rest2,
                 "whiff_pct": _whiff2, "opp_k_pct_hand": _oppkp2,
+                "gb_pct": _gb_xwoba_lookup(pid2).get("gb_pct") if pid2 else None,
+                "xwoba_against": _gb_xwoba_lookup(pid2).get("xwoba") if pid2 else None,
+                "implied_total": _lookup_game_total(st["team"], st["opp"]),
                 "opp_k_rank": _opp_kr2["rank"]    if _opp_kr2 else None,
                 "opp_k_pg":   _opp_kr2["k_per_g"] if _opp_kr2 else None,
                 "opp_k_total": _opp_kr2["total"]  if _opp_kr2 else None,
