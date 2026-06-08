@@ -1543,18 +1543,21 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     # Pitcher props — Hits Allowed + Earned Runs use the offense axis; Walks use
     # the umpire walk factor (wide zone -> fewer walks -> Under boosted). Outs +
     # K excluded here. OVER × factor, UNDER × 1/factor.
+    def _prop_val(x):
+        """Use the fully-adjusted projection when available; fall back to blend."""
+        p = x.get("proj")
+        return p if p is not None else (x.get("blended") or 0)
+
     for _mkt, _bk in pitcher_props.items():
         if _mkt in ("pitcher_hits_allowed", "pitcher_earned_runs"):
             _bk["picks"].sort(
-                key=lambda x: abs((x.get("blended") if x.get("blended") is not None else 0)
-                                  - (x.get("line") or 0))
+                key=lambda x: abs(_prop_val(x) - (x.get("line") or 0))
                               * (_offf(x) if x.get("pick") == "OVER" else 1.0 / _offf(x)),
                 reverse=True,
             )
         elif _mkt == "pitcher_walks":
             _bk["picks"].sort(
-                key=lambda x: abs((x.get("blended") if x.get("blended") is not None else 0)
-                                  - (x.get("line") or 0))
+                key=lambda x: abs(_prop_val(x) - (x.get("line") or 0))
                               * (_umpf(x, "bbFactor") if x.get("pick") == "OVER"
                                  else 1.0 / _umpf(x, "bbFactor")),
                 reverse=True,
