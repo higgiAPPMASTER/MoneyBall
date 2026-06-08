@@ -29,6 +29,67 @@ _SAVANT_HDRS = {
                   "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"
 }
 
+_BATTER_SAV_CACHE: dict = {}   # {year: {player_id: {xba, hard_hit_pct}}}
+LEAGUE_HARD_HIT   = 35.0       # MLB avg hard-hit rate % (exit velo >= 95 mph), 2024-2025
+LEAGUE_XBA        = 0.245      # MLB avg expected batting average (xBA), 2024-2025
+
+def _fetch_batter_savant(year: str) -> dict:
+    """Bulk-fetch hitter xBA + hard-hit% from Baseball Savant. Cached per year."""
+    if _BATTER_SAV_CACHE.get(year):
+        return _BATTER_SAV_CACHE[year]
+    import csv, io
+    out = {}
+    for _attempt in range(2):
+        try:
+            r = requests.get("https://baseballsavant.mlb.com/leaderboard/custom",
+                params={"year": str(year), "type": "batter", "filter": "", "min": "30",
+                        "selections": "xba,hard_hit_percent", "csv": "true"},
+                headers=_SAVANT_HDRS, timeout=15)
+            for row in csv.DictReader(io.StringIO(r.text)):
+                try:
+                    pid  = int(row.get("player_id") or 0)
+                    xba  = row.get("xba") or ""
+                    hh   = (row.get("hard_hit_percent") or row.get("hard_hit_pct") or "")
+                    if not pid: continue
+                    entry: dict = {}
+                    if xba not in (None, ""): entry["xba"]          = float(xba)
+                    if hh  not in (None, ""): entry["hard_hit_pct"] = float(hh)
+                    if entry: out[pid] = entry
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        if out: break
+        time.sleep(1.0)
+    if out:
+        _BATTER_SAV_CACHE[year] = out
+    return out
+
+def _batter_sav_lookup(player_id) -> dict:
+    """Return {xba, hard_hit_pct} for this batter — current season, prior-year fallback."""
+    if not player_id: return {}
+    pid = int(player_id)
+    from datetime import date as _d
+    yr = str(_d.today().year)
+    cur = _BATTER_SAV_CACHE.get(yr, {})
+    if pid in cur: return cur[pid]
+    prev = _BATTER_SAV_CACHE.get(str(int(yr) - 1), {})
+    return prev.get(pid, {})
+
+def _xba_hardhit_adj(player_id, current_ba) -> tuple:
+    """(xba_adj, hardhit_adj) ranking nudges from Statcast quality-of-contact metrics.
+    xBA gap >= .020 above current BA => positive (due for positive regression).
+    Hard-hit % vs 35% avg => +/-50 pts. Ranking-only — never affects totals."""
+    sav = _batter_sav_lookup(player_id)
+    xba_adj = 0
+    if sav.get("xba") is not None and current_ba is not None:
+        gap = sav["xba"] - current_ba
+        xba_adj = int(max(-100, min(100, round(gap * 2000))))
+    hardhit_adj = 0
+    if sav.get("hard_hit_pct") is not None:
+        hardhit_adj = int(max(-50, min(50, round((sav["hard_hit_pct"] - LEAGUE_HARD_HIT) * 2))))
+    return xba_adj, hardhit_adj
+
 def _fetch_one_pt(args):
     """Fetch one (pitch_type, player_type, year) combination from Savant."""
     import csv, io
@@ -634,6 +695,12 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     pitcher_map = {p["batter"]: p["pitcher"] for p in top30}
     emit({"type": "step1_done", "msg": f"✅ {len(top30)} players loaded", "count": len(top30)})
 
+    # Pre-load batter Savant xBA + hard-hit% leaderboards (cached for the run).
+    _yr = run_date[:4]
+    _fetch_batter_savant(_yr)
+    _fetch_batter_savant(str(int(_yr) - 1))
+    emit({"type": "log", "msg": f"  ✅ Batter Savant loaded: {len(_BATTER_SAV_CACHE.get(_yr, {}))} hitters (xBA + hard-hit%)"})
+
     # ── ESPN Schedule ─────────────────────────────────────────────────
     emit({"type": "section", "msg": "ESPN — Fetching today's schedule"})
     espn_r = requests.get(
@@ -722,6 +789,8 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         s3s   = round(s3["ba"] * 1000) if s3["ba"] and "✅" in s3["flag"] else 0
         total = round(p["ba"] * 1000) + s2s + s3s if not dq else 0
 
+        _sav_dat = _batter_sav_lookup(player_id)
+        _xba_adj, _hh_adj = _xba_hardhit_adj(player_id, p.get("ba"))
         player_result = {
             "name": name, "pos": p["pos"], "s1": p["ba"],
             "team": team, "opp": opp_name, "side": side, "slug": slug,
@@ -731,6 +800,8 @@ def run_pipeline(run_date: str, emit=None) -> dict:
             "dq": bool(dq), "dq_reason": " & ".join(dq),
             "player_id": player_id,
             "game_start": game_start,
+            "xba": _sav_dat.get("xba"), "hard_hit_pct": _sav_dat.get("hard_hit_pct"),
+            "xba_adj": _xba_adj, "hardhit_adj": _hh_adj,
         }
         results.append(player_result)
 
@@ -1476,6 +1547,8 @@ def run_pipeline(run_date: str, emit=None) -> dict:
             + x.get("pitch_adj", 0)
             + x.get("lineup_adj", 0)
             + x.get("platoon_adj", 0)
+            + x.get("xba_adj", 0)
+            + x.get("hardhit_adj", 0)
         ) * _offf(x),
         reverse=True,
     )
