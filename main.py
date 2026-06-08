@@ -5169,8 +5169,8 @@ function _dowChip(mkt,pickDir){
   var match=sig===(pickDir||'').toUpperCase().charAt(0);
   var dn=['SUN','MON','TUE','WED','THU','FRI','SAT'][day];
   return match
-    ?'<span style="font-size:.61rem;background:rgba(74,222,128,.1);border:1px solid rgba(74,222,128,.28);color:#4ade80;border-radius:5px;padding:1px 6px;letter-spacing:.04em;font-weight:700">'+dn+' \u2714<\/span>'
-    :'<span style="font-size:.61rem;background:rgba(251,191,36,.07);border:1px solid rgba(251,191,36,.22);color:#fbbf24;border-radius:5px;padding:1px 6px;letter-spacing:.04em;font-weight:700">'+dn+' \u2195<\/span>';
+    ?'<span style="font-size:.61rem;background:rgba(74,222,128,.1);border:1px solid rgba(74,222,128,.28);color:#4ade80;border-radius:5px;padding:1px 6px;letter-spacing:.04em;font-weight:700">'+dn+' \u2714</span>'
+    :'<span style="font-size:.61rem;background:rgba(251,191,36,.07);border:1px solid rgba(251,191,36,.22);color:#fbbf24;border-radius:5px;padding:1px 6px;letter-spacing:.04em;font-weight:700">'+dn+' \u2195</span>';
 }
 function _bcTab(tab){
   document.getElementById('bc-bat').style.display=tab==='bat'?'block':'none';
