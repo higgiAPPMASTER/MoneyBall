@@ -110,7 +110,7 @@ def _fetch_one_pt(args):
                 if not pid:
                     continue
                 if ptype == "pitcher":
-                    pct = float(row.get("pitch_percent") or 0)
+                    pct = float(row.get("pitch_usage") or row.get("pitch_percent") or 0)
                     _ARSENAL_CACHE.setdefault(pid, {})[pt] = pct
                 else:
                     w = row.get("woba") or row.get("est_woba") or ""
