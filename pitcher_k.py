@@ -804,12 +804,12 @@ def _fetch_velo_map(year: str) -> dict:
         try:
             r = requests.get("https://baseballsavant.mlb.com/leaderboard/custom",
                 params={"year": str(year), "type": "pitcher", "filter": "", "min": "10",
-                        "selections": "release_speed_avg", "csv": "true"},
+                        "selections": "fastball_avg_speed", "csv": "true"},
                 headers=hdrs, timeout=15)
             for row in csv.DictReader(io.StringIO(r.text.lstrip("\ufeff"))):
                 try:
                     pid = int(row.get("player_id") or 0)
-                    rv  = (row.get("release_speed_avg") or row.get("avg_speed") or "")
+                    rv  = (row.get("fastball_avg_speed") or row.get("release_speed_avg") or row.get("avg_speed") or "")
                     if pid and rv not in (None, ""):
                         out[pid] = float(rv)
                 except Exception:
@@ -890,7 +890,7 @@ def _pk_fetch_one_pt(args) -> None:
                 pid = int(row.get("player_id") or 0)
                 if not pid: continue
                 if ptype == "pitcher":
-                    pct = float(row.get("pitch_percent") or 0)
+                    pct = float(row.get("pitch_usage") or row.get("pitch_percent") or 0)
                     _PK_ARSENAL_CACHE.setdefault(pid, {})[pt] = pct
                 else:
                     w = row.get("woba") or row.get("est_woba") or ""
