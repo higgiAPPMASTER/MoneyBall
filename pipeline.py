@@ -301,35 +301,36 @@ def _recent_hit_log(player_id, n: int = 5) -> list:
         return []
 
 
-def fetch_series_splits(player_id, today_opp: str, run_date: str) -> dict:
-    """G1/G2/G3+ BA splits and today's series position.
-    Uses cached game logs — no extra API calls."""
+def fetch_series_splits(player_id, today_opp: str, run_date: str, side: str = "") -> dict:
+    """G1/G2/G3+ BA splits — current season only, filtered by home/away."""
     _EMPTY = {"today_pos": 1, "g1_ba": None, "g1_ab": 0,
-               "g2_ba": None, "g2_ab": 0, "g3_ba": None, "g3_ab": 0}
+               "g2_ba": None, "g2_ab": 0, "g3_ba": None, "g3_ab": 0, "ha": side or ""}
     if not player_id:
         return _EMPTY
     try:
         from mlb_stats_splits import _get_game_logs
-        from datetime import date as _dt, timedelta as _td
+        from datetime import date as _dt
         cy = _dt.today().year
+        want_home = (side.upper() == "HOME") if side else None
         all_games = []
-        for season in range(cy, cy - 3, -1):
-            for sp in _get_game_logs(player_id, season):
-                stat = sp.get("stat", {})
-                ab = int(stat.get("atBats", 0) or 0)
-                if ab < 1:
-                    continue
-                raw = (sp.get("date") or "")[:10]
-                try:
-                    gdate = _dt.fromisoformat(raw)
-                except Exception:
-                    continue
-                all_games.append({
-                    "date": gdate,
-                    "hits": int(stat.get("hits", 0) or 0),
-                    "ab": ab,
-                    "opp": (sp.get("opponent", {}) or {}).get("name", ""),
-                })
+        for sp in _get_game_logs(player_id, cy):
+            stat = sp.get("stat", {})
+            ab = int(stat.get("atBats", 0) or 0)
+            if ab < 1:
+                continue
+            if want_home is not None and sp.get("isHome") != want_home:
+                continue
+            raw = (sp.get("date") or "")[:10]
+            try:
+                gdate = _dt.fromisoformat(raw)
+            except Exception:
+                continue
+            all_games.append({
+                "date": gdate,
+                "hits": int(stat.get("hits", 0) or 0),
+                "ab": ab,
+                "opp": (sp.get("opponent", {}) or {}).get("name", ""),
+            })
         if not all_games:
             return _EMPTY
 
@@ -377,6 +378,7 @@ def fetch_series_splits(player_id, today_opp: str, run_date: str) -> dict:
             "g1_ba": _ba(pos_stats[1][0], pos_stats[1][1]), "g1_ab": pos_stats[1][1],
             "g2_ba": _ba(pos_stats[2][0], pos_stats[2][1]), "g2_ab": pos_stats[2][1],
             "g3_ba": _ba(pos_stats[3][0], pos_stats[3][1]), "g3_ab": pos_stats[3][1],
+            "ha": side or "",
         }
     except Exception:
         return _EMPTY
@@ -1125,7 +1127,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     # Series game-position splits (G1/G2/G3+)
     for _hp in top9 + also_ran:
         _hp["series_splits"] = fetch_series_splits(
-            _hp.get("player_id"), _hp.get("opp", ""), run_date
+            _hp.get("player_id"), _hp.get("opp", ""), run_date, _hp.get("side", "")
         )
 
     # ── Under Picks ───────────────────────────────────────────────────
@@ -1268,7 +1270,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         _up.setdefault("team", "")
         _up.setdefault("game_start", "")
         _up["recent_hit_log"] = _recent_hit_log(_up.get("batter_id"))
-        _up["series_splits"]  = fetch_series_splits(_up.get("batter_id"), _up.get("opp", ""), run_date)
+        _up["series_splits"]  = fetch_series_splits(_up.get("batter_id"), _up.get("opp", ""), run_date, _up.get("side", ""))
 
     # ── Pitcher K Picks ───────────────────────────────────────────────
     try:
@@ -1311,7 +1313,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         runs_picks_list = []
     for _rp in runs_picks_list:
         _rp["game_start"]    = _game_start_for(_rp.get("team", ""))
-        _rp["series_splits"] = fetch_series_splits(_rp.get("batter_id"), _rp.get("opp", ""), run_date)
+        _rp["series_splits"] = fetch_series_splits(_rp.get("batter_id"), _rp.get("opp", ""), run_date, _rp.get("side", ""))
 
     # ── TB Under Picks (batter total bases Under 1.5) ─────────────────────
     try:
@@ -1322,7 +1324,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         tb_picks_list = []
     for _tp in tb_picks_list:
         _tp["game_start"]    = _game_start_for(_tp.get("team", ""))
-        _tp["series_splits"] = fetch_series_splits(_tp.get("batter_id"), _tp.get("opp", ""), run_date)
+        _tp["series_splits"] = fetch_series_splits(_tp.get("batter_id"), _tp.get("opp", ""), run_date, _tp.get("side", ""))
 
     # ── TB Over Picks (batter total bases Over 1.5) ───────────────────────
     try:
@@ -1333,7 +1335,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         tb_over_picks_list = []
     for _tov in tb_over_picks_list:
         _tov["game_start"]    = _game_start_for(_tov.get("team", ""))
-        _tov["series_splits"] = fetch_series_splits(_tov.get("batter_id"), _tov.get("opp", ""), run_date)
+        _tov["series_splits"] = fetch_series_splits(_tov.get("batter_id"), _tov.get("opp", ""), run_date, _tov.get("side", ""))
 
     # ── RBI Picks (Batter RBIs, Over/Under 0.5) ───────────────────────────
     try:
@@ -1344,7 +1346,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         rbi_picks_list = []
     for _xp in rbi_picks_list:
         _xp["game_start"]    = _game_start_for(_xp.get("team", ""))
-        _xp["series_splits"] = fetch_series_splits(_xp.get("batter_id"), _xp.get("opp", ""), run_date)
+        _xp["series_splits"] = fetch_series_splits(_xp.get("batter_id"), _xp.get("opp", ""), run_date, _xp.get("side", ""))
 
     # ── HRR Picks (Hits+Runs+RBI Over 1.5) ────────────────────────────────
     try:
@@ -1355,7 +1357,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         hrr_picks_list = []
     for _hp in hrr_picks_list:
         _hp["game_start"]    = _game_start_for(_hp.get("team", ""))
-        _hp["series_splits"] = fetch_series_splits(_hp.get("batter_id"), _hp.get("opp", ""), run_date)
+        _hp["series_splits"] = fetch_series_splits(_hp.get("batter_id"), _hp.get("opp", ""), run_date, _hp.get("side", ""))
 
     # ── EV enrichment for ALL non-hit categories ────────────────────────
     # Each pick gets ev / edge / ev_prob from our model probability vs the
