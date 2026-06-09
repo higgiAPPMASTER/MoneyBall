@@ -3698,8 +3698,9 @@ function _ssBlock(p){
       +'<div style="font-size:.6rem;color:#475569;margin-top:2px">'+s.ab+' AB</div>'
       +'</div>';
   }).join('');
+  var haLbl=ss.ha?(' \u00b7 '+ss.ha):'';
   return '<div style="margin-top:14px;border-top:1px solid #1e293b;padding-top:12px">'
-    +'<div style="font-size:.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Series Game Splits (BA)</div>'
+    +'<div style="font-size:.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Series Splits \u00b7 This Season'+haLbl+'</div>'
     +'<div style="display:flex;gap:8px">'+cols+'</div></div>';
 }
 function _seriesChip(p){
