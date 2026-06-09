@@ -713,7 +713,7 @@ def _fetch_whiff_map(year: str) -> dict:
                 params={"year": str(year), "type": "pitcher", "filter": "", "min": "10",
                         "selections": "whiff_percent", "csv": "true"},
                 headers=hdrs, timeout=15)
-            for row in csv.DictReader(io.StringIO(r.text)):
+            for row in csv.DictReader(io.StringIO(r.text.lstrip("\ufeff"))):
                 try:
                     pid = int(row.get("player_id") or 0)
                     wp = row.get("whiff_percent")
@@ -755,7 +755,7 @@ def _fetch_gb_xwoba_map(year: str) -> dict:
                 params={"year": str(year), "type": "pitcher", "filter": "", "min": "10",
                         "selections": "gb_percent,xwoba", "csv": "true"},
                 headers=hdrs, timeout=15)
-            for row in csv.DictReader(io.StringIO(r.text)):
+            for row in csv.DictReader(io.StringIO(r.text.lstrip("\ufeff"))):
                 try:
                     pid = int(row.get("player_id") or 0)
                     if not pid:
@@ -806,7 +806,7 @@ def _fetch_velo_map(year: str) -> dict:
                 params={"year": str(year), "type": "pitcher", "filter": "", "min": "10",
                         "selections": "release_speed_avg", "csv": "true"},
                 headers=hdrs, timeout=15)
-            for row in csv.DictReader(io.StringIO(r.text)):
+            for row in csv.DictReader(io.StringIO(r.text.lstrip("\ufeff"))):
                 try:
                     pid = int(row.get("player_id") or 0)
                     rv  = (row.get("release_speed_avg") or row.get("avg_speed") or "")
@@ -846,7 +846,7 @@ def _fetch_stuff_map(year: str) -> dict:
                 params={"year": str(year), "type": "pitcher", "filter": "", "min": "10",
                         "selections": "stuff_plus", "csv": "true"},
                 headers=hdrs, timeout=15)
-            for row in csv.DictReader(io.StringIO(r.text)):
+            for row in csv.DictReader(io.StringIO(r.text.lstrip("\ufeff"))):
                 try:
                     pid = int(row.get("player_id") or 0)
                     sp  = row.get("stuff_plus") or ""
@@ -883,7 +883,7 @@ def _pk_fetch_one_pt(args) -> None:
                     "position": "", "team": "", "min": "1",
                     "stat": "p_run_exp", "sort": "1", "sortDir": "desc", "csv": "true"},
             headers=hdrs, timeout=15)
-        txt = r.text.strip()
+        txt = r.text.lstrip("\ufeff").strip()
         if not txt or txt.startswith("<"): return
         for row in csv.DictReader(io.StringIO(txt)):
             try:
