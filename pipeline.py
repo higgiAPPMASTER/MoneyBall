@@ -301,6 +301,86 @@ def _recent_hit_log(player_id, n: int = 5) -> list:
         return []
 
 
+def fetch_series_splits(player_id, today_opp: str, run_date: str) -> dict:
+    """G1/G2/G3+ BA splits and today's series position.
+    Uses cached game logs — no extra API calls."""
+    _EMPTY = {"today_pos": 1, "g1_ba": None, "g1_ab": 0,
+               "g2_ba": None, "g2_ab": 0, "g3_ba": None, "g3_ab": 0}
+    if not player_id:
+        return _EMPTY
+    try:
+        from mlb_stats_splits import _get_game_logs
+        from datetime import date as _dt, timedelta as _td
+        cy = _dt.today().year
+        all_games = []
+        for season in range(cy, cy - 3, -1):
+            for sp in _get_game_logs(player_id, season):
+                stat = sp.get("stat", {})
+                ab = int(stat.get("atBats", 0) or 0)
+                if ab < 1:
+                    continue
+                raw = (sp.get("date") or "")[:10]
+                try:
+                    gdate = _dt.fromisoformat(raw)
+                except Exception:
+                    continue
+                all_games.append({
+                    "date": gdate,
+                    "hits": int(stat.get("hits", 0) or 0),
+                    "ab": ab,
+                    "opp": (sp.get("opponent", {}) or {}).get("name", ""),
+                })
+        if not all_games:
+            return _EMPTY
+
+        all_games.sort(key=lambda g: g["date"])
+
+        # Group consecutive games vs same opponent (≤4 day gap) into series
+        pos_stats = {1: [0, 0], 2: [0, 0], 3: [0, 0]}
+        i = 0
+        while i < len(all_games):
+            g = all_games[i]; series = [g]; j = i + 1
+            while j < len(all_games):
+                prev = all_games[j - 1]; curr = all_games[j]
+                if curr["opp"] == g["opp"] and (curr["date"] - prev["date"]).days <= 4:
+                    series.append(curr); j += 1
+                else:
+                    break
+            for pos, sg in enumerate(series, 1):
+                k = min(pos, 3)
+                pos_stats[k][0] += sg["hits"]
+                pos_stats[k][1] += sg["ab"]
+            i = j
+
+        def _ba(h, a): return round(h / a, 3) if a >= 5 else None
+
+        # Today's series position — count recent consecutive games vs same opp
+        try:
+            today_d = _dt.fromisoformat(run_date[:10])
+        except Exception:
+            today_d = _dt.today()
+        opp_norm = set((today_opp or "").lower().split()) - {"the", "at", "vs"}
+        def _match(opp_str):
+            if not opp_norm: return False
+            return bool(opp_norm & (set((opp_str or "").lower().split()) - {"the", "at", "vs"}))
+        recent = [g for g in reversed(all_games)
+                  if _match(g["opp"]) and 0 < (today_d - g["date"]).days <= 5]
+        streak = 0; prev_d = today_d
+        for g in recent:
+            if (prev_d - g["date"]).days <= 2:
+                streak += 1; prev_d = g["date"]
+            else:
+                break
+
+        return {
+            "today_pos": min(streak + 1, 3),
+            "g1_ba": _ba(pos_stats[1][0], pos_stats[1][1]), "g1_ab": pos_stats[1][1],
+            "g2_ba": _ba(pos_stats[2][0], pos_stats[2][1]), "g2_ab": pos_stats[2][1],
+            "g3_ba": _ba(pos_stats[3][0], pos_stats[3][1]), "g3_ab": pos_stats[3][1],
+        }
+    except Exception:
+        return _EMPTY
+
 
 from day_night_check  import get_game_time_type, find_espn_player_id, fetch_day_night_ba
 
@@ -1041,6 +1121,12 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     # Recent form: last 5 games (date/opp/hits/total-bases) for the click-through popup
     for _hp in top9 + also_ran:
         _hp["recent_hit_log"] = _recent_hit_log(_hp.get("player_id"))
+
+    # Series game-position splits (G1/G2/G3+)
+    for _hp in top9 + also_ran:
+        _hp["series_splits"] = fetch_series_splits(
+            _hp.get("player_id"), _hp.get("opp", ""), run_date
+        )
 
     # ── Under Picks ───────────────────────────────────────────────────
     try:
