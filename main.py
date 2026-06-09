@@ -1007,10 +1007,11 @@ def _attach_clv(date_str: str, rows: list):
         except Exception as e:
             print(f"[clv] open grade failed {date_str}: {e}")
     for r in rows:
-        close_odds = r.get("odds")
-        open_odds = omap.get((r.get("name"), r.get("category"), r.get("side"), r.get("pick")), close_odds)
-        r["close_odds"] = close_odds
-        r["open_odds"] = open_odds
+        # open_odds stays None when no opening line existed yet (e.g. props whose
+        # line posts just before first pitch) — the frontend then skips it from
+        # CLV rather than faking a 0% "even" move.
+        r["close_odds"] = r.get("odds")
+        r["open_odds"] = omap.get((r.get("name"), r.get("category"), r.get("side"), r.get("pick")))
 
 import threading as _trk_threading
 _LEDGER_LOCK = _trk_threading.Lock()
