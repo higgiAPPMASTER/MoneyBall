@@ -1268,6 +1268,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         _up.setdefault("team", "")
         _up.setdefault("game_start", "")
         _up["recent_hit_log"] = _recent_hit_log(_up.get("batter_id"))
+        _up["series_splits"]  = fetch_series_splits(_up.get("batter_id"), _up.get("opp", ""), run_date)
 
     # ── Pitcher K Picks ───────────────────────────────────────────────
     try:
@@ -1309,7 +1310,8 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         emit({"type": "log", "msg": f"⚠️ Runs Picks skipped: {exc}"})
         runs_picks_list = []
     for _rp in runs_picks_list:
-        _rp["game_start"] = _game_start_for(_rp.get("team", ""))
+        _rp["game_start"]    = _game_start_for(_rp.get("team", ""))
+        _rp["series_splits"] = fetch_series_splits(_rp.get("batter_id"), _rp.get("opp", ""), run_date)
 
     # ── TB Under Picks (batter total bases Under 1.5) ─────────────────────
     try:
@@ -1319,7 +1321,8 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         emit({"type": "log", "msg": f"⚠️ TB Under picks skipped: {exc}"})
         tb_picks_list = []
     for _tp in tb_picks_list:
-        _tp["game_start"] = _game_start_for(_tp.get("team", ""))
+        _tp["game_start"]    = _game_start_for(_tp.get("team", ""))
+        _tp["series_splits"] = fetch_series_splits(_tp.get("batter_id"), _tp.get("opp", ""), run_date)
 
     # ── TB Over Picks (batter total bases Over 1.5) ───────────────────────
     try:
@@ -1329,7 +1332,8 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         emit({"type": "log", "msg": f"⚠️ TB Over picks skipped: {exc}"})
         tb_over_picks_list = []
     for _tov in tb_over_picks_list:
-        _tov["game_start"] = _game_start_for(_tov.get("team", ""))
+        _tov["game_start"]    = _game_start_for(_tov.get("team", ""))
+        _tov["series_splits"] = fetch_series_splits(_tov.get("batter_id"), _tov.get("opp", ""), run_date)
 
     # ── RBI Picks (Batter RBIs, Over/Under 0.5) ───────────────────────────
     try:
@@ -1339,7 +1343,8 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         emit({"type": "log", "msg": f"⚠️ RBI picks skipped: {exc}"})
         rbi_picks_list = []
     for _xp in rbi_picks_list:
-        _xp["game_start"] = _game_start_for(_xp.get("team", ""))
+        _xp["game_start"]    = _game_start_for(_xp.get("team", ""))
+        _xp["series_splits"] = fetch_series_splits(_xp.get("batter_id"), _xp.get("opp", ""), run_date)
 
     # ── HRR Picks (Hits+Runs+RBI Over 1.5) ────────────────────────────────
     try:
@@ -1349,7 +1354,8 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         emit({"type": "log", "msg": f"⚠️ HRR picks skipped: {exc}"})
         hrr_picks_list = []
     for _hp in hrr_picks_list:
-        _hp["game_start"] = _game_start_for(_hp.get("team", ""))
+        _hp["game_start"]    = _game_start_for(_hp.get("team", ""))
+        _hp["series_splits"] = fetch_series_splits(_hp.get("batter_id"), _hp.get("opp", ""), run_date)
 
     # ── EV enrichment for ALL non-hit categories ────────────────────────
     # Each pick gets ev / edge / ev_prob from our model probability vs the
