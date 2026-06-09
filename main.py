@@ -38,14 +38,15 @@ def _sb_get(table, params=None, timeout=10):
         print(f"[sb] GET {table} failed: {e}")
     return None
 
-def _sb_upsert(table, rows, timeout=10):
+def _sb_upsert(table, rows, on_conflict=None, timeout=10):
     import requests as _r
     if not rows:
         return True
     h = {**_SB_HDRS, "Prefer": "resolution=merge-duplicates,return=minimal"}
     payload = rows if isinstance(rows, list) else [rows]
+    params = {"on_conflict": on_conflict} if on_conflict else None
     try:
-        rsp = _r.post(f"{_SB_URL}/rest/v1/{table}", headers=h,
+        rsp = _r.post(f"{_SB_URL}/rest/v1/{table}", headers=h, params=params,
                       json=payload, timeout=timeout)
         if rsp.status_code not in (200, 201, 204):
             print(f"[sb] UPSERT {table} {rsp.status_code}: {rsp.text[:120]}")
@@ -93,6 +94,59 @@ def _load_disk_cache(date_str: str):
         except Exception as e:
             print(f"[disk_cache] load failed: {e}")
     return None
+
+# ── Daily pick snapshot in Supabase (survives Render redeploys) ──────────
+# The disk pick cache lives on Render's ephemeral filesystem and is wiped on
+# every deploy, so a day's picks can vanish before its games go Final and the
+# day can be graded. We mirror each run's picks into Supabase keyed by date;
+# the LAST run of the day overwrites the row, so the final pre-game run is what
+# gets graded and locked. Stored in the existing mpa_track_ledger table as a
+# category="__picks__" row (locked=False, so it never pollutes the W/L read).
+_PICKS_CAT = "__picks__"
+
+def _save_sb_picks(date_str: str, result: dict):
+    if not (_SB_URL and _SB_KEY):
+        return
+    import datetime as _dt
+    row = {"app": "mlb", "date": date_str, "category": _PICKS_CAT, "side": "ALL",
+           "wins": 0, "losses": 0, "locked": False,
+           "locked_at": _dt.datetime.utcnow().isoformat() + "Z", "detail": result}
+    # merge on the (app,date,category,side) unique key → last run of the day wins
+    _sb_upsert("mpa_track_ledger", [row], on_conflict="app,date,category,side")
+    # prune snapshots >7 days old (those dates are already locked in the ledger)
+    try:
+        cutoff = date.fromordinal(date.today().toordinal() - 7).isoformat()
+        _sb_delete("mpa_track_ledger", {"app": "eq.mlb",
+                   "category": f"eq.{_PICKS_CAT}", "date": f"lt.{cutoff}"})
+    except Exception:
+        pass
+
+def _load_sb_picks(date_str: str):
+    if not (_SB_URL and _SB_KEY):
+        return None
+    rows = _sb_get("mpa_track_ledger", {"app": "eq.mlb",
+                   "category": f"eq.{_PICKS_CAT}", "side": "eq.ALL",
+                   "date": f"eq.{date_str}", "select": "detail", "limit": "1"})
+    if rows:
+        return rows[0].get("detail") or None
+    return None
+
+def _list_sb_pick_dates():
+    if not (_SB_URL and _SB_KEY):
+        return []
+    rows = _sb_get("mpa_track_ledger", {"app": "eq.mlb",
+                   "category": f"eq.{_PICKS_CAT}", "side": "eq.ALL", "select": "date"})
+    if not rows:
+        return []
+    return sorted({r["date"] for r in rows if r.get("date")})
+
+def _load_pick_cache(date_str: str):
+    """Picks for a date: local disk first (fast), else the Supabase snapshot
+    (survives redeploys). Used by every read/grade path."""
+    d = _load_disk_cache(date_str)
+    if d is not None:
+        return d
+    return _load_sb_picks(date_str)
 
 from fastapi import FastAPI, HTTPException, Form, Request
 from fastapi.responses import StreamingResponse, FileResponse, HTMLResponse
@@ -196,7 +250,7 @@ async def start_run(request: Request, date_str: str, force: bool = False, token:
         raise HTTPException(status_code=401, detail="Subscription required — please log in via moneypicksarena.com")
     if not force:
         if date_str not in _cache:
-            disk = _load_disk_cache(date_str)
+            disk = _load_pick_cache(date_str)
             if disk:
                 _cache[date_str] = disk
     if not force and date_str in _cache and not _cache[date_str].get("stats", {}).get("has_tbd"):
@@ -237,6 +291,7 @@ async def start_run(request: Request, date_str: str, force: bool = False, token:
             try: _update_track_ledger()
             except Exception as _le: print(f"[track_ledger] {_le}")
             _save_disk_cache(date_str, result)
+            _save_sb_picks(date_str, result)
             try:
                 # Bake the picks into the page HTML so the Replit hub can serve
                 # an instant, no-cold-start snapshot at moneypicksarena.com.
@@ -294,7 +349,7 @@ async def get_results(date_str: str, request: Request, token: str = ""):
     if not _verify_hub_token(tok):
         raise HTTPException(status_code=401, detail="Subscription required — please log in via moneypicksarena.com")
     if date_str not in _cache:
-        disk = _load_disk_cache(date_str)
+        disk = _load_pick_cache(date_str)
         if disk is not None:
             _cache[date_str] = disk
     if date_str in _cache:
@@ -749,7 +804,7 @@ def _save_ledger(led: dict):
                     rows.append({"app": "mlb", "date": date_str, "category": cat,
                                  "side": side, "wins": wl[0], "losses": wl[1],
                                  "locked": True, "locked_at": now})
-        _sb_upsert("mpa_track_ledger", rows)
+        _sb_upsert("mpa_track_ledger", rows, on_conflict="app,date,category,side")
         return
     try:
         tmp = f"{_TRACK_LEDGER_PATH}.{os.getpid()}.tmp"
@@ -788,7 +843,7 @@ def _save_detail(det: dict):
                  "wins": 0, "losses": 0, "locked": True, "locked_at": now,
                  "detail": picks}
                 for d, picks in det.items()]
-        _sb_upsert("mpa_track_ledger", rows)
+        _sb_upsert("mpa_track_ledger", rows, on_conflict="app,date,category,side")
         return
     try:
         tmp = f"{_TRACK_DETAIL_PATH}.{os.getpid()}.tmp"
@@ -859,21 +914,29 @@ def _update_track_ledger() -> dict:
             _today_d = None
         changed = False
         det_changed = False
+        # Candidate past dates come from BOTH the local disk cache AND the
+        # Supabase snapshots — so grading still works after a Render redeploy
+        # wipes the disk. The last run of each day is what was stored, so that
+        # final pre-game version is what gets graded and locked.
+        cand = set()
         try:
-            files = sorted(_glob.glob(os.path.join(_CACHE_DIR, "*.json")))
+            for fp in _glob.glob(os.path.join(_CACHE_DIR, "*.json")):
+                bn = os.path.basename(fp).replace(".json", "")
+                if not bn.startswith("_") and len(bn) == 10 and bn[4] == "-":
+                    cand.add(bn)
         except Exception:
-            files = []
-        for fp in files:
-            bn = os.path.basename(fp).replace(".json", "")
-            if bn.startswith("_") or len(bn) != 10 or bn[4] != "-":
-                continue          # skip ledger file / non-date files
+            pass
+        for bn in _list_sb_pick_dates():
+            if len(bn) == 10 and bn[4] == "-":
+                cand.add(bn)
+        for bn in sorted(cand):
             if bn >= today:
                 continue          # today/future — games not final yet
             need_led = bn not in led or not led.get(bn)
             need_det = bn not in det or not det.get(bn)
             if not need_led and not need_det:
                 continue          # already locked — W/L and detail both present
-            picks = _load_disk_cache(bn)
+            picks = _load_pick_cache(bn)
             if not picks:
                 continue
             try:
@@ -1318,7 +1381,7 @@ async def grade_picks(date_str: str, request: Request, token: str = "", admin: s
     if not is_ok:
         raise HTTPException(status_code=401, detail="Subscription required")
     if date_str not in _cache:
-        disk = _load_disk_cache(date_str)
+        disk = _load_pick_cache(date_str)
         if disk is not None:
             _cache[date_str] = disk
     picks = _cache.get(date_str)
@@ -4968,110 +5031,38 @@ function renderTrackRecord(d){
     'Pitcher Ks|OVER','Pitcher Ks|UNDER','Pitcher Hits Allowed|OVER','Pitcher Hits Allowed|UNDER',
     'Pitcher Outs|OVER','Pitcher Outs|UNDER','Pitcher Earned Runs|OVER','Pitcher Earned Runs|UNDER',
     'Pitcher Walks|OVER','Pitcher Walks|UNDER'];
-  function _rc(w,n){ if(!n) return '#64748b'; var p=w/n; return p>=0.70?'#4ade80':(p>=0.55?'#facc15':'#f87171'); }
-  function _bar(w,n,clr){
-    var pct=n?Math.round(w/n*100):0;
-    return '<div style="height:9px;border-radius:5px;background:#1e293b;overflow:hidden;flex:1;min-width:80px">'
-      +'<div style="height:100%;width:'+pct+'%;background:'+clr+';border-radius:5px"></div></div>';
-  }
-  var sumHtml='<div style="background:#111;border-radius:10px;padding:14px 18px;margin-bottom:16px;display:flex;flex-wrap:wrap;gap:12px;align-items:center">'
-    +'<div style="font-weight:700;font-size:.95rem">All-Time: '
-    +'<span style="color:#4ade80;font-size:1.2rem;font-weight:900">'+tw+'W</span> '
-    +'<span style="color:#f87171;font-size:1.2rem;font-weight:900">'+tl+'L</span> '
-    +'<span style="color:'+_twColor(tw,tl)+'"> ('+_twPct(tw,tl)+')</span></div>'
-    +'<div style="font-size:.79rem;color:#64748b">'+(d.days||0)+' day'+((d.days===1)?'':'s')+' graded \u00b7 top-10 picks per category \u00b7 Final games only</div>'
-    +'<div style="margin-left:auto;display:flex;gap:8px">'
-    +'<button onclick="downloadTrackAllTimeCSV()" style="background:#7c3aed;color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:.78rem;font-weight:600;cursor:pointer">\u2b07 All-Time CSV</button>'
-    +'<button onclick="downloadTrackDailyCSV()" style="background:#1d4ed8;color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:.78rem;font-weight:600;cursor:pointer">\u2b07 Daily CSV</button>'
-    +'</div>'
-    +'</div>';
-  // Show EVERY category (both sides), even at 0-0, so the full slate of what's
-  // winning/losing is always visible. Graded rows fill in their W/L; the rest
-  // render as 0/0 placeholders until a slate goes Final.
-  var rowMap={};
-  rows.forEach(function(r){ rowMap[r.category+'|'+r.side]=r; });
+  // CSV needs the full per-category list (all cats, even 0-0).
+  var rowMap={}; rows.forEach(function(r){ rowMap[r.category+'|'+r.side]=r; });
   var fullAll=[];
-  var catRows='';
   CAT_ORDER.forEach(function(key){
     var parts=key.split('|');
     var r=rowMap[key]||{category:parts[0],side:parts[1],wins:0,losses:0};
-    var cfg=CAT_CFG[key]||{lbl:r.category+' ('+r.side+')',icon:'📊',abbr:r.side};
-    var n=r.wins+r.losses;
-    var clr=_rc(r.wins,n);
-    var pctStr=n?Math.round(r.wins/n*100)+'%':'—';
+    var cfg=CAT_CFG[key]||{lbl:r.category+' ('+r.side+')'};
     fullAll.push({category:r.category,side:r.side,label:cfg.lbl,wins:r.wins,losses:r.losses});
-    catRows+='<div style="display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid #1e293b">'
-      +'<span style="font-size:1.1rem;width:22px;text-align:center;flex-shrink:0">'+cfg.icon+'</span>'
-      +'<span style="color:#e2e8f0;font-weight:600;min-width:195px;font-size:.87rem;flex-shrink:0">'+cfg.lbl+'</span>'
-      +'<span style="font-family:monospace;font-weight:900;font-size:1.1rem;color:'+clr+';min-width:54px;text-align:right;flex-shrink:0">'+r.wins+'/'+n+'</span>'
-      +_bar(r.wins,n,clr)
-      +'<span style="font-family:monospace;font-size:.87rem;font-weight:700;color:'+clr+';min-width:40px;text-align:right;flex-shrink:0">'+pctStr+'</span>'
-      +'</div>';
   });
   window.__TRACK_ALLTIME_FULL__=fullAll;
-  var catSection='<div style="border:1px solid #1e293b;border-radius:12px;overflow:hidden;margin-bottom:16px">'
-      +'<div style="display:flex;align-items:center;padding:7px 14px;background:#0c1829;border-bottom:1px solid #1e293b">'
-      +'<span style="font-size:.68rem;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.07em;min-width:217px">Category</span>'
-      +'<span style="font-size:.68rem;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.07em;min-width:54px;text-align:right">W/N</span>'
-      +'<span style="font-size:.68rem;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.07em;flex:1;margin:0 10px">Hit Rate</span>'
-      +'<span style="font-size:.68rem;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.07em;min-width:40px;text-align:right">%</span>'
-      +'</div>'+catRows+'</div>'
-    +((d.days||0)?'':'<p style="color:#64748b;font-size:.78rem;padding:4px 2px 12px">No graded days yet \u2014 records fill in automatically as slates go Final.</p>');
-  var det=d.detail||[];
-  var earnHtml='<div style="background:#0a1f14;border:1px solid #16432c;border-radius:10px;padding:14px 18px;margin-bottom:16px;display:flex;flex-wrap:wrap;gap:14px;align-items:center">'
-    +'<div style="font-weight:800;font-size:.92rem;color:#6ee7b7">💰 Potential Earnings</div>'
-    +'<label style="font-size:.82rem;color:#94a3b8">Flat bet $ <input id="trkBet" type="number" min="1" step="1" value="100" oninput="_recalcEarnings()" style="width:84px;margin-left:4px;background:#020617;border:1px solid #334155;color:#fff;border-radius:6px;padding:5px 8px;font-size:.82rem"></label>'
-    +'<div id="trkNet" style="font-size:.88rem;font-weight:700;color:#e2e8f0"></div>'
-    +'<button onclick="downloadTrackEarningsCSV()" style="margin-left:auto;background:#16a34a;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:.78rem;font-weight:700;cursor:pointer">\u2b07 Earnings CSV (Excel)</button>'
-    +'</div>';
-  document.getElementById('track-alltime').innerHTML=sumHtml+earnHtml+catSection;
-  _recalcEarnings();
-  // Daily — every graded day expands to its full per-pick lists, grouped by
-  // category, so the user can show exactly which plays hit and which missed.
-  var detByDate={};
-  (d.detail||[]).forEach(function(r){ (detByDate[r.date]=detByDate[r.date]||[]).push(r); });
-  function _catRank(k){ var i=CAT_ORDER.indexOf(k); return i<0?999:i; }
-  var dayBlocks=daily.slice().reverse().map(function(x){
-    var groups={};
-    (detByDate[x.date]||[]).forEach(function(r){
-      var k=(r.category||'?')+'|'+(r.side||'OVER');
-      (groups[k]=groups[k]||[]).push(r);
-    });
-    var gkeys=Object.keys(groups).sort(function(a,b){ return _catRank(a)-_catRank(b); });
-    var inner='';
-    gkeys.forEach(function(k){
-      var cfg=CAT_CFG[k]||{lbl:k.split('|').join(' '),icon:'📊'};
-      var picks=groups[k];
-      var gw=picks.filter(function(p){return p.result==='WIN';}).length;
-      var gn=picks.length;
-      var gclr=_rc(gw,gn);
-      inner+='<div style="margin:10px 0 4px;font-weight:800;font-size:.81rem;color:#cbd5e1">'+cfg.icon+' '+cfg.lbl
-        +' <span style="color:'+gclr+';font-family:monospace;font-weight:900">'+gw+'/'+gn+'</span></div>';
-      picks.forEach(function(p){
-        var win=p.result==='WIN';
-        var mk=win?'<span style="color:#4ade80">\u2713</span>':'<span style="color:#f87171">\u2717</span>';
-        var act=(p.actual!=null)?('<span style="color:#cbd5e1">\u2192 '+p.actual+(p.stat?(' '+p.stat):'')+'</span>'):'';
-        var odd=(p.odds!=null&&p.odds!=='')?('<span style="color:#64748b;font-family:monospace">'+((Number(p.odds)>0?'+':'')+p.odds)+'</span>'):'';
-        inner+='<div style="display:flex;gap:8px;align-items:center;padding:2px 0 2px 6px;font-size:.79rem">'
-          +mk
-          +'<span style="color:#e2e8f0;min-width:150px">'+p.name+'</span>'
-          +'<span style="color:#94a3b8;min-width:120px">'+p.pick+'</span>'
-          +act+odd
-          +'<span style="margin-left:auto;font-weight:800;color:'+(win?'#4ade80':'#f87171')+'">'+p.result+'</span>'
-          +'</div>';
-      });
-    });
-    if(!inner) inner='<div style="color:#64748b;font-size:.79rem;padding:4px 6px">No decided picks recorded this day.</div>';
-    return '<details style="border-bottom:1px solid #1f2937;padding:7px 0">'
-      +'<summary style="cursor:pointer;font-weight:800;color:#e2e8f0;font-size:.88rem">'
-      +x.date+' \u2014 <span style="color:#4ade80">'+x.wins+'W</span> <span style="color:#f87171">'+x.losses+'L</span> '
-      +'<span style="color:'+_twColor(x.wins,x.losses)+'">('+_twPct(x.wins,x.losses)+')</span></summary>'
-      +'<div style="padding:2px 0 12px">'+inner+'</div></details>';
-  }).join('');
-  document.getElementById('track-daily').innerHTML=daily.length
-    ?'<details open style="margin-top:0"><summary style="cursor:pointer;font-weight:700;color:#a78bfa;padding:10px 0;border-bottom:1px solid #1f2937">📅 Daily \u2014 every pick by category ('+daily.length+' day'+(daily.length===1?'':'s')+')</summary>'
-      +'<div style="margin-top:6px">'+dayBlocks+'</div></details>'
-    :'';
+  window.__TRK_CFG__=CAT_CFG; window.__TRK_ORDER__=CAT_ORDER;
+  // Single flat-bet box drives every $ figure below.
+  var hdr='<div style="display:flex;flex-wrap:wrap;gap:14px;align-items:center;background:#0a1f14;border:1px solid #16432c;border-radius:12px;padding:14px 18px;margin-bottom:14px">'
+    +'<span style="font-weight:800;color:#6ee7b7;font-size:1rem">💰 Bet amount $</span>'
+    +'<input id="trkBet" type="number" min="1" step="1" value="20" oninput="_trkRecalc()" style="width:104px;background:#020617;border:1px solid #334155;color:#fff;border-radius:8px;padding:8px 12px;font-size:1.05rem;font-weight:800;text-align:center">'
+    +'<span style="color:#94a3b8;font-size:.8rem">flat on every pick \u2014 change once, whole sheet recalculates</span>'
+    +'<div style="margin-left:auto;text-align:right">'
+      +'<div style="font-weight:700;font-size:.92rem">All-Time <span style="color:#4ade80;font-weight:900">'+tw+'W</span> <span style="color:#f87171;font-weight:900">'+tl+'L</span> <span style="color:'+_twColor(tw,tl)+'">('+_twPct(tw,tl)+')</span></div>'
+      +'<div id="trkNet" style="font-size:.83rem;color:#94a3b8"></div>'
+    +'</div></div>';
+  var bar='<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px">'
+    +'<span style="font-size:.78rem;color:#64748b">'+(d.days||0)+' day'+((d.days===1)?'':'s')+' graded \u00b7 top-10 picks per category \u00b7 Final games only</span>'
+    +'<span style="margin-left:auto;display:flex;gap:8px">'
+    +'<button onclick="downloadTrackAllTimeCSV()" style="background:#7c3aed;color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:.78rem;font-weight:600;cursor:pointer">\u2b07 All-Time CSV</button>'
+    +'<button onclick="downloadTrackDailyCSV()" style="background:#1d4ed8;color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:.78rem;font-weight:600;cursor:pointer">\u2b07 Daily CSV</button>'
+    +'<button onclick="downloadTrackEarningsCSV()" style="background:#16a34a;color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:.78rem;font-weight:700;cursor:pointer">\u2b07 Earnings CSV</button>'
+    +'</span></div>';
+  document.getElementById('track-alltime').innerHTML=hdr+bar
+    +'<div style="font-size:.82rem;color:#cbd5e1;font-weight:800;margin:2px 2px 8px">Categories \u2014 ranked best \u2192 worst to bet (at your stake)</div>'
+    +'<div id="trk-cats"></div>';
+  document.getElementById('track-daily').innerHTML='<div id="trk-daily"></div>';
+  _trkRecalc();
 }
 
 // American-odds profit on a winning bet; a loss always costs the full stake.
@@ -5084,31 +5075,108 @@ function _amProfit(odds, stake, win){
   return odds>0 ? stake*(odds/100) : stake*(100/Math.abs(odds));
 }
 // Single source of truth for the flat bet size — blank/zero/negative/NaN all
-// fall back to the 100 default so the live total and the CSV always agree.
+// fall back to the $20 default so the live total and the CSV always agree.
 function _trkStake(){
   var inp=document.getElementById('trkBet');
-  var s=inp?Number(inp.value):100;
-  if(!isFinite(s)||s<=0) s=100;
+  var s=inp?Number(inp.value):20;
+  if(!isFinite(s)||s<=0) s=20;
   return s;
 }
-function _recalcEarnings(){
+// Recompute the WHOLE Track Record from the one bet box: per-category Net P/L
+// + ROI (ranked best->worst), the all-time net summary, then the daily sheet.
+function _trkRecalc(){
   var d=window.__TRACK__; if(!d) return;
-  var el=document.getElementById('trkNet'); if(!el) return;
-  var det=d.detail||[];
+  var CAT_CFG=window.__TRK_CFG__||{}, CAT_ORDER=window.__TRK_ORDER__||[];
   var stake=_trkStake();
-  if(!det.length){ el.innerHTML='<span style="color:#64748b">No per-pick detail yet \u2014 builds up from today forward as slates go Final.</span>'; return; }
-  var net=0, counted=0, skipped=0;
-  det.forEach(function(r){
-    var pl=_amProfit(r.odds, stake, (r.result==='WIN'));
-    if(pl===null){ skipped++; return; }
-    net+=pl; counted++;
-  });
-  var risk=counted*stake;
-  var roi=risk?(net/risk*100):0;
-  var clr=net>=0?'#4ade80':'#f87171';
-  el.innerHTML='Net P/L across '+counted+' plays: <span style="color:'+clr+';font-weight:900;font-size:1.05rem">'+(net>=0?'+':'\u2212')+'$'+Math.abs(net).toFixed(0)+'</span> '
-    +'<span style="color:#64748b">(ROI '+(roi>=0?'+':'\u2212')+Math.abs(roi).toFixed(1)+'% on $'+risk.toFixed(0)+' risked)</span>'
-    +(skipped?(' <span style="color:#facc15">\u00b7 '+skipped+' win'+(skipped===1?'':'s')+' had no odds (excluded)</span>'):'');
+  function _rc(w,n){ if(!n) return '#64748b'; var p=w/n; return p>=0.70?'#4ade80':(p>=0.55?'#facc15':'#f87171'); }
+  function _bar(pct,clr){ return '<div style="height:8px;border-radius:4px;background:#1e293b;overflow:hidden;width:88px;display:inline-block;vertical-align:middle"><div style="height:100%;width:'+pct+'%;background:'+clr+';border-radius:4px"></div></div>'; }
+  var perCat={};
+  (d.alltime||[]).forEach(function(r){ var k=r.category+'|'+r.side; var pc=perCat[k]=perCat[k]||{w:0,l:0,net:0,counted:0,skipped:0}; pc.w+=r.wins; pc.l+=r.losses; });
+  (d.detail||[]).forEach(function(r){ var k=(r.category||'?')+'|'+(r.side||'OVER'); var pc=perCat[k]=perCat[k]||{w:0,l:0,net:0,counted:0,skipped:0}; var pl=_amProfit(r.odds,stake,r.result==='WIN'); if(pl===null){ pc.skipped++; return; } pc.net+=pl; pc.counted++; });
+  var graded=[], gset={};
+  Object.keys(perCat).forEach(function(k){ var pc=perCat[k]; if(pc.counted>0){ pc.roi=pc.net/(pc.counted*stake)*100; graded.push([k,pc]); gset[k]=1; } });
+  graded.sort(function(a,b){ return b[1].roi-a[1].roi; });
+  var oNet=0,oCnt=0,oSkip=0;
+  graded.forEach(function(x){ oNet+=x[1].net; oCnt+=x[1].counted; oSkip+=x[1].skipped; });
+  var oRisk=oCnt*stake, oRoi=oRisk?oNet/oRisk*100:0;
+  var nEl=document.getElementById('trkNet');
+  if(nEl){
+    if(!oCnt){ nEl.innerHTML='No graded picks with odds yet \u2014 fills in as slates go Final.'; }
+    else { var oc=oNet>=0?'#4ade80':'#f87171', rc2=oRoi>=0?'#4ade80':'#f87171';
+      nEl.innerHTML='Net <span style="color:'+oc+';font-weight:900">'+(oNet>=0?'+$':'\u2212$')+Math.abs(oNet).toFixed(0)+'</span> \u00b7 ROI <span style="color:'+rc2+';font-weight:800">'+(oRoi>=0?'+':'\u2212')+Math.abs(oRoi).toFixed(1)+'%</span> on $'+oRisk.toFixed(0)+' risked'+(oSkip?(' \u00b7 '+oSkip+' no-odds win'+(oSkip===1?'':'s')+' excluded'):''); }
+  }
+  function _row(k,pc,rank){
+    var parts=k.split('|'); var cfg=CAT_CFG[k]||{lbl:parts[0]+' ('+parts[1]+')',icon:'📊'};
+    var n=pc.w+pc.l, clr=_rc(pc.w,n), pct=n?Math.round(pc.w/n*100):0;
+    var hasRoi=pc.counted>0, roi=hasRoi?pc.roi:null, netClr=pc.net>=0?'#4ade80':'#f87171';
+    var badge;
+    if(rank===1) badge='<span style="display:inline-block;width:22px;height:22px;line-height:22px;text-align:center;border-radius:50%;background:#064e3b;color:#6ee7b7;font-weight:800;font-size:.72rem">1</span>';
+    else if(rank===2||rank===3) badge='<span style="display:inline-block;width:22px;height:22px;line-height:22px;text-align:center;border-radius:50%;background:#065f46;color:#6ee7b7;font-weight:800;font-size:.72rem">'+rank+'</span>';
+    else if(hasRoi&&roi<0) badge='<span style="display:inline-block;width:22px;height:22px;line-height:22px;text-align:center;border-radius:50%;background:#4c1d24;color:#fca5a5;font-weight:800;font-size:.72rem">\u2193</span>';
+    else badge='<span style="display:inline-block;width:22px;color:#475569;text-align:center">\u00b7</span>';
+    return '<div style="display:flex;align-items:center;padding:10px 12px;border-bottom:1px solid #131c2e">'
+      +'<span style="width:30px;flex-shrink:0">'+badge+'</span>'
+      +'<span style="flex:1;min-width:140px;color:#e2e8f0;font-weight:600;font-size:.85rem">'+(cfg.icon||'')+' '+cfg.lbl+'</span>'
+      +'<span style="width:58px;text-align:right;font-family:monospace;font-weight:800;color:'+clr+';flex-shrink:0">'+pc.w+'/'+n+'</span>'
+      +'<span style="width:100px;text-align:center;flex-shrink:0">'+_bar(pct,clr)+'</span>'
+      +'<span style="width:80px;text-align:right;font-family:monospace;font-weight:800;color:'+(hasRoi?netClr:'#475569')+';flex-shrink:0">'+(hasRoi?((pc.net>=0?'+$':'\u2212$')+Math.abs(pc.net).toFixed(0)):'\u2014')+'</span>'
+      +'<span style="width:72px;text-align:right;font-family:monospace;font-weight:700;color:'+(hasRoi?(roi>=0?'#4ade80':'#f87171'):'#475569')+';flex-shrink:0">'+(hasRoi?((roi>=0?'+':'\u2212')+Math.abs(roi).toFixed(1)+'%'):'\u2014')+'</span>'
+      +'</div>';
+  }
+  var head='<div style="display:flex;align-items:center;padding:7px 12px;background:#0c1829;border-bottom:1px solid #1e293b">'
+    +'<span style="width:30px;flex-shrink:0"></span>'
+    +'<span style="flex:1;min-width:140px;font-size:.66rem;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.06em">Category</span>'
+    +'<span style="width:58px;text-align:right;font-size:.66rem;color:#64748b;font-weight:700;text-transform:uppercase;flex-shrink:0">Record</span>'
+    +'<span style="width:100px;text-align:center;font-size:.66rem;color:#64748b;font-weight:700;text-transform:uppercase;flex-shrink:0">Hit Rate</span>'
+    +'<span style="width:80px;text-align:right;font-size:.66rem;color:#64748b;font-weight:700;text-transform:uppercase;flex-shrink:0">Net P/L</span>'
+    +'<span style="width:72px;text-align:right;font-size:.66rem;color:#64748b;font-weight:700;text-transform:uppercase;flex-shrink:0">ROI</span>'
+    +'</div>';
+  var body=''; graded.forEach(function(x,i){ body+=_row(x[0],x[1],i+1); });
+  CAT_ORDER.forEach(function(k){ if(gset[k]) return; var pc=perCat[k]||{w:0,l:0,net:0,counted:0,skipped:0}; body+=_row(k,pc,0); });
+  var note=(d.days||0)?'':'<p style="color:#64748b;font-size:.78rem;padding:8px 2px">No graded days yet \u2014 records fill in automatically as slates go Final.</p>';
+  var ce=document.getElementById('trk-cats'); if(ce) ce.innerHTML='<div style="border:1px solid #1e293b;border-radius:12px;overflow:hidden;margin-bottom:16px">'+head+body+'</div>'+note;
+  _trkRenderDaily(stake);
+}
+function _trkRenderDaily(stake){
+  var d=window.__TRACK__; if(!d) return;
+  var CAT_CFG=window.__TRK_CFG__||{}, CAT_ORDER=window.__TRK_ORDER__||[];
+  var daily=d.daily||[];
+  function _rc(w,n){ if(!n) return '#64748b'; var p=w/n; return p>=0.70?'#4ade80':(p>=0.55?'#facc15':'#f87171'); }
+  var detByDate={}; (d.detail||[]).forEach(function(r){ (detByDate[r.date]=detByDate[r.date]||[]).push(r); });
+  function _catRank(k){ var i=CAT_ORDER.indexOf(k); return i<0?999:i; }
+  var dayBlocks=daily.slice().reverse().map(function(x){
+    var groups={}; (detByDate[x.date]||[]).forEach(function(r){ var k=(r.category||'?')+'|'+(r.side||'OVER'); (groups[k]=groups[k]||[]).push(r); });
+    var gkeys=Object.keys(groups).sort(function(a,b){ return _catRank(a)-_catRank(b); });
+    var inner='', dayNet=0, dayHas=false;
+    gkeys.forEach(function(k){
+      var cfg=CAT_CFG[k]||{lbl:k.split('|').join(' '),icon:'📊'};
+      var picks=groups[k]; var gw=picks.filter(function(p){return p.result==='WIN';}).length; var gn=picks.length; var gclr=_rc(gw,gn);
+      inner+='<div style="margin:10px 0 4px;font-weight:800;font-size:.81rem;color:#cbd5e1">'+cfg.icon+' '+cfg.lbl+' <span style="color:'+gclr+';font-family:monospace;font-weight:900">'+gw+'/'+gn+'</span></div>';
+      picks.forEach(function(p){
+        var win=p.result==='WIN';
+        var mk=win?'<span style="color:#4ade80">\u2713</span>':'<span style="color:#f87171">\u2717</span>';
+        var act=(p.actual!=null)?('<span style="color:#cbd5e1">\u2192 '+p.actual+(p.stat?(' '+p.stat):'')+'</span>'):'';
+        var odd=(p.odds!=null&&p.odds!=='')?('<span style="color:#64748b;font-family:monospace">'+((Number(p.odds)>0?'+':'')+p.odds)+'</span>'):'';
+        var pl=_amProfit(p.odds,stake,win), plHtml, roiHtml;
+        if(pl===null){ plHtml='<span style="color:#475569;font-family:monospace">\u2014</span>'; roiHtml=''; }
+        else { dayNet+=pl; dayHas=true; var c=pl>=0?'#4ade80':'#f87171', rp=pl/stake*100;
+          plHtml='<span style="font-family:monospace;font-weight:800;color:'+c+'">'+(pl>=0?'+$':'\u2212$')+Math.abs(pl).toFixed(0)+'</span>';
+          roiHtml='<span style="font-family:monospace;font-weight:700;color:'+c+'">'+(rp>=0?'+':'\u2212')+Math.abs(rp).toFixed(0)+'%</span>'; }
+        inner+='<div style="display:flex;gap:8px;align-items:center;padding:2px 0 2px 6px;font-size:.79rem">'
+          +mk
+          +'<span style="color:#e2e8f0;min-width:130px">'+p.name+'</span>'
+          +'<span style="color:#94a3b8;min-width:115px">'+p.pick+'</span>'
+          +act+odd
+          +'<span style="margin-left:auto;display:flex;gap:12px;align-items:center"><span style="min-width:52px;text-align:right">'+plHtml+'</span><span style="min-width:44px;text-align:right">'+roiHtml+'</span></span>'
+          +'</div>';
+      });
+    });
+    if(!inner) inner='<div style="color:#64748b;font-size:.79rem;padding:4px 6px">No decided picks recorded this day.</div>';
+    var dn=dayHas?(' \u00b7 Net <span style="color:'+(dayNet>=0?'#4ade80':'#f87171')+';font-weight:800">'+(dayNet>=0?'+$':'\u2212$')+Math.abs(dayNet).toFixed(0)+'</span>'):'';
+    return '<details style="border-bottom:1px solid #1f2937;padding:7px 0"><summary style="cursor:pointer;font-weight:800;color:#e2e8f0;font-size:.88rem">'+x.date+' \u2014 <span style="color:#4ade80">'+x.wins+'W</span> <span style="color:#f87171">'+x.losses+'L</span> <span style="color:'+_twColor(x.wins,x.losses)+'">('+_twPct(x.wins,x.losses)+')</span>'+dn+'</summary><div style="padding:2px 0 12px">'+inner+'</div></details>';
+  }).join('');
+  var de=document.getElementById('trk-daily'); if(!de) return;
+  de.innerHTML=daily.length?'<details open style="margin-top:0"><summary style="cursor:pointer;font-weight:700;color:#a78bfa;padding:10px 0;border-bottom:1px solid #1f2937">📅 Daily \u2014 every pick by category ('+daily.length+' day'+(daily.length===1?'':'s')+')</summary><div style="margin-top:6px">'+dayBlocks+'</div></details>':'';
 }
 function downloadTrackEarningsCSV(){
   var d=window.__TRACK__; if(!d){ alert('Open Track Record first.'); return; }
@@ -5835,6 +5903,7 @@ def _auto_run_pipeline(date_str: str, label: str):
         try: _update_track_ledger()
         except Exception as _le: print(f"[track_ledger] {_le}")
         _save_disk_cache(date_str, result)
+        _save_sb_picks(date_str, result)
         if result.get("stats", {}).get("has_tbd"):
             print(f"[auto-run] {label} — cached {date_str} (has TBD starters; app will re-run on load)")
         else:
