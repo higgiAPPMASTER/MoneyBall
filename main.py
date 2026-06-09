@@ -2332,7 +2332,7 @@ window.onload = () => {
       .then(r => r.json())
       .then(d => {
         if (d && d.is_admin)  { window.IS_ADMIN = true; document.body.classList.add('is-admin'); }
-        else if (d && d.is_tester) { document.body.classList.add('is-tester'); }
+        else if (d && d.is_tester) { window.IS_TESTER = true; document.body.classList.add('is-tester'); }
       })
       .catch(() => {});
   }
@@ -2503,7 +2503,7 @@ function showResults(result) {
   // Money Ball, pitcher K OVERs) and keep only UNDER plays. window._lastResult
   // stays the FULL result so parlay/CSV/search are unaffected — we only filter a
   // local render copy.
-  const _vBase = (window.UNDERS_ONLY && window.IS_ADMIN)
+  const _vBase = (window.UNDERS_ONLY && (window.IS_ADMIN||window.IS_TESTER))
     ? Object.assign({}, result, {
         top9: [],
         also_ran: [],
@@ -2545,13 +2545,13 @@ function showResults(result) {
   ].join('');
 
   const t10Plays = _buildTop10(view);
-  if (t10Plays.length > 0 && !(window.UNDERS_ONLY && window.IS_ADMIN)) {
+  if (t10Plays.length > 0 && !(window.UNDERS_ONLY && (window.IS_ADMIN||window.IS_TESTER))) {
     show('top10-plays-card');
     window.__T10_REG__={};
     document.getElementById('top10-plays-body').innerHTML = t10Plays.map(function(p,i){ return _top10Card(p, i+1); }).join('');
   }
 
-  if (window.UNDERS_ONLY && window.IS_ADMIN) { hide('top-picks-card'); hide('top10-plays-card'); } else { show('top-picks-card'); }
+  if (window.UNDERS_ONLY && (window.IS_ADMIN||window.IS_TESTER)) { hide('top-picks-card'); hide('top10-plays-card'); } else { show('top-picks-card'); }
   window.__HIT_REG__={};
   // Value re-rank: merge Top Picks + More Hit Picks, order by EV (default keeps
   // ALL plays), then re-split 10 / rest. "+EV Only" toggle filters to ev>0.
@@ -2748,7 +2748,7 @@ function _pkForm(key){
   // Prop rows are clickable → _ppForm for that market's game-by-game log.
   var _nm=String(p.name||'').toLowerCase().trim();
   var _mk=(window.__PP_BY_NAME__||{})[_nm]||{};
-  var _adm=!!window.IS_ADMIN;
+  var _adm=!!(window.IS_ADMIN||window.IS_TESTER);
   function _mkRow(lbl,ln,bl,unit,pk,od,key,clickable,betSrc,betCat,statKey){
     var pc=pk==='OVER'?'#63cab7':(pk==='UNDER'?'#ff8a65':'#64748b');
     var odStr=od!=null?((od>0?'+':'')+od):'';
@@ -3375,7 +3375,7 @@ function _paintParlay(){
   var header='<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid #262626;background:#121212">'
     +'<span style="font-weight:800;color:#ccc;font-size:.74rem">'+(window._parlayMode||'TOP PLAYS')+'</span>'
     +'<span onclick="closeParlay()" title="Close" style="cursor:pointer;color:#888;font-weight:900;font-size:1.15rem;line-height:1;padding:0 6px">×</span></div>';
-  var logBtn=window.IS_ADMIN?('<button class="admin-only" onclick="_parlayBetForm()" style="margin-top:7px;background:rgba(67,56,202,.18);border:1px solid rgba(129,140,248,.55);color:#c7d2fe;border-radius:7px;padding:5px 11px;font-size:.72rem;font-weight:800;cursor:pointer;display:block">&#128221; Log This Parlay</button>'):'';
+  var logBtn=(window.IS_ADMIN||window.IS_TESTER)?('<button class="admin-only" onclick="_parlayBetForm()" style="margin-top:7px;background:rgba(67,56,202,.18);border:1px solid rgba(129,140,248,.55);color:#c7d2fe;border-radius:7px;padding:5px 11px;font-size:.72rem;font-weight:800;cursor:pointer;display:block">&#128221; Log This Parlay</button>'):'';
   var summary='<div style="display:flex;justify-content:space-between;align-items:center;padding:12px;background:linear-gradient(135deg,rgba(245,158,11,.12),rgba(245,158,11,.02));border-top:1px solid #262626">'
     +'<div><div style="font-weight:900;color:#f59e0b">'+n+'-LEG PARLAY</div>'+logBtn+'</div>'
     +'<div style="text-align:right">'+(am?('<div style="font-weight:900;color:#63cab7;font-size:1.05rem">'+am+'</div><div style="color:#999;font-size:.7rem">$100 → $'+payout.toFixed(2)+(missing?(' · '+priced+'/'+n+' legs priced'):'')+'</div>'):('<div style="color:#888;font-size:.78rem">No book odds available for these legs</div>'))+'</div>'
@@ -3553,7 +3553,7 @@ document.addEventListener('click', function(e){
 // Admin-only client-side filter: re-renders the current picks showing only UNDER
 // plays (hitter Under 1.5 + pitcher K Unders). No re-run, no server call.
 function toggleUndersOnly(){
-  if(!window.IS_ADMIN) return;
+  if(!(window.IS_ADMIN||window.IS_TESTER)) return;
   window.UNDERS_ONLY = !window.UNDERS_ONLY;
   var b=document.getElementById('unders-btn');
   if(b){
@@ -5494,7 +5494,7 @@ function _betAuthQS(){
 // Builds the "＋ Track Bet" control (admin-only). Registers the pick in
 // __BET_SRC__ and opens the stake form. No line ⇒ no button (can't grade).
 function _betBtn(p,cat,side,statKey,statLabel,line,odds){
-  if(!window.IS_ADMIN) return '';
+  if(!(window.IS_ADMIN||window.IS_TESTER)) return '';
   if(line==null||!side||!statKey) return '';
   window.__BET_SRC__=window.__BET_SRC__||{}; window.__BET_N__=(window.__BET_N__||0)+1;
   var k='bs'+window.__BET_N__;
