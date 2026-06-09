@@ -1791,8 +1791,6 @@ _HTML = """
     .grade-table th { color:#94a3b8; font-weight:600; padding:6px 12px; border-bottom:1px solid #1f2937; text-align:left; white-space:nowrap; }
     .grade-table td { padding:7px 12px; border-bottom:1px solid #111827; vertical-align:middle; }
     .grade-table tr:hover td { background:rgba(255,255,255,.02); }
-    .bet-input { width:68px; background:#1e1e1e; border:1px solid #374151; border-radius:6px; color:#fff; padding:4px 6px; font-size:.85rem; text-align:center; }
-    .bet-input:focus { outline:none; border-color:#f59e0b; }
     /* Admin gate: hidden by default, shown only when body has is-admin or is-tester */
     .admin-only { display: none !important; }
     body.is-admin .admin-only { display: revert !important; }
@@ -4069,6 +4067,7 @@ function _mlbCard(p, rank, dim) {
         <span style="font-size:.78rem;color:#64748b">${p.pitcher?'vs '+p.pitcher:''}</span>
         ${lineupBadge(p.lineup_status)}
       </div>
+      ${p.facing_top_era?`<div style="margin-top:6px;font-size:.7rem;color:#fbbf24;background:rgba(245,158,11,.10);border:1px solid rgba(245,158,11,.35);border-radius:6px;padding:3px 7px">⚾ vs top-30 ERA: ${p.facing_top_era}${p.top_era_val!=null?' · '+(+p.top_era_val).toFixed(2)+' ERA':''}</div>`:''}
       ${p.blurb ? `<div style="margin-top:5px;font-size:.72rem;color:#94a3b8;line-height:1.5;font-style:italic">${p.blurb}</div>` : ''}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
         <span style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">Hit Odds</span>
@@ -4917,10 +4916,8 @@ function renderGradeSection(title, rows, color) {
       '<td style="font-weight:700;white-space:nowrap">' + (r.name || '—') + '</td>' +
       '<td style="font-size:.8rem;color:#cbd5e1">' + (r.pick || '—') + '</td>' +
       '<td style="font-family:monospace;color:#94a3b8">' + _gradeOddsDisp(r.odds) + '</td>' +
-      '<td><input type="number" min="0" step="1" placeholder="$" oninput="recalcPL()" id="gbet' + idx + '" class="bet-input"></td>' +
       '<td style="font-family:monospace;font-weight:700;color:#fff">' + actual + statusNote + '</td>' +
       '<td>' + _gradeResultBadge(res) + '</td>' +
-      '<td id="gpl' + idx + '" style="font-family:monospace;font-weight:700;color:#94a3b8">—</td>' +
       '</tr>';
   }).join('');
   return '<details open style="margin-bottom:20px">' +
@@ -4929,7 +4926,7 @@ function renderGradeSection(title, rows, color) {
     '<span style="font-size:.72rem;color:#64748b;background:#111;border-radius:999px;padding:2px 8px">' + rows.length + '</span>' +
     '<span style="font-size:.7rem;color:#475569;margin-left:auto">▸ toggle</span></summary>' +
     '<div style="overflow-x:auto"><table class="grade-table">' +
-    '<thead><tr><th>#</th><th>Player</th><th>Pick</th><th>Odds</th><th>Bet ($)</th><th>Actual</th><th>Result</th><th>P&L</th></tr></thead>' +
+    '<thead><tr><th>#</th><th>Player</th><th>Pick</th><th>Odds</th><th>Actual</th><th>Result</th></tr></thead>' +
     '<tbody>' + trs + '</tbody></table></div></details>';
 }
 
@@ -5054,40 +5051,6 @@ function downloadResEarningsCSV(){
   var url=URL.createObjectURL(blob);
   var a=document.createElement('a'); a.href=url; a.download='mlb-earnings-'+dateStr+'-flat'+stake+'.csv';
   document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
-}
-
-function recalcPL() {
-  var rows = window.__GRADE_ROWS__ || [];
-  var totalWagered = 0, totalNet = 0, wins = 0, losses = 0;
-  rows.forEach(function(r, idx) {
-    var input = document.getElementById('gbet' + idx);
-    var cell  = document.getElementById('gpl' + idx);
-    if (!input || !cell) return;
-    var stake = parseFloat(input.value) || 0;
-    if (!stake) { cell.textContent = '—'; cell.style.color = '#94a3b8'; return; }
-    var odds = parseFloat(r.odds);
-    if (isNaN(odds) || r.odds == null) { cell.textContent = '—'; cell.style.color = '#94a3b8'; return; }
-    if (r.result === 'WIN') {
-      var profit = odds > 0 ? (odds / 100) * stake : (100 / Math.abs(odds)) * stake;
-      cell.textContent = '+' + profit.toFixed(2); cell.style.color = '#4ade80';
-      totalNet += profit; totalWagered += stake; wins++;
-    } else if (r.result === 'LOSS') {
-      cell.textContent = '-' + stake.toFixed(2); cell.style.color = '#f87171';
-      totalNet -= stake; totalWagered += stake; losses++;
-    } else {
-      cell.textContent = 'TBD'; cell.style.color = '#94a3b8';
-      totalWagered += stake;
-    }
-  });
-  var stats = document.getElementById('grade-summary-stats');
-  if (!stats || totalWagered === 0) return;
-  var roi = totalNet / totalWagered * 100;
-  stats.innerHTML =
-    'Wagered <strong style="color:#fff">$' + totalWagered.toFixed(2) + '</strong>' +
-    ' &nbsp;|&nbsp; Net <strong style="color:' + (totalNet >= 0 ? '#4ade80' : '#f87171') + '">' +
-    (totalNet >= 0 ? '+' : '') + totalNet.toFixed(2) + '</strong>' +
-    ' &nbsp;|&nbsp; ROI <strong style="color:' + (roi >= 0 ? '#4ade80' : '#f87171') + '">' +
-    (roi >= 0 ? '+' : '') + roi.toFixed(1) + '%</strong>';
 }
 
 // ── Track Record (admin) — all-time + daily W/L by category ──────────────
