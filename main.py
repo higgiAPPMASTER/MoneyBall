@@ -2838,17 +2838,19 @@ function _hitForm(key){
   }).join(''):'<tr><td colspan="4" style="padding:14px;color:#64748b;text-align:center">No recent games on record</td></tr>';
   var name=p.full_name||p.name||'';
   var pickClr=isUnder?'#ff8a65':'#63cab7';
+  var ssHtml=_ssBlock(p);
   ov.innerHTML=`<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:440px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">
     <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid #1e293b">
       <div>
         <div style="font-weight:800;font-size:1.05rem;color:#fff">${name}</div>
         <div style="color:#94a3b8;font-size:.78rem">${p.side||''} vs ${p.opp||''} · ${goal}</div>
       </div>
-      <button onclick="document.getElementById('hit-modal').style.display='none'" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem">✕</button>
+      <button onclick="document.getElementById('hit-modal').style.display='none'" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem">&#x2715;</button>
     </div>
     <div style="padding:14px 18px">
       <div style="font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase;margin-bottom:8px">Last ${log.length||0} Games</div>
       <table style="width:100%;border-collapse:collapse;font-size:.85rem"><tbody>${rows}</tbody></table>
+      ${ssHtml}
       <div style="margin-top:12px;border-top:1px solid #1e293b;padding-top:10px;color:${pickClr};font-weight:800;font-size:.85rem">Pick: ${goal}</div>
     </div>
   </div>`;
@@ -2896,6 +2898,7 @@ function _runsForm(key){
     <div style="padding:14px 18px">
       <div style="font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase;margin-bottom:8px">Runs Rate ${p.rate_disp||''} · Last ${log.length||0} Games</div>
       <table style="width:100%;border-collapse:collapse;font-size:.85rem"><tbody>${rows}</tbody></table>
+      ${_ssBlock(p)}
       <div style="margin-top:12px;border-top:1px solid #1e293b;padding-top:10px;color:${pickClr};font-weight:800;font-size:.85rem">Pick: ${goal}</div>
     </div>
   </div>`;
@@ -3678,6 +3681,27 @@ function _bpChip(p){
   }
   return '';
 }
+function _ssBlock(p){
+  var ss=p.series_splits||{}; var sp=ss.today_pos||1;
+  if(!ss.g1_ab&&!ss.g2_ab&&!ss.g3_ab) return '';
+  var slots=[{lbl:'Game 1',ba:ss.g1_ba,ab:ss.g1_ab||0,pos:1},{lbl:'Game 2',ba:ss.g2_ba,ab:ss.g2_ab||0,pos:2},{lbl:'Game 3+',ba:ss.g3_ba,ab:ss.g3_ab||0,pos:3}];
+  function _sba(ba){ return ba!=null?ba.toFixed(3).replace('0.','.'):'\u2014'; }
+  function _sclr(ba){ return ba==null?'#64748b':ba>=0.300?'#4ade80':ba>=0.250?'#fbbf24':'#f87171'; }
+  var cols=slots.map(function(s){
+    var isNow=s.pos===sp;
+    var bdr=isNow?'border:1px solid rgba(250,204,21,.5);background:rgba(250,204,21,.08)':'border:1px solid #1e293b';
+    var lclr=isNow?'#facc15':'#94a3b8';
+    var vclr=isNow?'#facc15':_sclr(s.ba);
+    return '<div style="flex:1;text-align:center;padding:8px 4px;border-radius:8px;'+bdr+'">'
+      +'<div style="font-size:.62rem;color:'+lclr+';font-weight:'+(isNow?'800':'600')+';margin-bottom:4px">'+s.lbl+(isNow?' &#9654; TODAY':'')+'</div>'
+      +'<div style="font-size:1rem;font-weight:900;color:'+vclr+';font-family:monospace">'+_sba(s.ba)+'</div>'
+      +'<div style="font-size:.6rem;color:#475569;margin-top:2px">'+s.ab+' AB</div>'
+      +'</div>';
+  }).join('');
+  return '<div style="margin-top:14px;border-top:1px solid #1e293b;padding-top:12px">'
+    +'<div style="font-size:.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Series Game Splits (BA)</div>'
+    +'<div style="display:flex;gap:8px">'+cols+'</div></div>';
+}
 function _seriesChip(p){
   var ss=p.series_splits; if(!ss) return '';
   var pos=ss.today_pos||1;
@@ -4087,6 +4111,7 @@ function _rbiForm(key){
     <div style="padding:14px 18px">
       <div style="font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase;margin-bottom:8px">RBI Rate ${p.rate_disp||''} · Last ${log.length||0} Games</div>
       <table style="width:100%;border-collapse:collapse;font-size:.85rem"><tbody>${rows}</tbody></table>
+      ${_ssBlock(p)}
       <div style="margin-top:12px;border-top:1px solid #1e293b;padding-top:10px;color:${pickClr};font-weight:800;font-size:.85rem">Pick: ${goal}</div>
     </div>
   </div>`;
@@ -4235,6 +4260,7 @@ function _tbOverForm(key){
       +'<th style="text-align:right;padding:4px 10px;font-size:.7rem;color:#64748b;font-weight:600;border-bottom:1px solid #1e293b">Hits</th>'
       +'<th style="text-align:right;padding:4px 10px;font-size:.7rem;color:#64748b;font-weight:600;border-bottom:1px solid #1e293b">TB</th>'
     +'</tr></thead><tbody>'+rows+'</tbody></table>'
+    +_ssBlock(p)
     +'</div></div>';
   ov.style.display='flex';
 }
@@ -4481,6 +4507,7 @@ function _hrrForm(key){
       +'<th style="text-align:right;padding:4px 10px;font-size:.7rem;color:#64748b;font-weight:600;border-bottom:1px solid #1e293b">Breakdown</th>'
       +'<th style="text-align:right;padding:4px 10px;font-size:.7rem;color:#64748b;font-weight:600;border-bottom:1px solid #1e293b">HRR</th>'
     +'</tr></thead><tbody>'+rows+'</tbody></table>'
+    +_ssBlock(p)
     +'</div></div>';
   ov.style.display='flex';
 }
@@ -4517,6 +4544,7 @@ function _tbForm(key){
     +'<div style="padding:14px 18px">'
       +'<div style="font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase;margin-bottom:8px">TB Rate '+(p.rate_disp||'')+' \u00b7 Last '+log.length+' Games</div>'
       +'<table style="width:100%;border-collapse:collapse;font-size:.85rem"><tbody>'+rows+'</tbody></table>'
+      +_ssBlock(p)
       +'<div style="margin-top:12px;border-top:1px solid #1e293b;padding-top:10px;color:#a78bfa;font-weight:800;font-size:.85rem">Pick: Under 1.5 Total Bases</div>'
     +'</div>'
   +'</div>';
