@@ -282,7 +282,6 @@ def _fetch_pitcher_props(run_date: str, emit=None) -> None:
         log("⚠️  ODDS_API_KEY not set — Pitcher prop picks skipped")
         return
 
-    PREFERRED = ["draftkings", "fanduel", "betmgm", "caesars", "pointsbetus"]
     tomorrow  = (time.strftime("%Y-%m-%d",
                   time.gmtime(time.mktime(time.strptime(run_date, "%Y-%m-%d")) + 86400)))
 
@@ -310,9 +309,8 @@ def _fetch_pitcher_props(run_date: str, emit=None) -> None:
             away_team = ev.get("away_team", "")
             r2 = requests.get(
                 f"{ODDS_BASE}/sports/baseball_mlb/events/{ev['id']}/odds",
-                params={"apiKey": ODDS_API_KEY, "regions": "us",
+                params={"apiKey": ODDS_API_KEY, "regions": "us,us2",
                         "markets": ",".join(PROP_MARKETS),
-                        "bookmakers": ",".join(PREFERRED),
                         "oddsFormat": "american"}, timeout=15)
             if not r2.ok: continue
             for bm in r2.json().get("bookmakers", []):
