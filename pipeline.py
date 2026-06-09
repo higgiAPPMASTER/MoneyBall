@@ -45,7 +45,7 @@ def _fetch_batter_savant(year: str) -> dict:
                 params={"year": str(year), "type": "batter", "filter": "", "min": "30",
                         "selections": "xba,hard_hit_percent", "csv": "true"},
                 headers=_SAVANT_HDRS, timeout=15)
-            for row in csv.DictReader(io.StringIO(r.text)):
+            for row in csv.DictReader(io.StringIO(r.text.lstrip("\ufeff"))):
                 try:
                     pid  = int(row.get("player_id") or 0)
                     xba  = row.get("xba") or ""
@@ -101,7 +101,7 @@ def _fetch_one_pt(args):
                     "position": "", "team": "", "min": "1",
                     "stat": "p_run_exp", "sort": "1", "sortDir": "desc", "csv": "true"},
             headers=_SAVANT_HDRS, timeout=15)
-        txt = r.text.strip()
+        txt = r.text.lstrip("\ufeff").strip()
         if not txt or txt.startswith("<"):
             return  # throttled / HTML error
         for row in csv.DictReader(io.StringIO(txt)):
@@ -920,7 +920,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
             emit({"type": "dn_ok", "name": r["name"], "label": label, "display": dn["display"]})
 
     # ── STEP 5 ────────────────────────────────────────────────────────
-    emit({"type": "section", "msg": f"Step 5 — Pitcher ERA filter (top {TOP_N_ERA_PITCHERS} lowest ERA)"})
+    emit({"type": "section", "msg": f"Step 5 — Pitcher ERA reference (top {TOP_N_ERA_PITCHERS} lowest ERA · display only, never removes a hitter)"})
     era_qualified, era_dq = [], []
     top_era_lastnames, top_era_list = _get_top_era_starters(run_date[:4])
     # Fetch MLB schedule probable pitchers as fallback when FIC pitcher data is missing
@@ -950,12 +950,12 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                 matched_era = next((p["era"] for p in top_era_list
                                     if p["name"].lower().endswith(pitcher_last)), None)
                 era_str = f" ERA {matched_era:.2f}" if matched_era else ""
-                r["dq"] = True
-                r["dq_reason"] = f"Facing top-ERA pitcher {pitcher_raw}{era_str}"
-                era_dq.append(r)
-                emit({"type": "log", "msg": f"  ❌ {r['name']} — facing {pitcher_raw}{era_str}"})
-            else:
-                era_qualified.append(r)
+                # DISPLAY ONLY — tag a reference chip for the card. Top 30 ERA is a
+                # reference, NOT a gate: the hitter is never removed from the pool.
+                r["facing_top_era"] = pitcher_raw
+                r["top_era_val"] = matched_era
+                emit({"type": "log", "msg": f"  • {r['name']} — facing top-ERA {pitcher_raw}{era_str} (reference only)"})
+            era_qualified.append(r)
     else:
         emit({"type": "log", "msg": "⚠️ ERA rankings unavailable — skipping Step 5"})
         era_qualified = qualified
