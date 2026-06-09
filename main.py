@@ -3678,6 +3678,20 @@ function _bpChip(p){
   }
   return '';
 }
+function _seriesChip(p){
+  var ss=p.series_splits; if(!ss) return '';
+  var pos=ss.today_pos||1;
+  var slots=[{lbl:'G1',ba:ss.g1_ba,ab:ss.g1_ab},{lbl:'G2',ba:ss.g2_ba,ab:ss.g2_ab},{lbl:'G3+',ba:ss.g3_ba,ab:ss.g3_ab}];
+  var parts=slots.map(function(s,i){
+    var isToday=(i+1)===pos;
+    var baStr=s.ba!=null?(s.ba).toFixed(3).replace('0.','.'):'\u2014';
+    var clr=s.ba==null?'#64748b':s.ba>=0.300?'#4ade80':s.ba>=0.250?'#fbbf24':'#f87171';
+    if(isToday) return '<span style="font-size:.68rem;font-weight:900;color:#facc15;background:rgba(250,204,21,.15);border:1px solid rgba(250,204,21,.4);border-radius:4px;padding:1px 5px">'+s.lbl+' &#9656; '+baStr+'</span>';
+    return '<span style="font-size:.65rem;color:'+clr+';opacity:.8">'+s.lbl+' '+baStr+'</span>';
+  }).join('<span style="color:#334155;margin:0 3px">&middot;</span>');
+  return '<div style="margin-top:5px;display:flex;align-items:center;gap:4px;flex-wrap:wrap">'
+    +'<span style="font-size:.6rem;color:#475569">series</span>'+parts+'</div>';
+}
 function _platoonChip(p) {
   var pl = p && p.platoon;
   if (!pl || !pl.bat_hand || !pl.pit_hand) return '';
@@ -3836,6 +3850,7 @@ function _mlbCard(p, rank, dim) {
       ${_evBadge(p)}
       ${_xbaBadge(p)}
       <div style="margin-top:5px;display:flex;align-items:center;gap:5px"><span style="font-size:.6rem;color:#475569">day trend</span>${_dowChip('hits_over','OVER')}</div>
+      ${_seriesChip(p)}
       ${adminStats}
     </div>
   ${_betBtn(p,'Hitter Hits','OVER','hits','Hits',0.5,p.hit_odds)}
@@ -3893,6 +3908,7 @@ function _underCard(p, rank) {
         <span style="font-family:monospace;color:#63cab7;font-weight:700;font-size:.9rem">${tbOdds}</span>
       </div>
       <div style="margin-top:5px;display:flex;align-items:center;gap:5px"><span style="font-size:.6rem;color:#475569">day trend</span>${_dowChip('hits_under','UNDER')}</div>
+      ${_seriesChip(p)}
       ${_evBadge(p)}
       ${adminStats}
     </div>
