@@ -140,9 +140,16 @@ def _build_player_map(season: int):
 def _resolve_id(name: str):
     key = name.lower().strip()
     if key in _PLAYER_MAP: return _PLAYER_MAP[key]
-    last = key.split()[-1] if key else ""
+    parts = key.split()
+    if not parts: return None
+    last, first = parts[-1], parts[0]
+    # Last-name fallback (handles accents/nickname spellings) but ALSO require the
+    # first initial to match — otherwise distinct players sharing a surname
+    # (e.g. Nick Gonzales vs Marco Gonzales) collapse onto one id → same pic+stats.
     for k, v in _PLAYER_MAP.items():
-        if k.endswith(last) and abs(len(k) - len(key)) <= 6:
+        kp = k.split()
+        if not kp: continue
+        if kp[-1] == last and kp[0][:1] == first[:1] and abs(len(k) - len(key)) <= 6:
             return v
     return None
 
