@@ -148,6 +148,79 @@ def _load_pick_cache(date_str: str):
         return d
     return _load_sb_picks(date_str)
 
+# ── Opening-odds snapshot (Closing Line Value) ──────────────────────────
+# The FIRST run of the day captures the price you'd have bet at; later runs
+# (last-wins) become the closing line. CLV compares the two. Written ONCE per
+# day and never overwritten, so the opening price is preserved even though the
+# regular pick snapshot keeps getting replaced. Stored like the pick snapshot
+# but under category="__open__" (locked=False, so it never hits the W/L read).
+_OPEN_CAT = "__open__"
+
+def _disk_open_path(date_str: str) -> str:
+    return os.path.join(_CACHE_DIR, f"_open_{date_str}.json")
+
+def _load_disk_open(date_str: str):
+    p = _disk_open_path(date_str)
+    if os.path.exists(p):
+        try:
+            with open(p) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return None
+
+def _load_sb_open(date_str: str):
+    if not (_SB_URL and _SB_KEY):
+        return None
+    rows = _sb_get("mpa_track_ledger", {"app": "eq.mlb",
+                   "category": f"eq.{_OPEN_CAT}", "side": "eq.ALL",
+                   "date": f"eq.{date_str}", "select": "detail", "limit": "1"})
+    if rows:
+        return rows[0].get("detail") or None
+    return None
+
+def _load_open_cache(date_str: str):
+    """Opening snapshot for a date. Supabase is the source of truth for
+    'first ever' (disk resets on redeploy), so prefer it when configured."""
+    if _SB_URL and _SB_KEY:
+        d = _load_sb_open(date_str)
+        if d is not None:
+            return d
+        return _load_disk_open(date_str)
+    return _load_disk_open(date_str)
+
+def _save_open_snapshot(date_str: str, result: dict):
+    """First run of the day only — capture opening odds for CLV. Write-once:
+    if an opening snapshot already exists, keep it untouched."""
+    def _write_disk():
+        try:
+            p = _disk_open_path(date_str)
+            tmp = f"{p}.{os.getpid()}.tmp"
+            with open(tmp, "w") as f:
+                json.dump(result, f)
+            os.replace(tmp, p)
+        except Exception as e:
+            print(f"[open_cache] save failed: {e}")
+    if _SB_URL and _SB_KEY:
+        if _load_sb_open(date_str) is not None:
+            return                      # already captured today (survives redeploy)
+        import datetime as _dt
+        row = {"app": "mlb", "date": date_str, "category": _OPEN_CAT, "side": "ALL",
+               "wins": 0, "losses": 0, "locked": False,
+               "locked_at": _dt.datetime.utcnow().isoformat() + "Z", "detail": result}
+        _sb_upsert("mpa_track_ledger", [row], on_conflict="app,date,category,side")
+        try:
+            cutoff = date.fromordinal(date.today().toordinal() - 7).isoformat()
+            _sb_delete("mpa_track_ledger", {"app": "eq.mlb",
+                       "category": f"eq.{_OPEN_CAT}", "date": f"lt.{cutoff}"})
+        except Exception:
+            pass
+        _write_disk()                   # mirror for fast same-process reads
+    else:
+        if os.path.exists(_disk_open_path(date_str)):
+            return                      # disk-only write-once
+        _write_disk()
+
 from fastapi import FastAPI, HTTPException, Form, Request
 from fastapi.responses import StreamingResponse, FileResponse, HTMLResponse
 import os as _os
@@ -292,6 +365,7 @@ async def start_run(request: Request, date_str: str, force: bool = False, token:
             except Exception as _le: print(f"[track_ledger] {_le}")
             _save_disk_cache(date_str, result)
             _save_sb_picks(date_str, result)
+            _save_open_snapshot(date_str, result)
             try:
                 # Bake the picks into the page HTML so the Replit hub can serve
                 # an instant, no-cold-start snapshot at moneypicksarena.com.
@@ -483,6 +557,8 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "stat": "Hits",
             "result": _grade("OVER", 0.5, actual, (st or {}).get("final", False)),
             "game_status": (st or {}).get("status", "—"),
+            "ev": p.get("ev"),
+            "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
         })
 
     # Under 1.5 Hits — top 10 for Track Record
@@ -502,6 +578,8 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "stat": "Hits",
             "result": _grade(pick_dir, 1.5, actual, (st or {}).get("final", False)),
             "game_status": (st or {}).get("status", "—"),
+            "ev": p.get("ev"),
+            "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
         })
 
     # Runs OVER/UNDER 0.5 — top 10 per side for Track Record
@@ -524,6 +602,8 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "stat": "Runs",
             "result": _grade(pick_dir, 0.5, actual, (st or {}).get("final", False)),
             "game_status": (st or {}).get("status", "—"),
+            "ev": p.get("ev"),
+            "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
         })
 
     # TB Under 1.5 — top 10 for Track Record
@@ -542,6 +622,8 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "stat": "Total Bases",
             "result": _grade("UNDER", 1.5, actual, (st or {}).get("final", False)),
             "game_status": (st or {}).get("status", "—"),
+            "ev": p.get("ev"),
+            "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
         })
 
     # TB Over 1.5 — top 10 for Track Record
@@ -560,6 +642,8 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "stat": "Total Bases",
             "result": _grade("OVER", 1.5, actual, (st or {}).get("final", False)),
             "game_status": (st or {}).get("status", "—"),
+            "ev": p.get("ev"),
+            "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
         })
 
     # RBI OVER/UNDER — top 10 per side for Track Record
@@ -583,6 +667,8 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "stat": "RBI",
             "result": _grade(pick_dir, line, actual, (st or {}).get("final", False)),
             "game_status": (st or {}).get("status", "—"),
+            "ev": p.get("ev"),
+            "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
         })
 
     # HRR (Hits+Runs+RBI) OVER/UNDER 1.5 — top 10 per side for Track Record
@@ -605,6 +691,8 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "stat": "H+R+RBI",
             "result": _grade(pick_dir, 1.5, actual, (st or {}).get("final", False)),
             "game_status": (st or {}).get("status", "—"),
+            "ev": p.get("ev"),
+            "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
         })
 
     # Pitcher Ks — top 10 for Track Record
@@ -629,6 +717,8 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "stat": "Ks",
             "result": _grade(pick_dir, line, actual, (st or {}).get("final", False)),
             "game_status": (st or {}).get("status", "—"),
+            "ev": p.get("ev"),
+            "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
         })
 
     # Pitcher Props (Hits Allowed / Outs / Earned Runs)
@@ -661,6 +751,8 @@ def _grade_date(date_str: str, picks: dict) -> dict:
                 "stat": stat_label,
                 "result": _grade(pick_dir, line, actual, (st or {}).get("final", False)),
                 "game_status": (st or {}).get("status", "—"),
+                "ev": p.get("ev"),
+                "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
             })
 
     # Top 10 Batter — combine all batter categories, rank by EV, take top 10
@@ -711,6 +803,8 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "odds": c["odds"], "line": c["line"], "actual": actual, "stat": c["stat_label"],
             "result": _grade(c["side"], c["line"], actual, (st or {}).get("final", False)),
             "game_status": (st or {}).get("status", "—"),
+            "ev": p.get("ev"),
+            "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
         })
 
     # Top 10 Pitcher — combine Ks + all pitcher props, rank by blended gap, take top 10
@@ -747,6 +841,8 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "odds": c["odds"], "line": c["line"], "actual": actual, "stat": c["stat_label"],
             "result": _grade(c["side"], c["line"], actual, (st or {}).get("final", False)),
             "game_status": (st or {}).get("status", "—"),
+            "ev": p.get("ev"),
+            "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
         })
 
     return {
@@ -891,8 +987,30 @@ def _detail_graded(graded: dict) -> list:
                 "actual": r.get("actual"),
                 "stat": r.get("stat", ""),
                 "result": res,
+                "ev": r.get("ev"),
+                "ev_prob": r.get("ev_prob"),
             })
     return out
+
+def _attach_clv(date_str: str, rows: list):
+    """Stamp each graded row with open_odds (first run of the day) + close_odds
+    (the locked last run). `odds` is left as the locked price for ROI; CLV is a
+    separate lens that compares the price you'd have bet at vs the closing line."""
+    open_picks = _load_open_cache(date_str)
+    omap = {}
+    if open_picks:
+        try:
+            og = _grade_date(date_str, open_picks)
+            for r in _detail_graded(og):
+                if r.get("odds") is not None:
+                    omap[(r.get("name"), r.get("category"), r.get("side"), r.get("pick"))] = r.get("odds")
+        except Exception as e:
+            print(f"[clv] open grade failed {date_str}: {e}")
+    for r in rows:
+        close_odds = r.get("odds")
+        open_odds = omap.get((r.get("name"), r.get("category"), r.get("side"), r.get("pick")), close_odds)
+        r["close_odds"] = close_odds
+        r["open_odds"] = open_odds
 
 import threading as _trk_threading
 _LEDGER_LOCK = _trk_threading.Lock()
@@ -958,7 +1076,12 @@ def _update_track_ledger() -> dict:
                 led[bn] = _aggregate_graded(graded)
                 changed = True
             if need_det:
-                det[bn] = _detail_graded(graded)
+                _rows = _detail_graded(graded)
+                try:
+                    _attach_clv(bn, _rows)
+                except Exception as _ce:
+                    print(f"[clv] attach failed {bn}: {_ce}")
+                det[bn] = _rows
                 det_changed = True
         if changed:
             _save_ledger(led)
@@ -5060,7 +5183,9 @@ function renderTrackRecord(d){
     +'</span></div>';
   document.getElementById('track-alltime').innerHTML=hdr+bar
     +'<div style="font-size:.82rem;color:#cbd5e1;font-weight:800;margin:2px 2px 8px">Categories \u2014 ranked best \u2192 worst to bet (at your stake)</div>'
-    +'<div id="trk-cats"></div>';
+    +'<div id="trk-cats"></div>'
+    +'<div id="trk-clv" style="margin-top:22px"></div>'
+    +'<div id="trk-calib" style="margin-top:22px"></div>';
   document.getElementById('track-daily').innerHTML='<div id="trk-daily"></div>';
   _trkRecalc();
 }
@@ -5136,6 +5261,8 @@ function _trkRecalc(){
   var note=(d.days||0)?'':'<p style="color:#64748b;font-size:.78rem;padding:8px 2px">No graded days yet \u2014 records fill in automatically as slates go Final.</p>';
   var ce=document.getElementById('trk-cats'); if(ce) ce.innerHTML='<div style="border:1px solid #1e293b;border-radius:12px;overflow:hidden;margin-bottom:16px">'+head+body+'</div>'+note;
   _trkRenderDaily(stake);
+  _trkRenderCLV();
+  _trkRenderCalib(stake);
 }
 function _trkRenderDaily(stake){
   var d=window.__TRACK__; if(!d) return;
@@ -5177,6 +5304,164 @@ function _trkRenderDaily(stake){
   }).join('');
   var de=document.getElementById('trk-daily'); if(!de) return;
   de.innerHTML=daily.length?'<details open style="margin-top:0"><summary style="cursor:pointer;font-weight:700;color:#a78bfa;padding:10px 0;border-bottom:1px solid #1f2937">📅 Daily \u2014 every pick by category ('+daily.length+' day'+(daily.length===1?'':'s')+')</summary><div style="margin-top:6px">'+dayBlocks+'</div></details>':'';
+}
+// American odds -> decimal payout multiplier (incl. stake). null if unpriceable.
+function _amDec(o){ if(o==null||o==='') return null; o=Number(o); if(!isFinite(o)||o===0) return null; return o>0?(1+o/100):(1+100/Math.abs(o)); }
+// Meta-ranking buckets duplicate the per-category picks — exclude them so CLV
+// and calibration never double-count the same bet.
+function _trkSkipMeta(r){ return r.category==='Top 10 Batter'||r.category==='Top 10 Pitcher'; }
+function _trkAmOdds(o){ o=Number(o); return (o>0?'+':'')+o; }
+
+// CLOSING LINE VALUE — did you get a better price than the market settled at?
+// open_odds = first run of the day (what you would have bet), close_odds = the
+// locked last run (the closing line). CLV>0 means you beat the close.
+function _trkRenderCLV(){
+  var d=window.__TRACK__; var el=document.getElementById('trk-clv'); if(!el||!d) return;
+  var CAT_CFG=window.__TRK_CFG__||{};
+  var det=(d.detail||[]).filter(function(r){ return !_trkSkipMeta(r); });
+  var rows=[];
+  det.forEach(function(r){
+    var od=_amDec(r.open_odds), cd=_amDec(r.close_odds);
+    if(od==null||cd==null) return;
+    rows.push({date:r.date,name:r.name,catKey:(r.category||'')+'|'+(r.side||'OVER'),
+      pick:r.pick,open:r.open_odds,close:r.close_odds,clv:(od/cd-1)*100});
+  });
+  var ttl='<div style="font-size:.9rem;color:#e2e8f0;font-weight:800;margin:2px 2px 4px">📈 Closing Line Value</div>'
+    +'<div style="font-size:.74rem;color:#64748b;margin:0 2px 10px">Did you get a better price than the market settled at? Beating the close is the earliest sign of a real edge \u2014 it shows up before the wins do.</div>';
+  if(!rows.length){
+    el.innerHTML=ttl+'<p style="color:#64748b;font-size:.8rem;padding:4px 2px;border:1px dashed #1e293b;border-radius:10px">No CLV captured yet. It needs two odds reads per day: run picks once when they post (captures your opening price), then run again near first pitch (the closing line). CLV fills in after those games go Final.</p>';
+    return;
+  }
+  var beat=0,sum=0,byCat={};
+  rows.forEach(function(x){ if(x.clv>0.01)beat++; sum+=x.clv;
+    var c=byCat[x.catKey]=byCat[x.catKey]||{n:0,beat:0,sum:0}; c.n++; if(x.clv>0.01)c.beat++; c.sum+=x.clv; });
+  var n=rows.length, avg=sum/n, beatPct=beat/n*100;
+  var avgClr=avg>=0?'#4ade80':'#f87171';
+  var summary='<div style="display:flex;flex-wrap:wrap;gap:18px;align-items:center;background:#0c1829;border:1px solid #1e293b;border-radius:12px;padding:12px 16px;margin-bottom:12px">'
+    +'<div><div style="font-size:.64rem;color:#64748b;text-transform:uppercase;letter-spacing:.05em">Beat the close</div><div style="font-weight:900;font-size:1.15rem;color:'+(beatPct>=50?'#4ade80':'#f87171')+'">'+beat+' / '+n+' <span style="font-size:.85rem;color:#94a3b8">('+beatPct.toFixed(0)+'%)</span></div></div>'
+    +'<div><div style="font-size:.64rem;color:#64748b;text-transform:uppercase;letter-spacing:.05em">Avg CLV</div><div style="font-weight:900;font-size:1.15rem;color:'+avgClr+'">'+(avg>=0?'+':'\u2212')+Math.abs(avg).toFixed(1)+'%</div></div>'
+    +'<div style="flex:1;min-width:160px;color:#64748b;font-size:.75rem">'+(beatPct>=52?'You are consistently getting prices the market later shortens \u2014 a genuine long-run edge.':'Mixed \u2014 watch which categories beat the close and lean there.')+'</div>'
+    +'</div>';
+  var cats=Object.keys(byCat).map(function(k){ var c=byCat[k]; return [k,c,c.sum/c.n]; }).sort(function(a,b){ return b[2]-a[2]; });
+  var catRows=cats.map(function(x){
+    var cfg=CAT_CFG[x[0]]||{lbl:x[0].split('|').join(' '),icon:'📊'};
+    var a=x[2], clr=a>=0?'#4ade80':'#f87171';
+    return '<div style="display:flex;align-items:center;padding:7px 12px;border-bottom:1px solid #131c2e;font-size:.82rem">'
+      +'<span style="flex:1;min-width:150px;color:#e2e8f0;font-weight:600">'+(cfg.icon||'')+' '+cfg.lbl+'</span>'
+      +'<span style="width:90px;text-align:right;color:#94a3b8;font-family:monospace">'+x[1].beat+'/'+x[1].n+'</span>'
+      +'<span style="width:80px;text-align:right;font-family:monospace;font-weight:800;color:'+clr+'">'+(a>=0?'+':'\u2212')+Math.abs(a).toFixed(1)+'%</span>'
+      +'</div>';
+  }).join('');
+  var catHead='<div style="display:flex;padding:6px 12px;background:#0c1829;border-bottom:1px solid #1e293b;font-size:.64rem;color:#64748b;font-weight:700;text-transform:uppercase">'
+    +'<span style="flex:1;min-width:150px">Category</span><span style="width:90px;text-align:right">Beat / Total</span><span style="width:80px;text-align:right">Avg CLV</span></div>';
+  var recent=rows.slice().sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); }).slice(0,12);
+  var recRows=recent.map(function(x){
+    var clr=x.clv>0.01?'#4ade80':(x.clv<-0.01?'#f87171':'#94a3b8');
+    var mk=x.clv>0.01?'\u2713':(x.clv<-0.01?'\u2717':'\u00b7');
+    return '<div style="display:flex;gap:8px;align-items:center;padding:3px 8px;font-size:.77rem;border-bottom:1px solid #111a2b">'
+      +'<span style="color:'+clr+';width:14px">'+mk+'</span>'
+      +'<span style="color:#64748b;width:78px;font-family:monospace">'+(x.date||'')+'</span>'
+      +'<span style="color:#e2e8f0;flex:1;min-width:120px">'+x.name+'</span>'
+      +'<span style="color:#94a3b8;min-width:110px">'+(x.pick||'')+'</span>'
+      +'<span style="font-family:monospace;color:#cbd5e1;width:54px;text-align:right">'+_trkAmOdds(x.open)+'</span>'
+      +'<span style="color:#475569;width:18px;text-align:center">\u2192</span>'
+      +'<span style="font-family:monospace;color:#94a3b8;width:54px;text-align:right">'+_trkAmOdds(x.close)+'</span>'
+      +'<span style="font-family:monospace;font-weight:800;color:'+clr+';width:62px;text-align:right">'+(x.clv>=0?'+':'\u2212')+Math.abs(x.clv).toFixed(1)+'%</span>'
+      +'</div>';
+  }).join('');
+  el.innerHTML=ttl+summary
+    +'<div style="border:1px solid #1e293b;border-radius:12px;overflow:hidden;margin-bottom:12px">'+catHead+catRows+'</div>'
+    +'<details><summary style="cursor:pointer;font-size:.78rem;color:#a78bfa;font-weight:700;padding:4px 2px">Recent picks \u2014 your price vs the close ('+recent.length+')</summary>'
+    +'<div style="border:1px solid #1e293b;border-radius:10px;overflow:hidden;margin-top:6px">'+recRows+'</div></details>';
+}
+
+// MODEL CHECK (calibration) — does the +EV tag actually win, and do the model
+// probabilities match real-world hit rates? Built purely from graded detail.
+function _trkRenderCalib(stake){
+  var d=window.__TRACK__; var el=document.getElementById('trk-calib'); if(!el||!d) return;
+  var CAT_CFG=window.__TRK_CFG__||{};
+  var det=(d.detail||[]).filter(function(r){ return !_trkSkipMeta(r); });
+  var ttl='<div style="font-size:.9rem;color:#e2e8f0;font-weight:800;margin:2px 2px 4px">🔬 Model Check</div>'
+    +'<div style="font-size:.74rem;color:#64748b;margin:0 2px 10px">Is the +EV badge real, and do the model probabilities match what actually happens? This proves (or exposes) the model from your own results.</div>';
+  var withEv=det.filter(function(r){ return r.ev!=null; });
+  if(!withEv.length){
+    el.innerHTML=ttl+'<p style="color:#64748b;font-size:.8rem;padding:4px 2px;border:1px dashed #1e293b;border-radius:10px">No model data yet. Calibration builds from graded days going forward (each pick now stores its EV + predicted probability). Check back after a few slates go Final.</p>';
+    return;
+  }
+  // Part A: +EV vs no-edge
+  var B={pos:{w:0,l:0,net:0,cnt:0},neg:{w:0,l:0,net:0,cnt:0}};
+  withEv.forEach(function(r){
+    var b=r.ev>0?B.pos:B.neg, win=r.result==='WIN';
+    if(win)b.w++; else b.l++;
+    var pl=_amProfit(r.odds,stake,win); if(pl!==null){ b.net+=pl; b.cnt++; }
+  });
+  function _aRow(lbl,b,hi){
+    var n=b.w+b.l, wp=n?b.w/n*100:0, roi=b.cnt?b.net/(b.cnt*stake)*100:0;
+    var rc=roi>=0?'#4ade80':'#f87171';
+    return '<div style="display:flex;align-items:center;padding:9px 12px;border-bottom:1px solid #131c2e;font-size:.84rem;'+(hi?'background:rgba(34,197,94,.06)':'')+'">'
+      +'<span style="flex:1;color:#e2e8f0;font-weight:700">'+lbl+'</span>'
+      +'<span style="width:54px;text-align:right;color:#94a3b8;font-family:monospace">'+n+'</span>'
+      +'<span style="width:72px;text-align:right;color:#cbd5e1;font-family:monospace">'+b.w+'-'+b.l+'</span>'
+      +'<span style="width:60px;text-align:right;color:#cbd5e1;font-family:monospace">'+wp.toFixed(0)+'%</span>'
+      +'<span style="width:72px;text-align:right;font-family:monospace;font-weight:800;color:'+rc+'">'+(roi>=0?'+':'\u2212')+Math.abs(roi).toFixed(1)+'%</span>'
+      +'</div>';
+  }
+  var aHead='<div style="display:flex;padding:6px 12px;background:#0c1829;border-bottom:1px solid #1e293b;font-size:.64rem;color:#64748b;font-weight:700;text-transform:uppercase">'
+    +'<span style="flex:1">Group</span><span style="width:54px;text-align:right">Picks</span><span style="width:72px;text-align:right">Record</span><span style="width:60px;text-align:right">Win%</span><span style="width:72px;text-align:right">ROI</span></div>';
+  var posRoi=B.pos.cnt?B.pos.net/(B.pos.cnt*stake)*100:0, negRoi=B.neg.cnt?B.neg.net/(B.neg.cnt*stake)*100:0;
+  var posN=B.pos.w+B.pos.l, negN=B.neg.w+B.neg.l;
+  var verdict;
+  if(!posN){ verdict='No +EV picks graded yet.'; }
+  else if(posRoi>negRoi+1){ verdict='\u2713 +EV picks outperform no-edge picks \u2014 the model has real signal.'; }
+  else { verdict='\u26a0 +EV picks are not beating no-edge picks yet \u2014 treat the badge with caution on this sample.'; }
+  var partA='<div style="font-size:.78rem;color:#cbd5e1;font-weight:800;margin:2px 2px 6px">Does the +EV tag beat no-edge?</div>'
+    +'<div style="border:1px solid #1e293b;border-radius:12px;overflow:hidden">'+aHead+_aRow('\u2713 +EV picks',B.pos,true)+_aRow('\u2013 No edge',B.neg,false)+'</div>'
+    +'<div style="font-size:.76rem;color:'+(posN&&posRoi>negRoi+1?'#4ade80':'#facc15')+';padding:8px 2px 14px">'+verdict+'</div>';
+  // Part B: predicted vs actual
+  var pbDef=[{lo:0.70,hi:1.01,lbl:'70%+'},{lo:0.60,hi:0.70,lbl:'60\u201369%'},{lo:0.50,hi:0.60,lbl:'50\u201359%'},{lo:0.40,hi:0.50,lbl:'40\u201349%'},{lo:0,hi:0.40,lbl:'<40%'}];
+  var withP=withEv.filter(function(r){ return r.ev_prob!=null; });
+  var partB='';
+  if(withP.length){
+    var brows=pbDef.map(function(bk){
+      var inb=withP.filter(function(r){ return r.ev_prob>=bk.lo&&r.ev_prob<bk.hi; });
+      if(!inb.length) return '';
+      var pred=inb.reduce(function(s,r){ return s+r.ev_prob; },0)/inb.length*100;
+      var act=inb.filter(function(r){ return r.result==='WIN'; }).length/inb.length*100;
+      var gap=Math.abs(pred-act), mk=gap<=6?'\u2713':(gap<=12?'~':'\u26a0'), mc=gap<=6?'#4ade80':(gap<=12?'#facc15':'#f87171');
+      return '<div style="display:flex;align-items:center;padding:7px 12px;border-bottom:1px solid #131c2e;font-size:.82rem">'
+        +'<span style="width:70px;color:#e2e8f0;font-weight:700">'+bk.lbl+'</span>'
+        +'<span style="flex:1;color:#64748b;font-size:.72rem">model said \u2248'+pred.toFixed(0)+'%</span>'
+        +'<span style="width:96px;text-align:right;color:#cbd5e1;font-family:monospace">hit '+act.toFixed(0)+'%</span>'
+        +'<span style="width:78px;text-align:right;color:#94a3b8;font-family:monospace">('+inb.length+' pk)</span>'
+        +'<span style="width:24px;text-align:right;color:'+mc+'">'+mk+'</span>'
+        +'</div>';
+    }).join('');
+    partB='<div style="font-size:.78rem;color:#cbd5e1;font-weight:800;margin:14px 2px 6px">Predicted probability vs actual hit rate</div>'
+      +'<div style="border:1px solid #1e293b;border-radius:12px;overflow:hidden">'+brows+'</div>';
+  }
+  // Part C: by-category +EV ROI
+  var cc={};
+  withEv.forEach(function(r){ if(!(r.ev>0)) return; var k=(r.category||'')+'|'+(r.side||'OVER');
+    var c=cc[k]=cc[k]||{w:0,l:0,net:0,cnt:0}; var win=r.result==='WIN'; if(win)c.w++; else c.l++;
+    var pl=_amProfit(r.odds,stake,win); if(pl!==null){ c.net+=pl; c.cnt++; } });
+  var ckeys=Object.keys(cc).filter(function(k){ return cc[k].cnt>0; })
+    .map(function(k){ return [k,cc[k],cc[k].net/(cc[k].cnt*stake)*100]; }).sort(function(a,b){ return b[2]-a[2]; });
+  var partC='';
+  if(ckeys.length){
+    var crows=ckeys.map(function(x){
+      var cfg=CAT_CFG[x[0]]||{lbl:x[0].split('|').join(' '),icon:'📊'};
+      var roi=x[2], clr=roi>=0?'#4ade80':'#f87171', tag=roi>=3?'trust it':(roi>=-3?'marginal':'fade it');
+      return '<div style="display:flex;align-items:center;padding:7px 12px;border-bottom:1px solid #131c2e;font-size:.82rem">'
+        +'<span style="flex:1;min-width:150px;color:#e2e8f0;font-weight:600">'+(cfg.icon||'')+' '+cfg.lbl+'</span>'
+        +'<span style="width:72px;text-align:right;color:#94a3b8;font-family:monospace">'+x[1].w+'-'+x[1].l+'</span>'
+        +'<span style="width:74px;text-align:right;font-family:monospace;font-weight:800;color:'+clr+'">'+(roi>=0?'+':'\u2212')+Math.abs(roi).toFixed(1)+'%</span>'
+        +'<span style="width:74px;text-align:right;color:'+clr+';font-size:.72rem">'+tag+'</span>'
+        +'</div>';
+    }).join('');
+    partC='<div style="font-size:.78rem;color:#cbd5e1;font-weight:800;margin:14px 2px 6px">Where the +EV edge actually lives (by category)</div>'
+      +'<div style="border:1px solid #1e293b;border-radius:12px;overflow:hidden">'+crows+'</div>';
+  }
+  el.innerHTML=ttl+partA+partB+partC;
 }
 function downloadTrackEarningsCSV(){
   var d=window.__TRACK__; if(!d){ alert('Open Track Record first.'); return; }
@@ -5904,6 +6189,7 @@ def _auto_run_pipeline(date_str: str, label: str):
         except Exception as _le: print(f"[track_ledger] {_le}")
         _save_disk_cache(date_str, result)
         _save_sb_picks(date_str, result)
+        _save_open_snapshot(date_str, result)
         if result.get("stats", {}).get("has_tbd"):
             print(f"[auto-run] {label} — cached {date_str} (has TBD starters; app will re-run on load)")
         else:
