@@ -118,6 +118,10 @@ def _verify_hub_token(token: str) -> bool:
 # owner's email; can be overridden with an ADMIN_EMAIL env var.
 _ADMIN_EMAILS = {e.strip().lower() for e in _os.environ.get("ADMIN_EMAIL", "higgi117711@gmail.com").split(",") if e.strip()}
 
+# Tester accounts — see everything admin sees except Run Picks / Force Refresh.
+# Add emails here or override via TESTER_EMAILS env var (comma-separated).
+_TESTER_EMAILS = {e.strip().lower() for e in _os.environ.get("TESTER_EMAILS", "curtsmith95@gmail.com").split(",") if e.strip()}
+
 
 def _token_email(token: str) -> str:
     """Return the email (sub) from a valid hub token, else ''."""
@@ -132,6 +136,9 @@ def _token_email(token: str) -> str:
 
 def _is_admin_token(token: str) -> bool:
     return bool(_ADMIN_EMAILS) and _token_email(token) in _ADMIN_EMAILS
+
+def _is_tester_token(token: str) -> bool:
+    return bool(_TESTER_EMAILS) and _token_email(token) in _TESTER_EMAILS
 
 
 from replit_push import push_picks_to_replit  # pushes daily picks to Replit DB
@@ -943,7 +950,7 @@ def _save_bets(data: dict):
         print(f"[bet_log] save failed: {e}")
 
 def _bet_admin_ok(tok: str, admin: str) -> bool:
-    return _is_admin_token(tok) or (
+    return _is_admin_token(tok) or _is_tester_token(tok) or (
         bool(admin) and admin == os.environ.get("INTERNAL_API_TOKEN", "__none__"))
 
 def _bet_user_key(tok: str, admin: str) -> str:
@@ -1328,7 +1335,7 @@ async def track_record(request: Request, token: str = "", admin: str = ""):
     """Admin-only. All-time + daily W/L record per category (Over vs Under) from the
     permanent ledger. Grades any past cached day not yet locked, then aggregates."""
     tok = token or request.headers.get("Authorization", "").replace("Bearer ", "").strip()
-    is_admin = _is_admin_token(tok) or (
+    is_admin = _is_admin_token(tok) or _is_tester_token(tok) or (
         bool(admin) and admin == os.environ.get("INTERNAL_API_TOKEN", "__none__")
     )
     if not is_admin:
@@ -1541,7 +1548,7 @@ def api_lookup(name: str, date_str: str):
 @app.get("/api/whoami")
 async def whoami(request: Request, token: str = ""):
     tok = token or request.headers.get("Authorization", "").replace("Bearer ", "").strip()
-    return {"is_admin": _is_admin_token(tok)}
+    return {"is_admin": _is_admin_token(tok), "is_tester": _is_tester_token(tok)}
 
 _HTML = """
 <!DOCTYPE html>
@@ -1599,11 +1606,16 @@ _HTML = """
     .grade-table tr:hover td { background:rgba(255,255,255,.02); }
     .bet-input { width:68px; background:#1e1e1e; border:1px solid #374151; border-radius:6px; color:#fff; padding:4px 6px; font-size:.85rem; text-align:center; }
     .bet-input:focus { outline:none; border-color:#f59e0b; }
-    /* Admin gate: hidden by default, shown only when body has is-admin */
+    /* Admin gate: hidden by default, shown only when body has is-admin or is-tester */
     .admin-only { display: none !important; }
     body.is-admin .admin-only { display: revert !important; }
     body.is-admin .results-table th.admin-only,
     body.is-admin .results-table td.admin-only { display: table-cell !important; }
+    /* Tester: sees everything admin sees except run/force buttons */
+    body.is-tester .admin-only { display: revert !important; }
+    body.is-tester .results-table th.admin-only,
+    body.is-tester .results-table td.admin-only { display: table-cell !important; }
+    body.is-tester .admin-run-only { display: none !important; }
     .rank-badge { width: 32px; height: 32px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-weight: 800; font-size: .85rem; }
     .rank-1 { background: var(--gold); color: #000; } .rank-2 { background: var(--silver); color: #000; }
     .rank-3 { background: var(--bronze); color: #fff; } .rank-n { background: var(--navy3); color: #94a3b8; }
@@ -1896,8 +1908,8 @@ _HTML = """
       <div style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-bottom:12px">
         <button class="btn-primary" id="get-btn" onclick="getPicks()">🎯 Get Picks</button>
         <button class="btn-primary" id="ev-btn" onclick="toggleEvOnly()" style="background:#1f2937;color:#fff" title="Show only hit picks where our matchup model (your hitter vs this pitcher) beats the sportsbook price. Default off — all picks shown, ranked by value.">&#10003; +EV Only</button>
-        <button class="btn-primary admin-only" id="run-btn" onclick="startRun()">Run Picks</button>
-        <button class="btn-primary admin-only" id="force-btn" onclick="startRun(true)" style="background:#dc2626;color:#fff" title="Bypass cache and rebuild today's picks from scratch">Force Refresh</button>
+        <button class="btn-primary admin-only admin-run-only" id="run-btn" onclick="startRun()">Run Picks</button>
+        <button class="btn-primary admin-only admin-run-only" id="force-btn" onclick="startRun(true)" style="background:#dc2626;color:#fff" title="Bypass cache and rebuild today's picks from scratch">Force Refresh</button>
       </div>
       <div id="run-spinner" class="hidden" style="margin-top:12px;color:#6b7280;font-size:13px">
         <span class="spinner"></span> Analyzing player histories…
@@ -2133,7 +2145,10 @@ window.onload = () => {
   if (!window.IS_ADMIN && token) {
     fetch('/api/whoami?token=' + encodeURIComponent(token))
       .then(r => r.json())
-      .then(d => { if (d && d.is_admin) { window.IS_ADMIN = true; document.body.classList.add('is-admin'); } })
+      .then(d => {
+        if (d && d.is_admin)  { window.IS_ADMIN = true; document.body.classList.add('is-admin'); }
+        else if (d && d.is_tester) { document.body.classList.add('is-tester'); }
+      })
       .catch(() => {});
   }
   // Snapshot mode: the Replit hub serves this page with picks already baked in
