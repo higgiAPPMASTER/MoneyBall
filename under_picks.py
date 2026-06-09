@@ -75,7 +75,7 @@ def _fetch_batter_savant_up(year: str) -> dict:
                 params={"year": str(year), "type": "batter", "filter": "", "min": "30",
                         "selections": "xba,hard_hit_percent", "csv": "true"},
                 headers=hdrs, timeout=15)
-            for row in csv.DictReader(io.StringIO(r.text)):
+            for row in csv.DictReader(io.StringIO(r.text.lstrip("\ufeff"))):
                 try:
                     pid  = int(row.get("player_id") or 0)
                     xba  = row.get("xba") or ""
