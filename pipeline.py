@@ -1375,6 +1375,49 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         _hp["game_start"]    = _game_start_for(_hp.get("team", ""))
         _hp["series_splits"] = fetch_series_splits(_hp.get("batter_id"), _hp.get("opp", ""), run_date, _hp.get("side", ""))
 
+    # ── Pitcher series position (G1/G2/G3) ────────────────────────────────
+    # Pitchers have no batting logs, so derive each game's series slot from the
+    # hitters in that same game: a pitcher's start IS game N of his team's
+    # series, and his team's hitters already carry today_pos vs the opponent.
+    # Use the MAX today_pos seen for the team (the hitter who played every game
+    # reflects the true series position). Stamp a minimal series_splits so the
+    # frontend G# badge + strategy dot render on pitcher cards too.
+    try:
+        _team_pos: dict = {}
+        for _lst in (top9, also_ran, under_picks_list, runs_picks_list,
+                     tb_picks_list, tb_over_picks_list, rbi_picks_list,
+                     walks_picks_list, hrr_picks_list):
+            for _hh in _lst:
+                _tm  = (_hh.get("team") or "").strip()
+                _pos = ((_hh.get("series_splits") or {}).get("today_pos")) or 0
+                if _tm and _pos and _pos > _team_pos.get(_tm, 0):
+                    _team_pos[_tm] = _pos
+
+        def _pos_for_team(team_name):
+            if not team_name:
+                return 0
+            _p = _team_pos.get(team_name)
+            if _p:
+                return _p
+            _tl = team_name.lower()
+            for _k, _v in _team_pos.items():
+                if _tl in _k.lower() or _k.lower() in _tl:
+                    return _v
+            return 0
+
+        _pit_all = list(pitcher_k_result.get("picks", [])) + list(pitcher_k_result.get("all", []))
+        for _b in pitcher_props.values():
+            _pit_all += list(_b.get("picks", [])) + list(_b.get("all", []))
+        _stamped = 0
+        for _pp in _pit_all:
+            _pos = _pos_for_team(_pp.get("team", ""))
+            if _pos:
+                _pp["series_splits"] = {"today_pos": _pos}
+                _stamped += 1
+        emit({"type": "log", "msg": f"  ✅ Pitcher series position stamped ({_stamped} picks, {len(_team_pos)} teams)"})
+    except Exception as _exc:
+        emit({"type": "log", "msg": f"⚠️ Pitcher series position skipped: {_exc}"})
+
     # ── EV enrichment for ALL non-hit categories ────────────────────────
     # Each pick gets ev / edge / ev_prob from our model probability vs the
     # posted price for the SIDE we picked. Binary 0.5/1.5 batter markets use the
