@@ -51,6 +51,25 @@ _PK_BATTER_WOBA_CACHE: dict = {}  # {batter_id: {pitch_type: woba}}
 _PK_PITCH_LOADED:  set  = set()   # years fetched for pitch-type data
 _PK_LINEUP_MAP:    dict = {}      # {norm_team: [batter_id_int]} — tonight's lineups
 
+# ── Best-price book selection ──────────────────────────────────────────────
+# Show the BEST price among the user's 3 Canadian sportsbooks; fall back to the
+# first US book only when none of the 3 posted that line. Each pick also carries
+# which book the displayed (pick-side) price came from.
+MY_BOOKS = ("bet99", "thescore", "bet365")
+_BOOK_LABEL = {"bet99":"Bet99","thescore":"theScore","bet365":"Bet365","draftkings":"DK","fanduel":"FanDuel","betmgm":"BetMGM","espnbet":"ESPN BET","caesars":"Caesars","williamhill_us":"Caesars","hardrockbet":"Hard Rock","pointsbetus":"PointsBet","fanatics":"Fanatics"}
+def _book_label(k):
+    return _BOOK_LABEL.get(k, (k or "").replace("_"," ").title())
+def _take_odds(entry, price_field, book_field, price, book_key):
+    """Keep the BEST price preferring MY_BOOKS; fall back to first non-MY book. Records source book key in book_field."""
+    if price is None:
+        return
+    cur = entry.get(price_field); cur_bk = entry.get(book_field)
+    new_mine = book_key in MY_BOOKS
+    cur_mine = cur_bk in MY_BOOKS
+    if cur is None or (new_mine and not cur_mine) or (new_mine and cur_mine and price > cur):
+        entry[price_field] = price
+        entry[book_field] = book_key
+
 # ── Pitcher prop O/U categories (real Odds API markets, parallel to K) ─────
 # Each is a true Over/Under betting line that feeds the parlay builder.
 # Data comes from the SAME pitching gameLog already pulled for K's:
@@ -233,13 +252,13 @@ def _fetch_k_lines(run_date: str, emit=None) -> list:
             for market in MARKETS:
                 r2 = requests.get(
                     f"{ODDS_BASE}/sports/baseball_mlb/events/{ev['id']}/odds",
-                    params={"apiKey": ODDS_API_KEY, "regions": "us",
+                    params={"apiKey": ODDS_API_KEY, "regions": "us,us2,ca",
                             "markets": market, "bookmakers": ",".join(PREFERRED),
                             "oddsFormat": "american"}, timeout=15)
                 if not r2.ok: continue
                 for bm in r2.json().get("bookmakers", []):
+                    bk = bm.get("key")
                     for mkt in bm.get("markets", []):
-                        pairs: dict = {}
                         for oc in mkt.get("outcomes", []):
                             name  = (oc.get("description") or oc.get("name", "")).strip()
                             pt    = oc.get("point")
@@ -249,15 +268,20 @@ def _fetch_k_lines(run_date: str, emit=None) -> list:
                             key = _normalize(name)
                             if side == "Over" and price is not None:
                                 ladder.setdefault(key, {}).setdefault(float(pt), price)
-                            pairs.setdefault(key, {"name": name, "point": float(pt)})
-                            if side == "Over":    pairs[key]["over_odds"]  = price
-                            elif side == "Under": pairs[key]["under_odds"] = price
-                        for key, p in pairs.items():
-                            if key not in seen:
-                                seen[key] = {"name": p["name"], "line": p["point"],
-                                             "home_team": home_team, "away_team": away_team,
-                                             "over_odds": p.get("over_odds"),
-                                             "under_odds": p.get("under_odds")}
+                            entry = seen.get(key)
+                            if entry is None:
+                                entry = {"name": name, "line": float(pt),
+                                         "home_team": home_team, "away_team": away_team,
+                                         "over_odds": None, "under_odds": None}
+                                seen[key] = entry
+                            # Only take odds posted at the displayed line so the
+                            # best-book price always matches the shown line.
+                            if abs(float(pt) - entry["line"]) > 1e-9:
+                                continue
+                            if side == "Over":
+                                _take_odds(entry, "over_odds", "over_odds_book", price, bk)
+                            elif side == "Under":
+                                _take_odds(entry, "under_odds", "under_odds_book", price, bk)
                     break
         for key, entry in seen.items():
             entry["over_ladder"] = ladder.get(key, {})
@@ -309,11 +333,12 @@ def _fetch_pitcher_props(run_date: str, emit=None) -> None:
             away_team = ev.get("away_team", "")
             r2 = requests.get(
                 f"{ODDS_BASE}/sports/baseball_mlb/events/{ev['id']}/odds",
-                params={"apiKey": ODDS_API_KEY, "regions": "us,us2",
+                params={"apiKey": ODDS_API_KEY, "regions": "us,us2,ca",
                         "markets": ",".join(PROP_MARKETS),
                         "oddsFormat": "american"}, timeout=15)
             if not r2.ok: continue
             for bm in r2.json().get("bookmakers", []):
+                bk = bm.get("key")
                 for mkt in bm.get("markets", []):
                     mk = mkt.get("key")
                     if mk not in PROP_ODDS: continue
@@ -331,11 +356,11 @@ def _fetch_pitcher_props(run_date: str, emit=None) -> None:
                                  "over_odds": None, "under_odds": None}
                             PROP_ODDS[mk][key] = d
                         if abs(float(pt) - d["line"]) > 1e-9:
-                            continue  # only the first-seen line for this pitcher
-                        if side == "Over" and d["over_odds"] is None:
-                            d["over_odds"] = price
-                        elif side == "Under" and d["under_odds"] is None:
-                            d["under_odds"] = price
+                            continue  # only the displayed line for this pitcher
+                        if side == "Over":
+                            _take_odds(d, "over_odds", "over_odds_book", price, bk)
+                        elif side == "Under":
+                            _take_odds(d, "under_odds", "under_odds_book", price, bk)
         log(f"  Pitcher props: " +
             ", ".join(f"{PROP_META[m][0]} {len(PROP_ODDS[m])}" for m in PROP_MARKETS))
     except Exception as exc:
@@ -968,7 +993,7 @@ def _fetch_game_totals(run_date: str) -> dict:
         return _GAME_TOTALS
     try:
         r = requests.get(f"{ODDS_BASE}/sports/baseball_mlb/odds",
-            params={"apiKey": ODDS_API_KEY, "regions": "us", "markets": "totals",
+            params={"apiKey": ODDS_API_KEY, "regions": "us,us2,ca", "markets": "totals",
                     "dateFormat": "iso", "oddsFormat": "american"},
             timeout=15)
         out = {}
@@ -1208,6 +1233,7 @@ def _build_prop_picks(name, team, opp, side, hist, rf, pid=None,
             "name": name, "team": team, "opp": opp, "side": side,
             "pid": pid,
             "line": line, "over_odds": odds.get("over_odds"), "under_odds": odds.get("under_odds"),
+            "book": _book_label(odds.get("over_odds_book") if pick == "OVER" else odds.get("under_odds_book")),
             "career_avg": career_avg, "recent_avg": recent_avg, "recent_starts": recent_n,
             "blended": blended, "avg": blended, "blend_src": blend_src, "starts": starts,
             "proj": proj, "proj_factors": proj_factors, "pit_hand": pit_hand,
@@ -1297,6 +1323,7 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                      "line": line, "over_odds": pl.get("over_odds"),
                      "under_odds": pl.get("under_odds"), "avg_k": None, "starts": 0,
                      "min_k": None, "max_k": None, "k_history": "—",
+                     "book": _book_label(pl.get("over_odds_book") or pl.get("under_odds_book")),
                      "pick": None, "pick_note": dq_note}), logs
 
         logs.append(f"  {name}  K line:{line}  {side} vs {opp}...")
@@ -1382,7 +1409,9 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                 break
         return ({"name": name, "team": pitcher_team, "opp": opp, "side": side,
                  "line": line, "over_odds": pl.get("over_odds"),
-                 "under_odds": pl.get("under_odds"), "avg_k": avg_k,
+                 "under_odds": pl.get("under_odds"),
+                 "book": _book_label(pl.get("over_odds_book") if pick == "OVER" else pl.get("under_odds_book")),
+                 "avg_k": avg_k,
                  "starts": starts, "min_k": hist["min_k"] if hist else None,
                  "max_k": hist["max_k"] if hist else None,
                  "avg_ip": hist["avg_ip"] if hist else None,
