@@ -7,6 +7,7 @@ main.py — FastAPI app for MoneyBall
   • GET  /                   — serves the frontend SPA
 """
 import asyncio, json, os, uuid, glob as _glob
+import datetime as _dt, copy as _copy
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from typing import Optional
@@ -147,6 +148,83 @@ def _load_pick_cache(date_str: str):
     if d is not None:
         return d
     return _load_sb_picks(date_str)
+
+# ── Pre-game snapshot freeze (Track Record integrity) ───────────────────
+# The graded snapshot (disk + Supabase) must reflect the LAST run BEFORE each
+# game's first pitch. A re-run while games are live would otherwise rewrite a
+# pick's line/side with in-game numbers (e.g. a pitcher already past his K
+# total flips UNDER 5.5 → OVER 2.5), and that corrupted line is what gets
+# locked. So: for TODAY, any pick whose game has already started keeps the
+# line/side from the prior snapshot; only not-yet-started games take fresh
+# lines. Per-game (not whole-slate) so late games still update until they start.
+def _pick_started(p, now_dt) -> bool:
+    if not isinstance(p, dict):
+        return False
+    gs = p.get("game_start")
+    if not gs:
+        return False
+    try:
+        t = _dt.datetime.fromisoformat(str(gs).replace("Z", "+00:00"))
+        if t.tzinfo is not None:
+            t = t.astimezone(_dt.timezone.utc).replace(tzinfo=None)
+        return now_dt >= t
+    except Exception:
+        return False
+
+def _pick_ident(p):
+    pid = p.get("player_id") or p.get("batter_id") or p.get("pid") or ""
+    nm  = p.get("name") or p.get("full_name") or ""
+    mkt = p.get("market") or ""
+    return (str(pid), str(nm).lower(), str(mkt))
+
+def _freeze_merge(old_node, new_node, now_dt):
+    # Recurse through dicts on shared keys (e.g. pitcher_k -> picks/all, pitcher_props -> market -> picks/all).
+    if isinstance(new_node, dict) and isinstance(old_node, dict):
+        for k, v in new_node.items():
+            if k in old_node:
+                new_node[k] = _freeze_merge(old_node[k], v, now_dt)
+        return new_node
+    # Merge lists of pick dicts; leave every other list untouched.
+    if isinstance(new_node, list) and isinstance(old_node, list):
+        if not new_node or not all(isinstance(x, dict) for x in new_node):
+            return new_node
+        old_by_id = {}
+        for i, op in enumerate(old_node):
+            if isinstance(op, dict):
+                old_by_id.setdefault(_pick_ident(op), (i, op))
+        seen = set()
+        merged = []
+        for np in new_node:
+            ident = _pick_ident(np)
+            seen.add(ident)
+            if _pick_started(np, now_dt) and ident in old_by_id:
+                merged.append(old_by_id[ident][1])      # frozen pre-game pick
+            else:
+                merged.append(np)                        # not started → fresh line
+        # Pre-game picks for started games that dropped out of the live run:
+        # re-add near their original rank so the [:10] grading window is preserved.
+        missing = [(i, op) for ident, (i, op) in old_by_id.items()
+                   if ident not in seen and _pick_started(op, now_dt)]
+        missing.sort()
+        for i, op in missing:
+            merged.insert(min(i, len(merged)), op)
+        return merged
+    return new_node
+
+def _freeze_started_picks(date_str: str, new_result: dict):
+    """Return a snapshot for date_str with started-game picks frozen at their
+    prior-snapshot (pre-game) line/side. Only affects TODAY; past/future dates
+    and the first run of the day pass through unchanged."""
+    try:
+        if date_str != date.today().isoformat():
+            return new_result
+        old = _load_pick_cache(date_str)
+        if not isinstance(old, dict) or not old:
+            return new_result            # no pre-game snapshot yet → take this run
+        return _freeze_merge(old, _copy.deepcopy(new_result), _dt.datetime.utcnow())
+    except Exception as e:
+        print(f"[freeze] skipped for {date_str}: {e}")
+        return new_result
 
 # ── Opening-odds snapshot (Closing Line Value) ──────────────────────────
 # The FIRST run of the day captures the price you'd have bet at; later runs
@@ -363,8 +441,9 @@ async def start_run(request: Request, date_str: str, force: bool = False, token:
             _cache[date_str] = result
             try: _update_track_ledger()
             except Exception as _le: print(f"[track_ledger] {_le}")
-            _save_disk_cache(date_str, result)
-            _save_sb_picks(date_str, result)
+            _snap = _freeze_started_picks(date_str, result)
+            _save_disk_cache(date_str, _snap)
+            _save_sb_picks(date_str, _snap)
             _save_open_snapshot(date_str, result)
             try:
                 # Bake the picks into the page HTML so the Replit hub can serve
@@ -6385,8 +6464,9 @@ def _auto_run_pipeline(date_str: str, label: str):
         _cache[date_str] = result
         try: _update_track_ledger()
         except Exception as _le: print(f"[track_ledger] {_le}")
-        _save_disk_cache(date_str, result)
-        _save_sb_picks(date_str, result)
+        _snap = _freeze_started_picks(date_str, result)
+        _save_disk_cache(date_str, _snap)
+        _save_sb_picks(date_str, _snap)
         _save_open_snapshot(date_str, result)
         if result.get("stats", {}).get("has_tbd"):
             print(f"[auto-run] {label} — cached {date_str} (has TBD starters; app will re-run on load)")
