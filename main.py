@@ -824,6 +824,13 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "odds":p.get("hrr_over_odds") if pd=="OVER" else p.get("hrr_under_odds"),
             "ev":p.get("ev") or 0,"pid":p.get("batter_id"),"fname":p.get("name")})
     _bat_cands.sort(key=lambda x: -(x.get("ev") or 0))
+    _bat_seen = set()
+    _bat_dedup = []
+    for _bc in _bat_cands:
+        _bk = (_bc.get("name") or "").strip().lower()
+        if _bk in _bat_seen: continue
+        _bat_seen.add(_bk); _bat_dedup.append(_bc)
+    _bat_cands = _bat_dedup
     top10_batter = []
     for c in _bat_cands[:10]:
         st = _lookup(c.get("pid"), c.get("fname") or c["name"])
@@ -862,6 +869,13 @@ def _grade_date(date_str: str, picks: dict) -> dict:
                 "side":pd,"stat_key":sk,"stat_label":sl,"line":ln,
                 "odds":p.get("over_odds") if pd=="OVER" else p.get("under_odds"),"gap":gap})
     _pit_cands.sort(key=lambda x: -x.get("gap", 0))
+    _pit_seen = set()
+    _pit_dedup = []
+    for _pc in _pit_cands:
+        _pk = (_pc.get("name") or "").strip().lower()
+        if _pk in _pit_seen: continue
+        _pit_seen.add(_pk); _pit_dedup.append(_pc)
+    _pit_cands = _pit_dedup
     top10_pitcher = []
     for c in _pit_cands[:10]:
         st = _lookup(None, c["name"])
@@ -4672,6 +4686,8 @@ function _buildTop10(view) {
   _add(view.runs_picks,    'RUNS');
   _add(view.walks_picks,   'BWALK');
   plays.sort(function(a,b){ return b._t10ev - a._t10ev; });
+  var _t10seen={};
+  plays=plays.filter(function(p){ var k=(p.name||p.full_name||'').trim().toLowerCase(); if(_t10seen[k]) return false; _t10seen[k]=true; return true; });
   return plays.slice(0, 10);
 }
 function _top10BetBtn(p, kind) {
