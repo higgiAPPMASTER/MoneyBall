@@ -24,6 +24,25 @@ ODDS_API_KEY = os.environ.get("ODDS_API_KEY", "")
 _PLAYER_MAP:    dict = {}
 _PITCHER_CACHE: dict = {}
 
+# ── Best-price book selection ──────────────────────────────────────────────
+# Show the BEST price among the user's 3 Canadian sportsbooks; fall back to the
+# first US book only when none of the 3 posted that line. Each pick also carries
+# which book the displayed (pick-side) price came from.
+MY_BOOKS = ("bet99", "thescore", "bet365")
+_BOOK_LABEL = {"bet99":"Bet99","thescore":"theScore","bet365":"Bet365","draftkings":"DK","fanduel":"FanDuel","betmgm":"BetMGM","espnbet":"ESPN BET","caesars":"Caesars","williamhill_us":"Caesars","hardrockbet":"Hard Rock","pointsbetus":"PointsBet","fanatics":"Fanatics"}
+def _book_label(k):
+    return _BOOK_LABEL.get(k, (k or "").replace("_"," ").title())
+def _take_odds(entry, price_field, book_field, price, book_key):
+    """Keep the BEST price preferring MY_BOOKS; fall back to first non-MY book. Records source book key in book_field."""
+    if price is None:
+        return
+    cur = entry.get(price_field); cur_bk = entry.get(book_field)
+    new_mine = book_key in MY_BOOKS
+    cur_mine = cur_bk in MY_BOOKS
+    if cur is None or (new_mine and not cur_mine) or (new_mine and cur_mine and price > cur):
+        entry[price_field] = price
+        entry[book_field] = book_key
+
 # Populated by _fetch_hits_lines: normalized player name -> Over price on the 0.5 hits line
 # (i.e. the standard "to record a hit" prop). Read by pipeline.py to enrich top9 picks.
 import unicodedata as _ud
@@ -38,6 +57,9 @@ def _norm_name(s: str) -> str:
     s = _re.sub(r'\s+', ' ', s).strip()
     return s
 HIT_ODDS: dict = {}
+# Parallel to HIT_ODDS: normalized name -> source book key for the displayed
+# (best-among-MY_BOOKS) 0.5-hit Over price. Read by pipeline.py to stamp pick["book"].
+HIT_ODDS_BOOK: dict = {}
 # Populated by _fetch_hits_lines: normalized name -> {name, line, home_team,
 # away_team, over, under} for the batter_runs_scored (Over/Under ~0.5) market.
 # Read by run_runs_picks. Parallel to HIT_ODDS; first game seen per name wins.
@@ -341,7 +363,7 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
             away_team = ev.get("away_team", "")
             r2 = requests.get(
                 f"https://api.the-odds-api.com/v4/sports/baseball_mlb/events/{ev['id']}/odds",
-                params={"apiKey": ODDS_API_KEY, "regions": "us,us2",
+                params={"apiKey": ODDS_API_KEY, "regions": "us,us2,ca",
                         "markets": "batter_hits,batter_hits_alternate,batter_total_bases,batter_total_bases_alternate,batter_runs_scored,batter_rbis,batter_hits_runs_rbis,batter_walks",
                         "oddsFormat": "american"}, timeout=15)
             if r2.status_code != 200: continue
@@ -350,6 +372,7 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
             _bm_map = {b.get("key"): b for b in all_bms}
             # Collect 0.5-line Over odds from every bookmaker (first seen per player)
             for bm_any in all_bms:
+                _bk = bm_any.get("key")
                 for mkt in bm_any.get("markets", []):
                     if mkt.get("key") not in ("batter_hits", "batter_hits_alternate"): continue
                     for oc in mkt.get("outcomes", []):
@@ -360,8 +383,15 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
                         if not player or pt is None or side != "Over": continue
                         nk = _norm_name(player)
                         if pt == 0.5 and price is not None:
-                            if nk not in HIT_ODDS:
+                            # Best price preferring MY_BOOKS for the displayed 0.5 "to
+                            # record a hit" Over; record its source book in HIT_ODDS_BOOK.
+                            _cur = HIT_ODDS.get(nk); _cur_bk = HIT_ODDS_BOOK.get(nk)
+                            _new_mine = _bk in MY_BOOKS
+                            _cur_mine = _cur_bk in MY_BOOKS
+                            if (_cur is None or (_new_mine and not _cur_mine)
+                                    or (_new_mine and _cur_mine and price > _cur)):
                                 HIT_ODDS[nk] = price
+                                HIT_ODDS_BOOK[nk] = _bk
                             hit05.setdefault(nk, {"name": player,
                                                   "home_team": home_team,
                                                   "away_team": away_team})
@@ -379,6 +409,7 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
                              + [b for b in all_bms if b.get("key") not in PREFERRED])
             event_entries: dict = {}
             for book in ordered_books:
+                bk = book.get("key")
                 for mkt in book.get("markets", []):
                     if mkt.get("key") not in ("batter_hits", "batter_hits_alternate"): continue
                     for oc in mkt.get("outcomes", []):
@@ -395,16 +426,15 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
                                      "home_team": home_team, "away_team": away_team,
                                      "over_odds": None, "under_odds": None}
                             event_entries[nk] = entry
-                        if side == "Over" and entry["over_odds"] is None:
-                            entry["over_odds"] = price
-                        elif side == "Under" and entry["under_odds"] is None:
-                            entry["under_odds"] = price
+                        if side == "Over":
+                            _take_odds(entry, "over_odds", "over_odds_book", price, bk)
+                        elif side == "Under":
+                            _take_odds(entry, "under_odds", "under_odds_book", price, bk)
             # Under 1.5 TOTAL BASES odds for the same players, shown alongside the
             # hits line (pays more because a double/HR busts it even on one hit).
             # Same all-books union + PREFERRED order; first Under price seen wins.
-            tb_under: dict = {}
-            tb_over_map: dict = {}
             for book in ordered_books:
+                bk = book.get("key")
                 for mkt in book.get("markets", []):
                     if mkt.get("key") not in ("batter_total_bases", "batter_total_bases_alternate"): continue
                     for oc in mkt.get("outcomes", []):
@@ -414,13 +444,15 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
                         price  = oc.get("price")
                         if not player or pt != 1.5 or price is None: continue
                         nk = _norm_name(player)
-                        if side == "Under" and nk not in tb_under:
-                            tb_under[nk] = price
-                        elif side == "Over" and nk not in tb_over_map:
-                            tb_over_map[nk] = price
+                        entry = event_entries.get(nk)
+                        if entry is None: continue  # TB only attaches to 1.5-hit-line players
+                        if side == "Under":
+                            _take_odds(entry, "tb_under_odds", "tb_under_odds_book", price, bk)
+                        elif side == "Over":
+                            _take_odds(entry, "tb_over_odds", "tb_over_odds_book", price, bk)
             for nk, entry in event_entries.items():
-                entry["tb_under_odds"] = tb_under.get(nk)
-                entry["tb_over_odds"]  = tb_over_map.get(nk)
+                entry.setdefault("tb_under_odds", None)
+                entry.setdefault("tb_over_odds", None)
                 seen.setdefault(nk, entry)
                 if entry.get("tb_under_odds") is not None:
                     TB_ODDS.setdefault(nk, entry)
@@ -431,6 +463,7 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
             # in the module-global RUNS_ODDS (parallel to HIT_ODDS), first game seen wins.
             # ZERO extra Odds API calls beyond the one market added to the request above.
             for book in ordered_books:
+                bk = book.get("key")
                 for mkt in book.get("markets", []):
                     if mkt.get("key") != "batter_runs_scored": continue
                     for oc in mkt.get("outcomes", []):
@@ -447,14 +480,15 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
                                      "home_team": home_team, "away_team": away_team,
                                      "over": None, "under": None}
                             RUNS_ODDS[nk] = entry
-                        if side == "Over" and entry["over"] is None:
-                            entry["over"] = price; entry["line"] = pt
-                        elif side == "Under" and entry["under"] is None:
-                            entry["under"] = price
+                        if side == "Over":
+                            _take_odds(entry, "over", "over_book", price, bk); entry["line"] = pt
+                        elif side == "Under":
+                            _take_odds(entry, "under", "under_book", price, bk)
 
             # Batter RBIs (Over/Under 0.5) for the RBI Picks category.
             # ZERO extra Odds API calls — market added to the same per-game request.
             for book in ordered_books:
+                bk = book.get("key")
                 for mkt in book.get("markets", []):
                     if mkt.get("key") != "batter_rbis": continue
                     for oc in mkt.get("outcomes", []):
@@ -470,13 +504,14 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
                                      "home_team": home_team, "away_team": away_team,
                                      "over": None, "under": None}
                             RBI_ODDS[nk] = entry
-                        if side == "Over" and entry["over"] is None:
-                            entry["over"] = price; entry["line"] = pt
-                        elif side == "Under" and entry["under"] is None:
-                            entry["under"] = price
+                        if side == "Over":
+                            _take_odds(entry, "over", "over_book", price, bk); entry["line"] = pt
+                        elif side == "Under":
+                            _take_odds(entry, "under", "under_book", price, bk)
 
             # Batter HRR (Hits+Runs+RBI, Over/Under 1.5) — ZERO extra Odds API calls.
             for book in ordered_books:
+                bk = book.get("key")
                 for mkt in book.get("markets", []):
                     if mkt.get("key") != "batter_hits_runs_rbis": continue
                     for oc in mkt.get("outcomes", []):
@@ -492,15 +527,18 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
                                      "home_team": home_team, "away_team": away_team,
                                      "hrr_over_odds": None, "hrr_under_odds": None}
                             HRR_ODDS[nk] = entry
-                        if side == "Over" and entry.get("hrr_over_odds") is None:
-                            entry["hrr_over_odds"] = price
-                        elif side == "Under" and entry.get("hrr_under_odds") is None:
-                            entry["hrr_under_odds"] = price
+                        if side == "Over":
+                            _take_odds(entry, "hrr_over_odds", "hrr_over_odds_book", price, bk)
+                        elif side == "Under":
+                            _take_odds(entry, "hrr_under_odds", "hrr_under_odds_book", price, bk)
 
             # Batter Walks (Over/Under 0.5) for the Batter Walks category.
             # ZERO extra Odds API calls — market added to the same per-game request.
             # Distinct from the PITCHER walks (Walks Allowed) market.
+            # Best price preferring MY_BOOKS is handled by _take_odds, so iterate
+            # plain ordered_books (no special bet99-first reordering needed).
             for book in ordered_books:
+                bk = book.get("key")
                 for mkt in book.get("markets", []):
                     if mkt.get("key") != "batter_walks": continue
                     for oc in mkt.get("outcomes", []):
@@ -516,10 +554,10 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
                                      "home_team": home_team, "away_team": away_team,
                                      "over": None, "under": None}
                             WALKS_ODDS[nk] = entry
-                        if side == "Over" and entry["over"] is None:
-                            entry["over"] = price; entry["line"] = pt
-                        elif side == "Under" and entry["under"] is None:
-                            entry["under"] = price
+                        if side == "Over":
+                            _take_odds(entry, "over", "over_book", price, bk); entry["line"] = pt
+                        elif side == "Under":
+                            _take_odds(entry, "under", "under_book", price, bk)
 
         _log(emit, f"  ✅ {len(seen)} players on 1.5 hits line | {len(HIT_ODDS)} players with 0.5 hit odds | {len(RUNS_ODDS)} with runs odds | {len(TB_ODDS)} with TB under odds | {len(RBI_ODDS)} with RBI odds | {len(HRR_ODDS)} with HRR odds | {len(WALKS_ODDS)} with walks odds")
         # Scan ALL players who have any posted hit odds (the 0.5 set), not just
@@ -637,7 +675,8 @@ def run_under_picks(run_date: str, team_schedule: dict, emit=None,
                 "ace_era": ace_era,
                 "xba": _sav_u.get("xba"), "hard_hit_pct": _sav_u.get("hard_hit_pct"),
                 "under_odds": c.get("under_odds"), "over_odds": c.get("over_odds"),
-                "tb_under_odds": c.get("tb_under_odds")}
+                "tb_under_odds": c.get("tb_under_odds"),
+                "book": _book_label(c.get("under_odds_book"))}
 
     picks = []
     with ThreadPoolExecutor(max_workers=8) as _ex:
@@ -822,6 +861,7 @@ def run_runs_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 "games": rate["games"], "basis": rate.get("basis", ""),
                 "wilson": round(_wilson_lb(rate["runs_games"], rate["games"]), 4),
                 "over_odds": c.get("over"), "under_odds": c.get("under"),
+                "book": _book_label(c.get("over_book") if pick == "OVER" else c.get("under_book")),
                 "batter_id": batter_id,
                 "recent_runs_log": _recent_runs_log(batter_id)}
 
@@ -993,6 +1033,7 @@ def run_rbi_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 "games": rate["games"], "basis": rate.get("basis", ""),
                 "wilson": round(_wilson_lb(rate["rbi_games"], rate["games"]), 4),
                 "over_odds": c.get("over"), "under_odds": c.get("under"),
+                "book": _book_label(c.get("over_book") if pick == "OVER" else c.get("under_book")),
                 "batter_id": batter_id,
                 "recent_rbi_log": _recent_rbi_log(batter_id)}
 
@@ -1203,6 +1244,7 @@ def run_walks_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 "games": rate["games"], "basis": rate.get("basis", ""),
                 "wilson": round(_wilson_lb(rate["bb_games"], rate["games"]), 4),
                 "over_odds": c.get("over"), "under_odds": c.get("under"),
+                "book": _book_label(c.get("over_book") if pick == "OVER" else c.get("under_book")),
                 "batter_id": batter_id,
                 "recent_walks_log": _recent_walks_log(batter_id)}
 
@@ -1509,6 +1551,7 @@ def run_hrr_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 "wilson": round(_wilson_lb(vs["hrr_games"], vs["games"]), 4),
                 "hrr_over_odds": c.get("hrr_over_odds"),
                 "hrr_under_odds": c.get("hrr_under_odds"),
+                "book": _book_label(c.get("hrr_over_odds_book") if pick == "OVER" else c.get("hrr_under_odds_book")),
                 "batter_id": batter_id,
                 "recent_hrr_log": _recent_hrr_log(batter_id)}
 
@@ -1585,6 +1628,7 @@ def run_tb_over_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 "games": vs["games"], "basis": "vs opp",
                 "wilson": round(_wilson_lb(vs["tb_games"], vs["games"]), 4),
                 "tb_over_odds": c.get("tb_over_odds"),
+                "book": _book_label(c.get("tb_over_odds_book")),
                 "batter_id": batter_id,
                 "recent_tb_log": _recent_tb_log(batter_id)}
 
@@ -1654,6 +1698,7 @@ def run_tb_under_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 "games": rate["games"], "basis": rate.get("basis", ""),
                 "wilson": round(_wilson_lb(rate["tb_games"], rate["games"]), 4),
                 "tb_under_odds": c.get("tb_under_odds"),
+                "book": _book_label(c.get("tb_under_odds_book")),
                 "batter_id": batter_id,
                 "recent_tb_log": _recent_tb_log(batter_id)}
 
