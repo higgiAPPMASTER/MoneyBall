@@ -1141,7 +1141,8 @@ def run_pipeline(run_date: str, emit=None) -> dict:
 
     # ── Enrich top9 + also_ran with hit odds (0.5 line "to record a hit") ──
     try:
-        from under_picks import HIT_ODDS as _HIT_ODDS, _norm_name as _nn
+        from under_picks import (HIT_ODDS as _HIT_ODDS, HIT_ODDS_BOOK as _HIT_ODDS_BOOK,
+                                  _norm_name as _nn, _book_label as _hit_book_label)
         # Build last-name index for fallback (only use when unambiguous)
         _last_idx: dict = {}
         for _k, _v in _HIT_ODDS.items():
@@ -1179,7 +1180,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                 candidates.extend(_name_variants(p.get(field, "")))
             # 1. exact match on any variant
             for v in candidates:
-                if v in _HIT_ODDS: return _HIT_ODDS[v]
+                if v in _HIT_ODDS: return v
             # 2. unambiguous last-name fallback (skip common last names)
             seen_last = set()
             for v in candidates:
@@ -1188,11 +1189,15 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                 if not last or last in seen_last: continue
                 seen_last.add(last)
                 matches = _last_idx.get(last, [])
-                if len(matches) == 1: return matches[0][1]
+                if len(matches) == 1: return matches[0][0]
             return None
 
         for _p in top9 + also_ran:
-            _p["hit_odds"] = _lookup_odds(_p)
+            # Hit picks are always the "to record a hit" OVER on the 0.5 line, so the
+            # displayed-side book is whichever book posted that best price.
+            _mk = _lookup_odds(_p)
+            _p["hit_odds"] = _HIT_ODDS.get(_mk) if _mk else None
+            _p["book"]     = _hit_book_label(_HIT_ODDS_BOOK.get(_mk)) if _mk else ""
         emit({"type": "log", "msg": f"  ✅ Hit odds matched for {sum(1 for p in top9+also_ran if p.get('hit_odds') is not None)}/{len(top9)+len(also_ran)} picks"})
     except Exception as _exc:
         emit({"type": "log", "msg": f"⚠️ Hit odds enrichment skipped: {_exc}"})
@@ -1348,6 +1353,17 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         _xp["game_start"]    = _game_start_for(_xp.get("team", ""))
         _xp["series_splits"] = fetch_series_splits(_xp.get("batter_id"), _xp.get("opp", ""), run_date, _xp.get("side", ""))
 
+    # ── Batter Walks Picks (Batter Walks, Over/Under 0.5) ─────────────────
+    try:
+        from under_picks import run_walks_picks
+        walks_picks_list = run_walks_picks(run_date, team_schedule, emit=emit)
+    except Exception as exc:
+        emit({"type": "log", "msg": f"⚠️ Batter Walks picks skipped: {exc}"})
+        walks_picks_list = []
+    for _wp in walks_picks_list:
+        _wp["game_start"]    = _game_start_for(_wp.get("team", ""))
+        _wp["series_splits"] = fetch_series_splits(_wp.get("batter_id"), _wp.get("opp", ""), run_date, _wp.get("side", ""))
+
     # ── HRR Picks (Hits+Runs+RBI Over 1.5) ────────────────────────────────
     try:
         from under_picks import run_hrr_picks
@@ -1377,6 +1393,10 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                 _set_ev(p, p_over, over_am)
 
         for _p in rbi_picks_list:
+            _s = _p.get("score")
+            _ev_ou(_p, (_s / 100.0) if _s is not None else None,
+                   _p.get("over_odds"), _p.get("under_odds"))
+        for _p in walks_picks_list:
             _s = _p.get("score")
             _ev_ou(_p, (_s / 100.0) if _s is not None else None,
                    _p.get("over_odds"), _p.get("under_odds"))
@@ -1446,7 +1466,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     # onto it (Phase A), then a single combined Phase B re-ranks every category
     # (reorder only — qualification gates are never touched, so the same picks
     # appear, just in a different order). Either factor missing -> neutral 1.0.
-    _rr_targets = list(top9) + list(also_ran) + list(under_picks_list) + list(runs_picks_list) + list(tb_picks_list) + list(tb_over_picks_list) + list(rbi_picks_list) + list(hrr_picks_list)
+    _rr_targets = list(top9) + list(also_ran) + list(under_picks_list) + list(runs_picks_list) + list(tb_picks_list) + list(tb_over_picks_list) + list(rbi_picks_list) + list(walks_picks_list) + list(hrr_picks_list)
     _rr_targets += pitcher_k_result.get("picks", []) + pitcher_k_result.get("all", [])
     for _b in pitcher_props.values():
         _rr_targets += _b.get("picks", []) + _b.get("all", [])
@@ -1593,7 +1613,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     _nonhit_all = (
         under_picks_list + runs_picks_list +
         tb_picks_list + tb_over_picks_list +
-        rbi_picks_list + hrr_picks_list
+        rbi_picks_list + walks_picks_list + hrr_picks_list
     )
     _nh_enriched = 0
     for _np in _nonhit_all:
@@ -1680,6 +1700,17 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         -p.get("games", 0),
     ))
 
+    # Batter Walks 0.5: same signed-adj pattern as RBI.
+    walks_picks_list.sort(key=lambda p: (
+        0 if p.get("pick") == "OVER" else 1,
+        -((p.get("wilson", 0) * _offf(p))
+          + p.get("pitch_adj", 0) + p.get("lineup_adj", 0))
+        if p.get("pick") == "OVER"
+        else (p.get("score", 0) * _offf(p)
+              + p.get("pitch_adj", 0) + p.get("lineup_adj", 0)),
+        -p.get("games", 0),
+    ))
+
     # HRR 1.5: same signed-adj pattern as RBI.
     hrr_picks_list.sort(key=lambda p: (
         0 if p.get("pick") == "OVER" else 1,
@@ -1734,7 +1765,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     elapsed = round(time.time() - t_start, 1)
     result = {
         "date": run_date, "top9": top9, "also_ran": also_ran,
-        "under_picks": under_picks_list, "runs_picks": runs_picks_list, "tb_picks": tb_picks_list, "tb_over_picks": tb_over_picks_list, "rbi_picks": rbi_picks_list, "hrr_picks": hrr_picks_list,
+        "under_picks": under_picks_list, "runs_picks": runs_picks_list, "tb_picks": tb_picks_list, "tb_over_picks": tb_over_picks_list, "rbi_picks": rbi_picks_list, "walks_picks": walks_picks_list, "hrr_picks": hrr_picks_list,
         "all_qualified": era_qualified,
         "dq_s1_s3": [x for x in results if x["dq"] and x not in dn_dq and x not in era_dq and x not in dq_lineup and x not in s4_dq],
         "dq_step4": dn_dq, "dq_step5": era_dq, "dq_lineup": dq_lineup, "dq_s4": s4_dq, "pitcher_k": pitcher_k_result,
@@ -1746,6 +1777,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                   "tb_count": len(tb_picks_list),
                   "tb_over_count": len(tb_over_picks_list),
                   "rbi_count": len(rbi_picks_list),
+                  "walks_count": len(walks_picks_list),
                   "hrr_count": len(hrr_picks_list),
                   "pitcher_k_count": len(pitcher_k_result.get("picks", [])),
                   "prop_counts": {m: len(b.get("picks", [])) for m, b in pitcher_props.items()},
