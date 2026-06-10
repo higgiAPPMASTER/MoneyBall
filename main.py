@@ -2846,7 +2846,7 @@ function _propBestCard(p, key, rank) {
   var sideLabel=p.side?`<span style="font-size:.62rem;background:rgba(255,255,255,.07);border-radius:4px;padding:1px 5px;color:#94a3b8">${p.homeRoad||p.side}</span>`:'';
   var oppLabel=p.opp?`<span style="font-size:.62rem;color:#64748b">vs ${p.opp}</span>`:'';
   var gapHtml=gapDisp?`<div style="margin-top:4px;font-size:.66rem;color:#fbbf24">${gapDisp}</div>`:'';
-  var oddsHtml=odds?`<div style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.85rem;margin-top:2px">${odds}</div>`:'';
+  var oddsHtml=odds?`<div style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.85rem;margin-top:2px">${odds}${_bookTag(p)}</div>`:'';
   var _propStatKey={pitcher_hits_allowed:'hits_allowed',pitcher_outs:'outs',pitcher_earned_runs:'earnedRuns',pitcher_walks:'walks'}[p.market]||'prop';
   var _propOdds=isOver?(p.over_odds!=null?p.over_odds:null):(p.under_odds!=null?p.under_odds:null);
   var rgbClr=p.market==='pitcher_hits_allowed'?'248,113,113':p.market==='pitcher_outs'?'167,139,250':'251,146,60';
@@ -4043,6 +4043,7 @@ function _xbaBadge(p){
     +parts.join('<span style="color:#475569"> &#183; </span>')+'</div>';
 }
 
+function _bookTag(p){ return (p&&p.book)?(' <span style="font-size:.62rem;color:#94a3b8;font-weight:600">'+p.book+'</span>'):''; }
 function _mlbCard(p, rank, dim) {
   const abbr = _mlbTeamAbbr(p.team);
   const teamLogo = abbr ? `https://a.espncdn.com/i/teamlogos/mlb/500/${abbr}.png` : '';
@@ -4090,7 +4091,7 @@ function _mlbCard(p, rank, dim) {
       ${p.blurb ? `<div style="margin-top:5px;font-size:.72rem;color:#94a3b8;line-height:1.5;font-style:italic">${p.blurb}</div>` : ''}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
         <span style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">Hit Odds</span>
-        <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odds}</span>
+        <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odds}${_bookTag(p)}</span>
       </div>
       ${_evBadge(p)}
       ${_xbaBadge(p)}
@@ -4146,7 +4147,7 @@ function _underCard(p, rank) {
       ${p.under_basis==='vs-ace'?`<div style="margin-top:6px;font-size:.7rem;color:#fca5a5;background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.35);border-radius:6px;padding:3px 7px">🔥 Facing top-30 ERA ace${p.ace_era!=null?' · '+(+p.ace_era).toFixed(2)+' ERA':''}</div>`:''}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
         <span style="font-size:.8rem;color:#ff8a65;font-weight:800">U 1.5 Hits</span>
-        <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${uOdds}</span>
+        <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${uOdds}${_bookTag(p)}</span>
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
         <span style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">U 1.5 Total Bases</span>
@@ -4227,7 +4228,7 @@ function _runsCard(p, rank, pfx) {
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
         <span style="font-size:.8rem;color:${pickClr};font-weight:900">${p.pick} ${p.line!=null?p.line:0.5} Runs</span>
-        <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}</span>
+        <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}${_bookTag(p)}</span>
       </div>
       <div style="margin-top:5px;display:flex;align-items:center;gap:5px"><span style="font-size:.6rem;color:#475569">day trend</span>${_dowChip('runs',p.pick)}</div>
       ${_evBadge(p)}
@@ -4284,7 +4285,7 @@ function _rbiCard(p, rank, pfx) {
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
         <span style="font-size:.8rem;color:${pickClr};font-weight:900">${p.pick} ${p.line!=null?p.line:0.5} RBI</span>
-        <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}</span>
+        <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}${_bookTag(p)}</span>
       </div>
       <div style="margin-top:5px;display:flex;align-items:center;gap:5px"><span style="font-size:.6rem;color:#475569">day trend</span>${_dowChip('rbi',p.pick)}</div>
       ${_evBadge(p)}
@@ -4386,7 +4387,7 @@ function _walksCard(p, rank, pfx) {
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
         <span style="font-size:.8rem;color:${pickClr};font-weight:900">${p.pick} ${p.line!=null?p.line:0.5} Walks</span>
-        <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}</span>
+        <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}${_bookTag(p)}</span>
       </div>
       ${_evBadge(p)}
       ${adminStats}
@@ -4483,7 +4484,7 @@ function _tbCard(p, rank) {
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
         <span style="font-size:.8rem;color:#a78bfa;font-weight:900">UNDER 1.5 Total Bases</span>
-        <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}</span>
+        <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}${_bookTag(p)}</span>
       </div>
       <div style="margin-top:5px;display:flex;align-items:center;gap:5px"><span style="font-size:.6rem;color:#475569">day trend</span>${_dowChip('tb_under','UNDER')}</div>
       ${adminStats}
@@ -4535,7 +4536,7 @@ function _tbOverCard(p, rank) {
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
         <span style="font-size:.8rem;color:#4ade80;font-weight:900">OVER 1.5 Total Bases</span>
-        <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}</span>
+        <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}${_bookTag(p)}</span>
       </div>
       <div style="margin-top:5px;display:flex;align-items:center;gap:5px"><span style="font-size:.6rem;color:#475569">day trend</span>${_dowChip('tb_over','OVER')}</div>
       ${_evBadge(p)}
@@ -4730,7 +4731,7 @@ function _top10Card(p, rank) {
       +'</div>'
       +'<div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">'
         +'<span style="font-size:.8rem;color:'+kc+';font-weight:900">'+label+'</span>'
-        +'<span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">'+odDisp+'</span>'
+        +'<span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">'+odDisp+_bookTag(p)+'</span>'
       +'</div>'
       +'<div class="admin-only" style="display:none;font-size:.72rem;color:#64748b;margin-top:4px">EV <strong style="color:#facc15">'+ev+'</strong></div>'
     +'</div>'
@@ -4787,7 +4788,7 @@ function _hrrCard(p, rank, pfx) {
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
         <span style="font-size:.8rem;color:${pickClr};font-weight:900">${isOver?'OVER':'UNDER'} 1.5 H+R+RBI</span>
-        <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}</span>
+        <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}${_bookTag(p)}</span>
       </div>
       ${_evBadge(p)}
       ${adminStats}
@@ -4924,7 +4925,7 @@ function _pitcherCard(p, rank, keyPfx) {
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:3px">
         <span style="font-size:.72rem;color:#64748b">${hasProj?('Proj '+projDisp+' · blend '+blDisp):('Blend '+blDisp)}</span>
-        <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.9rem">${odds||'—'}</span>
+        <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.9rem">${odds||'—'}${_bookTag(p)}</span>
       </div>
       ${hasProj?`<div style="margin-top:2px;font-size:.62rem;color:#475569">${factTxt}</div>`:''}
       <div style="margin-top:5px;font-size:.68rem;color:#94a3b8;line-height:1.6">K <strong style="color:#cbd5e1">${p.avg_k!=null?p.avg_k:'—'}</strong> · H <strong style="color:#cbd5e1">${p.avg_hits!=null?p.avg_hits:'—'}</strong> · ER <strong style="color:#cbd5e1">${p.avg_er!=null?p.avg_er:'—'}</strong> · Outs <strong style="color:#cbd5e1">${p.avg_outs!=null?p.avg_outs:'—'}</strong> · BB <strong style="color:#cbd5e1">${p.avg_bb!=null?p.avg_bb:'—'}</strong> · IP <strong style="color:#cbd5e1">${p.avg_ip!=null?p.avg_ip:'—'}</strong> · ERA <strong style="color:#cbd5e1">${p.era||'—'}</strong> <span style="color:#64748b">vr opp</span></div>
