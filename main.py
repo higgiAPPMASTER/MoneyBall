@@ -1965,12 +1965,13 @@ _HTML = """
         (function(){
           var DAY_TO_SLOT=[3,1,2,3,4,5,2];
           var SLOTS=[null,
-            {name:\'Game 1\',label:\'Series Opener\',bat:[\'U\',\'U\',\'U\',\'U\',\'U\'],pit:[\'O\',\'U\',\'O\',\'U\',\'U\']},
-            {name:\'Game 2\',label:\'Mid-Series\',bat:[\'O\',\'O\',\'O\',\'O\',\'O\'],pit:[\'U\',\'O\',\'O\',\'O\',\'O\']},
-            {name:\'Game 3\',label:\'Late Series\',bat:[\'O\',\'O\',\'O\',\'O\',\'O\'],pit:[\'U\',\'O\',\'U\',\'O\',\'O\']},
-            {name:\'Getaway Day\',label:\'Travel Day Game\',bat:[\'U\',\'U\',\'U\',\'U\',\'U\'],pit:[\'U\',\'U\',\'U\',\'O\',\'U\']},
-            {name:\'Friday Night\',label:\'Weekend Opener\',bat:[\'O\',\'O\',\'O\',\'O\',\'O\'],pit:[\'O\',\'U\',\'O\',\'U\',\'U\']}
+            {name:\'Game 1\',label:\'Series Opener\',bat:[\'U\',\'U\',\'U\',\'U\',\'U\',\'U\'],pit:[\'O\',\'U\',\'O\',\'U\',\'U\']},
+            {name:\'Game 2\',label:\'Mid-Series\',bat:[\'O\',\'O\',\'O\',\'O\',\'O\',\'O\'],pit:[\'U\',\'O\',\'O\',\'O\',\'O\']},
+            {name:\'Game 3\',label:\'Late Series\',bat:[\'O\',\'O\',\'O\',\'O\',\'O\',\'O\'],pit:[\'U\',\'O\',\'U\',\'O\',\'O\']},
+            {name:\'Getaway Day\',label:\'Travel Day Game\',bat:[\'U\',\'U\',\'U\',\'U\',\'U\',\'U\'],pit:[\'U\',\'U\',\'U\',\'O\',\'U\']},
+            {name:\'Friday Night\',label:\'Weekend Opener\',bat:[\'O\',\'O\',\'O\',\'O\',\'O\',\'U\'],pit:[\'O\',\'U\',\'O\',\'U\',\'U\']}
           ];
+          window.__MPA_SLOTS__=SLOTS;
           var d=new Date().getDay();
           var slot=DAY_TO_SLOT[d]||1;
           var s=SLOTS[slot];
@@ -1979,7 +1980,7 @@ _HTML = """
           if(el&&tx){
             el.style.display=\'block\';
             tx.innerHTML=s.name+\' \u2014 \'+s.label
-              +\'<br><span style="color:#94a3b8">Batters:</span> Hits \'+oc(s.bat[0])+\' \u00b7 TB \'+oc(s.bat[1])+\' \u00b7 HRR \'+oc(s.bat[2])+\' \u00b7 Runs \'+oc(s.bat[3])+\' \u00b7 RBI \'+oc(s.bat[4])
+              +\'<br><span style="color:#94a3b8">Batters:</span> Hits \'+oc(s.bat[0])+\' \u00b7 TB \'+oc(s.bat[1])+\' \u00b7 HRR \'+oc(s.bat[2])+\' \u00b7 Runs \'+oc(s.bat[3])+\' \u00b7 RBI \'+oc(s.bat[4])+\' \u00b7 Walks \'+oc(s.bat[5])
               +\'<br><span style="color:#94a3b8">Pitchers:</span> K \'+oc(s.pit[0])+\' \u00b7 Hits Allowed \'+oc(s.pit[1])+\' \u00b7 Outs \'+oc(s.pit[2])+\' \u00b7 ER \'+oc(s.pit[3])+\' \u00b7 BB \'+oc(s.pit[4]);
           }
           document.querySelectorAll(\'[data-slot]\').forEach(function(tr){
@@ -1997,11 +1998,12 @@ _HTML = """
             <thead>
               <tr style="border-bottom:2px solid #1e293b">
                 <th style="text-align:left;padding:7px 8px;color:#94a3b8;font-size:.62rem;letter-spacing:.06em;white-space:nowrap;font-weight:700;width:9%">GAME SLOT</th>
-                <th style="text-align:left;padding:7px 8px;color:#4ade80;font-size:.62rem;letter-spacing:.06em;font-weight:700;width:18%">&#9918; HITS<br><span style="color:#64748b;font-weight:400">O/U 0.5</span></th>
-                <th style="text-align:left;padding:7px 8px;color:#a78bfa;font-size:.62rem;letter-spacing:.06em;font-weight:700;width:18%">&#128995; TOTAL BASES<br><span style="color:#64748b;font-weight:400">O/U 1.5</span></th>
-                <th style="text-align:left;padding:7px 8px;color:#fb923c;font-size:.62rem;letter-spacing:.06em;font-weight:700;width:18%">&#128293; HRR &middot; H+R+RBI<br><span style="color:#64748b;font-weight:400">O/U 1.5</span></th>
-                <th style="text-align:left;padding:7px 8px;color:#60a5fa;font-size:.62rem;letter-spacing:.06em;font-weight:700;width:18%">&#128309; RUNS SCORED<br><span style="color:#64748b;font-weight:400">O/U 0.5</span></th>
-                <th style="text-align:left;padding:7px 8px;color:#fbbf24;font-size:.62rem;letter-spacing:.06em;font-weight:700;width:19%">&#128993; RBIs RECORDED<br><span style="color:#64748b;font-weight:400">O/U 0.5</span></th>
+                <th style="text-align:left;padding:7px 8px;color:#4ade80;font-size:.62rem;letter-spacing:.06em;font-weight:700;width:15%">&#9918; HITS<br><span style="color:#64748b;font-weight:400">O/U 0.5</span></th>
+                <th style="text-align:left;padding:7px 8px;color:#a78bfa;font-size:.62rem;letter-spacing:.06em;font-weight:700;width:15%">&#128995; TOTAL BASES<br><span style="color:#64748b;font-weight:400">O/U 1.5</span></th>
+                <th style="text-align:left;padding:7px 8px;color:#fb923c;font-size:.62rem;letter-spacing:.06em;font-weight:700;width:15%">&#128293; HRR &middot; H+R+RBI<br><span style="color:#64748b;font-weight:400">O/U 1.5</span></th>
+                <th style="text-align:left;padding:7px 8px;color:#60a5fa;font-size:.62rem;letter-spacing:.06em;font-weight:700;width:15%">&#128309; RUNS SCORED<br><span style="color:#64748b;font-weight:400">O/U 0.5</span></th>
+                <th style="text-align:left;padding:7px 8px;color:#fbbf24;font-size:.62rem;letter-spacing:.06em;font-weight:700;width:15%">&#128993; RBIs RECORDED<br><span style="color:#64748b;font-weight:400">O/U 0.5</span></th>
+                <th style="text-align:left;padding:7px 8px;color:#34d399;font-size:.62rem;letter-spacing:.06em;font-weight:700;width:16%">&#128694; WALKS DRAWN<br><span style="color:#64748b;font-weight:400">O/U 0.5</span></th>
               </tr>
             </thead>
             <tbody>
@@ -2012,6 +2014,7 @@ _HTML = """
                 <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Hard to stack hits, runs, and RBIs against a fresh ace. All three are tough to hit in the first game of a series.</td>
                 <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Fewer baserunners means fewer runs. Top starters shut down the top of the lineup early in a series.</td>
                 <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> No runners on base means no RBI chances. Lean Under until hitters get a real look at the pitcher.</td>
+                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Aces pound the zone with sharp command. Hitters rarely draw a free pass against a fresh top starter.</td>
               </tr>
               <tr data-slot="2" style="border-bottom:1px solid #1e1e1e;background:rgba(255,255,255,.015)">
                 <td style="padding:8px 8px;color:#fbbf24;font-weight:700;white-space:nowrap;vertical-align:top">Game 2<br><span style="font-size:.66rem;color:#64748b;font-weight:400">Mid-Series</span></td>
@@ -2020,6 +2023,7 @@ _HTML = """
                 <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> More hits means more runs and RBIs. Game 2 is the sweet spot for multi-stat combo props.</td>
                 <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> A tired bullpen from Game 1 leaks runs late. Hitters cash in more often as the series goes on.</td>
                 <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Middle-of-the-order bats find their rhythm. Runners score at a higher clip in the second game.</td>
+                <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> The No. 2-3 starter has shakier command. Hitters work deeper counts and draw more walks in Game 2.</td>
               </tr>
               <tr data-slot="3" style="border-bottom:1px solid #1e1e1e">
                 <td style="padding:8px 8px;color:#f87171;font-weight:700;white-space:nowrap;vertical-align:top">Game 3<br><span style="font-size:.66rem;color:#64748b;font-weight:400">Late Series</span></td>
@@ -2028,6 +2032,7 @@ _HTML = """
                 <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> All three stats trend up against the weakest starter. Strong play for hits, runs, and RBI props in Game 3.</td>
                 <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Deep counts and walks fill the bases. Runs score easily against a tiring rotation in the late games of a series.</td>
                 <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Cleanup spots feast on weak starters. Target RBI props for hitters batting 3rd through 5th in Game 3.</td>
+                <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Back-end starters lose the zone as pitch counts climb. Walks drawn pile up against the weakest arm.</td>
               </tr>
               <tr data-slot="4" style="border-bottom:1px solid #1e1e1e;background:rgba(255,255,255,.015)">
                 <td style="padding:8px 8px;color:#94a3b8;font-weight:700;white-space:nowrap;vertical-align:top">Getaway Day<br><span style="font-size:.66rem;color:#64748b;font-weight:400">Travel Day Game</span></td>
@@ -2036,6 +2041,7 @@ _HTML = """
                 <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Fast games and early outs — hard to stack stats when everyone wants to get home.</td>
                 <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Managers rest key players to save them for the next series. Fewer quality bats means fewer runs scored.</td>
                 <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Shortened lineups and early substitutions kill RBI chances. Lean Under on individual RBI props on getaway days.</td>
+                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Hitters hack early to get the game over with. Fewer deep counts means fewer walks drawn on getaway days.</td>
               </tr>
               <tr data-slot="5">
                 <td style="padding:8px 8px;color:#c4b5fd;font-weight:700;white-space:nowrap;vertical-align:top">Friday Night<br><span style="font-size:.66rem;color:#64748b;font-weight:400">Weekend Opener</span></td>
@@ -2044,6 +2050,7 @@ _HTML = """
                 <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> High-energy Friday night parks push all three stats higher. Good night for multi-stat combination plays.</td>
                 <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Hot home lineups come out swinging on Friday nights. Run totals spike — lean Over on runs scored.</td>
                 <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Target hitters in the 3-5 spots on Friday nights, especially in hitter-friendly parks with a weaker visiting starter.</td>
+                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> The weekend ace is on full rest with peak command. Free passes stay scarce on Friday nights.</td>
               </tr>
             </tbody>
           </table>
@@ -2849,6 +2856,7 @@ function _propBestCard(p, key, rank) {
         <div style="width:26px;height:26px;border-radius:50%;background:${clr};color:#000;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.78rem">${rank}</div>
         ${_mlbHead(p.pid)}
         <span style="font-size:.62rem;letter-spacing:.1em;color:${clr};font-weight:800">${String(p.label||p.market||'PROP').toUpperCase()}</span>
+        ${_seriesTag(p,(isOver?'O':'U'),true,({pitcher_hits_allowed:1,pitcher_outs:2,pitcher_earned_runs:3,pitcher_walks:4}[p.market]))}
       </div>
       ${teamLogo?`<img src="${teamLogo}" alt="${p.team||''}" style="height:30px;width:30px;object-fit:contain" onerror="this.style.display='none'"/>`:''}
     </div>
@@ -3933,6 +3941,27 @@ function _seriesBadge(p){
   var clr=pos===1?'#34d399':pos===2?'#fbbf24':'#f87171';
   return '<span style="font-size:.62rem;font-weight:900;padding:2px 6px;border-radius:4px;background:'+bg+';color:'+clr+';letter-spacing:.06em">'+lbl+'</span>';
 }
+function _slotDot(p, side, isPit, catIdx){
+  var ss=p&&p.series_splits; if(!ss) return '';
+  var pos=ss.today_pos||0; if(!pos) return '';
+  var slots=window.__MPA_SLOTS__; if(!slots||!slots[pos]) return '';
+  var arr=isPit?slots[pos].pit:slots[pos].bat;
+  if(!arr||catIdx==null||arr[catIdx]==null) return '';
+  var lean=arr[catIdx];
+  var agree=(lean===side);
+  var clr=agree?'#22c55e':'#ef4444';
+  var glow=agree?'rgba(34,197,94,.75)':'rgba(239,68,68,.75)';
+  var g=pos===1?'G1':pos===2?'G2':'G3';
+  var leanTxt=lean==='O'?'Over':'Under';
+  var sideTxt=side==='O'?'Over':'Under';
+  var tip=agree
+    ?(g+' chart leans '+leanTxt+' \u2014 matches this '+sideTxt+' pick. Good spot to play today.')
+    :(g+' chart leans '+leanTxt+' \u2014 opposite this '+sideTxt+' pick. Chart says fade today.');
+  return '<span title="'+tip+'" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:'+clr+';box-shadow:0 0 5px '+glow+';margin-left:5px;vertical-align:middle"></span>';
+}
+function _seriesTag(p, side, isPit, catIdx){
+  return _seriesBadge(p)+_slotDot(p, side, isPit, catIdx);
+}
 function _platoonChip(p) {
   var pl = p && p.platoon;
   if (!pl || !pl.bat_hand || !pl.pit_hand) return '';
@@ -4067,7 +4096,7 @@ function _mlbCard(p, rank, dim) {
         <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
         ${_mlbHead(p.player_id)}
         <span style="font-size:.72rem;letter-spacing:.12em;color:#f59e0b;font-weight:800">MLB · ${p.pos||''}</span>
-        ${_seriesBadge(p)}
+        ${_seriesTag(p,'O',false,0)}
       </div>
       ${teamLogo?`<img src="${teamLogo}" alt="${p.team}" style="height:34px;width:34px;object-fit:contain" onerror="this.style.display='none'"/>`:''}
     </div>
@@ -4124,7 +4153,7 @@ function _underCard(p, rank) {
         <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
         ${_mlbHead(p.batter_id)}
         <span style="font-size:.72rem;letter-spacing:.12em;color:#ff8a65;font-weight:800">MLB · UNDER</span>
-        ${_seriesBadge(p)}
+        ${_seriesTag(p,'U',false,0)}
       </div>
       ${teamLogo?`<img src="${teamLogo}" alt="${p.team}" style="height:34px;width:34px;object-fit:contain" onerror="this.style.display='none'"/>`:''}
     </div>
@@ -4203,6 +4232,7 @@ function _runsCard(p, rank, pfx) {
         <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
         ${_mlbHead(p.batter_id)}
         <span style="font-size:.72rem;letter-spacing:.12em;color:#60a5fa;font-weight:800">MLB · RUN</span>
+        ${_seriesTag(p,(p.pick==='OVER'?'O':'U'),false,3)}
       </div>
       ${teamLogo?`<img src="${teamLogo}" alt="${p.team}" style="height:34px;width:34px;object-fit:contain" onerror="this.style.display='none'"/>`:''}
     </div>
@@ -4259,6 +4289,7 @@ function _rbiCard(p, rank, pfx) {
         <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
         ${_mlbHead(p.batter_id)}
         <span style="font-size:.72rem;letter-spacing:.12em;color:#f59e0b;font-weight:800">MLB · RBI</span>
+        ${_seriesTag(p,(p.pick==='OVER'?'O':'U'),false,4)}
       </div>
       ${teamLogo?`<img src="${teamLogo}" alt="${p.team}" style="height:34px;width:34px;object-fit:contain" onerror="this.style.display='none'"/>`:''}
     </div>
@@ -4360,6 +4391,7 @@ function _walksCard(p, rank, pfx) {
         <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
         ${_mlbHead(p.batter_id)}
         <span style="font-size:.72rem;letter-spacing:.12em;color:#34d399;font-weight:800">MLB · BB</span>
+        ${_seriesTag(p,(p.pick==='OVER'?'O':'U'),false,5)}
       </div>
       ${teamLogo?`<img src="${teamLogo}" alt="${p.team}" style="height:34px;width:34px;object-fit:contain" onerror="this.style.display='none'"/>`:''}
     </div>
@@ -4457,6 +4489,7 @@ function _tbCard(p, rank) {
         <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
         ${_mlbHead(p.batter_id)}
         <span style="font-size:.72rem;letter-spacing:.12em;color:#a78bfa;font-weight:800">MLB · TB</span>
+        ${_seriesTag(p,'U',false,1)}
       </div>
       ${teamLogo?`<img src="${teamLogo}" alt="${p.team}" style="height:34px;width:34px;object-fit:contain" onerror="this.style.display='none'"/>`:''}
     </div>
@@ -4508,6 +4541,7 @@ function _tbOverCard(p, rank) {
         <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
         ${_mlbHead(p.batter_id)}
         <span style="font-size:.72rem;letter-spacing:.12em;color:#4ade80;font-weight:800">MLB · TBO</span>
+        ${_seriesTag(p,'O',false,1)}
       </div>
       ${teamLogo?`<img src="${teamLogo}" alt="${p.team}" style="height:34px;width:34px;object-fit:contain" onerror="this.style.display='none'"/>`:''}
     </div>
@@ -4710,7 +4744,7 @@ function _top10Card(p, rank) {
         +'<div style="width:30px;height:30px;border-radius:50%;background:'+rnkColors[0]+';color:'+rnkColors[1]+';display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">'+rank+'</div>'
         +(p.batter_id?_mlbHead(p.batter_id):'')
         +'<span style="font-size:.66rem;letter-spacing:.1em;background:'+kc+';color:#000;padding:2px 6px;border-radius:4px;font-weight:900">'+_t10KindBadge(kind)+'</span>'
-        +_seriesBadge(p)
+        +_seriesTag(p,'O',false,0)
       +'</div>'
       +(teamLogo?'<img src="'+teamLogo+'" alt="'+(p.team||'')+'" style="height:34px;width:34px;object-fit:contain" onerror="this.style.display=\\'none\\'"/>':'')
     +'</div>'
@@ -4761,6 +4795,7 @@ function _hrrCard(p, rank, pfx) {
         <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
         ${_mlbHead(p.batter_id)}
         <span style="font-size:.72rem;letter-spacing:.12em;color:#fb923c;font-weight:800">MLB · HRR</span>
+        ${_seriesTag(p,(isOver?'O':'U'),false,2)}
       </div>
       ${teamLogo?`<img src="${teamLogo}" alt="${p.team}" style="height:34px;width:34px;object-fit:contain" onerror="this.style.display='none'"/>`:''}
     </div>
@@ -4901,6 +4936,7 @@ function _pitcherCard(p, rank, keyPfx) {
         <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
         ${_mlbHead(p.pid)}
         <span style="font-size:.72rem;letter-spacing:.12em;color:#63cab7;font-weight:800">MLB · P</span>
+        ${_seriesTag(p,((p.sugg_line!=null||p.pick==='OVER')?'O':'U'),true,0)}
       </div>
       ${teamLogo?`<img src="${teamLogo}" alt="${p.team}" style="height:34px;width:34px;object-fit:contain" onerror="this.style.display='none'"/>`:''}
     </div>
