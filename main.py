@@ -1132,21 +1132,26 @@ def _update_track_ledger() -> dict:
 # settles from box scores by player name, so it grades even after that date's
 # pick-cache file is gone.
 _BET_LOG_PATH = os.path.join(_CACHE_DIR, "_bet_log.json")
+# Bets persist in the working mpa_track_ledger jsonb `detail` column. The
+# mpa_bet_log table's flat columns can't hold a full bet (name/team/stat_label
+# /profit/settled_at) or a parlay's nested legs, so writes there 409/400 and
+# silently drop. One row holds the entire {email: [bets]} dict under a sentinel
+# date that never collides with real dated rows; category="__bets__" + locked
+# False keep it out of the W/L read (_load_ledger requires locked=true) and the
+# __detail__/__picks__ reads.
+_BETS_CAT = "__bets__"
+_BETS_DATE = "2000-01-01"
 _BET_LOCK = _trk_threading.Lock()
 _BET_STAT_KEYS = ("hits", "runs", "total_bases", "rbi", "walks_bat", "hrr", "strikeOuts", "hits_allowed", "outs", "earnedRuns", "walks")
 _BET_PITCH_STATS = ("strikeOuts", "hits_allowed", "outs", "earnedRuns", "walks")
 
 def _load_bets() -> dict:
     if _SB_URL and _SB_KEY:
-        rows = _sb_get("mpa_bet_log", {"app": "eq.mlb", "order": "logged_at.asc"})
+        rows = _sb_get("mpa_track_ledger", {
+            "app": "eq.mlb", "category": f"eq.{_BETS_CAT}", "side": "eq.ALL",
+            "date": f"eq.{_BETS_DATE}", "select": "detail", "limit": "1"})
         if rows is not None:
-            data: dict = {}
-            for r in rows:
-                email = r.pop("email", "__admin__")
-                r.pop("app", None)
-                r.pop("logged_at", None)
-                data.setdefault(email, []).append(r)
-            return data
+            return (rows[0].get("detail") or {}) if rows else {}
     try:
         with open(_BET_LOG_PATH) as f:
             return json.load(f)
@@ -1155,11 +1160,11 @@ def _load_bets() -> dict:
 
 def _save_bets(data: dict):
     if _SB_URL and _SB_KEY:
-        rows = []
-        for email, bets in data.items():
-            for b in bets:
-                rows.append({**b, "email": email, "app": "mlb"})
-        _sb_upsert("mpa_bet_log", rows)
+        import datetime as _dt
+        row = {"app": "mlb", "date": _BETS_DATE, "category": _BETS_CAT,
+               "side": "ALL", "wins": 0, "losses": 0, "locked": False,
+               "locked_at": _dt.datetime.utcnow().isoformat() + "Z", "detail": data}
+        _sb_upsert("mpa_track_ledger", [row], on_conflict="app,date,category,side")
         return
     try:
         tmp = f"{_BET_LOG_PATH}.{os.getpid()}.tmp"
@@ -1516,16 +1521,13 @@ async def delete_bet(bet_id: str, request: Request, token: str = "", admin: str 
     if not _bet_admin_ok(tok, admin):
         raise HTTPException(status_code=403, detail="Admin only")
     with _BET_LOCK:
-        if _SB_URL and _SB_KEY:
-            _sb_delete("mpa_bet_log", {"id": f"eq.{bet_id}", "app": "eq.mlb"})
-        else:
-            data = _load_bets()
-            key = _bet_user_key(tok, admin)
-            bets = data.get(key, [])
-            new = [b for b in bets if b.get("id") != bet_id]
-            if len(new) != len(bets):
-                data[key] = new
-                _save_bets(data)
+        data = _load_bets()
+        key = _bet_user_key(tok, admin)
+        bets = data.get(key, [])
+        new = [b for b in bets if b.get("id") != bet_id]
+        if len(new) != len(bets):
+            data[key] = new
+            _save_bets(data)
     return {"ok": True}
 
 
@@ -1922,7 +1924,6 @@ _HTML = """
   <nav class="app-nav">
     <span class="app-nav-logo">Money<span> Picks</span> Arena</span>
     <div style="display:flex;gap:10px;align-items:center">
-      <button id="results-btn" onclick="checkResults()" title="Grade every pick for the selected date against final box scores" style="background:#1d4ed8;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">📊 Results</button>
       <button class="admin-only" id="track-btn" onclick="openTrackRecord()" title="All-time + daily Win/Loss record across every graded day, by category" style="background:#7c3aed;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">🏆 Track Record</button>
       <button class="admin-only" id="mybets-btn" onclick="openMyBets()" title="Your personal logged bets — click Get Results to grade against box scores" style="background:#4338ca;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">💰 My Bets</button>
       <button class="admin-only" onclick="_manualParlayForm()" title="Manually log a parlay — add legs one by one then save" style="background:#7e22ce;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">📋 Log Parlay</button>
@@ -5190,16 +5191,22 @@ async function openTrackRecord(){
   show('track-card');
   document.getElementById('track-card').scrollIntoView({behavior:'smooth',block:'start'});
   document.getElementById('track-spinner').classList.remove('hidden');
-  document.getElementById('track-alltime').innerHTML='';
-  document.getElementById('track-daily').innerHTML='';
+  document.getElementById('track-head').innerHTML='';
+  document.getElementById('track-body').innerHTML='';
+  var today=_trkTodayISO();
+  window.__TRK_TODAY__=today; window.__TRK_DAILY_DATE__=today;
+  window.__TRK_GRADE_CACHE__=window.__TRK_GRADE_CACHE__||{};
+  if(!window.__TRK_MONTH__) window.__TRK_MONTH__=today.slice(0,7);
   try{
-    var url='/api/track-record?token='+encodeURIComponent(tok)+(adm?('&admin='+encodeURIComponent(adm)):'');
-    var res=await fetch(url);
-    if(!res.ok){ var t=await res.text(); throw new Error(t); }
-    window.__TRACK__=await res.json();
+    var q='?token='+encodeURIComponent(tok)+(adm?('&admin='+encodeURIComponent(adm)):'');
+    var trP=fetch('/api/track-record'+q).then(function(r){ if(!r.ok) return r.text().then(function(t){ throw new Error(t); }); return r.json(); });
+    var grP=fetch('/api/grade/'+today+q).then(function(r){ return r.ok?r.json():null; }).catch(function(){ return null; });
+    var arr=await Promise.all([trP,grP]);
+    window.__TRACK__=arr[0];
+    if(arr[1]) window.__TRK_GRADE_CACHE__[today]=arr[1];
     renderTrackRecord(window.__TRACK__);
   }catch(e){
-    document.getElementById('track-alltime').innerHTML='<p style="color:#f87171;padding:16px">'+(e.message||'Error loading track record')+'</p>';
+    document.getElementById('track-body').innerHTML='<p style="color:#f87171;padding:16px">'+(e.message||'Error loading track record')+'</p>';
   }finally{
     btn.disabled=false; btn.textContent=lbl;
     document.getElementById('track-spinner').classList.add('hidden');
@@ -5248,40 +5255,19 @@ function renderTrackRecord(d){
     'Pitcher Ks|OVER','Pitcher Ks|UNDER','Pitcher Hits Allowed|OVER','Pitcher Hits Allowed|UNDER',
     'Pitcher Outs|OVER','Pitcher Outs|UNDER','Pitcher Earned Runs|OVER','Pitcher Earned Runs|UNDER',
     'Pitcher Walks|OVER','Pitcher Walks|UNDER'];
-  // CSV needs the full per-category list (all cats, even 0-0).
-  var rowMap={}; rows.forEach(function(r){ rowMap[r.category+'|'+r.side]=r; });
-  var fullAll=[];
-  CAT_ORDER.forEach(function(key){
-    var parts=key.split('|');
-    var r=rowMap[key]||{category:parts[0],side:parts[1],wins:0,losses:0};
-    var cfg=CAT_CFG[key]||{lbl:r.category+' ('+r.side+')'};
-    fullAll.push({category:r.category,side:r.side,label:cfg.lbl,wins:r.wins,losses:r.losses});
-  });
-  window.__TRACK_ALLTIME_FULL__=fullAll;
   window.__TRK_CFG__=CAT_CFG; window.__TRK_ORDER__=CAT_ORDER;
-  // Single flat-bet box drives every $ figure below.
+  if(!window.__TRK_TAB__) window.__TRK_TAB__='daily';
+  if(!window.__TRK_MONTH__) window.__TRK_MONTH__=_trkTodayISO().slice(0,7);
+  var bet=(window.__TRK_BET__!=null?window.__TRK_BET__:20);
   var hdr='<div style="display:flex;flex-wrap:wrap;gap:14px;align-items:center;background:#0a1f14;border:1px solid #16432c;border-radius:12px;padding:14px 18px;margin-bottom:14px">'
     +'<span style="font-weight:800;color:#6ee7b7;font-size:1rem">💰 Bet amount $</span>'
-    +'<input id="trkBet" type="number" min="1" step="1" value="20" oninput="_trkRecalc()" style="width:104px;background:#020617;border:1px solid #334155;color:#fff;border-radius:8px;padding:8px 12px;font-size:1.05rem;font-weight:800;text-align:center">'
-    +'<span style="color:#94a3b8;font-size:.8rem">flat on every pick \u2014 change once, whole sheet recalculates</span>'
-    +'<div style="margin-left:auto;text-align:right">'
-      +'<div style="font-weight:700;font-size:.92rem">All-Time <span style="color:#4ade80;font-weight:900">'+tw+'W</span> <span style="color:#f87171;font-weight:900">'+tl+'L</span> <span style="color:'+_twColor(tw,tl)+'">('+_twPct(tw,tl)+')</span></div>'
-      +'<div id="trkNet" style="font-size:.83rem;color:#94a3b8"></div>'
-    +'</div></div>';
-  var bar='<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px">'
-    +'<span style="font-size:.78rem;color:#64748b">'+(d.days||0)+' day'+((d.days===1)?'':'s')+' graded \u00b7 top-10 picks per category \u00b7 Final games only</span>'
-    +'<span style="margin-left:auto;display:flex;gap:8px">'
-    +'<button onclick="downloadTrackAllTimeCSV()" style="background:#7c3aed;color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:.78rem;font-weight:600;cursor:pointer">\u2b07 All-Time CSV</button>'
-    +'<button onclick="downloadTrackDailyCSV()" style="background:#1d4ed8;color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:.78rem;font-weight:600;cursor:pointer">\u2b07 Daily CSV</button>'
-    +'<button onclick="downloadTrackEarningsCSV()" style="background:#16a34a;color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:.78rem;font-weight:700;cursor:pointer">\u2b07 Earnings CSV</button>'
-    +'</span></div>';
-  document.getElementById('track-alltime').innerHTML=hdr+bar
-    +'<div style="font-size:.82rem;color:#cbd5e1;font-weight:800;margin:2px 2px 8px">Categories \u2014 ranked best \u2192 worst to bet (at your stake)</div>'
-    +'<div id="trk-cats"></div>'
-    +'<div id="trk-clv" style="margin-top:22px"></div>'
-    +'<div id="trk-calib" style="margin-top:22px"></div>';
-  document.getElementById('track-daily').innerHTML='<div id="trk-daily"></div>';
-  _trkRecalc();
+    +'<input id="trkBet" type="number" min="1" step="1" value="'+bet+'" oninput="_trkBetInput()" style="width:104px;background:#020617;border:1px solid #334155;color:#fff;border-radius:8px;padding:8px 12px;font-size:1.05rem;font-weight:800;text-align:center">'
+    +'<span style="color:#94a3b8;font-size:.8rem">flat on every pick \u2014 drives every $ below</span>'
+    +'</div>';
+  var tabs='<div style="display:flex;gap:8px;margin-bottom:4px">'+_trkTabBtn('daily','Daily')+_trkTabBtn('weekly','Weekly')+_trkTabBtn('monthly','Monthly')+'</div>';
+  var he=document.getElementById('track-head'); if(he) he.innerHTML=hdr+tabs;
+  var be=document.getElementById('track-body'); if(be) be.innerHTML='';
+  _trkRenderActive();
 }
 
 // American-odds profit on a winning bet; a loss always costs the full stake.
@@ -5399,6 +5385,102 @@ function _trkRenderDaily(stake){
   var de=document.getElementById('trk-daily'); if(!de) return;
   de.innerHTML=daily.length?'<details open style="margin-top:0"><summary style="cursor:pointer;font-weight:700;color:#a78bfa;padding:10px 0;border-bottom:1px solid #1f2937">📅 Daily \u2014 every pick by category ('+daily.length+' day'+(daily.length===1?'':'s')+')</summary><div style="margin-top:6px">'+dayBlocks+'</div></details>':'';
 }
+// ===== Track Record tabs: Daily / Weekly (last 7 days) / Monthly =====
+var _TRK_KEYS=['hitter_overs','hitter_unders','runs','tb_under','tb_over','rbi','batter_walks','hrr','pitcher_ks','pitcher_props'];
+function _trkTodayISO(){ var dp=document.getElementById('date-picker'); if(dp&&dp.value) return dp.value; var d=new Date(); var z=d.getTimezoneOffset()*60000; return new Date(d.getTime()-z).toISOString().slice(0,10); }
+function _isoShift(iso,days){ var d=new Date(iso+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()+days); return d.toISOString().slice(0,10); }
+function _trkRC(w,n){ if(!n) return '#64748b'; var p=w/n; return p>=0.70?'#4ade80':(p>=0.55?'#facc15':'#f87171'); }
+function _trkBar(pct,clr){ return '<div style="height:8px;border-radius:4px;background:#1e293b;overflow:hidden;width:80px;display:inline-block;vertical-align:middle"><div style="height:100%;width:'+pct+'%;background:'+clr+';border-radius:4px"></div></div>'; }
+function _trkTabBtn(id,label){ var active=window.__TRK_TAB__===id; return '<button onclick="_trkTab(&#39;'+id+'&#39;)" style="background:'+(active?'#7c3aed':'#1e293b')+';color:'+(active?'#fff':'#cbd5e1')+';border:none;border-radius:8px;padding:8px 20px;font-size:.86rem;font-weight:800;cursor:pointer">'+label+'</button>'; }
+function _trkTab(t){ window.__TRK_BET__=_trkStake(); window.__TRK_TAB__=t; renderTrackRecord(window.__TRACK__); }
+function _trkBetInput(){ window.__TRK_BET__=_trkStake(); _trkRenderActive(); }
+function _trkRenderActive(){ var be=document.getElementById('track-body'); if(!be) return; var stake=_trkStake(); var t=window.__TRK_TAB__||'daily'; if(t==='daily') _trkRenderDailyTab(be,stake); else _trkRenderRangeTab(be,stake,t); }
+function _trkFlatten(g){ var out=[]; if(!g||g==='LOADING'||g.__error__) return out; _TRK_KEYS.forEach(function(k){ (g[k]||[]).forEach(function(r){ out.push(r); }); }); return out; }
+function _trkRangePool(from,to){ var d=window.__TRACK__||{}; var pool=[]; (d.detail||[]).forEach(function(r){ if(r.date>=from&&r.date<=to) pool.push(r); }); var today=window.__TRK_TODAY__||_trkTodayISO(); if(today>=from&&today<=to){ var has=(d.detail||[]).some(function(r){ return r.date===today; }); if(!has){ var g=(window.__TRK_GRADE_CACHE__||{})[today]; _trkFlatten(g).forEach(function(r){ if(r.result==='WIN'||r.result==='LOSS'){ var c={}; for(var kk in r) c[kk]=r[kk]; c.date=today; pool.push(c); } }); } } return pool; }
+function _trkAgg(pool,stake){ var cats={}, overall={w:0,l:0,net:0,counted:0,skipped:0}; pool.forEach(function(r){ if(_trkSkipMeta(r)) return; if(r.result!=='WIN'&&r.result!=='LOSS') return; var k=(r.category||'?')+'|'+(r.side||'OVER'); var c=cats[k]=cats[k]||{w:0,l:0,net:0,counted:0,skipped:0}; var win=r.result==='WIN'; if(win){c.w++;overall.w++;} else {c.l++;overall.l++;} var pl=_amProfit(r.odds,stake,win); if(pl===null){c.skipped++;overall.skipped++;} else {c.net+=pl;c.counted++;overall.net+=pl;overall.counted++;} }); return {cats:cats,overall:overall}; }
+async function _trkLoadDaily(date){ window.__TRK_DAILY_DATE__=date; window.__TRK_GRADE_CACHE__=window.__TRK_GRADE_CACHE__||{}; var cur=window.__TRK_GRADE_CACHE__[date]; if(cur&&cur!=='LOADING'){ _trkRenderActive(); return; } var tok=localStorage.getItem('__mpa_token')||localStorage.getItem('hub_token')||''; var adm=new URLSearchParams(location.search).get('admin')||''; window.__TRK_GRADE_CACHE__[date]='LOADING'; _trkRenderActive(); try{ var res=await fetch('/api/grade/'+date+'?token='+encodeURIComponent(tok)+(adm?('&admin='+encodeURIComponent(adm)):'')); if(!res.ok){ var t=await res.text(); window.__TRK_GRADE_CACHE__[date]={__error__:(t||'No picks for this date')}; } else { window.__TRK_GRADE_CACHE__[date]=await res.json(); } }catch(e){ window.__TRK_GRADE_CACHE__[date]={__error__:String((e&&e.message)||e)}; } _trkRenderActive(); }
+function _trkMonthShift(n){ window.__TRK_BET__=_trkStake(); var m=window.__TRK_MONTH__||_trkTodayISO().slice(0,7); var y=parseInt(m.slice(0,4),10), mo=parseInt(m.slice(5,7),10)-1+n; while(mo<0){mo+=12;y--;} while(mo>11){mo-=12;y++;} var nm=y+'-'+((mo+1)<10?'0':'')+(mo+1); var cur=_trkTodayISO().slice(0,7); if(nm>cur) nm=cur; window.__TRK_MONTH__=nm; _trkRenderActive(); }
+// Daily sub-view toggle: "By Category" (summary table) vs "Full List" (every pick + odds).
+function _trkDViewBtn(id,label){ var active=(window.__TRK_DVIEW__||'cat')===id; return '<button onclick="_trkDView(&#39;'+id+'&#39;)" style="background:'+(active?'#0e7490':'#1e293b')+';color:'+(active?'#fff':'#cbd5e1')+';border:none;border-radius:7px;padding:6px 14px;font-size:.78rem;font-weight:700;cursor:pointer">'+label+'</button>'; }
+function _trkDView(v){ window.__TRK_BET__=_trkStake(); window.__TRK_DVIEW__=v; _trkRenderActive(); }
+// Shared category-summary table (ranked best->worst) — used by the Daily "By Category"
+// view AND the Weekly/Monthly range tabs so all three render identically.
+function _trkCatTable(pool,stake,emptyMsg){
+  var CAT_CFG=window.__TRK_CFG__||{};
+  var ag=_trkAgg(pool,stake);
+  var arr=Object.keys(ag.cats).map(function(k){ var c=ag.cats[k]; c.roi=c.counted?c.net/(c.counted*stake)*100:null; return [k,c]; });
+  arr.sort(function(a,b){ var ra=a[1].counted?a[1].roi:-1e9, rb=b[1].counted?b[1].roi:-1e9; return rb-ra; });
+  var head='<div style="display:flex;align-items:center;padding:7px 12px;background:#0c1829;border-bottom:1px solid #1e293b"><span style="flex:1;min-width:140px;font-size:.66rem;color:#64748b;font-weight:700;text-transform:uppercase">Category</span><span style="width:64px;text-align:right;font-size:.66rem;color:#64748b;font-weight:700;text-transform:uppercase">Record</span><span style="width:90px;text-align:center;font-size:.66rem;color:#64748b;font-weight:700;text-transform:uppercase">Hit Rate</span><span style="width:80px;text-align:right;font-size:.66rem;color:#64748b;font-weight:700;text-transform:uppercase">Net P/L</span><span style="width:72px;text-align:right;font-size:.66rem;color:#64748b;font-weight:700;text-transform:uppercase">ROI</span></div>';
+  var body='';
+  arr.forEach(function(x){ var k=x[0], c=x[1], n=c.w+c.l; if(!n) return; var cfg=CAT_CFG[k]||{lbl:k.split('|').join(' '),icon:'📊'}; var clr=_trkRC(c.w,n), pct=Math.round(c.w/n*100); var hasRoi=c.counted>0, netClr=c.net>=0?'#4ade80':'#f87171'; body+='<div style="display:flex;align-items:center;padding:9px 12px;border-bottom:1px solid #131c2e"><span style="flex:1;min-width:140px;color:#e2e8f0;font-weight:600;font-size:.85rem">'+(cfg.icon||'')+' '+cfg.lbl+'</span><span style="width:64px;text-align:right;font-family:monospace;font-weight:800;color:'+clr+'">'+c.w+'/'+n+'</span><span style="width:90px;text-align:center">'+_trkBar(pct,clr)+'</span><span style="width:80px;text-align:right;font-family:monospace;font-weight:800;color:'+(hasRoi?netClr:'#475569')+'">'+(hasRoi?((c.net>=0?'+$':'\u2212$')+Math.abs(c.net).toFixed(0)):'\u2014')+'</span><span style="width:72px;text-align:right;font-family:monospace;font-weight:700;color:'+(hasRoi?(c.roi>=0?'#4ade80':'#f87171'):'#475569')+'">'+(hasRoi?((c.roi>=0?'+':'\u2212')+Math.abs(c.roi).toFixed(1)+'%'):'\u2014')+'</span></div>'; });
+  if(!body) body='<div style="color:#64748b;padding:16px;font-size:.83rem">'+(emptyMsg||'No graded picks in this range yet \u2014 fills in as slates go Final.')+'</div>';
+  return {html:'<div style="border:1px solid #1e293b;border-radius:12px;overflow:hidden">'+head+body+'</div>', overall:ag.overall};
+}
+function _trkRenderDailyTab(be,stake){
+  var date=window.__TRK_DAILY_DATE__||_trkTodayISO();
+  var cache=window.__TRK_GRADE_CACHE__=window.__TRK_GRADE_CACHE__||{};
+  var g=cache[date];
+  var CAT_CFG=window.__TRK_CFG__||{}, CAT_ORDER=window.__TRK_ORDER__||[];
+  var view=window.__TRK_DVIEW__||'cat';
+  var datesel='<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:12px"><label style="font-size:.82rem;color:#94a3b8">Day <input type="date" value="'+date+'" max="'+_trkTodayISO()+'" onchange="_trkLoadDaily(this.value)" style="margin-left:6px;background:#020617;border:1px solid #334155;color:#fff;border-radius:6px;padding:6px 8px;font-size:.82rem"></label><span style="display:flex;gap:6px;margin-left:auto">'+_trkDViewBtn('cat','By Category')+_trkDViewBtn('full','Full List')+'</span></div>';
+  if(g===undefined){ be.innerHTML=datesel+'<p style="color:#94a3b8;padding:12px">Loading\u2026</p>'; _trkLoadDaily(date); return; }
+  if(g==='LOADING'){ be.innerHTML=datesel+'<p style="color:#94a3b8;padding:12px">Loading\u2026</p>'; return; }
+  if(g&&g.__error__){ be.innerHTML=datesel+'<p style="color:#94a3b8;padding:12px">'+(g.__error__)+'</p>'; return; }
+  var rows=_trkFlatten(g);
+  if(!rows.length){ be.innerHTML=datesel+'<p style="color:#94a3b8;padding:12px">No picks recorded for '+date+'.</p>'; return; }
+  if(view==='cat'){
+    var cpool=rows.map(function(r){ var c={}; for(var ck in r) c[ck]=r[ck]; c.date=date; return c; });
+    var ct=_trkCatTable(cpool,stake,'No decided picks for this day yet \u2014 fills in as games go Final.');
+    var co=ct.overall, con=co.w+co.l, crisk=co.counted*stake, croi=crisk?co.net/crisk*100:0, cclr=co.net>=0?'#4ade80':'#f87171', cwclr=_trkRC(co.w,con);
+    var cpend=rows.filter(function(r){ return r.result!=='WIN'&&r.result!=='LOSS'; }).length;
+    var csum='<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;background:#0c1829;border:1px solid #1e293b;border-radius:12px;padding:12px 16px;margin-bottom:12px"><div style="font-weight:800"><span style="color:'+cwclr+'">'+co.w+'/'+con+'</span> <span style="color:#94a3b8;font-size:.8rem">('+(con?(co.w/con*100).toFixed(1):'0.0')+'%)</span>'+(cpend?' <span style="color:#94a3b8;font-size:.8rem">'+cpend+' pending</span>':'')+'</div><div style="font-size:.86rem">Net <span style="color:'+cclr+';font-weight:900">'+(co.net>=0?'+$':'\u2212$')+Math.abs(co.net).toFixed(0)+'</span> <span style="color:#64748b">\u00b7 ROI '+(croi>=0?'+':'\u2212')+Math.abs(croi).toFixed(1)+'% on $'+crisk.toFixed(0)+'</span></div><button onclick="downloadTrkDailyCSV()" style="margin-left:auto;background:#16a34a;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:.78rem;font-weight:700;cursor:pointer">\u2b07 CSV</button></div>';
+    be.innerHTML=datesel+csum+ct.html;
+    return;
+  }
+  var groups={}; rows.forEach(function(r){ var k=(r.category||'?')+'|'+(r.side||'OVER'); (groups[k]=groups[k]||[]).push(r); });
+  function _rank(k){ var i=CAT_ORDER.indexOf(k); return i<0?999:i; }
+  var keys=Object.keys(groups).sort(function(a,b){ return _rank(a)-_rank(b); });
+  var win=0,loss=0,pend=0,net=0,counted=0,body='';
+  keys.forEach(function(k){
+    var cfg=CAT_CFG[k]||{lbl:k.split('|').join(' '),icon:'📊'};
+    var picks=groups[k];
+    var gw=picks.filter(function(p){ return p.result==='WIN'; }).length;
+    var gn=picks.filter(function(p){ return p.result==='WIN'||p.result==='LOSS'; }).length;
+    var gclr=_trkRC(gw,gn);
+    body+='<div style="margin:12px 0 4px;font-weight:800;font-size:.83rem;color:#cbd5e1">'+(cfg.icon||'')+' '+cfg.lbl+' <span style="color:'+gclr+';font-family:monospace;font-weight:900">'+gw+'/'+gn+'</span></div>';
+    picks.forEach(function(p){
+      var rr=p.result;
+      var mk=rr==='WIN'?'<span style="color:#4ade80">\u2713</span>':(rr==='LOSS'?'<span style="color:#f87171">\u2717</span>':'<span style="color:#64748b">\u00b7</span>');
+      if(rr==='WIN')win++; else if(rr==='LOSS')loss++; else pend++;
+      var act=(p.actual!=null)?('<span style="color:#cbd5e1">\u2192 '+p.actual+(p.stat?(' '+p.stat):'')+'</span>'):'';
+      var odd=(p.odds!=null&&p.odds!=='')?('<span style="color:#64748b;font-family:monospace">'+((Number(p.odds)>0?'+':'')+p.odds)+'</span>'):'';
+      var plHtml,roiHtml='';
+      if(rr==='WIN'||rr==='LOSS'){ var pl=_amProfit(p.odds,stake,rr==='WIN'); if(pl===null){ plHtml='<span style="color:#475569;font-family:monospace">\u2014</span>'; } else { net+=pl; counted++; var c=pl>=0?'#4ade80':'#f87171', rp=pl/stake*100; plHtml='<span style="font-family:monospace;font-weight:800;color:'+c+'">'+(pl>=0?'+$':'\u2212$')+Math.abs(pl).toFixed(0)+'</span>'; roiHtml='<span style="font-family:monospace;font-weight:700;color:'+c+'">'+(rp>=0?'+':'\u2212')+Math.abs(rp).toFixed(0)+'%</span>'; } }
+      else { plHtml='<span style="color:#64748b;font-size:.72rem">pending</span>'; }
+      body+='<div style="display:flex;gap:8px;align-items:center;padding:2px 0 2px 6px;font-size:.79rem">'+mk+'<span style="color:#e2e8f0;min-width:130px">'+(p.name||'')+'</span><span style="color:#94a3b8;min-width:120px">'+(p.pick||'')+'</span>'+act+odd+'<span style="margin-left:auto;display:flex;gap:12px;align-items:center"><span style="min-width:52px;text-align:right">'+plHtml+'</span><span style="min-width:44px;text-align:right">'+roiHtml+'</span></span></div>';
+    });
+  });
+  var risk=counted*stake, roi=risk?net/risk*100:0, nclr=net>=0?'#4ade80':'#f87171';
+  var summary='<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;background:#0c1829;border:1px solid #1e293b;border-radius:12px;padding:12px 16px;margin-bottom:12px"><div style="font-weight:800"><span style="color:#4ade80">'+win+'W</span> <span style="color:#f87171">'+loss+'L</span>'+(pend?' <span style="color:#94a3b8;font-size:.82rem">'+pend+' pending</span>':'')+'</div><div style="font-size:.86rem">Net <span style="color:'+nclr+';font-weight:900">'+(net>=0?'+$':'\u2212$')+Math.abs(net).toFixed(0)+'</span> <span style="color:#64748b">\u00b7 ROI '+(roi>=0?'+':'\u2212')+Math.abs(roi).toFixed(1)+'% on $'+risk.toFixed(0)+'</span></div><button onclick="downloadTrkDailyCSV()" style="margin-left:auto;background:#16a34a;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:.78rem;font-weight:700;cursor:pointer">\u2b07 CSV</button></div>';
+  be.innerHTML=datesel+summary+body;
+}
+function _trkRenderRangeTab(be,stake,which){
+  var CAT_CFG=window.__TRK_CFG__||{};
+  var from,to,label,nav='';
+  if(which==='weekly'){ to=window.__TRK_TODAY__||_trkTodayISO(); from=_isoShift(to,-6); label='Last 7 days'; }
+  else { var m=window.__TRK_MONTH__||_trkTodayISO().slice(0,7); from=m+'-01'; to=m+'-31'; var mn=['January','February','March','April','May','June','July','August','September','October','November','December']; label=mn[parseInt(m.slice(5,7),10)-1]+' '+m.slice(0,4); var canNext=(m<_trkTodayISO().slice(0,7)); nav='<span style="display:flex;gap:6px;align-items:center;margin-left:10px"><button onclick="_trkMonthShift(-1)" style="background:#1e293b;color:#fff;border:none;border-radius:6px;padding:4px 11px;cursor:pointer;font-weight:800">\u25c0</button><button onclick="_trkMonthShift(1)"'+(canNext?'':' disabled')+' style="background:'+(canNext?'#1e293b':'#0f172a')+';color:'+(canNext?'#fff':'#475569')+';border:none;border-radius:6px;padding:4px 11px;cursor:'+(canNext?'pointer':'default')+';font-weight:800">\u25b6</button></span>'; }
+  var ct=_trkCatTable(_trkRangePool(from,to),stake);
+  var o=ct.overall, on=o.w+o.l, orisk=o.counted*stake, oroi=orisk?o.net/orisk*100:0, oclr=o.net>=0?'#4ade80':'#f87171', owclr=_trkRC(o.w,on);
+  var summary='<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;background:#0a1f14;border:1px solid #16432c;border-radius:12px;padding:12px 16px;margin-bottom:12px"><div style="font-weight:800;color:#6ee7b7;display:flex;align-items:center">'+label+nav+'</div><div style="margin-left:auto;text-align:right"><div style="font-weight:800;font-size:.92rem"><span style="color:'+owclr+'">'+o.w+'/'+on+'</span> <span style="color:#94a3b8;font-size:.8rem">('+(on?(o.w/on*100).toFixed(1):'0.0')+'%)</span></div><div style="font-size:.82rem">Net <span style="color:'+oclr+';font-weight:900">'+(o.net>=0?'+$':'\u2212$')+Math.abs(o.net).toFixed(0)+'</span> <span style="color:#64748b">\u00b7 ROI '+(oroi>=0?'+':'\u2212')+Math.abs(oroi).toFixed(1)+'% on $'+orisk.toFixed(0)+'</span></div></div></div>';
+  var csvBtn='<div style="display:flex;margin-top:10px"><button onclick="downloadTrkRangeCSV(&#39;'+which+'&#39;)" style="margin-left:auto;background:#16a34a;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:.78rem;font-weight:700;cursor:pointer">\u2b07 CSV</button></div>';
+  var html=summary+ct.html+csvBtn;
+  if(which==='monthly') html+='<div style="margin-top:20px;font-size:.74rem;color:#64748b;text-transform:uppercase;letter-spacing:.04em">Advanced (all-time)</div><div id="trk-clv" style="margin-top:8px"></div><div id="trk-calib" style="margin-top:22px"></div>';
+  be.innerHTML=html;
+  if(which==='monthly'){ _trkRenderCLV(); _trkRenderCalib(stake); }
+}
+function _trkDownloadCSV(out,fname){ var csv=out.map(function(row){ return row.map(_csvCell).join(','); }).join(String.fromCharCode(13)+String.fromCharCode(10)); var blob=new Blob([String.fromCharCode(65279)+csv],{type:'text/csv;charset=utf-8;'}); var url=URL.createObjectURL(blob); var a=document.createElement('a'); a.href=url; a.download=fname; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); }
+function downloadTrkDailyCSV(){ var date=window.__TRK_DAILY_DATE__||_trkTodayISO(); var g=(window.__TRK_GRADE_CACHE__||{})[date]; var rows=_trkFlatten(g); if(!rows.length){ alert('No picks to export for '+date+'.'); return; } var stake=_trkStake(); var out=[['Date','Category','Side','Player','Pick','Odds','Actual','Result','Bet','Profit/Loss']]; var net=0,counted=0; rows.forEach(function(r){ var dec=(r.result==='WIN'||r.result==='LOSS'); var pl=dec?_amProfit(r.odds,stake,r.result==='WIN'):null; var plStr=''; if(pl!==null){ plStr=pl.toFixed(2); net+=pl; counted++; } out.push([date,r.category||'',r.side||'',r.name||'',r.pick||'',(r.odds!=null&&r.odds!==''?((Number(r.odds)>0?'+':'')+r.odds):''),(r.actual!=null?r.actual:''),r.result||'pending',stake,plStr]); }); out.push([]); out.push(['','','','','','','','TOTALS ('+counted+' graded)',(counted*stake),net.toFixed(2)]); _trkDownloadCSV(out,'mlb-daily-'+date+'-flat'+stake+'.csv'); }
+function downloadTrkRangeCSV(which){ var stake=_trkStake(), from,to,tag; if(which==='weekly'){ to=window.__TRK_TODAY__||_trkTodayISO(); from=_isoShift(to,-6); tag='last7-'+from+'_'+to; } else { var m=window.__TRK_MONTH__||_trkTodayISO().slice(0,7); from=m+'-01'; to=m+'-31'; tag='month-'+m; } var ag=_trkAgg(_trkRangePool(from,to),stake); var CAT_CFG=window.__TRK_CFG__||{}; var arr=Object.keys(ag.cats).map(function(k){ var c=ag.cats[k]; c.roi=c.counted?c.net/(c.counted*stake)*100:null; return [k,c]; }); arr.sort(function(a,b){ var ra=a[1].counted?a[1].roi:-1e9, rb=b[1].counted?b[1].roi:-1e9; return rb-ra; }); if(!arr.length){ alert('No graded picks in this range yet.'); return; } var out=[['Range','Category','Side','Wins','Losses','Plays','Win%','Bet','Net P/L','ROI%']]; arr.forEach(function(x){ var k=x[0], c=x[1], n=c.w+c.l; if(!n) return; var parts=k.split('|'); out.push([from+'_'+to,(CAT_CFG[k]&&CAT_CFG[k].lbl)||parts[0],parts[1],c.w,c.l,n,(c.w/n*100).toFixed(1),stake,(c.counted?c.net.toFixed(2):''),(c.counted?c.roi.toFixed(1):'')]); }); var o=ag.overall, on=o.w+o.l; out.push([]); out.push([from+'_'+to,'OVERALL','',o.w,o.l,on,(on?(o.w/on*100).toFixed(1):'0.0'),stake,o.net.toFixed(2),(o.counted?(o.net/(o.counted*stake)*100).toFixed(1):'')]); _trkDownloadCSV(out,'mlb-'+tag+'-flat'+stake+'.csv'); }
 // American odds -> decimal payout multiplier (incl. stake). null if unpriceable.
 function _amDec(o){ if(o==null||o==='') return null; o=Number(o); if(!isFinite(o)||o===0) return null; return o>0?(1+o/100):(1+100/Math.abs(o)); }
 // Meta-ranking buckets duplicate the per-category picks — exclude them so CLV
@@ -6177,20 +6259,12 @@ function downloadMyBetsCSV(){
   document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
 }
 </script>
-<div id="grade-card" class="hidden space-y-6" style="max-width:960px;margin:0 auto 24px;padding:0 16px">
-  <div class="card p-6">
-    <div class="section-hdr" style="color:#60a5fa;margin-bottom:16px">📊 Today's Results</div>
-    <div id="grade-spinner" class="hidden" style="color:#94a3b8;font-size:.9rem;margin-bottom:12px;display:flex;align-items:center;gap:8px"><span class="spinner"></span> Fetching box scores…</div>
-    <div id="grade-summary"></div>
-    <div id="grade-body"></div>
-  </div>
-</div>
 <div id="track-card" class="hidden space-y-6" style="max-width:960px;margin:0 auto 24px;padding:0 16px">
   <div class="card p-6">
-    <div class="section-hdr" style="color:#a78bfa;margin-bottom:16px">🏆 Track Record — All-Time &amp; Daily</div>
+    <div class="section-hdr" style="color:#a78bfa;margin-bottom:16px">🏆 Track Record</div>
     <div id="track-spinner" class="hidden" style="color:#94a3b8;font-size:.9rem;margin-bottom:12px;display:flex;align-items:center;gap:8px"><span class="spinner"></span> Grading history…</div>
-    <div id="track-alltime"></div>
-    <div id="track-daily"></div>
+    <div id="track-head"></div>
+    <div id="track-body"></div>
   </div>
 </div>
 <div id="mybets-card" class="hidden space-y-6" style="max-width:960px;margin:0 auto 24px;padding:0 16px">
