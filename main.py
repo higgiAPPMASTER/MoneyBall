@@ -2863,7 +2863,6 @@ function _propBestCard(p, key, rank) {
       ${oddsHtml}
       ${hasPP?`<div style="margin-top:2px;font-size:.6rem;color:#475569">blend ${blendDisp} · hand x${ppf.hand!=null?ppf.hand:1} · whiff x${ppf.whiff!=null?ppf.whiff:1}</div>`:''}
       ${_veloBadge(p)}
-      <div style="margin-top:5px;display:flex;align-items:center;gap:5px"><span style="font-size:.6rem;color:#475569">day trend</span>${_dowChip(_propDowMkt,p.pick)}</div>
       ${p.market==='pitcher_walks'&&p.opp_bb_rank!=null?`<div style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap"><span style="font-size:.62rem;color:#94a3b8">Opp BB/G rank:</span><span style="font-size:.72rem;font-weight:800;color:#34d399">#${p.opp_bb_rank}<span style="color:#64748b;font-weight:400"> of ${p.opp_bb_total||30}</span></span><span style="font-size:.68rem;color:#cbd5e1;font-family:monospace">${p.opp_bb_pg!=null?p.opp_bb_pg+' BB/G':''}</span></div>`:''}
       ${_evBadge(p)}
     </div>
@@ -4094,7 +4093,6 @@ function _mlbCard(p, rank, dim) {
       </div>
       ${_evBadge(p)}
       ${_xbaBadge(p)}
-      <div style="margin-top:5px;display:flex;align-items:center;gap:5px"><span style="font-size:.6rem;color:#475569">day trend</span>${_dowChip('hits_over','OVER')}</div>
       ${_seriesChip(p)}
       ${adminStats}
     </div>
@@ -4153,7 +4151,6 @@ function _underCard(p, rank) {
         <span style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">U 1.5 Total Bases</span>
         <span style="font-family:monospace;color:#63cab7;font-weight:700;font-size:.9rem">${tbOdds}</span>
       </div>
-      <div style="margin-top:5px;display:flex;align-items:center;gap:5px"><span style="font-size:.6rem;color:#475569">day trend</span>${_dowChip('hits_under','UNDER')}</div>
       ${_seriesChip(p)}
       ${_evBadge(p)}
       ${adminStats}
@@ -4230,7 +4227,6 @@ function _runsCard(p, rank, pfx) {
         <span style="font-size:.8rem;color:${pickClr};font-weight:900">${p.pick} ${p.line!=null?p.line:0.5} Runs</span>
         <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}${_bookTag(p)}</span>
       </div>
-      <div style="margin-top:5px;display:flex;align-items:center;gap:5px"><span style="font-size:.6rem;color:#475569">day trend</span>${_dowChip('runs',p.pick)}</div>
       ${_evBadge(p)}
       ${adminStats}
     </div>
@@ -4287,7 +4283,6 @@ function _rbiCard(p, rank, pfx) {
         <span style="font-size:.8rem;color:${pickClr};font-weight:900">${p.pick} ${p.line!=null?p.line:0.5} RBI</span>
         <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}${_bookTag(p)}</span>
       </div>
-      <div style="margin-top:5px;display:flex;align-items:center;gap:5px"><span style="font-size:.6rem;color:#475569">day trend</span>${_dowChip('rbi',p.pick)}</div>
       ${_evBadge(p)}
       ${adminStats}
     </div>
@@ -4486,7 +4481,6 @@ function _tbCard(p, rank) {
         <span style="font-size:.8rem;color:#a78bfa;font-weight:900">UNDER 1.5 Total Bases</span>
         <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}${_bookTag(p)}</span>
       </div>
-      <div style="margin-top:5px;display:flex;align-items:center;gap:5px"><span style="font-size:.6rem;color:#475569">day trend</span>${_dowChip('tb_under','UNDER')}</div>
       ${adminStats}
     </div>
   ${_betBtn(p,'TB Under','UNDER','total_bases','Total Bases',1.5,p.tb_under_odds)}
@@ -4538,7 +4532,6 @@ function _tbOverCard(p, rank) {
         <span style="font-size:.8rem;color:#4ade80;font-weight:900">OVER 1.5 Total Bases</span>
         <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}${_bookTag(p)}</span>
       </div>
-      <div style="margin-top:5px;display:flex;align-items:center;gap:5px"><span style="font-size:.6rem;color:#475569">day trend</span>${_dowChip('tb_over','OVER')}</div>
       ${_evBadge(p)}
       ${adminStats}
     </div>
@@ -4780,7 +4773,6 @@ function _hrrCard(p, rank, pfx) {
       ${_envChip(p)}
       ${_umpChip(p)}
       ${_bpChip(p)}
-      <div style="margin-top:5px;display:flex;align-items:center;gap:5px"><span style="font-size:.6rem;color:#475569">day trend</span>${_dowChip('hrr',p.pick)}</div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
         <span style="font-size:.78rem;color:#94a3b8">HRR Rate <span style="color:#64748b;font-size:.68rem">vs opp</span></span>
         <span style="font-family:monospace;font-weight:700;color:${scoreClr}">${p.rate_disp||'—'}</span>
@@ -4932,7 +4924,7 @@ function _pitcherCard(p, rank, keyPfx) {
       </div>
       ${hasProj?`<div style="margin-top:2px;font-size:.62rem;color:#475569">${factTxt}</div>`:''}
       <div style="margin-top:5px;font-size:.68rem;color:#94a3b8;line-height:1.6">K <strong style="color:#cbd5e1">${p.avg_k!=null?p.avg_k:'—'}</strong> · H <strong style="color:#cbd5e1">${p.avg_hits!=null?p.avg_hits:'—'}</strong> · ER <strong style="color:#cbd5e1">${p.avg_er!=null?p.avg_er:'—'}</strong> · Outs <strong style="color:#cbd5e1">${p.avg_outs!=null?p.avg_outs:'—'}</strong> · BB <strong style="color:#cbd5e1">${p.avg_bb!=null?p.avg_bb:'—'}</strong> · IP <strong style="color:#cbd5e1">${p.avg_ip!=null?p.avg_ip:'—'}</strong> · ERA <strong style="color:#cbd5e1">${p.era||'—'}</strong> <span style="color:#64748b">vr opp</span></div>
-      <div style="margin-top:5px;display:flex;align-items:center;justify-content:space-between"><span style="display:flex;align-items:center;gap:5px"><span style="font-size:.6rem;color:#475569">day trend</span>${_dowChip('k',p.pick)}</span><span style="font-size:.66rem;color:#63cab7">all 5 markets →</span></div>
+      <div style="margin-top:5px;display:flex;align-items:center;justify-content:flex-end"><span style="font-size:.66rem;color:#63cab7">all 5 markets →</span></div>
       ${_stuffBadge(p)}
       ${_veloBadge(p)}
       ${_evBadge(p)}
