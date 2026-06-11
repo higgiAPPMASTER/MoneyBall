@@ -1976,8 +1976,9 @@ _HTML = """
     .flash{animation:cardflash 1.1s ease-out}
     @keyframes cardflash{0%{box-shadow:0 0 0 3px rgba(253,184,39,.9)}100%{box-shadow:0 0 0 3px rgba(253,184,39,0)}}
     .mlb-picks-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px}
-    .parlay-cat-row{display:flex;align-items:center;gap:8px;padding:4px 2px;cursor:pointer;font-size:.78rem;color:#ddd;user-select:none}
-    .parlay-cat-row input{cursor:pointer;width:15px;height:15px;accent-color:#f59e0b}
+    .parlay-cat-row{display:flex;align-items:center;gap:6px;padding:3px 2px;cursor:pointer;font-size:.73rem;color:#ddd;user-select:none}
+    .parlay-cat-row input{cursor:pointer;width:13px;height:13px;flex-shrink:0;accent-color:#f59e0b}
+    .parlay-cat-section{font-size:.58rem;font-weight:800;letter-spacing:.09em;color:#555;padding:5px 2px 2px;text-transform:uppercase}
     .env-chip{display:inline-block;margin:6px 0 2px;padding:3px 7px;border:1px solid #333;border-radius:6px;font-size:.64rem;font-weight:700;letter-spacing:.01em;line-height:1.35;background:#0d0d0d}
     .more-btn{width:100%;margin-top:14px;padding:11px 16px;background:#0f172a;border:1px solid #334155;border-radius:12px;font-size:.82rem;font-weight:700;cursor:pointer;letter-spacing:.06em;text-align:center;transition:background .15s,border-color .15s}
     .more-btn:hover{background:#1e293b;border-color:#475569}
@@ -2242,21 +2243,26 @@ _HTML = """
           <button class="btn-primary" id="parlay-minus-btn" onclick="toggleParlayMinus()" style="background:#1f2937;color:#fff">&minus; Odds Only</button>
           <button class="btn-primary" id="parlay-plus-btn" onclick="toggleParlayPlus()" style="background:#1f2937;color:#fff">&plus; Odds Only</button>
           <div style="position:relative;display:inline-block">
-            <button class="btn-primary" id="parlay-cats-btn" onclick="toggleCatMenu(event)" style="background:#1f2937;color:#fff">&#9776; Categories (10/10) &#9662;</button>
-            <div id="parlay-cats-menu" style="display:none;position:absolute;z-index:60;top:calc(100% + 6px);left:0;background:#0e0e0e;border:1px solid #2a2a2a;border-radius:10px;padding:10px;min-width:215px;box-shadow:0 12px 34px rgba(0,0,0,.55)">
-              <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px">
-                <span style="font-size:.66rem;color:#888;font-weight:800;letter-spacing:.06em">PARLAY CATEGORIES</span>
-                <span style="font-size:.66rem"><a onclick="_catSetAll(true)" style="color:#63cab7;cursor:pointer;font-weight:800">All</a> <span style="color:#444">·</span> <a onclick="_catSetAll(false)" style="color:#ff8a65;cursor:pointer;font-weight:800">None</a></span>
+            <button class="btn-primary" id="parlay-cats-btn" onclick="toggleCatMenu(event)" style="background:#1f2937;color:#fff">&#9776; Categories (13/13) &#9662;</button>
+            <div id="parlay-cats-menu" style="display:none;position:absolute;z-index:60;top:calc(100% + 6px);left:0;background:#0e0e0e;border:1px solid #2a2a2a;border-radius:10px;padding:10px 12px;min-width:190px;box-shadow:0 12px 34px rgba(0,0,0,.55)">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px">
+                <span style="font-size:.63rem;color:#888;font-weight:800;letter-spacing:.06em">PARLAY CATEGORIES</span>
+                <span style="font-size:.63rem"><a onclick="_catSetAll(true)" style="color:#63cab7;cursor:pointer;font-weight:800">All</a> <span style="color:#444">·</span> <a onclick="_catSetAll(false)" style="color:#ff8a65;cursor:pointer;font-weight:800">None</a></span>
               </div>
               <div id="parlay-cats-list">
-                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="HIT" checked onchange="_catChanged()"> Hits</label>
+                <div class="parlay-cat-section">Batters</div>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="HIT" checked onchange="_catChanged()"> Hits (Over 0.5)</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="UNDER_HITS" checked onchange="_catChanged()"> Under 1.5 Hits</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="TBO" checked onchange="_catChanged()"> Over 1.5 Total Bases</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="UNDER_TB" checked onchange="_catChanged()"> Under 1.5 Total Bases</label>
-                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="K" checked onchange="_catChanged()"> Pitcher K</label>
-                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="RUN" checked onchange="_catChanged()"> Runs</label>
-                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="BWALK" checked onchange="_catChanged()"> Batter Walks</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="RUN" checked onchange="_catChanged()"> Runs O/U 0.5</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="RBI" checked onchange="_catChanged()"> RBI O/U 0.5</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="HRR" checked onchange="_catChanged()"> H+R+RBI O/U 1.5</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="BWALK" checked onchange="_catChanged()"> Batter Walks O/U</label>
+                <div class="parlay-cat-section">Pitchers</div>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="K" checked onchange="_catChanged()"> Pitcher Strikeouts</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="pitcher_hits_allowed" checked onchange="_catChanged()"> Hits Allowed</label>
-                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="pitcher_outs" checked onchange="_catChanged()"> Outs</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="pitcher_outs" checked onchange="_catChanged()"> Outs Recorded</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="pitcher_earned_runs" checked onchange="_catChanged()"> Earned Runs</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="pitcher_walks" checked onchange="_catChanged()"> Walks Allowed</label>
               </div>
@@ -3451,9 +3457,9 @@ function _paintParlay(){
   var am = priced? _decToAm(dec) : null;
   var payout = priced? (100*dec) : null;
   var dirColor=function(d){return d==='OVER'?'#63cab7':d==='UNDER'?'#ff8a65':'#9ca3af';};
-  var tagBg={HIT:'rgba(245,158,11,.16)',UNDER:'rgba(255,138,101,.16)',K:'rgba(99,202,183,.16)',RUN:'rgba(96,165,250,.16)',pitcher_hits_allowed:'rgba(248,113,113,.16)',pitcher_outs:'rgba(167,139,250,.16)',pitcher_earned_runs:'rgba(251,146,60,.16)',pitcher_walks:'rgba(52,211,153,.16)'};
-  var tagFg={HIT:'#f59e0b',UNDER:'#ff8a65',K:'#63cab7',RUN:'#60a5fa',pitcher_hits_allowed:'#f87171',pitcher_outs:'#a78bfa',pitcher_earned_runs:'#fb923c',pitcher_walks:'#34d399'};
-  var tagLbl={HIT:'HIT',UNDER:'UNDER 1.5',K:'PITCHER K',RUN:'RUNS',pitcher_hits_allowed:'HITS ALLOWED',pitcher_outs:'OUTS',pitcher_earned_runs:'EARNED RUNS',pitcher_walks:'WALKS ALLOWED'};
+  var tagBg={HIT:'rgba(245,158,11,.16)',UNDER:'rgba(255,138,101,.16)',K:'rgba(99,202,183,.16)',RUN:'rgba(96,165,250,.16)',RBI:'rgba(251,191,36,.16)',HRR:'rgba(251,146,60,.16)',TB:'rgba(167,139,250,.16)',TBO:'rgba(74,222,128,.16)',BWALK:'rgba(52,211,153,.16)',pitcher_hits_allowed:'rgba(248,113,113,.16)',pitcher_outs:'rgba(167,139,250,.16)',pitcher_earned_runs:'rgba(251,146,60,.16)',pitcher_walks:'rgba(52,211,153,.16)'};
+  var tagFg={HIT:'#f59e0b',UNDER:'#ff8a65',K:'#63cab7',RUN:'#60a5fa',RBI:'#fbbf24',HRR:'#fb923c',TB:'#a78bfa',TBO:'#4ade80',BWALK:'#34d399',pitcher_hits_allowed:'#f87171',pitcher_outs:'#a78bfa',pitcher_earned_runs:'#fb923c',pitcher_walks:'#34d399'};
+  var tagLbl={HIT:'HIT',UNDER:'U1.5',K:'K',RUN:'RUNS',RBI:'RBI',HRR:'HRR',TB:'U1.5 TB',TBO:'O1.5 TB',BWALK:'BB (BAT)',pitcher_hits_allowed:'H ALLOW',pitcher_outs:'OUTS',pitcher_earned_runs:'ER',pitcher_walks:'BB (PIT)'};
   var rows=legs.map(function(l,idx){var fo=_fmtOdds(l.odds);return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #1a1a1a">'
     +'<div style="min-width:0">'
     +'<div style="font-weight:800;color:#fff;font-size:.85rem">'+(idx+1)+'. '+_nameSpan(l.src,l.player)+' <span style="color:#777;font-size:.7rem">'+(l.team?l.team+' ':'')+'vs '+l.opp+'</span> <span style="background:'+(tagBg[l.type]||'#222')+';color:'+(tagFg[l.type]||'#aaa')+';padding:1px 6px;border-radius:4px;font-size:.6rem;font-weight:800">'+(tagLbl[l.type]||l.type)+'</span></div>'
@@ -3516,7 +3522,7 @@ window.PARLAY_OVERS = false;
 window.PARLAY_MINUS = false;
 window.PARLAY_PLUS = false;
 // Parlay category checkboxes — which pick categories feed the parlay pool (all on by default).
-window.PARLAY_CATS = {HIT:true,UNDER_HITS:true,UNDER_TB:true,K:true,RUN:true,BWALK:true,pitcher_hits_allowed:true,pitcher_outs:true,pitcher_earned_runs:true,pitcher_walks:true};
+window.PARLAY_CATS = {HIT:true,UNDER_HITS:true,TBO:true,UNDER_TB:true,RUN:true,RBI:true,HRR:true,BWALK:true,K:true,pitcher_hits_allowed:true,pitcher_outs:true,pitcher_earned_runs:true,pitcher_walks:true};
 // Parlay game filter — which games feed the parlay pool. Empty = all games allowed; a
 // game is excluded only when explicitly set false. Keyed by the same gameKey() label as
 // the "By Game" card. Repopulated each run from the day's slate (_buildGamesMenu).
