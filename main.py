@@ -3136,6 +3136,7 @@ function _hitForm(key){
   var name=p.full_name||p.name||'';
   var pickClr=isUnder?'#ff8a65':'#63cab7';
   var ssHtml=_ssBlock(p);
+  var wu=_matrixWriteup(p,(isUnder?'U':'O'),0,false,'hits',(isUnder?'under 1.5 hits':'to record a hit'));
   ov.innerHTML=`<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:440px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">
     <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid #1e293b">
       <div>
@@ -3148,6 +3149,7 @@ function _hitForm(key){
       <div style="font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase;margin-bottom:8px">Last ${log.length||0} Games</div>
       <table style="width:100%;border-collapse:collapse;font-size:.85rem"><tbody>${rows}</tbody></table>
       ${ssHtml}
+      ${wu}
       <div style="margin-top:12px;border-top:1px solid #1e293b;padding-top:10px;color:${pickClr};font-weight:800;font-size:.85rem">Pick: ${goal}</div>
     </div>
   </div>`;
@@ -4067,6 +4069,51 @@ function _slotDot(p, side, isPit, catIdx){
 }
 function _seriesTag(p, side, isPit, catIdx){
   return _seriesBadge(p)+_slotDot(p, side, isPit, catIdx);
+}
+// Plain-English strategy-chart writeup for a detail popup. Reads the card&#39;s
+// series slot (today_pos) + market lean from window.__MPA_SLOTS__, compares to
+// the pick side, and renders a green "agrees" / red "fade" block with reasoning.
+function _matrixWriteup(p, side, catIdx, isPit, marketWord, pickLabel){
+  var ss=p&&p.series_splits; if(!ss) return '';
+  var pos=ss.today_pos||0; if(!pos) return '';
+  var slots=window.__MPA_SLOTS__; if(!slots||!slots[pos]) return '';
+  var arr=isPit?slots[pos].pit:slots[pos].bat;
+  if(!arr||catIdx==null||arr[catIdx]==null) return '';
+  var lean=arr[catIdx];
+  var agree=(lean===side);
+  var slot=slots[pos];
+  var why=pos===1?'the opposing ace is on the mound and hitters are seeing him fresh for the first time in the series'
+        :pos===2?'hitters have now seen this staff once and tend to adjust fast, while the bullpen starts to wear down'
+        :'hitters have now seen this staff multiple times and the back-end starter is usually the weakest arm';
+  if(isPit){
+    why=pos===1?'the ace is fresh and overpowering in the series opener'
+       :pos===2?'the No. 2-3 starter is more hittable and lineups have a first look at the staff'
+       :'the back-end starter is the weakest arm and hitters have seen the whole rotation';
+  }
+  var leanTxt=lean==='O'?'OVER':'UNDER';
+  var leanClr=lean==='O'?'#4ade80':'#ff8a65';
+  var ba=pos===1?ss.g1_ba:pos===2?ss.g2_ba:ss.g3_ba;
+  var slotShort=pos===1?'Game 1':pos===2?'Game 2':'Game 3+';
+  var splitSent='';
+  if(!isPit&&ba!=null){
+    var baStr=ba.toFixed(3).replace('0.','.');
+    var baClr=ba>=0.300?'#4ade80':ba>=0.250?'#fbbf24':'#f87171';
+    splitSent=' His '+slotShort+' split this season is <b style="color:'+baClr+'">'+baStr+'</b>.';
+  }
+  var clr=agree?'#22c55e':'#ef4444';
+  var glow=agree?'rgba(34,197,94,.85)':'rgba(239,68,68,.85)';
+  var bg=agree?'rgba(34,197,94,.06)':'rgba(239,68,68,.06)';
+  var bd=agree?'rgba(34,197,94,.3)':'rgba(239,68,68,.3)';
+  var head=agree?'Matrix Agrees \u2014 Good To Play':'Chart Says Fade';
+  var tail=agree
+    ?(' \u2014 which matches this <b style="color:#fff">'+pickLabel+'</b> play.'+splitSent+' Good spot to play today.')
+    :(' \u2014 the opposite of this <b style="color:#fff">'+pickLabel+'</b> play.'+splitSent+' Chart says fade today.');
+  var body='This is <b style="color:#fff">'+slot.name+' \u2014 '+slot.label+'</b>. Because '+why
+          +', the strategy chart leans <b style="color:'+leanClr+'">'+leanTxt+'</b> on '+marketWord+' in this slot'+tail;
+  return '<div style="margin-top:14px;background:'+bg+';border:1px solid '+bd+';border-radius:10px;padding:11px 13px">'
+    +'<div style="display:flex;align-items:center;gap:7px;font-size:.6rem;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:'+clr+';margin-bottom:6px">'
+    +'<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:'+clr+';box-shadow:0 0 6px '+glow+'"></span>'+head+'</div>'
+    +'<div style="font-size:.82rem;line-height:1.55;color:#cbd5e1">'+body+'</div></div>';
 }
 function _platoonChip(p) {
   var pl = p && p.platoon;
