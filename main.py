@@ -2251,20 +2251,29 @@ _HTML = """
               </div>
               <div id="parlay-cats-list">
                 <div class="parlay-cat-section">Batters</div>
-                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="HIT" checked onchange="_catChanged()"> Hits (Over 0.5)</label>
-                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="UNDER_HITS" checked onchange="_catChanged()"> Under 1.5 Hits</label>
-                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="TBO" checked onchange="_catChanged()"> Over 1.5 Total Bases</label>
-                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="UNDER_TB" checked onchange="_catChanged()"> Under 1.5 Total Bases</label>
-                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="RUN" checked onchange="_catChanged()"> Runs O/U 0.5</label>
-                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="RBI" checked onchange="_catChanged()"> RBI O/U 0.5</label>
-                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="HRR" checked onchange="_catChanged()"> H+R+RBI O/U 1.5</label>
-                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="BWALK" checked onchange="_catChanged()"> Batter Walks O/U</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="HIT_O" checked onchange="_catChanged()"> Hits Over 0.5</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="HIT_U" checked onchange="_catChanged()"> Hits Under 1.5</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="TB_O" checked onchange="_catChanged()"> Total Bases Over 1.5</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="TB_U" checked onchange="_catChanged()"> Total Bases Under 1.5</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="RUN_O" checked onchange="_catChanged()"> Runs Over 0.5</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="RUN_U" checked onchange="_catChanged()"> Runs Under 0.5</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="RBI_O" checked onchange="_catChanged()"> RBI Over 0.5</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="RBI_U" checked onchange="_catChanged()"> RBI Under 0.5</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="HRR_O" checked onchange="_catChanged()"> H+R+RBI Over 1.5</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="HRR_U" checked onchange="_catChanged()"> H+R+RBI Under 1.5</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="BWALK_O" checked onchange="_catChanged()"> Batter Walks Over</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="BWALK_U" checked onchange="_catChanged()"> Batter Walks Under</label>
                 <div class="parlay-cat-section">Pitchers</div>
-                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="K" checked onchange="_catChanged()"> Pitcher Strikeouts</label>
-                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="pitcher_hits_allowed" checked onchange="_catChanged()"> Hits Allowed</label>
-                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="pitcher_outs" checked onchange="_catChanged()"> Outs Recorded</label>
-                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="pitcher_earned_runs" checked onchange="_catChanged()"> Earned Runs</label>
-                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="pitcher_walks" checked onchange="_catChanged()"> Walks Allowed</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="K_O" checked onchange="_catChanged()"> Ks Over</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="K_U" checked onchange="_catChanged()"> Ks Under</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="PHA_O" checked onchange="_catChanged()"> Hits Allowed Over</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="PHA_U" checked onchange="_catChanged()"> Hits Allowed Under</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="POUT_O" checked onchange="_catChanged()"> Outs Over</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="POUT_U" checked onchange="_catChanged()"> Outs Under</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="PER_O" checked onchange="_catChanged()"> Earned Runs Over</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="PER_U" checked onchange="_catChanged()"> Earned Runs Under</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="PWK_O" checked onchange="_catChanged()"> Walks Allowed Over</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="PWK_U" checked onchange="_catChanged()"> Walks Allowed Under</label>
               </div>
             </div>
           </div>
@@ -3522,7 +3531,7 @@ window.PARLAY_OVERS = false;
 window.PARLAY_MINUS = false;
 window.PARLAY_PLUS = false;
 // Parlay category checkboxes — which pick categories feed the parlay pool (all on by default).
-window.PARLAY_CATS = {HIT:true,UNDER_HITS:true,TBO:true,UNDER_TB:true,RUN:true,RBI:true,HRR:true,BWALK:true,K:true,pitcher_hits_allowed:true,pitcher_outs:true,pitcher_earned_runs:true,pitcher_walks:true};
+window.PARLAY_CATS = {HIT_O:true,HIT_U:true,TB_O:true,TB_U:true,RUN_O:true,RUN_U:true,RBI_O:true,RBI_U:true,HRR_O:true,HRR_U:true,BWALK_O:true,BWALK_U:true,K_O:true,K_U:true,PHA_O:true,PHA_U:true,POUT_O:true,POUT_U:true,PER_O:true,PER_U:true,PWK_O:true,PWK_U:true};
 // Parlay game filter — which games feed the parlay pool. Empty = all games allowed; a
 // game is excluded only when explicitly set false. Keyed by the same gameKey() label as
 // the "By Game" card. Repopulated each run from the day's slate (_buildGamesMenu).
@@ -3581,7 +3590,19 @@ function toggleParlayPlus(){
 // Maps a parlay candidate leg to its category key (the unders split by stat so
 // Under 1.5 Hits and Under 1.5 Total Bases are independently checkable).
 function _legCat(c){
-  if(c.type==='UNDER') return (c.stat==='Total Bases')?'UNDER_TB':'UNDER_HITS';
+  var dir=(c.pick||'').split(' ')[0]==='OVER'?'O':'U';
+  if(c.type==='HIT') return 'HIT_O';
+  if(c.type==='UNDER') return c.stat==='Total Bases'?'TB_U':'HIT_U';
+  if(c.type==='TBO') return 'TB_O';
+  if(c.type==='RUN') return 'RUN_'+dir;
+  if(c.type==='RBI') return 'RBI_'+dir;
+  if(c.type==='HRR') return 'HRR_'+dir;
+  if(c.type==='BWALK') return 'BWALK_'+dir;
+  if(c.type==='K') return 'K_'+dir;
+  if(c.type==='pitcher_hits_allowed') return 'PHA_'+dir;
+  if(c.type==='pitcher_outs') return 'POUT_'+dir;
+  if(c.type==='pitcher_earned_runs') return 'PER_'+dir;
+  if(c.type==='pitcher_walks') return 'PWK_'+dir;
   return c.type;
 }
 function _catCount(){ var n=0,t=0; for(var k in window.PARLAY_CATS){ t++; if(window.PARLAY_CATS[k]) n++; } return n+'/'+t; }
