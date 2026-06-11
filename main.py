@@ -2896,6 +2896,7 @@ function _pkForm(key){
         <div><span style="color:#64748b">Blended (pick driver)</span><br><span style="color:#e2e8f0;font-weight:800">${blendTxt}</span></div>
         <div><span style="color:#64748b">Pick</span><br><span style="color:${pickClr};font-weight:800">${pickTxt}</span></div>
       </div>
+      ${_matrixWriteup(p,((p.sugg_line!=null||p.pick==='OVER')?'O':'U'),0,true,'strikeouts',pickTxt)}
       ${p.blend_src?('<div style="margin-top:10px;color:#64748b;font-size:.74rem">'+p.blend_src+'</div>'):''}
     </div>
   </div>`;
@@ -3084,6 +3085,9 @@ function _ppForm(key){
   var pickTxt=p.pick||'No pick';
   var oddsTxt=(p.pick==='OVER'?p.over_odds:(p.pick==='UNDER'?p.under_odds:null));
   oddsTxt=oddsTxt!=null?((oddsTxt>0?'+':'')+oddsTxt):'';
+  var _ppCat={pitcher_hits_allowed:1,pitcher_outs:2,pitcher_earned_runs:3,pitcher_walks:4}[p.market];
+  var _ppLbl=(p.pick?(p.pick+' '+(line!=null?line:'')+(unitW?(' '+unitW):'')):'this play');
+  var _ppWu=_matrixWriteup(p,(p.pick==='OVER'?'O':'U'),_ppCat,true,String(p.label||'').toLowerCase().replace('pitcher ',''),_ppLbl);
   ov.innerHTML='<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:440px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">'
     +'<div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid #1e293b">'
       +'<div><div style="font-weight:800;font-size:1.05rem;color:#fff">'+p.name+'</div>'
@@ -3100,6 +3104,7 @@ function _ppForm(key){
         +'<div><span style="color:#64748b">Blended (pick driver)</span><br><span style="color:#e2e8f0;font-weight:800">'+blendTxt+'</span></div>'
         +'<div><span style="color:#64748b">Pick</span><br><span style="color:'+pickClr+';font-weight:800">'+pickTxt+' '+oddsTxt+'</span></div>'
       +'</div>'
+      +_ppWu
       +(p.blend_src?('<div style="margin-top:10px;color:#64748b;font-size:.74rem">'+p.blend_src+'</div>'):'')
     +'</div>'
   +'</div>';
@@ -3198,6 +3203,7 @@ function _runsForm(key){
       <div style="font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase;margin-bottom:8px">Runs Rate ${p.rate_disp||''} · Last ${log.length||0} Games</div>
       <table style="width:100%;border-collapse:collapse;font-size:.85rem"><tbody>${rows}</tbody></table>
       ${_ssBlock(p)}
+      ${_matrixWriteup(p,(isOver?'O':'U'),3,false,'runs',goal)}
       <div style="margin-top:12px;border-top:1px solid #1e293b;padding-top:10px;color:${pickClr};font-weight:800;font-size:.85rem">Pick: ${goal}</div>
     </div>
   </div>`;
@@ -4513,6 +4519,7 @@ function _rbiForm(key){
       <div style="font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase;margin-bottom:8px">RBI Rate ${p.rate_disp||''} · Last ${log.length||0} Games</div>
       <table style="width:100%;border-collapse:collapse;font-size:.85rem"><tbody>${rows}</tbody></table>
       ${_ssBlock(p)}
+      ${_matrixWriteup(p,(isOver?'O':'U'),4,false,'RBIs',goal)}
       <div style="margin-top:12px;border-top:1px solid #1e293b;padding-top:10px;color:${pickClr};font-weight:800;font-size:.85rem">Pick: ${goal}</div>
     </div>
   </div>`;
@@ -4615,6 +4622,7 @@ function _walksForm(key){
       <div style="font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase;margin-bottom:8px">Walk Rate ${p.rate_disp||''} · Last ${log.length||0} Games</div>
       <table style="width:100%;border-collapse:collapse;font-size:.85rem"><tbody>${rows}</tbody></table>
       ${_ssBlock(p)}
+      ${_matrixWriteup(p,(isOver?'O':'U'),5,false,'walks',goal)}
       <div style="margin-top:12px;border-top:1px solid #1e293b;padding-top:10px;color:${pickClr};font-weight:800;font-size:.85rem">Pick: ${goal}</div>
     </div>
   </div>`;
@@ -4764,6 +4772,7 @@ function _tbOverForm(key){
       +'<th style="text-align:right;padding:4px 10px;font-size:.7rem;color:#64748b;font-weight:600;border-bottom:1px solid #1e293b">TB</th>'
     +'</tr></thead><tbody>'+rows+'</tbody></table>'
     +_ssBlock(p)
+    +_matrixWriteup(p,'O',1,false,'total bases','Over 1.5 total bases')
     +'</div></div>';
   ov.style.display='flex';
 }
@@ -5020,6 +5029,7 @@ function _hrrForm(key){
       +'<th style="text-align:right;padding:4px 10px;font-size:.7rem;color:#64748b;font-weight:600;border-bottom:1px solid #1e293b">HRR</th>'
     +'</tr></thead><tbody>'+rows+'</tbody></table>'
     +_ssBlock(p)
+    +_matrixWriteup(p,(isUnder?'U':'O'),2,false,'HRR (hits+runs+RBI)',(isUnder?'Under 1.5 H+R+RBI':'Over 1.5 H+R+RBI'))
     +'</div></div>';
   ov.style.display='flex';
 }
@@ -5057,6 +5067,7 @@ function _tbForm(key){
       +'<div style="font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase;margin-bottom:8px">TB Rate '+(p.rate_disp||'')+' \u00b7 Last '+log.length+' Games</div>'
       +'<table style="width:100%;border-collapse:collapse;font-size:.85rem"><tbody>'+rows+'</tbody></table>'
       +_ssBlock(p)
+      +_matrixWriteup(p,'U',1,false,'total bases','Under 1.5 total bases')
       +'<div style="margin-top:12px;border-top:1px solid #1e293b;padding-top:10px;color:#a78bfa;font-weight:800;font-size:.85rem">Pick: Under 1.5 Total Bases</div>'
     +'</div>'
   +'</div>';
