@@ -4099,100 +4099,93 @@ function _seriesChip(p){
   return '<div style="margin-top:5px;display:flex;align-items:center;gap:4px;flex-wrap:wrap">'
     +'<span style="font-size:.6rem;color:#475569">series</span>'+parts+'</div>';
 }
-function _seriesBadge(p){
-  var pos=(p.series_splits||{}).today_pos||0;
-  if(!pos) return '';
-  var lbl=pos===1?'G1':pos===2?'G2':'G3';
-  var bg=pos===1?'rgba(16,185,129,.2)':pos===2?'rgba(245,158,11,.18)':'rgba(239,68,68,.2)';
-  var clr=pos===1?'#34d399':pos===2?'#fbbf24':'#f87171';
-  return '<span style="font-size:.62rem;font-weight:900;padding:2px 6px;border-radius:4px;background:'+bg+';color:'+clr+';letter-spacing:.06em">'+lbl+'</span>';
+function _rotInfo(p,isPit){
+  if(!p) return null;
+  var rank=isPit?p.rot_rank:p.opp_rot_rank;
+  var rookie=isPit?p.rot_rookie:p.opp_rot_rookie;
+  if((rank==null||rank===0)&&!rookie) return null;
+  var tier;
+  if(rookie) tier=3;
+  else if(rank===1) tier=1;
+  else if(rank===2||rank===3) tier=2;
+  else if(rank>=4) tier=3;
+  else return null;
+  return {rank:rank,rookie:!!rookie,tier:tier};
+}
+function _seriesBadge(p,isPit){
+  var ri=_rotInfo(p,isPit); if(!ri) return '';
+  var lbl=(ri.rank!=null&&ri.rank>0)?('SP'+ri.rank):'SPOT';
+  var bg=ri.tier===1?'rgba(16,185,129,.2)':ri.tier===2?'rgba(245,158,11,.18)':'rgba(239,68,68,.2)';
+  var clr=ri.tier===1?'#34d399':ri.tier===2?'#fbbf24':'#f87171';
+  var rk=ri.rookie?'<span style="font-size:.55rem;font-weight:900;color:#fca5a5;margin-left:3px">R</span>':'';
+  var tip=ri.tier===1?'Staff ace (SP1) on the mound'
+    :ri.tier===2?('Mid-rotation arm (SP'+ri.rank+')')
+    :(((ri.rank!=null&&ri.rank>0)?('Back-end starter (SP'+ri.rank+')'):'Spot starter')+(ri.rookie?' \u2014 rookie':''));
+  return '<span title="'+tip+'" style="font-size:.62rem;font-weight:900;padding:2px 6px;border-radius:4px;background:'+bg+';color:'+clr+';letter-spacing:.06em">'+lbl+rk+'</span>';
 }
 function _slotDot(p, side, isPit, catIdx){
-  var ss=p&&p.series_splits; if(!ss) return '';
-  var pos=ss.today_pos||0; if(!pos) return '';
+  var ri=_rotInfo(p,isPit); if(!ri) return '';
+  var who=isPit?'This starter':'The opposing starter';
+  if(ri.tier===2){
+    var tipM=who+' is a mid-rotation arm (SP'+ri.rank+') \u2014 no clean depth-chart edge here. Lean light.';
+    return '<span title="'+tipM+'" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#f59e0b;box-shadow:0 0 5px rgba(245,158,11,.75);margin-left:5px;vertical-align:middle"></span>';
+  }
+  var pos=ri.tier===1?1:3;
   var slots=window.__MPA_SLOTS__; if(!slots||!slots[pos]) return '';
   var arr=isPit?slots[pos].pit:slots[pos].bat;
   if(!arr||catIdx==null||arr[catIdx]==null) return '';
   var sLean=arr[catIdx];
-  var dLean=_dayLean(isPit, catIdx);
-  var g=pos===1?'G1':pos===2?'G2':'G3';
-  var dn=_dayName();
   var sTxt=sLean==='O'?'Over':'Under';
-  var dTxt=dLean==='O'?'Over':'Under';
   var sideTxt=side==='O'?'Over':'Under';
-  var clr,glow,tip;
-  if(dLean&&sLean!==dLean){
-    clr='#f59e0b'; glow='rgba(245,158,11,.75)';
-    tip=g+' leans '+sTxt+' but '+dn+' leans '+dTxt+' \u2014 split signal on this '+sideTxt+' pick. Lean light today.';
-  } else {
-    var agree=(sLean===side);
-    clr=agree?'#22c55e':'#ef4444';
-    glow=agree?'rgba(34,197,94,.75)':'rgba(239,68,68,.75)';
-    var both=dLean?(g+' and '+dn+' both lean '+sTxt):(g+' chart leans '+sTxt);
-    tip=agree
-      ?(both+' \u2014 matches this '+sideTxt+' pick. Good spot to play today.')
-      :(both+' \u2014 opposite this '+sideTxt+' pick. Chart says fade today.');
-  }
+  var agree=(sLean===side);
+  var clr=agree?'#22c55e':'#ef4444';
+  var glow=agree?'rgba(34,197,94,.75)':'rgba(239,68,68,.75)';
+  var tierTxt=ri.tier===1?'ace (SP1)'
+    :(((ri.rank!=null&&ri.rank>0)?('back-end arm (SP'+ri.rank+')'):'spot starter')+(ri.rookie?', rookie':''));
+  var lean=who+' is a '+tierTxt+', leaning '+sTxt+' on this market';
+  var tip=agree?(lean+' \u2014 matches this '+sideTxt+' pick. Good spot.')
+              :(lean+' \u2014 opposite this '+sideTxt+' pick. Chart says fade.');
   return '<span title="'+tip+'" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:'+clr+';box-shadow:0 0 5px '+glow+';margin-left:5px;vertical-align:middle"></span>';
 }
 function _seriesTag(p, side, isPit, catIdx){
-  return _seriesBadge(p)+_slotDot(p, side, isPit, catIdx);
+  return _seriesBadge(p,isPit)+_slotDot(p, side, isPit, catIdx);
 }
-// Plain-English strategy-chart writeup for a detail popup. Reads the card&#39;s
-// series slot (today_pos) + market lean from window.__MPA_SLOTS__, compares to
-// the pick side, and renders a green "agrees" / red "fade" block with reasoning.
+// Plain-English depth-chart writeup for a detail popup. Maps the starter&#39;s
+// rotation rank (SP1 ace / SP2-3 mid / SP4+ back-end) to the market lean in
+// window.__MPA_SLOTS__, compares to the pick side, and renders a green
+// "agrees" / red "fade" / amber "lean light" block with reasoning.
 function _matrixWriteup(p, side, catIdx, isPit, marketWord, pickLabel){
-  var ss=p&&p.series_splits; if(!ss) return '';
-  var pos=ss.today_pos||0; if(!pos) return '';
+  var ri=_rotInfo(p,isPit); if(!ri) return '';
+  var who=isPit?'This pitcher':'The opposing starter';
+  var pl='<b style="color:#fff">'+pickLabel+'</b>';
+  if(ri.tier===2){
+    return _mtxBox('#f59e0b','rgba(245,158,11,.85)','rgba(245,158,11,.06)','rgba(245,158,11,.3)',
+      'Mid-Rotation \u2014 Lean Light',
+      who+' ranks <b style="color:#fff">SP'+ri.rank+'</b> in the rotation, a middle-of-the-staff arm. There is no clean depth-chart edge on '+marketWord+' either way, so treat this '+pl+' play as a lean-light spot.');
+  }
+  var pos=ri.tier===1?1:3;
   var slots=window.__MPA_SLOTS__; if(!slots||!slots[pos]) return '';
   var arr=isPit?slots[pos].pit:slots[pos].bat;
   if(!arr||catIdx==null||arr[catIdx]==null) return '';
   var sLean=arr[catIdx];
-  var dLean=_dayLean(isPit, catIdx);
-  var slot=slots[pos];
-  var why=pos===1?'the opposing ace is on the mound and hitters are seeing him fresh for the first time in the series'
-        :pos===2?'hitters have now seen this staff once and tend to adjust fast, while the bullpen starts to wear down'
-        :'hitters have now seen this staff multiple times and the back-end starter is usually the weakest arm';
-  if(isPit){
-    why=pos===1?'the ace is fresh and overpowering in the series opener'
-       :pos===2?'the No. 2-3 starter is more hittable and lineups have a first look at the staff'
-       :'the back-end starter is the weakest arm and hitters have seen the whole rotation';
-  }
-  var sLeanTxt=sLean==='O'?'OVER':'UNDER';
-  var sLeanClr=sLean==='O'?'#4ade80':'#ff8a65';
-  var dLeanTxt=dLean==='O'?'OVER':'UNDER';
-  var dLeanClr=dLean==='O'?'#4ade80':'#ff8a65';
-  var dn=_dayName();
-  var dWhy=_DOW_WHY[_slateDay()];
-  var ba=pos===1?ss.g1_ba:pos===2?ss.g2_ba:ss.g3_ba;
-  var slotShort=pos===1?'Game 1':pos===2?'Game 2':'Game 3+';
-  var baSent='';
-  if(!isPit&&ba!=null){
-    var baStr=ba.toFixed(3).replace('0.','.');
-    var baClr=ba>=0.300?'#4ade80':ba>=0.250?'#fbbf24':'#f87171';
-    baSent=' His '+slotShort+' split this season is <b style="color:'+baClr+'">'+baStr+'</b>.';
-  }
-  var pl='<b style="color:#fff">'+pickLabel+'</b>';
-  var split=(dLean&&sLean!==dLean);
-  var clr,glow,bg,bd,head,verdict;
-  if(split){
-    clr='#f59e0b'; glow='rgba(245,158,11,.85)'; bg='rgba(245,158,11,.06)'; bd='rgba(245,158,11,.3)';
-    head='Split Signal \u2014 Lean Light';
-    verdict=' The two signals disagree, so there is no clean edge on '+marketWord+' today.'+baSent+' Treat this '+pl+' play as a lean-light spot.';
-  } else {
-    var agree=(sLean===side);
-    clr=agree?'#22c55e':'#ef4444';
-    glow=agree?'rgba(34,197,94,.85)':'rgba(239,68,68,.85)';
-    bg=agree?'rgba(34,197,94,.06)':'rgba(239,68,68,.06)';
-    bd=agree?'rgba(34,197,94,.3)':'rgba(239,68,68,.3)';
-    head=agree?'Both Signals Agree \u2014 Good To Play':'Chart Says Fade';
-    verdict=agree
-      ?(' Both point <b style="color:'+sLeanClr+'">'+sLeanTxt+'</b>, which matches this '+pl+' play.'+baSent+' Strong spot to play today.')
-      :(' Both point <b style="color:'+sLeanClr+'">'+sLeanTxt+'</b>, the opposite of this '+pl+' play.'+baSent+' Chart says fade today.');
-  }
-  var body='This is <b style="color:#fff">'+slot.name+' \u2014 '+slot.label+'</b>, so the series chart leans <b style="color:'+sLeanClr+'">'+sLeanTxt+'</b> on '+marketWord+' (because '+why+').'
-    +(dLean?(' Today is <b style="color:#fff">'+dn+'</b>, and the 7-day chart leans <b style="color:'+dLeanClr+'">'+dLeanTxt+'</b> on '+marketWord+' (because '+dWhy+').'):'')
-    +verdict;
+  var sTxt=sLean==='O'?'OVER':'UNDER';
+  var sClr=sLean==='O'?'#4ade80':'#ff8a65';
+  var rankTxt=(ri.rank!=null&&ri.rank>0)?('SP'+ri.rank):'spot';
+  var why=ri.tier===1
+    ?(who+' is the staff <b style="color:#fff">ace (SP1)</b>, the toughest arm in the rotation')
+    :(who+' is a <b style="color:#fff">back-end '+rankTxt+' starter</b>'+(ri.rookie?' and a rookie':'')+', usually the most hittable arm');
+  var agree=(sLean===side);
+  var clr=agree?'#22c55e':'#ef4444';
+  var glow=agree?'rgba(34,197,94,.85)':'rgba(239,68,68,.85)';
+  var bg=agree?'rgba(34,197,94,.06)':'rgba(239,68,68,.06)';
+  var bd=agree?'rgba(34,197,94,.3)':'rgba(239,68,68,.3)';
+  var head=agree?'Depth Chart Agrees \u2014 Good To Play':'Depth Chart Says Fade';
+  var verdict=agree
+    ?(', so the chart leans <b style="color:'+sClr+'">'+sTxt+'</b> on '+marketWord+', which matches this '+pl+' play. Good spot to play.')
+    :(', so the chart leans <b style="color:'+sClr+'">'+sTxt+'</b> on '+marketWord+', the opposite of this '+pl+' play. Chart says fade.');
+  return _mtxBox(clr,glow,bg,bd,head,why+verdict);
+}
+function _mtxBox(clr,glow,bg,bd,head,body){
   return '<div style="margin-top:14px;background:'+bg+';border:1px solid '+bd+';border-radius:10px;padding:11px 13px">'
     +'<div style="display:flex;align-items:center;gap:7px;font-size:.6rem;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:'+clr+';margin-bottom:6px">'
     +'<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:'+clr+';box-shadow:0 0 6px '+glow+'"></span>'+head+'</div>'
@@ -5780,7 +5773,15 @@ function _trkTab(t){ window.__TRK_BET__=_trkStake(); window.__TRK_TAB__=t; rende
 function _trkBetInput(){ window.__TRK_BET__=_trkStake(); _trkRenderActive(); }
 function _trkRenderActive(){ var be=document.getElementById('track-body'); if(!be) return; var stake=_trkStake(); var t=window.__TRK_TAB__||'daily'; if(t==='daily') _trkRenderDailyTab(be,stake); else _trkRenderRangeTab(be,stake,t); }
 function _trkFlatten(g){ var out=[]; if(!g||g==='LOADING'||g.__error__) return out; _TRK_KEYS.forEach(function(k){ (g[k]||[]).forEach(function(r){ out.push(r); }); }); return out; }
-function _trkRangePool(from,to){ var d=window.__TRACK__||{}; var pool=[]; (d.detail||[]).forEach(function(r){ if(r.date>=from&&r.date<=to) pool.push(r); }); var today=window.__TRK_TODAY__||_trkTodayISO(); if(today>=from&&today<=to){ var has=(d.detail||[]).some(function(r){ return r.date===today; }); if(!has){ var g=(window.__TRK_GRADE_CACHE__||{})[today]; _trkFlatten(g).forEach(function(r){ if(r.result==='WIN'||r.result==='LOSS'){ var c={}; for(var kk in r) c[kk]=r[kk]; c.date=today; pool.push(c); } }); } } return pool; }
+function _trkRangePool(from,to){ var d=window.__TRACK__||{}; var pool=[]; var have={}; (d.detail||[]).forEach(function(r){ if(r.date>=from&&r.date<=to){ pool.push(r); have[r.date]=true; } }); var cache=window.__TRK_GRADE_CACHE__||{}; var cur=from; while(cur<=to){ if(!have[cur]){ _trkFlatten(cache[cur]).forEach(function(r){ if(r.result==='WIN'||r.result==='LOSS'){ var c={}; for(var kk in r) c[kk]=r[kk]; c.date=cur; pool.push(c); } }); } cur=_isoShift(cur,1); } return pool; }
+// Days in [from,to] (up to today) that are neither locked into the permanent ledger
+// nor yet fetched into the grade cache. These must be graded on demand so Weekly/
+// Monthly sum EVERY day (postponed / still-pending days included), not just locked
+// days + today.
+function _trkRangeMissing(from,to){ var d=window.__TRACK__||{}; var have={}; (d.detail||[]).forEach(function(r){ if(r.date) have[r.date]=true; }); var cache=window.__TRK_GRADE_CACHE__||{}; var today=window.__TRK_TODAY__||_trkTodayISO(); var miss=[], cur=from; while(cur<=to){ if(cur<=today && !have[cur] && cache[cur]===undefined) miss.push(cur); cur=_isoShift(cur,1); } return miss; }
+// Grade a list of dates into the cache, concurrency-limited so a wide range can't
+// fire dozens of simultaneous box-score lookups (avoids ESPN/MLB-API 429s).
+async function _trkFetchDays(dates){ var cache=window.__TRK_GRADE_CACHE__=window.__TRK_GRADE_CACHE__||{}; var tok=localStorage.getItem('__mpa_token')||localStorage.getItem('hub_token')||''; var adm=new URLSearchParams(location.search).get('admin')||''; dates.forEach(function(dt){ if(cache[dt]===undefined) cache[dt]='LOADING'; }); var i=0, LIMIT=4; async function _worker(){ while(i<dates.length){ var dt=dates[i++]; try{ var res=await fetch('/api/grade/'+dt+'?token='+encodeURIComponent(tok)+(adm?('&admin='+encodeURIComponent(adm)):'')); if(!res.ok){ var t=await res.text(); cache[dt]={__error__:(t||'No picks for this date')}; } else { cache[dt]=await res.json(); } }catch(e){ cache[dt]={__error__:String((e&&e.message)||e)}; } } } var ws=[]; for(var w=0;w<Math.min(LIMIT,dates.length);w++) ws.push(_worker()); await Promise.all(ws); }
 function _trkAgg(pool,stake){ var cats={}, overall={w:0,l:0,net:0,counted:0,skipped:0}; pool.forEach(function(r){ if(_trkSkipMeta(r)) return; if(r.result!=='WIN'&&r.result!=='LOSS') return; var k=(r.category||'?')+'|'+(r.side||'OVER'); var c=cats[k]=cats[k]||{w:0,l:0,net:0,counted:0,skipped:0}; var win=r.result==='WIN'; if(win){c.w++;overall.w++;} else {c.l++;overall.l++;} var pl=_amProfit(r.odds,stake,win); if(pl===null){c.skipped++;overall.skipped++;} else {c.net+=pl;c.counted++;overall.net+=pl;overall.counted++;} }); return {cats:cats,overall:overall}; }
 async function _trkLoadDaily(date){ window.__TRK_DAILY_DATE__=date; window.__TRK_GRADE_CACHE__=window.__TRK_GRADE_CACHE__||{}; var cur=window.__TRK_GRADE_CACHE__[date]; if(cur&&cur!=='LOADING'){ _trkRenderActive(); return; } var tok=localStorage.getItem('__mpa_token')||localStorage.getItem('hub_token')||''; var adm=new URLSearchParams(location.search).get('admin')||''; window.__TRK_GRADE_CACHE__[date]='LOADING'; _trkRenderActive(); try{ var res=await fetch('/api/grade/'+date+'?token='+encodeURIComponent(tok)+(adm?('&admin='+encodeURIComponent(adm)):'')); if(!res.ok){ var t=await res.text(); window.__TRK_GRADE_CACHE__[date]={__error__:(t||'No picks for this date')}; } else { window.__TRK_GRADE_CACHE__[date]=await res.json(); } }catch(e){ window.__TRK_GRADE_CACHE__[date]={__error__:String((e&&e.message)||e)}; } _trkRenderActive(); }
 function _trkMonthShift(n){ window.__TRK_BET__=_trkStake(); var m=window.__TRK_MONTH__||_trkTodayISO().slice(0,7); var y=parseInt(m.slice(0,4),10), mo=parseInt(m.slice(5,7),10)-1+n; while(mo<0){mo+=12;y--;} while(mo>11){mo-=12;y++;} var nm=y+'-'+((mo+1)<10?'0':'')+(mo+1); var cur=_trkTodayISO().slice(0,7); if(nm>cur) nm=cur; window.__TRK_MONTH__=nm; _trkRenderActive(); }
@@ -5853,6 +5854,8 @@ function _trkRenderRangeTab(be,stake,which){
   var from,to,label,nav='';
   if(which==='weekly'){ to=window.__TRK_TODAY__||_trkTodayISO(); from=_isoShift(to,-6); label='Last 7 days'; }
   else { var m=window.__TRK_MONTH__||_trkTodayISO().slice(0,7); from=m+'-01'; to=m+'-31'; var mn=['January','February','March','April','May','June','July','August','September','October','November','December']; label=mn[parseInt(m.slice(5,7),10)-1]+' '+m.slice(0,4); var canNext=(m<_trkTodayISO().slice(0,7)); nav='<span style="display:flex;gap:6px;align-items:center;margin-left:10px"><button onclick="_trkMonthShift(-1)" style="background:#1e293b;color:#fff;border:none;border-radius:6px;padding:4px 11px;cursor:pointer;font-weight:800">\u25c0</button><button onclick="_trkMonthShift(1)"'+(canNext?'':' disabled')+' style="background:'+(canNext?'#1e293b':'#0f172a')+';color:'+(canNext?'#fff':'#475569')+';border:none;border-radius:6px;padding:4px 11px;cursor:'+(canNext?'pointer':'default')+';font-weight:800">\u25b6</button></span>'; }
+  var _miss=_trkRangeMissing(from,to);
+  if(_miss.length){ be.innerHTML='<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;background:#0a1f14;border:1px solid #16432c;border-radius:12px;padding:12px 16px;margin-bottom:12px"><div style="font-weight:800;color:#6ee7b7;display:flex;align-items:center">'+label+nav+'</div><div style="margin-left:auto;color:#94a3b8;font-size:.84rem">Grading '+_miss.length+' day'+(_miss.length>1?'s':'')+'\u2026</div></div>'; _trkFetchDays(_miss).then(function(){ if((window.__TRK_TAB__||'daily')===which) _trkRenderActive(); }); return; }
   var ct=_trkCatTable(_trkRangePool(from,to),stake);
   var o=ct.overall, on=o.w+o.l, orisk=o.counted*stake, oroi=orisk?o.net/orisk*100:0, oclr=o.net>=0?'#4ade80':'#f87171', owclr=_trkRC(o.w,on);
   var summary='<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;background:#0a1f14;border:1px solid #16432c;border-radius:12px;padding:12px 16px;margin-bottom:12px"><div style="font-weight:800;color:#6ee7b7;display:flex;align-items:center">'+label+nav+'</div><div style="margin-left:auto;text-align:right"><div style="font-weight:800;font-size:.92rem"><span style="color:'+owclr+'">'+o.w+'/'+on+'</span> <span style="color:#94a3b8;font-size:.8rem">('+(on?(o.w/on*100).toFixed(1):'0.0')+'%)</span></div><div style="font-size:.82rem">Net <span style="color:'+oclr+';font-weight:900">'+(o.net>=0?'+$':'\u2212$')+Math.abs(o.net).toFixed(0)+'</span> <span style="color:#64748b">\u00b7 ROI '+(oroi>=0?'+':'\u2212')+Math.abs(oroi).toFixed(1)+'% on $'+orisk.toFixed(0)+'</span></div></div></div>';
