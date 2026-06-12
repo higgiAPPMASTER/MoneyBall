@@ -1233,12 +1233,15 @@ def _save_detail(det: dict):
         print(f"[track_detail] save failed: {e}")
 
 def _aggregate_graded(graded: dict) -> dict:
-    """Collapse a graded day into {category: {side: [W, L]}} counting only decided picks."""
+    """Collapse a graded day into {category: {side: [W, L]}} counting only decided picks
+    that had odds posted — no-odds picks are excluded from the record."""
     agg: dict = {}
     for key in ("hitter_overs", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "batter_walks", "hrr", "pitcher_ks", "pitcher_props", "top10_batter", "top10_pitcher"):
         for r in graded.get(key, []):
             res = r.get("result")
             if res not in ("WIN", "LOSS"):
+                continue
+            if r.get("odds") is None or r.get("odds") == "":
                 continue
             cat  = r.get("category") or key
             side = r.get("side") or "OVER"
@@ -1252,12 +1255,14 @@ def _aggregate_graded(graded: dict) -> dict:
 def _detail_graded(graded: dict) -> list:
     """Flatten a graded day into per-pick rows (decided picks only) carrying the
     fields an earnings sheet needs: player, team, category, side, pick, odds,
-    line, result."""
+    line, result. No-odds picks are excluded — they don't count in the record."""
     out = []
     for key in ("hitter_overs", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "batter_walks", "hrr", "pitcher_ks", "pitcher_props", "top10_batter", "top10_pitcher"):
         for r in graded.get(key, []):
             res = r.get("result")
             if res not in ("WIN", "LOSS"):
+                continue
+            if r.get("odds") is None or r.get("odds") == "":
                 continue
             out.append({
                 "name": r.get("name", ""),
