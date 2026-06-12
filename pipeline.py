@@ -228,17 +228,17 @@ def _build_rotation_ranks(run_date: str) -> dict:
     """Rank each team's CURRENT rotation via the MLB Stats API (official feed
     only, no scraping). Returns {pitcher_id: {"rank","gs","recent","rookie"}}.
 
-    Membership is recency-driven: the active rotation = distinct starters who
-    appear in the recent turn (last 21 days of actual starts + upcoming probable
-    starts). Spot starters, optioned arms and injured/long-IL pitchers fall out
-    of that window, so they no longer pad the ranking and push real starters down
-    (the old 'season games-started' count ranked every fill-in the team ever used,
-    which mislabeled recent callups as SP7/SP8). Within the active rotation the
-    order is a POWER RANKING by season ERA asc (lowest ERA = toughest arm = SP1),
-    NOT games-started, so the staff's best arm reads as the ace even if a
-    higher-volume but worse pitcher has made more starts. Pitchers under a 3-start
-    min sort to the bottom (sample too small); games-started / recent starts break
-    ties. An admin override still wins over this auto order.
+    Membership = RECURRING listed starters from the probable-pitcher schedule:
+    a pitcher is in the rotation only if he made >=2 starts in the trailing window
+    OR has an upcoming probable start. A single trailing start with nothing ahead
+    is a one-off (bullpen-day opener, spot starter, an arm that just hit the IL, or
+    a demotion to AAA) and is dropped. Pure relievers never appear at all (they are
+    never listed as a probable starter). A reliever recently promoted into the
+    rotation qualifies on his recurring recent starts even though his season line
+    still reads like a reliever. Within the rotation the order is a POWER RANKING by
+    season ERA asc (lowest ERA = toughest arm = SP1), NOT games-started, so the
+    staff's best arm reads as the ace; games-started / recent starts break ties.
+    An admin override still wins over this auto order.
 
     Rookie = 10 or fewer career games pitched (0-10 rookie, 11+ established).
     Cached per run_date for the life of the process."""
@@ -282,9 +282,13 @@ def _build_rotation_ranks(run_date: str) -> dict:
     tid_list = list(team_ids)
 
     def _team_rotation(tid):
-        # Recent-turn workload: count probable/actual starts per pitcher in the
-        # window -> defines who is actually in the current rotation.
-        recent: dict = {}
+        # Membership = the probable-pitcher schedule (the listed starter of record
+        # per game), split into trailing starts vs upcoming starts. Pure relievers
+        # never appear here (they are never a probable starter); the past/upcoming
+        # split then separates RECURRING starters from one-off bullpen openers, IL
+        # guys, and demotions.
+        past: dict = {}   # pid -> starts made in the trailing window
+        upc:  dict = {}   # pid -> upcoming probable starts (game date >= run_date)
         names: dict = {}
         try:
             r = requests.get(
@@ -292,6 +296,7 @@ def _build_rotation_ranks(run_date: str) -> dict:
                 f"&teamId={tid}&startDate={win_start}&endDate={win_end}"
                 "&hydrate=probablePitcher", timeout=15).json()
             for d in r.get("dates", []):
+                gdate = d.get("date", "")
                 for g in d.get("games", []):
                     teams = g.get("teams", {}) or {}
                     for _sh in ("home", "away"):
@@ -301,17 +306,19 @@ def _build_rotation_ranks(run_date: str) -> dict:
                         pp = (t.get("probablePitcher") or {})
                         pid = pp.get("id")
                         if pid:
-                            recent[int(pid)] = recent.get(int(pid), 0) + 1
+                            pid = int(pid)
+                            if gdate >= run_date:
+                                upc[pid] = upc.get(pid, 0) + 1
+                            else:
+                                past[pid] = past.get(pid, 0) + 1
                             if pp.get("fullName"):
-                                names[int(pid)] = pp.get("fullName")
+                                names[pid] = pp.get("fullName")
         except Exception:
-            recent = {}
-        # Season pitching profile: ERA is the POWER-RANKING signal (best arm =
-        # SP1); games-started / games-pitched / innings classify TRUE starters
-        # vs relievers (bullpen-day openers + spot starters).
+            past, upc = {}, {}
+        recent = {p: past.get(p, 0) + upc.get(p, 0)
+                  for p in set(past) | set(upc)}
+        # Season ERA powers the ranking (best arm = SP1); GS only breaks ties.
         seas: dict = {}   # pid -> season games started
-        gpd:  dict = {}   # pid -> season games pitched (appearances)
-        ipd:  dict = {}   # pid -> season innings pitched
         era:  dict = {}   # pid -> season ERA (float; 999.0 when none / 0 IP)
         try:
             r = requests.get(
@@ -326,14 +333,8 @@ def _build_rotation_ranks(run_date: str) -> dict:
                     if pid:
                         pid = int(pid)
                         seas[pid] = int(stt.get("gamesStarted", 0) or 0)
-                        gpd[pid] = int(stt.get("gamesPitched",
-                                               stt.get("gamesPlayed", 0)) or 0)
                         try:
                             ip = float(stt.get("inningsPitched", 0) or 0)
-                        except (TypeError, ValueError):
-                            ip = 0.0
-                        ipd[pid] = ip
-                        try:
                             era[pid] = float(stt.get("era")) if ip > 0 else 999.0
                         except (TypeError, ValueError):
                             era[pid] = 999.0
@@ -341,30 +342,17 @@ def _build_rotation_ranks(run_date: str) -> dict:
                             names[pid] = pl.get("fullName")
         except Exception:
             seas = {}
-        # TRUE-STARTER gate — keep relievers out of the rotation ENTIRELY (the
-        # editor + ranks never list them). A real starter: >=3 starts AND at
-        # least half their appearances are starts (not a long reliever who spot-
-        # starts on a bullpen day) AND >=2.5 IP per start (not a 1-inning opener).
-        # Relief innings only inflate IP/start, so this never wrongly drops a
-        # genuine starter; it only catches relievers/openers.
-        MIN_GS = 3
-        def _is_starter(p):
-            gs = seas.get(p, 0)
-            if gs < MIN_GS:
-                return False
-            gp = gpd.get(p, gs) or gs
-            if gp and gs < gp * 0.5:
-                return False
-            if gs and (ipd.get(p, 0.0) / gs) < 2.5:
-                return False
-            return True
-        # Active rotation = recent starters who are TRUE starters; fall back to
-        # the season starter pool when the recent window came back empty.
-        if recent:
-            cand = [p for p in recent if _is_starter(p)]
-        else:
-            cand = [p for p in seas if _is_starter(p)]
-        # POWER RANKING: order by season ERA asc (lowest ERA = toughest arm = SP1);
+        # CURRENT ROTATION = recurring listed starters: >=2 trailing starts OR an
+        # upcoming probable start. A single trailing start with nothing upcoming is
+        # a one-off (bullpen opener, spot starter, an arm that just hit the IL, or
+        # a demotion) and is dropped. Newly promoted arms (a reliever moved into
+        # the rotation) qualify on their recurring recent starts even though their
+        # season line still reads like a reliever. If nothing recurs, fall back to
+        # anyone listed as a probable starter in the window.
+        cand = [p for p in recent if past.get(p, 0) >= 2 or upc.get(p, 0) >= 1]
+        if not cand:
+            cand = list(recent.keys())
+        # POWER RANKING: season ERA asc (lowest ERA = toughest arm = SP1);
         # games-started / recent-start count break ties.
         def _key(p):
             return (era.get(p, 999.0), -seas.get(p, 0), -recent.get(p, 0))
