@@ -185,7 +185,9 @@ _ROT_OVR_CAT = "__rotation__"
 
 def _load_rot_override() -> dict:
     """Read the admin rotation-override row. Returns
-    {team_id(str): {"order":[(pid,name),...], "inj":[(pid,name),...]}} or {}.
+    {team_id(str): {"order":[(pid,name),...], "inj":[(pid,name),...],
+                    "tier":{pid:1|2|3}}} or {}. tier is a per-pitcher tier label
+    override (1 ace / 2 mid / 3 back-end); absent/0 = auto (rank-derived).
     Back-compat: a legacy plain-list detail value is read as order-only (no INJ)."""
     if not (_SB_URL_PL and _SB_KEY_PL):
         return {}
@@ -211,14 +213,22 @@ def _load_rot_override() -> dict:
 
             out = {}
             for tid, val in det.items():
+                tier = {}
                 if isinstance(val, dict):
                     order = _pairs(val.get("order"))
                     inj = _pairs(val.get("inj"))
+                    for pid_, n_ in (val.get("tier") or {}).items():
+                        try:
+                            ni = int(n_)
+                        except Exception:
+                            continue
+                        if ni in (1, 2, 3):
+                            tier[int(pid_)] = ni
                 else:
                     order = _pairs(val)   # legacy: ordered list, no INJ bucket
                     inj = []
-                if order or inj:
-                    out[str(tid)] = {"order": order, "inj": inj}
+                if order or inj or tier:
+                    out[str(tid)] = {"order": order, "inj": inj, "tier": tier}
             return out
     except Exception as e:
         print(f"[rot] override load failed: {e}")
@@ -374,6 +384,7 @@ def _build_rotation_ranks(run_date: str) -> dict:
         meta = {pid: (sgs, rc) for (pid, nm, sgs, rc) in rotation}
         name_by_pid = {pid: nm for (pid, nm) in auto if nm}
         ovr = override.get(str(tid))
+        tier_ovr = (ovr.get("tier") or {}) if ovr else {}
         inj_order = []   # [(pid,name)] parked in the INJ bucket (gets no rank)
         if ovr:
             # Admin order wins. Pinned starters take ranks 1..k in the saved
@@ -401,11 +412,13 @@ def _build_rotation_ranks(run_date: str) -> dict:
         ed_pitchers = []
         for i, pid in enumerate(final, 1):
             sgs, rc = meta.get(pid, (0, 0))
-            rank_map[pid] = {"rank": i, "gs": sgs, "recent": rc, "rookie": False}
+            rank_map[pid] = {"rank": i, "gs": sgs, "recent": rc,
+                             "rookie": False, "tier": tier_ovr.get(pid, 0)}
             pids.append(pid)
             ed_pitchers.append({"id": pid,
                                 "name": name_by_pid.get(pid, str(pid)),
-                                "rank": i, "override": has_ovr})
+                                "rank": i, "override": has_ovr,
+                                "tier": tier_ovr.get(pid, 0)})
         ed_injured = [{"id": pid, "name": name_by_pid.get(pid, str(pid))}
                       for pid, nm in inj_order]
         editor[str(tid)] = {"name": team_names.get(tid, str(tid)),
@@ -1982,12 +1995,14 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         if info:
             pick["opp_rot_rank"]   = info.get("rank")
             pick["opp_rot_rookie"] = info.get("rookie", False)
+            pick["opp_rot_tier"]   = info.get("tier", 0)
 
     def _set_own_rot(pick, pid):
         info = _rot_get(pid)
         if info:
             pick["rot_rank"]   = info.get("rank")
             pick["rot_rookie"] = info.get("rookie", False)
+            pick["rot_tier"]   = info.get("tier", 0)
 
     for _hp in list(top9) + list(also_ran):
         _set_opp_rot(_hp, _hp.get("pit_id"))
