@@ -185,7 +185,8 @@ _ROT_OVR_CAT = "__rotation__"
 
 def _load_rot_override() -> dict:
     """Read the admin rotation-override row. Returns
-    {team_id(str): [(pid(int), name(str)), ...]} or {} when unset/unavailable."""
+    {team_id(str): {"order":[(pid,name),...], "inj":[(pid,name),...]}} or {}.
+    Back-compat: a legacy plain-list detail value is read as order-only (no INJ)."""
     if not (_SB_URL_PL and _SB_KEY_PL):
         return {}
     try:
@@ -197,8 +198,8 @@ def _load_rot_override() -> dict:
                     "select": "detail", "limit": "1"}, timeout=10)
         if rsp.status_code == 200 and rsp.json():
             det = (rsp.json()[0] or {}).get("detail") or {}
-            out = {}
-            for tid, lst in det.items():
+
+            def _pairs(lst):
                 norm = []
                 for it in (lst or []):
                     if isinstance(it, (list, tuple)) and it:
@@ -206,8 +207,18 @@ def _load_rot_override() -> dict:
                                      str(it[1]) if len(it) > 1 else ""))
                     elif isinstance(it, dict) and it.get("id") is not None:
                         norm.append((int(it["id"]), str(it.get("name", ""))))
-                if norm:
-                    out[str(tid)] = norm
+                return norm
+
+            out = {}
+            for tid, val in det.items():
+                if isinstance(val, dict):
+                    order = _pairs(val.get("order"))
+                    inj = _pairs(val.get("inj"))
+                else:
+                    order = _pairs(val)   # legacy: ordered list, no INJ bucket
+                    inj = []
+                if order or inj:
+                    out[str(tid)] = {"order": order, "inj": inj}
             return out
     except Exception as e:
         print(f"[rot] override load failed: {e}")
@@ -223,8 +234,11 @@ def _build_rotation_ranks(run_date: str) -> dict:
     of that window, so they no longer pad the ranking and push real starters down
     (the old 'season games-started' count ranked every fill-in the team ever used,
     which mislabeled recent callups as SP7/SP8). Within the active rotation the
-    order is by season games-started desc (the durable ace signal), recent-start
-    count breaking ties, so SP1 is the staff ace.
+    order is a POWER RANKING by season ERA asc (lowest ERA = toughest arm = SP1),
+    NOT games-started, so the staff's best arm reads as the ace even if a
+    higher-volume but worse pitcher has made more starts. Pitchers under a 3-start
+    min sort to the bottom (sample too small); games-started / recent starts break
+    ties. An admin override still wins over this auto order.
 
     Rookie = 10 or fewer career games pitched (0-10 rookie, 11+ established).
     Cached per run_date for the life of the process."""
@@ -292,8 +306,10 @@ def _build_rotation_ranks(run_date: str) -> dict:
                                 names[int(pid)] = pp.get("fullName")
         except Exception:
             recent = {}
-        # Season games-started (durable ace signal + fallback pool).
-        seas: dict = {}
+        # Season pitching quality: ERA is the POWER-RANKING signal (best arm =
+        # SP1); games-started gives the sample-size gate + a tiebreak.
+        seas: dict = {}   # pid -> season games started
+        era:  dict = {}   # pid -> season ERA (float; 999.0 when none / 0 IP)
         try:
             r = requests.get(
                 "https://statsapi.mlb.com/api/v1/stats?stats=season&group=pitching"
@@ -303,22 +319,37 @@ def _build_rotation_ranks(run_date: str) -> dict:
                 for s in blk.get("splits", []):
                     pl = (s.get("player") or {})
                     pid = pl.get("id")
-                    gs = (s.get("stat") or {}).get("gamesStarted", 0) or 0
+                    stt = (s.get("stat") or {})
+                    gs = stt.get("gamesStarted", 0) or 0
                     if pid:
                         seas[int(pid)] = int(gs)
+                        try:
+                            ip = float(stt.get("inningsPitched", 0) or 0)
+                            era[int(pid)] = float(stt.get("era")) if ip > 0 else 999.0
+                        except (TypeError, ValueError):
+                            era[int(pid)] = 999.0
                         if pl.get("fullName") and int(pid) not in names:
                             names[int(pid)] = pl.get("fullName")
         except Exception:
             seas = {}
-        # Active rotation = pitchers with >=1 recent start; order by season GS
-        # desc (ace first), recent-start count breaking ties. Fall back to
-        # season GS only if the recent window came back empty.
+        # Active rotation = pitchers with >=1 recent start; fall back to anyone
+        # with a season start when the recent window came back empty.
         if recent:
-            pool = [(seas.get(p, 0), recent[p], p) for p in recent]
+            cand = list(recent.keys())
         else:
-            pool = [(seas[p], 0, p) for p in seas if seas[p]]
-        pool.sort(key=lambda x: (x[0], x[1]), reverse=True)
-        return [(p, names.get(p, ""), sgs, rc) for sgs, rc, p in pool]
+            cand = [p for p in seas if seas[p]]
+        # POWER RANKING: order by season ERA asc (lowest ERA = toughest arm = SP1).
+        # Pitchers under the min-starts gate (small, noisy sample) sort to the
+        # BOTTOM so a 1-start shiny ERA cannot masquerade as the ace; GS desc /
+        # recent-start count break ties.
+        MIN_GS = 3
+        def _key(p):
+            sgs = seas.get(p, 0)
+            return (0 if sgs >= MIN_GS else 1, era.get(p, 999.0),
+                    -sgs, -recent.get(p, 0))
+        cand.sort(key=_key)
+        return [(p, names.get(p, ""), seas.get(p, 0), recent.get(p, 0))
+                for p in cand]
 
     try:
         with _TPEx(max_workers=8) as _ex:
@@ -334,22 +365,28 @@ def _build_rotation_ranks(run_date: str) -> dict:
         meta = {pid: (sgs, rc) for (pid, nm, sgs, rc) in rotation}
         name_by_pid = {pid: nm for (pid, nm) in auto if nm}
         ovr = override.get(str(tid))
+        inj_order = []   # [(pid,name)] parked in the INJ bucket (gets no rank)
         if ovr:
-            # Admin order wins: pinned pitchers take ranks 1..k in the saved
-            # order; any auto-detected starter not pinned is appended after.
-            seen = set(); final = []
-            for pid, nm in ovr:
-                if pid in seen:
-                    continue
-                seen.add(pid)
+            # Admin order wins. Pinned starters take ranks 1..k in the saved
+            # order; arms moved to the INJ bucket (injured / optioned) are
+            # dropped from the ranking entirely so the real starters re-rank
+            # 1..k. Any auto-detected starter not pinned or INJ is appended.
+            inj_order = ovr.get("inj") or []
+            inj_pids = set(pid for pid, nm in inj_order)
+            for pid, nm in (ovr.get("order") or []) + inj_order:
                 if nm:
                     name_by_pid[pid] = nm
-                final.append(pid)
+            seen = set(); final = []
+            for pid, nm in (ovr.get("order") or []):
+                if pid in seen or pid in inj_pids:
+                    continue
+                seen.add(pid); final.append(pid)
             for pid, nm in auto:
-                if pid not in seen:
+                if pid not in seen and pid not in inj_pids:
                     seen.add(pid); final.append(pid)
             has_ovr = True
         else:
+            inj_pids = set()
             final = [pid for pid, nm in auto]
             has_ovr = False
         ed_pitchers = []
@@ -360,8 +397,11 @@ def _build_rotation_ranks(run_date: str) -> dict:
             ed_pitchers.append({"id": pid,
                                 "name": name_by_pid.get(pid, str(pid)),
                                 "rank": i, "override": has_ovr})
+        ed_injured = [{"id": pid, "name": name_by_pid.get(pid, str(pid))}
+                      for pid, nm in inj_order]
         editor[str(tid)] = {"name": team_names.get(tid, str(tid)),
-                            "pitchers": ed_pitchers, "has_override": has_ovr}
+                            "pitchers": ed_pitchers, "injured": ed_injured,
+                            "has_override": has_ovr}
 
     # Rookie flag — 10 or fewer career games pitched (batched career hydrate).
     try:
@@ -401,7 +441,8 @@ def rotation_editor_data(run_date: str) -> dict:
         teams.append({"team_id": tid,
                       "team_name": info.get("name", tid),
                       "has_override": info.get("has_override", False),
-                      "pitchers": info.get("pitchers", [])})
+                      "pitchers": info.get("pitchers", []),
+                      "injured": info.get("injured", [])})
     teams.sort(key=lambda t: (t["team_name"] or ""))
     return {"date": run_date, "teams": teams}
 
