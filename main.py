@@ -3780,7 +3780,7 @@ function toggleParlayPlus(){
 // Maps a parlay candidate leg to its category key (the unders split by stat so
 // Under 1.5 Hits and Under 1.5 Total Bases are independently checkable).
 function _legCat(c){
-  var dir=(c.pick||'').split(' ')[0]==='OVER'?'O':'U';
+  var dir=(c.dir||'').split(' ')[0]==='OVER'?'O':'U';
   if(c.type==='HIT') return 'HIT_O';
   if(c.type==='UNDER') return c.stat==='Total Bases'?'TB_U':'HIT_U';
   if(c.type==='TBO') return 'TB_O';
