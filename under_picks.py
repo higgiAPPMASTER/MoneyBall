@@ -40,6 +40,16 @@ def _take_odds(entry, price_field, book_field, price, book_key):
     if cur is None or price > cur:
         entry[price_field] = price
         entry[book_field] = book_key
+def _take_odds_any(entry, price_field, book_field, price, book_key):
+    """Any book: keep the best American price regardless of book origin.
+    Used for niche markets (e.g. batter_hits 1.5 line) where Ontario books
+    don't post the prop, so US fallback is required to avoid empty odds."""
+    if price is None:
+        return
+    cur = entry.get(price_field)
+    if cur is None or price > cur:
+        entry[price_field] = price
+        entry[book_field] = book_key
 
 # Populated by _fetch_hits_lines: normalized player name -> Over price on the 0.5 hits line
 # (i.e. the standard "to record a hit" prop). Read by pipeline.py to enrich top9 picks.
@@ -423,9 +433,9 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
                                      "over_odds": None, "under_odds": None}
                             event_entries[nk] = entry
                         if side == "Over":
-                            _take_odds(entry, "over_odds", "over_odds_book", price, bk)
+                            _take_odds_any(entry, "over_odds", "over_odds_book", price, bk)
                         elif side == "Under":
-                            _take_odds(entry, "under_odds", "under_odds_book", price, bk)
+                            _take_odds_any(entry, "under_odds", "under_odds_book", price, bk)
             # Under 1.5 TOTAL BASES odds for the same players, shown alongside the
             # hits line (pays more because a double/HR busts it even on one hit).
             # Same all-books union + PREFERRED order; first Under price seen wins.
