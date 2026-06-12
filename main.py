@@ -6246,7 +6246,7 @@ async function loadRotation(){
     var d=await r.json();
     window.__ROT__={reset:[],teams:(d.teams||[]).map(function(t){
       return {team_id:String(t.team_id),team_name:t.team_name||String(t.team_id),
-        has_override:!!t.has_override,dirty:false,
+        has_override:!!t.has_override,dirty:false,collapsed:true,
         pitchers:(t.pitchers||[]).map(function(p){return {id:p.id,name:p.name||String(p.id),tier:p.tier||0};}),
         injured:(t.injured||[]).map(function(p){return {id:p.id,name:p.name||String(p.id)};})};
     })};
@@ -6286,15 +6286,18 @@ function _rotRender(){
     }).join('');
     var injBlock=(t.injured&&t.injured.length)?('<div style="margin-top:8px;padding-top:8px;border-top:1px dashed #3f3f46"><div style="font-size:.58rem;color:#f87171;font-weight:800;letter-spacing:.06em;margin-bottom:3px">INJURED / OUT &#8212; not ranked</div>'+injRows+'</div>'):'';
     var tag=t.has_override?'<span style="font-size:.6rem;color:#34d399;font-weight:800;margin-left:8px">PINNED</span>':(t.dirty?'<span style="font-size:.6rem;color:#fbbf24;font-weight:800;margin-left:8px">EDITED</span>':'');
-    var resetLink=(t.has_override||t.dirty)?'<a onclick="_rotReset('+ti+')" style="color:#ff8a65;cursor:pointer;font-size:.7rem;font-weight:700">Reset to auto</a>':'';
+    var resetLink=(t.has_override||t.dirty)?'<a onclick="event.stopPropagation();_rotReset('+ti+')" style="color:#ff8a65;cursor:pointer;font-size:.7rem;font-weight:700">Reset to auto</a>':'';
     var addBlock='<div style="margin-top:10px;padding-top:8px;border-top:1px dashed #3f3f46;display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
       +'<input id="rotadd-'+ti+'" type="text" placeholder="Add a starter by name" onkeydown="if(event.key===&#39;Enter&#39;){_rotSearch('+ti+');}" style="flex:1;min-width:160px;background:#0b0f17;border:1px solid #334155;border-radius:6px;color:#e5e7eb;padding:6px 9px;font-size:.82rem" />'
       +'<button onclick="_rotSearch('+ti+')" style="background:#1d4ed8;color:#fff;border:none;border-radius:6px;height:30px;padding:0 12px;cursor:pointer;font-size:.74rem;font-weight:800">Search</button>'
       +'<div id="rotres-'+ti+'" style="width:100%"></div></div>';
+    var chev=t.collapsed?'&#9656;':'&#9662;';   // collapsed = right arrow, open = down arrow
+    var summ=t.collapsed?('<span style="font-size:.7rem;color:#64748b;margin-left:8px;font-weight:600">'+t.pitchers.length+' SP'+((t.injured&&t.injured.length)?(' &middot; '+t.injured.length+' INJ'):'')+'</span>'):'';
+    var body=t.collapsed?'':((rows||'<div style="color:#64748b;font-size:.8rem">No active starters.</div>')+injBlock+addBlock);
     return '<div style="background:rgba(255,255,255,.03);border:1px solid #262626;border-radius:10px;padding:12px 14px">'
-      +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'
-      +'<div style="font-weight:800;color:#fff;font-size:.95rem">'+t.team_name+tag+'</div>'+resetLink+'</div>'
-      +(rows||'<div style="color:#64748b;font-size:.8rem">No active starters.</div>')+injBlock+addBlock+'</div>';
+      +'<div onclick="_rotToggle('+ti+')" title="Click to expand or collapse this team" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;'+(t.collapsed?'':'margin-bottom:6px')+'">'
+      +'<div style="font-weight:800;color:#fff;font-size:.95rem"><span style="color:#94a3b8;margin-right:7px;font-size:.78rem">'+chev+'</span>'+t.team_name+tag+summ+'</div>'+resetLink+'</div>'
+      +body+'</div>';
   }).join('')||'<div style="color:#64748b;font-size:.85rem">No teams on this date. Pick a slate date and Load again.</div>';
 }
 function _rotMove(ti,pi,dir){
@@ -6312,6 +6315,12 @@ function _rotTier(ti,pi,val){
   var p=t.pitchers[pi]; if(!p) return;
   p.tier=parseInt(val,10)||0; t.dirty=true;
   var ri=(R.reset||[]).indexOf(t.team_id); if(ri>=0) R.reset.splice(ri,1);
+  _rotRender();
+}
+function _rotToggle(ti){
+  var R=window.__ROT__; if(!R) return;
+  var t=R.teams[ti]; if(!t) return;
+  t.collapsed=!t.collapsed;
   _rotRender();
 }
 function _rotToInj(ti,pi){
@@ -6396,7 +6405,7 @@ async function saveRotation(){
       body:JSON.stringify({set:set,reset:reset})});
     if(!r.ok){ var t=await r.text(); throw new Error(t||'save failed'); }
     var d=await r.json();
-    R.teams.forEach(function(t){ if(t.dirty){ t.has_override=true; t.dirty=false; } });
+    R.teams.forEach(function(t){ if(t.dirty){ t.has_override=true; t.dirty=false; } t.collapsed=true; });
     R.reset=[];
     _rotRender();
     st.textContent='Saved '+(d.teams!=null?d.teams:'')+' team overrides. Now click Force Refresh to apply to today\u2019s cards.';
