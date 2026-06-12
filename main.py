@@ -2042,38 +2042,80 @@ _HTML = """
           <div id="bc-lean-text" style="font-size:.72rem;color:#e2e8f0;margin-top:4px;line-height:1.7"></div>
         </div>
         <script>
-        (function(){
-          var DAY_TO_SLOT=[3,1,2,3,4,5,2];
-          var SLOTS=[null,
-            {name:\'Game 1\',label:\'Series Opener\',bat:[\'U\',\'U\',\'U\',\'U\',\'U\',\'U\'],pit:[\'O\',\'U\',\'O\',\'U\',\'U\']},
-            {name:\'Game 2\',label:\'Mid-Series\',bat:[\'O\',\'O\',\'O\',\'O\',\'O\',\'O\'],pit:[\'U\',\'O\',\'O\',\'O\',\'O\']},
-            {name:\'Game 3\',label:\'Late Series\',bat:[\'O\',\'O\',\'O\',\'O\',\'O\',\'O\'],pit:[\'U\',\'O\',\'U\',\'O\',\'O\']},
-            {name:\'Getaway Day\',label:\'Travel Day Game\',bat:[\'U\',\'U\',\'U\',\'U\',\'U\',\'U\'],pit:[\'U\',\'U\',\'U\',\'O\',\'U\']},
-            {name:\'Friday Night\',label:\'Weekend Opener\',bat:[\'O\',\'O\',\'O\',\'O\',\'O\',\'U\'],pit:[\'O\',\'U\',\'O\',\'U\',\'U\']}
-          ];
-          window.__MPA_SLOTS__=SLOTS;
-          var d=new Date().getDay();
-          var slot=DAY_TO_SLOT[d]||1;
-          var s=SLOTS[slot];
-          var oc=function(v){return v===\'O\'?\'<b style="color:#4ade80">OVER</b>\':\'<b style="color:#ff8a65">UNDER</b>\';};
-          var el=document.getElementById(\'bc-today-lean\'), tx=document.getElementById(\'bc-lean-text\');
-          if(el&&tx){
-            el.style.display=\'block\';
-            tx.innerHTML=s.name+\' \u2014 \'+s.label
-              +\'<br><span style="color:#94a3b8">Batters:</span> Hits \'+oc(s.bat[0])+\' \u00b7 TB \'+oc(s.bat[1])+\' \u00b7 HRR \'+oc(s.bat[2])+\' \u00b7 Runs \'+oc(s.bat[3])+\' \u00b7 RBI \'+oc(s.bat[4])+\' \u00b7 Walks \'+oc(s.bat[5])
-              +\'<br><span style="color:#94a3b8">Pitchers:</span> K \'+oc(s.pit[0])+\' \u00b7 Hits Allowed \'+oc(s.pit[1])+\' \u00b7 Outs \'+oc(s.pit[2])+\' \u00b7 ER \'+oc(s.pit[3])+\' \u00b7 BB \'+oc(s.pit[4]);
-          }
-          document.querySelectorAll(\'[data-slot]\').forEach(function(tr){
-            tr.style.background=tr.dataset.slot===String(slot)?\'rgba(245,158,11,.08)\':tr.style.background||\'\'
+        var _DOW_SIG={
+          0:['U','U','U','U','U','U','U','O','O','O'],
+          1:['U','U','U','U','U','O','O','U','U','U'],
+          2:['O','O','O','O','O','U','O','O','O','O'],
+          3:['O','O','O','O','O','O','U','O','O','O'],
+          4:['U','U','U','U','U','U','U','U','O','U'],
+          5:['O','O','O','O','O','O','O','U','U','U'],
+          6:['O','O','O','O','O','U','U','O','O','O']
+        };
+        var _DOW_IDX={hits:0,hits_over:0,hits_under:0,tb:1,tb_under:1,tb_over:1,hrr:2,runs:3,rbi:4,k:5,outs:6,hits_allowed:7,er:8,walks:9};
+        var _DOW_BAT=[0,1,2,3,4,9];
+        var _DOW_PIT=[5,7,6,8,9];
+        var _DOW_NAMES=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+        var _DOW_WHY=[
+          'it is a getaway day game with regulars resting and travel ahead',
+          'it follows a frequent off-day with fresh arms and series openers',
+          'lineups have settled into the series',
+          'hitters are dialed in midweek',
+          'it is a frequent getaway day game with regulars resting and travel ahead',
+          'the weekend opens with high energy and softer back-end arms',
+          'the weekend slate runs at full strength'
+        ];
+        function _dayName(){return _DOW_NAMES[new Date().getDay()];}
+        function _dayLean(isPit,catIdx){
+          if(catIdx==null) return '';
+          var map=isPit?_DOW_PIT:_DOW_BAT;
+          var idx=map[catIdx]; if(idx==null) return '';
+          var row=_DOW_SIG[new Date().getDay()]||[];
+          return row[idx]||'';
+        }
+        var SLOTS=[null,
+          {name:'Game 1',label:'Series Opener',bat:['U','U','U','U','U','U'],pit:['O','U','O','U','U']},
+          {name:'Game 2',label:'Mid-Series',bat:['O','O','O','O','O','O'],pit:['U','O','O','O','O']},
+          {name:'Game 3+',label:'Late Series',bat:['O','O','O','O','O','O'],pit:['U','O','U','O','O']}
+        ];
+        window.__MPA_SLOTS__=SLOTS;
+        function _buildDowTable(isPit){
+          var cols=isPit?[['K',5],['Hits Allowed',7],['Outs',6],['ER',8],['BB',9]]:[['Hits',0],['TB',1],['HRR',2],['Runs',3],['RBI',4],['Walks',9]];
+          var h='<table style="width:100%;border-collapse:collapse;font-size:.71rem;min-width:560px"><thead><tr style="border-bottom:2px solid #1e293b"><th style="text-align:left;padding:7px 8px;color:#94a3b8;font-size:.62rem;letter-spacing:.06em;white-space:nowrap;font-weight:700">DAY</th>';
+          cols.forEach(function(c){h+='<th style="text-align:center;padding:7px 6px;color:#94a3b8;font-size:.6rem;letter-spacing:.03em;font-weight:700">'+c[0]+'</th>';});
+          h+='</tr></thead><tbody>';
+          [1,2,3,4,5,6,0].forEach(function(d){
+            var sig=_DOW_SIG[d]||[];
+            h+='<tr data-dow="'+d+'" style="border-bottom:1px solid #1e1e1e"><td title="'+_DOW_WHY[d]+'" style="padding:8px 8px;color:#cbd5e1;font-weight:700;white-space:nowrap;cursor:help">'+_DOW_NAMES[d]+'</td>';
+            cols.forEach(function(c){var v=sig[c[1]];var clr=v==='O'?'#4ade80':'#ff8a65';h+='<td style="text-align:center;padding:8px 6px"><b style="color:'+clr+'">'+(v==='O'?'OVER':'UNDER')+'</b></td>';});
+            h+='</tr>';
           });
-        })();
+          return h+'</tbody></table>';
+        }
+        document.addEventListener('DOMContentLoaded',function(){
+          var day=new Date().getDay();
+          var sig=_DOW_SIG[day]||[];
+          var oc=function(v){return v==='O'?'<b style="color:#4ade80">OVER</b>':'<b style="color:#ff8a65">UNDER</b>';};
+          var bd=document.getElementById('bc-bat-dow'); if(bd) bd.innerHTML=_buildDowTable(false);
+          var pd=document.getElementById('bc-pit-dow'); if(pd) pd.innerHTML=_buildDowTable(true);
+          var el=document.getElementById('bc-today-lean'), tx=document.getElementById('bc-lean-text');
+          if(el&&tx){
+            el.style.display='block';
+            tx.innerHTML='<b style="color:#fbbf24">'+_dayName()+'</b> day-of-week lean \u2014 each pick also carries its series game (G1/G2/G3), and the two combine on the card:'
+              +'<br><span style="color:#94a3b8">Batters:</span> Hits '+oc(sig[0])+' \u00b7 TB '+oc(sig[1])+' \u00b7 HRR '+oc(sig[2])+' \u00b7 Runs '+oc(sig[3])+' \u00b7 RBI '+oc(sig[4])+' \u00b7 Walks '+oc(sig[9])
+              +'<br><span style="color:#94a3b8">Pitchers:</span> K '+oc(sig[5])+' \u00b7 Hits Allowed '+oc(sig[7])+' \u00b7 Outs '+oc(sig[6])+' \u00b7 ER '+oc(sig[8])+' \u00b7 BB '+oc(sig[9]);
+          }
+          document.querySelectorAll('[data-dow]').forEach(function(tr){
+            if(tr.dataset.dow===String(day)) tr.style.background='rgba(245,158,11,.08)';
+          });
+        });
         </script>
         <div style="display:flex;gap:8px;margin:4px 0 12px">
           <button id="bc-tab-bat" onclick="_bcTab('bat')" style="padding:5px 16px;border-radius:8px;border:1px solid #4ade80;background:rgba(74,222,128,.1);color:#4ade80;font-weight:800;font-size:.74rem;cursor:pointer;letter-spacing:.04em">&#9918; BATTERS</button>
           <button id="bc-tab-pit" onclick="_bcTab('pit')" style="padding:5px 16px;border-radius:8px;border:1px solid #334155;background:transparent;color:#64748b;font-weight:800;font-size:.74rem;cursor:pointer;letter-spacing:.04em">&#128142; PITCHERS</button>
         </div>
         <div id="bc-bat" style="overflow-x:auto">
-          <div style="font-size:.65rem;color:#64748b;margin-bottom:8px"><b style="color:#4ade80">O</b> = Over signal &nbsp;&#183;&nbsp; <b style="color:#ff8a65">U</b> = Under signal</div>
+          <div style="font-size:.65rem;color:#64748b;margin-bottom:8px"><b style="color:#4ade80">OVER</b> = Over signal &nbsp;&#183;&nbsp; <b style="color:#ff8a65">UNDER</b> = Under signal</div>
+          <div style="font-size:.68rem;color:#fbbf24;font-weight:800;letter-spacing:.05em;text-transform:uppercase;margin:4px 0 8px">Series Position &middot; G1 / G2 / G3</div>
           <table style="width:100%;border-collapse:collapse;font-size:.71rem;min-width:680px">
             <thead>
               <tr style="border-bottom:2px solid #1e293b">
@@ -2114,29 +2156,15 @@ _HTML = """
                 <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Cleanup spots feast on weak starters. Target RBI props for hitters batting 3rd through 5th in Game 3.</td>
                 <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Back-end starters lose the zone as pitch counts climb. Walks drawn pile up against the weakest arm.</td>
               </tr>
-              <tr data-slot="4" style="border-bottom:1px solid #1e1e1e;background:rgba(255,255,255,.015)">
-                <td style="padding:8px 8px;color:#94a3b8;font-weight:700;white-space:nowrap;vertical-align:top">Getaway Day<br><span style="font-size:.66rem;color:#64748b;font-weight:400">Travel Day Game</span></td>
-                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Teams pack up and fly out after the game. Players are mentally checked out — eye discipline drops across the whole lineup.</td>
-                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Early-count hacking leads to weak contact. Fewer hard-hit balls means fewer extra-base opportunities.</td>
-                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Fast games and early outs — hard to stack stats when everyone wants to get home.</td>
-                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Managers rest key players to save them for the next series. Fewer quality bats means fewer runs scored.</td>
-                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Shortened lineups and early substitutions kill RBI chances. Lean Under on individual RBI props on getaway days.</td>
-                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Hitters hack early to get the game over with. Fewer deep counts means fewer walks drawn on getaway days.</td>
-              </tr>
-              <tr data-slot="5">
-                <td style="padding:8px 8px;color:#c4b5fd;font-weight:700;white-space:nowrap;vertical-align:top">Friday Night<br><span style="font-size:.66rem;color:#64748b;font-weight:400">Weekend Opener</span></td>
-                <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Teams open the weekend at home with energy. Packed crowds fuel aggressive swings and higher contact rates.</td>
-                <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Friday starters are often softer No. 3-4 arms on the visiting team. Look for gaps and extra-base hits.</td>
-                <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> High-energy Friday night parks push all three stats higher. Good night for multi-stat combination plays.</td>
-                <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Hot home lineups come out swinging on Friday nights. Run totals spike — lean Over on runs scored.</td>
-                <td style="padding:8px 8px;color:#86efac;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Target hitters in the 3-5 spots on Friday nights, especially in hitter-friendly parks with a weaker visiting starter.</td>
-                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> The weekend ace is on full rest with peak command. Free passes stay scarce on Friday nights.</td>
-              </tr>
             </tbody>
           </table>
+          <div style="font-size:.68rem;color:#fbbf24;font-weight:800;letter-spacing:.05em;text-transform:uppercase;margin:18px 0 8px">Day Of Week &middot; Mon&ndash;Sun</div>
+          <div style="font-size:.63rem;color:#64748b;margin-bottom:8px">Hover a day for the reasoning. Today is highlighted. Each pick combines its series game with this day lean.</div>
+          <div id="bc-bat-dow" style="overflow-x:auto"></div>
         </div>
         <div id="bc-pit" style="overflow-x:auto;display:none">
-          <div style="font-size:.65rem;color:#64748b;margin-bottom:8px"><b style="color:#4ade80">O</b> = Over signal &nbsp;&#183;&nbsp; <b style="color:#ff8a65">U</b> = Under signal</div>
+          <div style="font-size:.65rem;color:#64748b;margin-bottom:8px"><b style="color:#4ade80">OVER</b> = Over signal &nbsp;&#183;&nbsp; <b style="color:#ff8a65">UNDER</b> = Under signal</div>
+          <div style="font-size:.68rem;color:#fbbf24;font-weight:800;letter-spacing:.05em;text-transform:uppercase;margin:4px 0 8px">Series Position &middot; G1 / G2 / G3</div>
           <table style="width:100%;border-collapse:collapse;font-size:.71rem;min-width:680px">
             <thead>
               <tr style="border-bottom:2px solid #1e293b">
@@ -2173,24 +2201,11 @@ _HTML = """
                 <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Back-end starters give up earned runs at the highest rate. Play the Over on earned runs by default in Game 3.</td>
                 <td style="padding:8px 8px;color:#fde68a;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Spot starters lose command as pitch counts climb. Walk totals pile up in the later innings of Game 3.</td>
               </tr>
-              <tr data-slot="4" style="border-bottom:1px solid #1e1e1e;background:rgba(255,255,255,.015)">
-                <td style="padding:8px 8px;color:#94a3b8;font-weight:700;white-space:nowrap;vertical-align:top">Getaway Day<br><span style="font-size:.66rem;color:#64748b;font-weight:400">Travel Day Game</span></td>
-                <td style="padding:8px 8px;color:#a7f3d0;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Starters are on a short leash — managers plan for 4-5 innings max. The K total is capped before the game even starts.</td>
-                <td style="padding:8px 8px;color:#bfdbfe;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Hitters swing early to end at-bats fast. Fewer long plate appearances means less hard contact and fewer hits allowed.</td>
-                <td style="padding:8px 8px;color:#cbd5e1;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> The starter gets pulled early no matter how they pitch. Fewest outs of any slot — lean Under on outs recorded.</td>
-                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Fill-in starters in getaway slots often lack sharp command and give up runs early — lean Over on earned runs.</td>
-                <td style="padding:8px 8px;color:#fde68a;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Hitters attack first pitches to finish quickly. Fewer deep counts means the pitcher issues fewer walks.</td>
-              </tr>
-              <tr data-slot="5">
-                <td style="padding:8px 8px;color:#c4b5fd;font-weight:700;white-space:nowrap;vertical-align:top">Friday Night<br><span style="font-size:.66rem;color:#64748b;font-weight:400">Weekend Opener</span></td>
-                <td style="padding:8px 8px;color:#a7f3d0;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Teams save their best arm for the Friday opener. The ace on full rest is at peak velocity — lean Over on strikeouts.</td>
-                <td style="padding:8px 8px;color:#bfdbfe;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> The ace comes out with a full pitch arsenal and neutralizes lineups early. Lean Under on hits allowed on Friday nights.</td>
-                <td style="padding:8px 8px;color:#cbd5e1;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Weekend aces are trusted to go 6-7 innings. Deep outings are the norm on Friday nights — Over on outs recorded.</td>
-                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> The best arm in the rotation controls damage. ERA holds even against hot lineups on Friday night — Under on ER.</td>
-                <td style="padding:8px 8px;color:#fde68a;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> Elite command on full rest — first-pitch strike rate peaks on Friday. The ace stays ahead and walks stay low all night.</td>
-              </tr>
             </tbody>
           </table>
+          <div style="font-size:.68rem;color:#fbbf24;font-weight:800;letter-spacing:.05em;text-transform:uppercase;margin:18px 0 8px">Day Of Week &middot; Mon&ndash;Sun</div>
+          <div style="font-size:.63rem;color:#64748b;margin-bottom:8px">Hover a day for the reasoning. Today is highlighted. Each pick combines its series game with this day lean.</div>
+          <div id="bc-pit-dow" style="overflow-x:auto"></div>
         </div>
       </div>
     </div>
@@ -4061,16 +4076,26 @@ function _slotDot(p, side, isPit, catIdx){
   var slots=window.__MPA_SLOTS__; if(!slots||!slots[pos]) return '';
   var arr=isPit?slots[pos].pit:slots[pos].bat;
   if(!arr||catIdx==null||arr[catIdx]==null) return '';
-  var lean=arr[catIdx];
-  var agree=(lean===side);
-  var clr=agree?'#22c55e':'#ef4444';
-  var glow=agree?'rgba(34,197,94,.75)':'rgba(239,68,68,.75)';
+  var sLean=arr[catIdx];
+  var dLean=_dayLean(isPit, catIdx);
   var g=pos===1?'G1':pos===2?'G2':'G3';
-  var leanTxt=lean==='O'?'Over':'Under';
+  var dn=_dayName();
+  var sTxt=sLean==='O'?'Over':'Under';
+  var dTxt=dLean==='O'?'Over':'Under';
   var sideTxt=side==='O'?'Over':'Under';
-  var tip=agree
-    ?(g+' chart leans '+leanTxt+' \u2014 matches this '+sideTxt+' pick. Good spot to play today.')
-    :(g+' chart leans '+leanTxt+' \u2014 opposite this '+sideTxt+' pick. Chart says fade today.');
+  var clr,glow,tip;
+  if(dLean&&sLean!==dLean){
+    clr='#f59e0b'; glow='rgba(245,158,11,.75)';
+    tip=g+' leans '+sTxt+' but '+dn+' leans '+dTxt+' \u2014 split signal on this '+sideTxt+' pick. Lean light today.';
+  } else {
+    var agree=(sLean===side);
+    clr=agree?'#22c55e':'#ef4444';
+    glow=agree?'rgba(34,197,94,.75)':'rgba(239,68,68,.75)';
+    var both=dLean?(g+' and '+dn+' both lean '+sTxt):(g+' chart leans '+sTxt);
+    tip=agree
+      ?(both+' \u2014 matches this '+sideTxt+' pick. Good spot to play today.')
+      :(both+' \u2014 opposite this '+sideTxt+' pick. Chart says fade today.');
+  }
   return '<span title="'+tip+'" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:'+clr+';box-shadow:0 0 5px '+glow+';margin-left:5px;vertical-align:middle"></span>';
 }
 function _seriesTag(p, side, isPit, catIdx){
@@ -4085,8 +4110,8 @@ function _matrixWriteup(p, side, catIdx, isPit, marketWord, pickLabel){
   var slots=window.__MPA_SLOTS__; if(!slots||!slots[pos]) return '';
   var arr=isPit?slots[pos].pit:slots[pos].bat;
   if(!arr||catIdx==null||arr[catIdx]==null) return '';
-  var lean=arr[catIdx];
-  var agree=(lean===side);
+  var sLean=arr[catIdx];
+  var dLean=_dayLean(isPit, catIdx);
   var slot=slots[pos];
   var why=pos===1?'the opposing ace is on the mound and hitters are seeing him fresh for the first time in the series'
         :pos===2?'hitters have now seen this staff once and tend to adjust fast, while the bullpen starts to wear down'
@@ -4096,26 +4121,41 @@ function _matrixWriteup(p, side, catIdx, isPit, marketWord, pickLabel){
        :pos===2?'the No. 2-3 starter is more hittable and lineups have a first look at the staff'
        :'the back-end starter is the weakest arm and hitters have seen the whole rotation';
   }
-  var leanTxt=lean==='O'?'OVER':'UNDER';
-  var leanClr=lean==='O'?'#4ade80':'#ff8a65';
+  var sLeanTxt=sLean==='O'?'OVER':'UNDER';
+  var sLeanClr=sLean==='O'?'#4ade80':'#ff8a65';
+  var dLeanTxt=dLean==='O'?'OVER':'UNDER';
+  var dLeanClr=dLean==='O'?'#4ade80':'#ff8a65';
+  var dn=_dayName();
+  var dWhy=_DOW_WHY[new Date().getDay()];
   var ba=pos===1?ss.g1_ba:pos===2?ss.g2_ba:ss.g3_ba;
   var slotShort=pos===1?'Game 1':pos===2?'Game 2':'Game 3+';
-  var splitSent='';
+  var baSent='';
   if(!isPit&&ba!=null){
     var baStr=ba.toFixed(3).replace('0.','.');
     var baClr=ba>=0.300?'#4ade80':ba>=0.250?'#fbbf24':'#f87171';
-    splitSent=' His '+slotShort+' split this season is <b style="color:'+baClr+'">'+baStr+'</b>.';
+    baSent=' His '+slotShort+' split this season is <b style="color:'+baClr+'">'+baStr+'</b>.';
   }
-  var clr=agree?'#22c55e':'#ef4444';
-  var glow=agree?'rgba(34,197,94,.85)':'rgba(239,68,68,.85)';
-  var bg=agree?'rgba(34,197,94,.06)':'rgba(239,68,68,.06)';
-  var bd=agree?'rgba(34,197,94,.3)':'rgba(239,68,68,.3)';
-  var head=agree?'Matrix Agrees \u2014 Good To Play':'Chart Says Fade';
-  var tail=agree
-    ?(' \u2014 which matches this <b style="color:#fff">'+pickLabel+'</b> play.'+splitSent+' Good spot to play today.')
-    :(' \u2014 the opposite of this <b style="color:#fff">'+pickLabel+'</b> play.'+splitSent+' Chart says fade today.');
-  var body='This is <b style="color:#fff">'+slot.name+' \u2014 '+slot.label+'</b>. Because '+why
-          +', the strategy chart leans <b style="color:'+leanClr+'">'+leanTxt+'</b> on '+marketWord+' in this slot'+tail;
+  var pl='<b style="color:#fff">'+pickLabel+'</b>';
+  var split=(dLean&&sLean!==dLean);
+  var clr,glow,bg,bd,head,verdict;
+  if(split){
+    clr='#f59e0b'; glow='rgba(245,158,11,.85)'; bg='rgba(245,158,11,.06)'; bd='rgba(245,158,11,.3)';
+    head='Split Signal \u2014 Lean Light';
+    verdict=' The two signals disagree, so there is no clean edge on '+marketWord+' today.'+baSent+' Treat this '+pl+' play as a lean-light spot.';
+  } else {
+    var agree=(sLean===side);
+    clr=agree?'#22c55e':'#ef4444';
+    glow=agree?'rgba(34,197,94,.85)':'rgba(239,68,68,.85)';
+    bg=agree?'rgba(34,197,94,.06)':'rgba(239,68,68,.06)';
+    bd=agree?'rgba(34,197,94,.3)':'rgba(239,68,68,.3)';
+    head=agree?'Both Signals Agree \u2014 Good To Play':'Chart Says Fade';
+    verdict=agree
+      ?(' Both point <b style="color:'+sLeanClr+'">'+sLeanTxt+'</b>, which matches this '+pl+' play.'+baSent+' Strong spot to play today.')
+      :(' Both point <b style="color:'+sLeanClr+'">'+sLeanTxt+'</b>, the opposite of this '+pl+' play.'+baSent+' Chart says fade today.');
+  }
+  var body='This is <b style="color:#fff">'+slot.name+' \u2014 '+slot.label+'</b>, so the series chart leans <b style="color:'+sLeanClr+'">'+sLeanTxt+'</b> on '+marketWord+' (because '+why+').'
+    +(dLean?(' Today is <b style="color:#fff">'+dn+'</b>, and the 7-day chart leans <b style="color:'+dLeanClr+'">'+dLeanTxt+'</b> on '+marketWord+' (because '+dWhy+').'):'')
+    +verdict;
   return '<div style="margin-top:14px;background:'+bg+';border:1px solid '+bd+';border-radius:10px;padding:11px 13px">'
     +'<div style="display:flex;align-items:center;gap:7px;font-size:.6rem;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:'+clr+';margin-bottom:6px">'
     +'<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:'+clr+';box-shadow:0 0 6px '+glow+'"></span>'+head+'</div>'
@@ -4236,18 +4276,9 @@ function _mlbCard(p, rank, dim) {
   const rnkColors = rank===1?['#f59e0b','#000']:rank===2?['#c0c0c0','#000']:rank===3?['#cd7f32','#fff']:['#1e1e1e','#f59e0b'];
   const sideCls = p.side==='HOME'?'badge-home':'badge-away';
   const odds = p.hit_odds!=null?(p.hit_odds>0?'+':'')+p.hit_odds:'—';
-  const s1Disp = p.s1!=null?p.s1.toFixed(3):'—';
-  const s4Disp = p.s4?.display||'—';
   const s5Lbl = p.dn_label||(p.s5?'D/N':'');
   const s5Val = p.s5?.display||'—';
-  const adminStats = `<div class="admin-only" style="display:none;font-size:.72rem;color:#64748b;margin-top:4px;line-height:1.7">
-    <span>S1 <strong style="color:#94a3b8">${s1Disp}</strong></span> &nbsp;
-    <span>S2 <strong style="color:#94a3b8">${p.s2?.display||'—'}</strong></span> &nbsp;
-    <span>S3 <strong style="color:#94a3b8">${p.s3?.display||'—'}</strong></span><br>
-    <span>S4 <strong style="color:#94a3b8">${s4Disp}</strong></span> &nbsp;
-    <span>Score <strong style="color:#f59e0b">${p.total||'—'}</strong></span> &nbsp;
-    <span>${s5Lbl} BA <strong style="color:#7dd3fc">${s5Val}</strong></span>
-  </div>`;
+  const s5Suffix = (p.s5 && s5Val!=='—') ? ` &#183; ${s5Lbl} BA ${s5Val}` : '';
   window.__HIT_REG__=window.__HIT_REG__||{}; window.__HIT_REG__['h'+rank]=p;
   return `<div class="mlb-pick-card" onclick="_hitForm('h${rank}')" title="Click for recent form" style="cursor:pointer;${dim?'opacity:0.85':''}">
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#1a2a1a 0%,#0a1a0a 100%)">
@@ -4274,7 +4305,7 @@ function _mlbCard(p, rank, dim) {
         ${lineupBadge(p.lineup_status)}
       </div>
       ${p.facing_top_era?`<div style="margin-top:6px;font-size:.7rem;color:#fbbf24;background:rgba(245,158,11,.10);border:1px solid rgba(245,158,11,.35);border-radius:6px;padding:3px 7px">⚾ vs top-30 ERA: ${p.facing_top_era}${p.top_era_val!=null?' · '+(+p.top_era_val).toFixed(2)+' ERA':''}</div>`:''}
-      ${p.blurb ? `<div style="margin-top:5px;font-size:.72rem;color:#94a3b8;line-height:1.5;font-style:italic">${p.blurb}</div>` : ''}
+      ${(p.blurb||s5Suffix) ? `<div style="margin-top:5px;font-size:.72rem;color:#94a3b8;line-height:1.5;font-style:italic">${p.blurb||''}${s5Suffix}</div>` : ''}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
         <span style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">Hit Odds</span>
         <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odds}${_bookTag(p)}</span>
@@ -4282,7 +4313,6 @@ function _mlbCard(p, rank, dim) {
       ${_evBadge(p)}
       ${_xbaBadge(p)}
       ${_seriesChip(p)}
-      ${adminStats}
     </div>
   ${_betBtn(p,'Hitter Hits','OVER','hits','Hits',0.5,p.hit_odds)}
   </div>`;
@@ -6260,18 +6290,7 @@ function _bcToggle(){
   b.classList.toggle('hidden');
   if(a) a.textContent=wasHidden?'\u25bc collapse':'\u25b6 expand';
 }
-// Matrix: [0=Sun,1=Mon,2=Tue,3=Wed,4=Thu,5=Fri,6=Sat]
-// Indices: hits=0,tb=1,hrr=2,runs=3,rbi=4,k=5,outs=6,hits_allowed=7,er=8,walks=9
-var _DOW_SIG={
-  0:['U','U','U','U','U','U','U','O','O','O'],
-  1:['U','U','U','U','U','O','O','U','U','U'],
-  2:['O','O','O','O','O','U','O','O','O','O'],
-  3:['O','O','O','O','O','O','U','O','O','O'],
-  4:['U','U','U','U','U','U','U','U','O','U'],
-  5:['O','O','O','O','O','O','O','U','U','U'],
-  6:['O','O','O','O','O','U','U','O','O','O']
-};
-var _DOW_IDX={hits:0,hits_over:0,hits_under:0,tb:1,tb_under:1,tb_over:1,hrr:2,runs:3,rbi:4,k:5,outs:6,hits_allowed:7,er:8,walks:9};
+// _DOW_SIG / _DOW_IDX defined in the strategy-chart script block near the top.
 function _dowChip(mkt,pickDir){
   var day=new Date().getDay();
   var idx=_DOW_IDX[mkt]; if(idx===undefined) return '';
@@ -6351,6 +6370,13 @@ function _resColor(r){ return r==='WIN'?'#4ade80':(r==='LOSS'?'#f87171':(r==='PU
 function _statBox(lbl,val,clr){ return '<div style="background:#111;border-radius:10px;padding:10px 14px;min-width:92px"><div style="font-size:.64rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">'+lbl+'</div><div style="font-size:1.12rem;font-weight:800;color:'+(clr||'#e2e8f0')+'">'+val+'</div></div>'; }
 function renderMyBets(d){
   var s=d.summary||{}; var bets=d.bets||[];
+  var _bdates={}; bets.forEach(function(b){ if(b.date) _bdates[b.date]=1; });
+  var _dlist=Object.keys(_bdates).sort();
+  var _maxd=_dlist.length?_dlist[_dlist.length-1]:_trkTodayISO();
+  var selDate=window.__MYBETS_DATE__;
+  if(!selDate||!_bdates[selDate]) selDate=_maxd;
+  window.__MYBETS_DATE__=selDate;
+  var shownBets=bets.filter(function(b){ return b.date===selDate; });
   var roiTxt=s.roi!=null?((s.roi>0?'+':'')+s.roi+'%'):'—';
   var roiClr=s.roi==null?'#94a3b8':(s.roi>0?'#4ade80':(s.roi<0?'#f87171':'#facc15'));
   var netClr=(s.profit||0)>0?'#4ade80':((s.profit||0)<0?'#f87171':'#cbd5e1');
@@ -6375,7 +6401,7 @@ function renderMyBets(d){
       +'<td style="font-family:monospace;font-weight:700;color:'+cclr+'">'+croi+'</td></tr>';
   }).join('');
   var bcHtml=bc?'<div style="overflow-x:auto;margin-bottom:18px"><table class="grade-table"><thead><tr><th>Category</th><th>W-L</th><th>Pend</th><th>Staked</th><th>Net</th><th>ROI</th></tr></thead><tbody>'+bc+'</tbody></table></div>':'';
-  var rows=bets.map(function(b){
+  var rows=shownBets.map(function(b){
     var res=b.result||'pending';
     var delBtn='<button onclick="_deleteBet(&#39;'+b.id+'&#39;)" title="Remove" style="background:none;border:none;color:#64748b;cursor:pointer;font-size:1rem">\u2716</button>';
     if(b.bet_type==='parlay'){
@@ -6419,9 +6445,12 @@ function renderMyBets(d){
       +'<td>'+delBtn+'</td>'
       +'</tr>';
   }).join('');
-  var rowsHtml=bets.length?'<div style="overflow-x:auto"><table class="grade-table"><thead><tr><th>Date</th><th>Player</th><th>Pick</th><th>Odds</th><th>Stake</th><th>Result</th><th>Profit</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>':'<p style="color:#94a3b8;padding:16px">No bets logged yet. Click <strong style="color:#c7d2fe">＋ Track Bet</strong> on any pick card to start.</p>';
-  document.getElementById('mybets-body').innerHTML=head+bcHtml+rowsHtml;
+  var dateBar='<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px"><label style="font-size:.85rem;color:#94a3b8;font-weight:700">Show day <input type="date" value="'+selDate+'" max="'+_maxd+'" onchange="_myBetsDate(this.value)" style="margin-left:8px;background:#020617;border:1px solid #334155;color:#fff;border-radius:7px;padding:7px 10px;font-size:.85rem"></label><span style="color:#64748b;font-size:.78rem">'+shownBets.length+' bet'+(shownBets.length===1?'':'s')+' on this day</span></div>';
+  var tbl='<div style="overflow-x:auto"><table class="grade-table"><thead><tr><th>Date</th><th>Player</th><th>Pick</th><th>Odds</th><th>Stake</th><th>Result</th><th>Profit</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  var rowsHtml=!bets.length?'<p style="color:#94a3b8;padding:16px">No bets logged yet. Click <strong style="color:#c7d2fe">＋ Track Bet</strong> on any pick card to start.</p>':(!shownBets.length?'<p style="color:#94a3b8;padding:16px">No bets on '+selDate+'. Pick another day above.</p>':tbl);
+  document.getElementById('mybets-body').innerHTML=head+bcHtml+(bets.length?dateBar:'')+rowsHtml;
 }
+function _myBetsDate(v){ window.__MYBETS_DATE__=v; renderMyBets(window.__MYBETS__); }
 async function _deleteBet(id){
   if(!confirm('Remove this bet from your log?')) return;
   try{
