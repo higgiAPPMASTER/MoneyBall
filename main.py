@@ -113,7 +113,14 @@ def _save_sb_picks(date_str: str, result: dict):
            "wins": 0, "losses": 0, "locked": False,
            "locked_at": _dt.datetime.utcnow().isoformat() + "Z", "detail": result}
     # merge on the (app,date,category,side) unique key → last run of the day wins
-    _sb_upsert("mpa_track_ledger", [row], on_conflict="app,date,category,side")
+    # Use 30s timeout — the full picks payload can be large; 10s times out silently.
+    import json as _json
+    _sz = len(_json.dumps(result))
+    ok = _sb_upsert("mpa_track_ledger", [row], on_conflict="app,date,category,side", timeout=30)
+    if ok:
+        print(f"[sb_picks] saved {date_str} ({_sz} bytes)")
+    else:
+        print(f"[sb_picks] SAVE FAILED for {date_str} ({_sz} bytes) — Track Record may show stale lines")
     # prune snapshots >7 days old (those dates are already locked in the ledger)
     try:
         cutoff = date.fromordinal(date.today().toordinal() - 7).isoformat()
