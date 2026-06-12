@@ -558,13 +558,21 @@ async def save_rotation(request: Request, token: str = "", admin: str = ""):
         return out
 
     for tid, val in (body.get("set") or {}).items():
+        tier = {}
         if isinstance(val, dict):
             order = _pairs(val.get("order"))
             inj = _pairs(val.get("inj"))
+            for _pid, _n in (val.get("tier") or {}).items():
+                try:
+                    _ni = int(_n)
+                except Exception:
+                    continue
+                if _ni in (1, 2, 3):
+                    tier[str(int(_pid))] = _ni
         else:
             order = _pairs(val); inj = []
-        if order or inj:
-            doc[str(tid)] = {"order": order, "inj": inj}
+        if order or inj or tier:
+            doc[str(tid)] = {"order": order, "inj": inj, "tier": tier}
         else:
             doc.pop(str(tid), None)
     for tid in (body.get("reset") or []):
@@ -2381,7 +2389,7 @@ _HTML = """
     </div>
     <div id="rotation-card" class="card p-6 admin-only">
       <div class="section-hdr" style="color:#f59e0b">🔧 Rotation Order <span style="font-size:.7rem;color:#777;font-weight:400">admin only</span></div>
-      <p class="text-xs text-slate-400 mb-3" style="margin-top:-4px">Pin each team's true rotation. Use the arrows to reorder. SP1-2 = ace (green), SP3-4 = mid (amber), SP5+ = back-end (red). Hit "INJ &#8595;" to drop an injured or optioned arm out of the count so the rest re-rank; "&#8593; Active" puts them back. Missing a starter (e.g. a just-promoted arm whose next start has not been posted as an official probable yet)? Type his name in the team's search box and click Search to add him, then arrow him into the right slot. Leave a team alone to keep the automatic ranking. Save, then Force Refresh to apply to today's cards.</p>
+      <p class="text-xs text-slate-400 mb-3" style="margin-top:-4px">Pin each team's true rotation. Use the arrows to reorder. SP1-2 = ace (green), SP3-4 = mid (amber), SP5+ = back-end (red). Hit "INJ &#8595;" to drop an injured or optioned arm out of the count so the rest re-rank; "&#8593; Active" puts them back. Missing a starter (e.g. a just-promoted arm whose next start has not been posted as an official probable yet)? Type his name in the team's search box and click Search to add him, then arrow him into the right slot. Each arm also has a tier dropdown (Auto / Ace / Mid / Back) that sets the label shown on the cards independent of the SP slot &#8212; leave it Auto to follow the SP order, or, for a weak staff like the Rockies, set every arm to Mid so none of them reads as an ace. Leave a team alone to keep the automatic ranking. Save, then Force Refresh to apply to today's cards.</p>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
         <button class="btn-primary" onclick="loadRotation()">Load Rotations</button>
         <button class="btn-primary" id="rot-save-btn" onclick="saveRotation()" style="background:#16a34a;color:#fff">Save Overrides</button>
@@ -4231,9 +4239,12 @@ function _rotInfo(p,isPit){
   if(!p) return null;
   var rank=isPit?p.rot_rank:p.opp_rot_rank;
   var rookie=isPit?p.rot_rookie:p.opp_rot_rookie;
-  if((rank==null||rank===0)&&!rookie) return null;
+  var tovr=isPit?p.rot_tier:p.opp_rot_tier;   // admin tier override (1/2/3); 0=auto
+  if((rank==null||rank===0)&&!rookie&&!(tovr&&tovr>0)) return null;
   var tier;
-  if(rank!=null&&rank>0){
+  if(tovr&&tovr>0){
+    tier=tovr;                     // admin-set tier wins (e.g. a weak staff all-mid)
+  } else if(rank!=null&&rank>0){
     if(rank<=2) tier=1;            // SP1-2 = ace (two-ace staffs both read ace)
     else if(rank<=4) tier=2;       // SP3-4 = mid
     else tier=3;                   // SP5+  = back-end
@@ -6236,7 +6247,7 @@ async function loadRotation(){
     window.__ROT__={reset:[],teams:(d.teams||[]).map(function(t){
       return {team_id:String(t.team_id),team_name:t.team_name||String(t.team_id),
         has_override:!!t.has_override,dirty:false,
-        pitchers:(t.pitchers||[]).map(function(p){return {id:p.id,name:p.name||String(p.id)};}),
+        pitchers:(t.pitchers||[]).map(function(p){return {id:p.id,name:p.name||String(p.id),tier:p.tier||0};}),
         injured:(t.injured||[]).map(function(p){return {id:p.id,name:p.name||String(p.id)};})};
     })};
     _rotRender();
@@ -6250,15 +6261,22 @@ function _rotRender(){
   box.innerHTML=R.teams.map(function(t,ti){
     var rows=t.pitchers.map(function(p,pi){
       var rank=pi+1;
-      var clr=rank<=2?'#34d399':rank<=4?'#fbbf24':'#f87171';
-      var bg=rank<=2?'rgba(16,185,129,.15)':rank<=4?'rgba(245,158,11,.15)':'rgba(239,68,68,.15)';
+      var et=(p.tier&&p.tier>0)?p.tier:(rank<=2?1:rank<=4?2:3);
+      var clr=et===1?'#34d399':et===2?'#fbbf24':'#f87171';
+      var bg=et===1?'rgba(16,185,129,.15)':et===2?'rgba(245,158,11,.15)':'rgba(239,68,68,.15)';
       var up=pi===0?'<span style="width:26px;display:inline-block"></span>':'<button onclick="_rotMove('+ti+','+pi+',-1)" style="background:#1f2937;color:#fff;border:none;border-radius:5px;width:26px;height:26px;cursor:pointer;font-size:.8rem">&#9650;</button>';
       var dn=pi===t.pitchers.length-1?'<span style="width:26px;display:inline-block"></span>':'<button onclick="_rotMove('+ti+','+pi+',1)" style="background:#1f2937;color:#fff;border:none;border-radius:5px;width:26px;height:26px;cursor:pointer;font-size:.8rem">&#9660;</button>';
       var inj='<button onclick="_rotToInj('+ti+','+pi+')" title="Move to Injured / Out &#8212; drops this arm out of the rotation count so the rest re-rank" style="background:#3f1d1d;color:#fca5a5;border:1px solid #7f1d1d;border-radius:5px;height:26px;padding:0 8px;cursor:pointer;font-size:.62rem;font-weight:800;white-space:nowrap">INJ &#8595;</button>';
+      var tsel='<select onchange="_rotTier('+ti+','+pi+',this.value)" title="Tier shown on the cards \u2014 independent of the SP order. Auto = SP1-2 ace, SP3-4 mid, SP5+ back-end." style="background:#0b0f17;border:1px solid #334155;border-radius:5px;color:'+clr+';height:26px;font-size:.66rem;font-weight:800;padding:0 4px;cursor:pointer">'
+        +'<option value="0"'+(p.tier?'':' selected')+' style="color:#e5e7eb">Auto</option>'
+        +'<option value="1"'+(p.tier===1?' selected':'')+' style="color:#e5e7eb">Ace</option>'
+        +'<option value="2"'+(p.tier===2?' selected':'')+' style="color:#e5e7eb">Mid</option>'
+        +'<option value="3"'+(p.tier===3?' selected':'')+' style="color:#e5e7eb">Back</option>'
+        +'</select>';
       return '<div style="display:flex;align-items:center;gap:8px;padding:4px 0">'
         +'<span style="font-size:.62rem;font-weight:900;padding:2px 7px;border-radius:5px;background:'+bg+';color:'+clr+';min-width:40px;text-align:center">SP'+rank+'</span>'
         +'<span style="flex:1;color:#e5e7eb;font-size:.9rem">'+p.name+'</span>'
-        +'<span style="display:flex;gap:5px;align-items:center">'+up+dn+inj+'</span></div>';
+        +'<span style="display:flex;gap:5px;align-items:center">'+tsel+up+dn+inj+'</span></div>';
     }).join('');
     var injRows=(t.injured||[]).map(function(p,ii){
       return '<div style="display:flex;align-items:center;gap:8px;padding:3px 0">'
@@ -6288,6 +6306,14 @@ function _rotMove(ti,pi,dir){
   var ri=(R.reset||[]).indexOf(t.team_id); if(ri>=0) R.reset.splice(ri,1);
   _rotRender();
 }
+function _rotTier(ti,pi,val){
+  var R=window.__ROT__; if(!R) return;
+  var t=R.teams[ti]; if(!t) return;
+  var p=t.pitchers[pi]; if(!p) return;
+  p.tier=parseInt(val,10)||0; t.dirty=true;
+  var ri=(R.reset||[]).indexOf(t.team_id); if(ri>=0) R.reset.splice(ri,1);
+  _rotRender();
+}
 function _rotToInj(ti,pi){
   var R=window.__ROT__; if(!R) return;
   var t=R.teams[ti]; if(!t) return;
@@ -6308,6 +6334,7 @@ function _rotReset(ti){
   var R=window.__ROT__; if(!R) return;
   var t=R.teams[ti]; if(!t) return;
   if(t.injured&&t.injured.length){ t.pitchers=t.pitchers.concat(t.injured); t.injured=[]; }
+  t.pitchers.forEach(function(p){ p.tier=0; });
   t.dirty=false; t.has_override=false;
   R.reset=R.reset||[];
   if(R.reset.indexOf(t.team_id)<0) R.reset.push(t.team_id);
@@ -6353,8 +6380,11 @@ async function saveRotation(){
   var set={};
   R.teams.forEach(function(t){
     if(t.dirty||t.has_override){
+      var tier={};
+      t.pitchers.forEach(function(p){ if(p.tier&&p.tier>0) tier[String(p.id)]=p.tier; });
       set[t.team_id]={order:t.pitchers.map(function(p){return {id:p.id,name:p.name};}),
-                      inj:(t.injured||[]).map(function(p){return {id:p.id,name:p.name};})};
+                      inj:(t.injured||[]).map(function(p){return {id:p.id,name:p.name};}),
+                      tier:tier};
     }
   });
   var reset=(R.reset||[]).filter(function(tid){ return !set[tid]; });
