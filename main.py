@@ -2855,7 +2855,7 @@ function showResults(result) {
       statCard('💥','RBI',(view.rbi_picks||[]).length,'rbi-over-card'),
       statCard('🏃','Runs',(view.runs_picks||[]).length,'runs-over-card'),
       statCard('🚶','Walks',(view.walks_picks||[]).length,'bwalk-over-card'),
-      statCard('🎯','Pitching Day',((((view.pitcher_k||{}).all||[]).filter(p=>p.pick&&(p.starts||0)>0).length)+PROP_ORDER.reduce((n,m)=>n+(((view.pitcher_props||{})[m]||{}).picks||[]).length,0)),'pitch-day-card'),
+      statCard('🎯','Pitching Day',_buildPitchDay(view).length,'pitch-day-card'),
       statCard('⚾','Pitchers',((view.pitcher_k||{}).all||[]).length,'pitcher-all-card'),
       statCard('⚾','Games Today',stats.games,'by-game-card'),
       statCard('🔍','Players Run',stats.step1_count),
@@ -3120,8 +3120,12 @@ function _propBestCard(p, key, rank) {
   var ppf=p.proj_factors||{};
   var ppDriver=hasPP?p.proj:p.blended;
   var projDisp=hasPP?(p.proj+(p.unit?' '+p.unit:'')):'';
-  var gap=ppDriver!=null&&p.line!=null?Math.abs(ppDriver-p.line):null;
-  var gapDisp=gap!=null?'edge +'+gap.toFixed(1)+(p.unit?' '+p.unit:''):'';
+  var gap=null;
+  if(ppDriver!=null&&p.line!=null){
+    if(isOver){ gap=ppDriver-(Math.floor(p.line)+1); }   // Over 4.5 must hit 5 to win
+    else { gap=(Math.ceil(p.line)-1)-ppDriver; }          // Under 4.5 must land on 4 to win
+  }
+  var gapDisp=gap!=null?('edge '+(gap>=0?'+':'')+gap.toFixed(1)+(p.unit?' '+p.unit:'')):'';
   var blendDisp=p.blended!=null?p.blended+(p.unit?' '+p.unit:''):'—';
   var lineDisp=p.line!=null?p.line+(p.unit?' '+p.unit:''):'—';
   var sideLabel=p.side?`<span style="font-size:.62rem;background:rgba(255,255,255,.07);border-radius:4px;padding:1px 5px;color:#94a3b8">${p.homeRoad||p.side}</span>`:'';
@@ -3191,18 +3195,7 @@ function _fillCard(cardId,bodyId,moreId,arr,cardFn,label,color){
         if(!_ex||(!_ex.obj.pick&&_p.pick)) window.__PP_BY_NAME__[_nm][_mkt]={obj:_p,key:_key};
       });
     });
-    var dayList=[];
-    var _pk=(view&&view.pitcher_k)||{};
-    (_pk.all||[]).forEach(function(p){
-      if(!(p.pick&&(p.starts||0)>0)) return;
-      dayList.push({p:p,kind:'K',ev:(p.ev!=null?p.ev:-999)});
-    });
-    PROP_ORDER.forEach(function(m){
-      ((props[m]||{}).picks||[]).forEach(function(p2){
-        dayList.push({p:p2,kind:'PROP',ev:(p2.ev!=null?p2.ev:-999)});
-      });
-    });
-    dayList.sort(function(a,b){return b.ev-a.ev;});
+    var dayList=_buildPitchDay(view);
     var _dayCard=function(x,rank){
       if(x.kind==='K') return _pitcherCard(x.p,rank,'pd');
       var k='pdp'+(window.__PP_SEQ__++); window.__PP_REG__[k]=x.p; return _propBestCard(x.p,k,rank);
@@ -4288,6 +4281,17 @@ function _slotDot(p, side, isPit, catIdx){
               :(lean+' \u2014 opposite this '+sideTxt+' pick. Chart says fade.');
   return '<span title="'+tip+'" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:'+clr+';box-shadow:0 0 5px '+glow+';margin-left:5px;vertical-align:middle"></span>';
 }
+// True when _slotDot would render a RED light (depth chart fades the pick).
+// Used to keep the Top 10 plays-of-the-day cards green/amber only.
+function _t10DotIsRed(p, side, isPit, catIdx){
+  var ri=_rotInfo(p,isPit); if(!ri) return false;
+  if(ri.tier===2) return false;                 // mid-rotation = amber, never red
+  var pos=ri.tier===1?1:3;
+  var slots=window.__MPA_SLOTS__; if(!slots||!slots[pos]) return false;
+  var arr=isPit?slots[pos].pit:slots[pos].bat;
+  if(!arr||catIdx==null||arr[catIdx]==null) return false;
+  return arr[catIdx]!==side;                     // chart leans opposite the pick = red
+}
 function _seriesTag(p, side, isPit, catIdx){
   return _seriesBadge(p,isPit)+_slotDot(p, side, isPit, catIdx);
 }
@@ -5043,6 +5047,31 @@ function _t10KindBadge(kind) {
   var abbrs={'HITTER':'HIT','TB OVER':'TB\u2191','HRR':'HRR','RBI':'RBI','RUNS':'RUN','BWALK':'BB','UNDER':'U-HIT'};
   return abbrs[kind]||kind;
 }
+// Pitching plays-of-the-day list (Ks + props), EV-sorted, RED lights dropped so
+// only green/amber make the Top 10. Shared by the stat count and the card render.
+function _buildPitchDay(view){
+  var props=(view&&view.pitcher_props)||{};
+  var dayList=[];
+  var _pk=(view&&view.pitcher_k)||{};
+  (_pk.all||[]).forEach(function(p){
+    if(!(p.pick&&(p.starts||0)>0)) return;
+    dayList.push({p:p,kind:'K',ev:(p.ev!=null?p.ev:-999)});
+  });
+  PROP_ORDER.forEach(function(m){
+    ((props[m]||{}).picks||[]).forEach(function(p2){
+      dayList.push({p:p2,kind:'PROP',ev:(p2.ev!=null?p2.ev:-999)});
+    });
+  });
+  dayList.sort(function(a,b){return b.ev-a.ev;});
+  dayList=dayList.filter(function(x){
+    var p=x.p;
+    if(x.kind==='K'){ var sK=(p.sugg_line!=null||p.pick==='OVER')?'O':'U'; return !_t10DotIsRed(p,sK,true,0); }
+    var isOver=(p.pick||'').toUpperCase()==='OVER';
+    var ci={pitcher_hits_allowed:1,pitcher_outs:2,pitcher_earned_runs:3,pitcher_walks:4}[p.market];
+    return !_t10DotIsRed(p,isOver?'O':'U',true,ci);
+  });
+  return dayList;
+}
 function _buildTop10(view) {
   var plays = [];
   function _add(arr, kind) {
@@ -5063,6 +5092,7 @@ function _buildTop10(view) {
   plays.sort(function(a,b){ return b._t10ev - a._t10ev; });
   var _t10seen={};
   plays=plays.filter(function(p){ var k=(p.name||p.full_name||'').trim().toLowerCase(); if(_t10seen[k]) return false; _t10seen[k]=true; return true; });
+  plays=plays.filter(function(p){ return !_t10DotIsRed(p,'O',false,0); });  // green/amber lights only
   return plays.slice(0, 10);
 }
 function _top10BetBtn(p, kind) {
