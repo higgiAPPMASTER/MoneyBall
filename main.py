@@ -496,6 +496,43 @@ async def get_rotation(request: Request, date_str: str = "",
     data = await loop.run_in_executor(executor, rotation_editor_data, ds)
     return data
 
+@app.get("/api/rotation/search")
+async def rotation_search(request: Request, q: str = "",
+                          token: str = "", admin: str = ""):
+    # Admin pitcher lookup for the rotation editor — lets an admin hand-add a
+    # starter the auto-detector cannot see yet (e.g. a just-promoted arm whose
+    # next start has not been posted as an official probable). Official MLB Stats
+    # API people search only; no scraping.
+    tok = token or request.headers.get("Authorization", "").replace("Bearer ", "").strip()
+    if not _bet_admin_ok(tok, admin):
+        raise HTTPException(status_code=403, detail="admin only")
+    q = (q or "").strip()
+    if len(q) < 3:
+        return {"players": []}
+
+    def _search():
+        import requests as _rq
+        import urllib.parse as _up
+        try:
+            j = _rq.get("https://statsapi.mlb.com/api/v1/people/search?names="
+                        + _up.quote(q), timeout=12).json()
+        except Exception:
+            return []
+        out = []
+        for p in j.get("people", []):
+            pos = ((p.get("primaryPosition") or {}).get("abbreviation") or "")
+            if pos not in ("P", "SP", "RP"):
+                continue
+            out.append({"id": p.get("id"),
+                        "name": p.get("fullName", ""),
+                        "team": ((p.get("currentTeam") or {}).get("name") or "")})
+            if len(out) >= 12:
+                break
+        return out
+    loop = asyncio.get_event_loop()
+    players = await loop.run_in_executor(executor, _search)
+    return {"players": players}
+
 @app.post("/api/rotation")
 async def save_rotation(request: Request, token: str = "", admin: str = ""):
     tok = token or request.headers.get("Authorization", "").replace("Bearer ", "").strip()
@@ -2344,7 +2381,7 @@ _HTML = """
     </div>
     <div id="rotation-card" class="card p-6 admin-only">
       <div class="section-hdr" style="color:#f59e0b">🔧 Rotation Order <span style="font-size:.7rem;color:#777;font-weight:400">admin only</span></div>
-      <p class="text-xs text-slate-400 mb-3" style="margin-top:-4px">Pin each team's true rotation. Use the arrows to reorder. SP1-2 = ace (green), SP3-4 = mid (amber), SP5+ = back-end (red). Hit "INJ &#8595;" to drop an injured or optioned arm out of the count so the rest re-rank; "&#8593; Active" puts them back. Leave a team alone to keep the automatic ranking. Save, then Force Refresh to apply to today's cards.</p>
+      <p class="text-xs text-slate-400 mb-3" style="margin-top:-4px">Pin each team's true rotation. Use the arrows to reorder. SP1-2 = ace (green), SP3-4 = mid (amber), SP5+ = back-end (red). Hit "INJ &#8595;" to drop an injured or optioned arm out of the count so the rest re-rank; "&#8593; Active" puts them back. Missing a starter (e.g. a just-promoted arm whose next start has not been posted as an official probable yet)? Type his name in the team's search box and click Search to add him, then arrow him into the right slot. Leave a team alone to keep the automatic ranking. Save, then Force Refresh to apply to today's cards.</p>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
         <button class="btn-primary" onclick="loadRotation()">Load Rotations</button>
         <button class="btn-primary" id="rot-save-btn" onclick="saveRotation()" style="background:#16a34a;color:#fff">Save Overrides</button>
@@ -6232,10 +6269,14 @@ function _rotRender(){
     var injBlock=(t.injured&&t.injured.length)?('<div style="margin-top:8px;padding-top:8px;border-top:1px dashed #3f3f46"><div style="font-size:.58rem;color:#f87171;font-weight:800;letter-spacing:.06em;margin-bottom:3px">INJURED / OUT &#8212; not ranked</div>'+injRows+'</div>'):'';
     var tag=t.has_override?'<span style="font-size:.6rem;color:#34d399;font-weight:800;margin-left:8px">PINNED</span>':(t.dirty?'<span style="font-size:.6rem;color:#fbbf24;font-weight:800;margin-left:8px">EDITED</span>':'');
     var resetLink=(t.has_override||t.dirty)?'<a onclick="_rotReset('+ti+')" style="color:#ff8a65;cursor:pointer;font-size:.7rem;font-weight:700">Reset to auto</a>':'';
+    var addBlock='<div style="margin-top:10px;padding-top:8px;border-top:1px dashed #3f3f46;display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
+      +'<input id="rotadd-'+ti+'" type="text" placeholder="Add a starter by name" onkeydown="if(event.key===&#39;Enter&#39;){_rotSearch('+ti+');}" style="flex:1;min-width:160px;background:#0b0f17;border:1px solid #334155;border-radius:6px;color:#e5e7eb;padding:6px 9px;font-size:.82rem" />'
+      +'<button onclick="_rotSearch('+ti+')" style="background:#1d4ed8;color:#fff;border:none;border-radius:6px;height:30px;padding:0 12px;cursor:pointer;font-size:.74rem;font-weight:800">Search</button>'
+      +'<div id="rotres-'+ti+'" style="width:100%"></div></div>';
     return '<div style="background:rgba(255,255,255,.03);border:1px solid #262626;border-radius:10px;padding:12px 14px">'
       +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'
       +'<div style="font-weight:800;color:#fff;font-size:.95rem">'+t.team_name+tag+'</div>'+resetLink+'</div>'
-      +(rows||'<div style="color:#64748b;font-size:.8rem">No active starters.</div>')+injBlock+'</div>';
+      +(rows||'<div style="color:#64748b;font-size:.8rem">No active starters.</div>')+injBlock+addBlock+'</div>';
   }).join('')||'<div style="color:#64748b;font-size:.85rem">No teams on this date. Pick a slate date and Load again.</div>';
 }
 function _rotMove(ti,pi,dir){
@@ -6270,6 +6311,38 @@ function _rotReset(ti){
   t.dirty=false; t.has_override=false;
   R.reset=R.reset||[];
   if(R.reset.indexOf(t.team_id)<0) R.reset.push(t.team_id);
+  _rotRender();
+}
+async function _rotSearch(ti){
+  var R=window.__ROT__; if(!R) return;
+  var t=R.teams[ti]; if(!t) return;
+  var inp=document.getElementById('rotadd-'+ti);
+  var res=document.getElementById('rotres-'+ti);
+  var q=inp?(inp.value||'').trim():'';
+  if(q.length<3){ if(res) res.innerHTML='<span style="color:#f87171;font-size:.72rem">Type at least 3 letters.</span>'; return; }
+  if(res) res.innerHTML='<span style="color:#9ca3af;font-size:.72rem">Searching...</span>';
+  try{
+    var r=await fetch('/api/rotation/search'+_betAuthQS()+'&q='+encodeURIComponent(q));
+    if(!r.ok){ var tx=await r.text(); throw new Error(tx||'search failed'); }
+    var d=await r.json(); var ps=d.players||[];
+    window.__ROTRES__=window.__ROTRES__||{}; window.__ROTRES__[ti]=ps;
+    if(!ps.length){ if(res) res.innerHTML='<span style="color:#9ca3af;font-size:.72rem">No pitchers found.</span>'; return; }
+    if(res) res.innerHTML='<div style="display:flex;flex-direction:column;gap:4px;margin-top:6px">'+ps.map(function(p,idx){
+      var team=p.team?('<span style="color:#64748b"> &#8212; '+p.team+'</span>'):'';
+      return '<button onclick="_rotAdd('+ti+','+idx+')" style="text-align:left;background:#0b0f17;border:1px solid #334155;border-radius:6px;color:#e5e7eb;padding:6px 9px;cursor:pointer;font-size:.8rem"><b style="color:#34d399">&#43;</b> '+p.name+team+'</button>';
+    }).join('')+'</div>';
+  }catch(e){ if(res) res.innerHTML='<span style="color:#f87171;font-size:.72rem">Search failed: '+((e&&e.message)||e)+'</span>'; }
+}
+function _rotAdd(ti,idx){
+  var R=window.__ROT__; if(!R) return;
+  var t=R.teams[ti]; if(!t) return;
+  var ps=(window.__ROTRES__||{})[ti]||[]; var p=ps[idx]; if(!p) return;
+  var res=document.getElementById('rotres-'+ti);
+  var dup=t.pitchers.some(function(x){return String(x.id)===String(p.id);})
+       ||(t.injured||[]).some(function(x){return String(x.id)===String(p.id);});
+  if(dup){ if(res) res.innerHTML='<span style="color:#fbbf24;font-size:.72rem">Already in this rotation.</span>'; return; }
+  t.pitchers.push({id:p.id,name:p.name}); t.dirty=true;
+  var ri=(R.reset||[]).indexOf(t.team_id); if(ri>=0) R.reset.splice(ri,1);
   _rotRender();
 }
 async function saveRotation(){
