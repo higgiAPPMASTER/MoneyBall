@@ -2389,7 +2389,6 @@ _HTML = """
     </div>
     <div id="rotation-card" class="card p-6 admin-only">
       <div class="section-hdr" style="color:#f59e0b">🔧 Rotation Order <span style="font-size:.7rem;color:#777;font-weight:400">admin only</span></div>
-      <p class="text-xs text-slate-400 mb-3" style="margin-top:-4px">Pin each team's true rotation. Use the arrows to reorder. SP1-2 = ace (green), SP3-4 = mid (amber), SP5+ = back-end (red). Hit "INJ &#8595;" to drop an injured or optioned arm out of the count so the rest re-rank; "&#8593; Active" puts them back. Missing a starter (e.g. a just-promoted arm whose next start has not been posted as an official probable yet)? Type his name in the team's search box and click Search to add him, then arrow him into the right slot. Each arm also has a tier dropdown (Auto / Ace / Mid / Back) that sets the label shown on the cards independent of the SP slot &#8212; leave it Auto to follow the SP order, or, for a weak staff like the Rockies, set every arm to Mid so none of them reads as an ace. Leave a team alone to keep the automatic ranking. Save, then Force Refresh to apply to today's cards.</p>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
         <button class="btn-primary" onclick="loadRotation()">Load Rotations</button>
         <button class="btn-primary" id="rot-save-btn" onclick="saveRotation()" style="background:#16a34a;color:#fff">Save Overrides</button>
