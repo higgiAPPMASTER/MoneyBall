@@ -5996,6 +5996,7 @@ function _trkRenderDailyTab(be,stake){
   function _rank(k){ var i=CAT_ORDER.indexOf(k); return i<0?999:i; }
   var keys=Object.keys(groups).sort(function(a,b){ return _rank(a)-_rank(b); });
   var win=0,loss=0,pend=0,net=0,counted=0,body='';
+  window.__TRK_LOG_ROWS__=[];
   keys.forEach(function(k){
     var cfg=CAT_CFG[k]||{lbl:k.split('|').join(' '),icon:'📊'};
     var picks=groups[k];
@@ -6004,6 +6005,7 @@ function _trkRenderDailyTab(be,stake){
     var gclr=_trkRC(gw,gn);
     body+='<div style="margin:12px 0 4px;font-weight:800;font-size:.83rem;color:#cbd5e1">'+(cfg.icon||'')+' '+cfg.lbl+' <span style="color:'+gclr+';font-family:monospace;font-weight:900">'+gw+'/'+gn+'</span></div>';
     picks.forEach(function(p){
+      var logIdx=window.__TRK_LOG_ROWS__.length; window.__TRK_LOG_ROWS__.push(p);
       var rr=p.result;
       var mk=rr==='WIN'?'<span style="color:#4ade80">\u2713</span>':(rr==='LOSS'?'<span style="color:#f87171">\u2717</span>':'<span style="color:#64748b">\u00b7</span>');
       if(rr==='WIN')win++; else if(rr==='LOSS')loss++; else pend++;
@@ -6012,7 +6014,8 @@ function _trkRenderDailyTab(be,stake){
       var plHtml,roiHtml='';
       if(rr==='WIN'||rr==='LOSS'){ var pl=_amProfit(p.odds,stake,rr==='WIN'); if(pl===null){ plHtml='<span style="color:#475569;font-family:monospace">\u2014</span>'; } else { net+=pl; counted++; var c=pl>=0?'#4ade80':'#f87171', rp=pl/stake*100; plHtml='<span style="font-family:monospace;font-weight:800;color:'+c+'">'+(pl>=0?'+$':'\u2212$')+Math.abs(pl).toFixed(0)+'</span>'; roiHtml='<span style="font-family:monospace;font-weight:700;color:'+c+'">'+(rp>=0?'+':'\u2212')+Math.abs(rp).toFixed(0)+'%</span>'; } }
       else { plHtml='<span style="color:#64748b;font-size:.72rem">pending</span>'; }
-      body+='<div style="display:flex;gap:8px;align-items:center;padding:2px 0 2px 6px;font-size:.79rem">'+mk+'<span style="color:#e2e8f0;min-width:130px">'+(p.name||'')+'</span><span style="color:#94a3b8;min-width:120px">'+(p.pick||'')+'</span>'+act+odd+'<span style="margin-left:auto;display:flex;gap:12px;align-items:center"><span style="min-width:52px;text-align:right">'+plHtml+'</span><span style="min-width:44px;text-align:right">'+roiHtml+'</span></span></div>';
+      var logBtn='<button onclick="_trkLogBet('+logIdx+')" title="Log as bet" style="background:#1e3a8a;color:#bfdbfe;border:1px solid #1d4ed8;border-radius:5px;padding:1px 7px;font-size:.66rem;font-weight:800;cursor:pointer;flex-shrink:0">+Log</button>';
+      body+='<div style="display:flex;gap:8px;align-items:center;padding:2px 0 2px 6px;font-size:.79rem">'+mk+'<span style="color:#e2e8f0;min-width:130px">'+(p.name||'')+'</span><span style="color:#94a3b8;min-width:120px">'+(p.pick||'')+'</span>'+act+odd+'<span style="margin-left:auto;display:flex;gap:8px;align-items:center"><span style="min-width:52px;text-align:right">'+plHtml+'</span><span style="min-width:44px;text-align:right">'+roiHtml+'</span>'+logBtn+'</span></div>';
     });
   });
   var risk=counted*stake, roi=risk?net/risk*100:0, nclr=net>=0?'#4ade80':'#f87171';
@@ -6038,6 +6041,24 @@ function _trkRenderRangeTab(be,stake,which){
 function _trkDownloadCSV(out,fname){ var csv=out.map(function(row){ return row.map(_csvCell).join(','); }).join(String.fromCharCode(13)+String.fromCharCode(10)); var blob=new Blob([String.fromCharCode(65279)+csv],{type:'text/csv;charset=utf-8;'}); var url=URL.createObjectURL(blob); var a=document.createElement('a'); a.href=url; a.download=fname; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); }
 function downloadTrkDailyCSV(){ var date=window.__TRK_DAILY_DATE__||_trkTodayISO(); var g=(window.__TRK_GRADE_CACHE__||{})[date]; var rows=_trkFlatten(g); if(!rows.length){ alert('No picks to export for '+date+'.'); return; } var stake=_trkStake(); var out=[['Date','Category','Side','Player','Pick','Odds','Actual','Result','Bet','Profit/Loss']]; var net=0,counted=0; rows.forEach(function(r){ var dec=(r.result==='WIN'||r.result==='LOSS'); var pl=dec?_amProfit(r.odds,stake,r.result==='WIN'):null; var plStr=''; if(pl!==null){ plStr=pl.toFixed(2); net+=pl; counted++; } out.push([date,r.category||'',r.side||'',r.name||'',r.pick||'',(r.odds!=null&&r.odds!==''?((Number(r.odds)>0?'+':'')+r.odds):''),(r.actual!=null?r.actual:''),r.result||'pending',stake,plStr]); }); out.push([]); out.push(['','','','','','','','TOTALS ('+counted+' graded)',(counted*stake),net.toFixed(2)]); _trkDownloadCSV(out,'mlb-daily-'+date+'-flat'+stake+'.csv'); }
 function downloadTrkRangeCSV(which){ var stake=_trkStake(), from,to,tag; if(which==='weekly'){ to=window.__TRK_TODAY__||_trkTodayISO(); from=_isoShift(to,-6); tag='last7-'+from+'_'+to; } else { var m=window.__TRK_MONTH__||_trkTodayISO().slice(0,7); from=m+'-01'; to=m+'-31'; tag='month-'+m; } var ag=_trkAgg(_trkRangePool(from,to),stake); var CAT_CFG=window.__TRK_CFG__||{}; var arr=Object.keys(ag.cats).map(function(k){ var c=ag.cats[k]; c.roi=c.counted?c.net/(c.counted*stake)*100:null; return [k,c]; }); arr.sort(function(a,b){ var ra=a[1].counted?a[1].roi:-1e9, rb=b[1].counted?b[1].roi:-1e9; return rb-ra; }); if(!arr.length){ alert('No graded picks in this range yet.'); return; } var out=[['Range','Category','Side','Wins','Losses','Plays','Win%','Bet','Net P/L','ROI%']]; arr.forEach(function(x){ var k=x[0], c=x[1], n=c.w+c.l; if(!n) return; var parts=k.split('|'); out.push([from+'_'+to,(CAT_CFG[k]&&CAT_CFG[k].lbl)||parts[0],parts[1],c.w,c.l,n,(c.w/n*100).toFixed(1),stake,(c.counted?c.net.toFixed(2):''),(c.counted?c.roi.toFixed(1):'')]); }); var o=ag.overall, on=o.w+o.l; out.push([]); out.push([from+'_'+to,'OVERALL','',o.w,o.l,on,(on?(o.w/on*100).toFixed(1):'0.0'),stake,o.net.toFixed(2),(o.counted?(o.net/(o.counted*stake)*100).toFixed(1):'')]); _trkDownloadCSV(out,'mlb-'+tag+'-flat'+stake+'.csv'); }
+function _trkLogBet(idx){
+  var p=(window.__TRK_LOG_ROWS__||[])[idx]; if(!p) return;
+  window.__BET_SRC__=window.__BET_SRC__||{};
+  var sl=(p.pick||'').replace(/^(OVER|UNDER)\s+[\d.]+\s*/i,'')||(p.stat||'');
+  window.__BET_SRC__['__trklog__']={
+    name:p.name||'',
+    team:p.team||'',
+    opp:p.opp||'',
+    category:p.category||'',
+    stat_key:p.stat_key||'hits',
+    stat_label:sl,
+    side:p.side||'OVER',
+    line:p.line!=null?Number(p.line):0.5,
+    odds:(p.odds!=null&&p.odds!=='')?Number(p.odds):null,
+    date:p.date||new Date().toISOString().slice(0,10)
+  };
+  _betForm('__trklog__');
+}
 // American odds -> decimal payout multiplier (incl. stake). null if unpriceable.
 function _amDec(o){ if(o==null||o==='') return null; o=Number(o); if(!isFinite(o)||o===0) return null; return o>0?(1+o/100):(1+100/Math.abs(o)); }
 // Meta-ranking buckets duplicate the per-category picks — exclude them so CLV
