@@ -306,9 +306,12 @@ def _build_rotation_ranks(run_date: str) -> dict:
                                 names[int(pid)] = pp.get("fullName")
         except Exception:
             recent = {}
-        # Season pitching quality: ERA is the POWER-RANKING signal (best arm =
-        # SP1); games-started gives the sample-size gate + a tiebreak.
+        # Season pitching profile: ERA is the POWER-RANKING signal (best arm =
+        # SP1); games-started / games-pitched / innings classify TRUE starters
+        # vs relievers (bullpen-day openers + spot starters).
         seas: dict = {}   # pid -> season games started
+        gpd:  dict = {}   # pid -> season games pitched (appearances)
+        ipd:  dict = {}   # pid -> season innings pitched
         era:  dict = {}   # pid -> season ERA (float; 999.0 when none / 0 IP)
         try:
             r = requests.get(
@@ -320,33 +323,51 @@ def _build_rotation_ranks(run_date: str) -> dict:
                     pl = (s.get("player") or {})
                     pid = pl.get("id")
                     stt = (s.get("stat") or {})
-                    gs = stt.get("gamesStarted", 0) or 0
                     if pid:
-                        seas[int(pid)] = int(gs)
+                        pid = int(pid)
+                        seas[pid] = int(stt.get("gamesStarted", 0) or 0)
+                        gpd[pid] = int(stt.get("gamesPitched",
+                                               stt.get("gamesPlayed", 0)) or 0)
                         try:
                             ip = float(stt.get("inningsPitched", 0) or 0)
-                            era[int(pid)] = float(stt.get("era")) if ip > 0 else 999.0
                         except (TypeError, ValueError):
-                            era[int(pid)] = 999.0
-                        if pl.get("fullName") and int(pid) not in names:
-                            names[int(pid)] = pl.get("fullName")
+                            ip = 0.0
+                        ipd[pid] = ip
+                        try:
+                            era[pid] = float(stt.get("era")) if ip > 0 else 999.0
+                        except (TypeError, ValueError):
+                            era[pid] = 999.0
+                        if pl.get("fullName") and pid not in names:
+                            names[pid] = pl.get("fullName")
         except Exception:
             seas = {}
-        # Active rotation = pitchers with >=1 recent start; fall back to anyone
-        # with a season start when the recent window came back empty.
-        if recent:
-            cand = list(recent.keys())
-        else:
-            cand = [p for p in seas if seas[p]]
-        # POWER RANKING: order by season ERA asc (lowest ERA = toughest arm = SP1).
-        # Pitchers under the min-starts gate (small, noisy sample) sort to the
-        # BOTTOM so a 1-start shiny ERA cannot masquerade as the ace; GS desc /
-        # recent-start count break ties.
+        # TRUE-STARTER gate — keep relievers out of the rotation ENTIRELY (the
+        # editor + ranks never list them). A real starter: >=3 starts AND at
+        # least half their appearances are starts (not a long reliever who spot-
+        # starts on a bullpen day) AND >=2.5 IP per start (not a 1-inning opener).
+        # Relief innings only inflate IP/start, so this never wrongly drops a
+        # genuine starter; it only catches relievers/openers.
         MIN_GS = 3
+        def _is_starter(p):
+            gs = seas.get(p, 0)
+            if gs < MIN_GS:
+                return False
+            gp = gpd.get(p, gs) or gs
+            if gp and gs < gp * 0.5:
+                return False
+            if gs and (ipd.get(p, 0.0) / gs) < 2.5:
+                return False
+            return True
+        # Active rotation = recent starters who are TRUE starters; fall back to
+        # the season starter pool when the recent window came back empty.
+        if recent:
+            cand = [p for p in recent if _is_starter(p)]
+        else:
+            cand = [p for p in seas if _is_starter(p)]
+        # POWER RANKING: order by season ERA asc (lowest ERA = toughest arm = SP1);
+        # games-started / recent-start count break ties.
         def _key(p):
-            sgs = seas.get(p, 0)
-            return (0 if sgs >= MIN_GS else 1, era.get(p, 999.0),
-                    -sgs, -recent.get(p, 0))
+            return (era.get(p, 999.0), -seas.get(p, 0), -recent.get(p, 0))
         cand.sort(key=_key)
         return [(p, names.get(p, ""), seas.get(p, 0), recent.get(p, 0))
                 for p in cand]
