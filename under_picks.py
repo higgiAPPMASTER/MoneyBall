@@ -25,21 +25,19 @@ _PLAYER_MAP:    dict = {}
 _PITCHER_CACHE: dict = {}
 
 # ── Best-price book selection ──────────────────────────────────────────────
-# Show the BEST price among the user's 3 Canadian sportsbooks; fall back to the
-# first US book only when none of the 3 posted that line. Each pick also carries
-# which book the displayed (pick-side) price came from.
-MY_BOOKS = ("bet99", "thescore", "bet365")
-_BOOK_LABEL = {"bet99":"Bet99","thescore":"theScore","bet365":"Bet365","draftkings":"DK","fanduel":"FanDuel","betmgm":"BetMGM","espnbet":"ESPN BET","caesars":"Caesars","williamhill_us":"Caesars","hardrockbet":"Hard Rock","pointsbetus":"PointsBet","fanatics":"Fanatics"}
+# Show the BEST price among the user's Ontario-legal sportsbooks ONLY (MY_BOOKS).
+# Non-Ontario books (Fliff, ESPN BET, offshore, etc.) are ignored entirely — no
+# US fallback. Each pick carries which book the displayed (pick-side) price came from.
+MY_BOOKS = ("bet99", "thescore", "bet365", "draftkings", "fanduel", "betmgm", "caesars", "williamhill_us", "betrivers", "ballybet")
+_BOOK_LABEL = {"bet99":"Bet99","thescore":"theScore","bet365":"Bet365","draftkings":"DK","fanduel":"FanDuel","betmgm":"BetMGM","caesars":"Caesars","williamhill_us":"Caesars","betrivers":"BetRivers","ballybet":"Bally Bet"}
 def _book_label(k):
     return _BOOK_LABEL.get(k, (k or "").replace("_"," ").title())
 def _take_odds(entry, price_field, book_field, price, book_key):
-    """Keep the BEST price preferring MY_BOOKS; fall back to first non-MY book. Records source book key in book_field."""
-    if price is None:
+    """Ontario books only: ignore any book outside MY_BOOKS; among them keep the best American price."""
+    if price is None or book_key not in MY_BOOKS:
         return
-    cur = entry.get(price_field); cur_bk = entry.get(book_field)
-    new_mine = book_key in MY_BOOKS
-    cur_mine = cur_bk in MY_BOOKS
-    if cur is None or (new_mine and not cur_mine) or (new_mine and cur_mine and price > cur):
+    cur = entry.get(price_field)
+    if cur is None or price > cur:
         entry[price_field] = price
         entry[book_field] = book_key
 
@@ -320,7 +318,7 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
     RBI_ODDS.clear()
     HRR_ODDS.clear()
     WALKS_ODDS.clear()
-    PREFERRED = ["draftkings", "betmgm", "espnbet", "hardrockbet", "fanduel", "williamhill_us", "pointsbetus"]
+    PREFERRED = ["draftkings", "fanduel", "betmgm", "williamhill_us", "betrivers", "ballybet", "bet365", "bet99", "thescore"]
     tomorrow  = (time.strftime("%Y-%m-%d",
                   time.gmtime(time.mktime(time.strptime(run_date, "%Y-%m-%d")) + 86400)))
     try:
@@ -383,15 +381,13 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
                         if not player or pt is None or side != "Over": continue
                         nk = _norm_name(player)
                         if pt == 0.5 and price is not None:
-                            # Best price preferring MY_BOOKS for the displayed 0.5 "to
-                            # record a hit" Over; record its source book in HIT_ODDS_BOOK.
-                            _cur = HIT_ODDS.get(nk); _cur_bk = HIT_ODDS_BOOK.get(nk)
-                            _new_mine = _bk in MY_BOOKS
-                            _cur_mine = _cur_bk in MY_BOOKS
-                            if (_cur is None or (_new_mine and not _cur_mine)
-                                    or (_new_mine and _cur_mine and price > _cur)):
-                                HIT_ODDS[nk] = price
-                                HIT_ODDS_BOOK[nk] = _bk
+                            # Displayed 0.5 "to record a hit" Over price: Ontario books
+                            # only, best price; record its source in HIT_ODDS_BOOK.
+                            if _bk in MY_BOOKS:
+                                _cur = HIT_ODDS.get(nk)
+                                if _cur is None or price > _cur:
+                                    HIT_ODDS[nk] = price
+                                    HIT_ODDS_BOOK[nk] = _bk
                             hit05.setdefault(nk, {"name": player,
                                                   "home_team": home_team,
                                                   "away_team": away_team})
