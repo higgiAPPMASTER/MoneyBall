@@ -3123,7 +3123,7 @@ function _propBestCard(p, key, rank) {
   var gap=null;
   if(ppDriver!=null&&p.line!=null){
     if(isOver){ gap=ppDriver-(Math.floor(p.line)+1); }   // Over 4.5 must hit 5 to win
-    else { gap=(Math.ceil(p.line)-1)-ppDriver; }          // Under 4.5 must land on 4 to win
+    else { gap=(Math.floor(p.line)+1)-ppDriver; }         // Under 5.5 loses at 6 — edge = that number minus proj
   }
   var gapDisp=gap!=null?('edge '+(gap>=0?'+':'')+gap.toFixed(1)+(p.unit?' '+p.unit:'')):'';
   var blendDisp=p.blended!=null?p.blended+(p.unit?' '+p.unit:''):'—';
