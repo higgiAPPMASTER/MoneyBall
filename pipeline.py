@@ -167,7 +167,52 @@ def _lineup_adj(spot) -> int:
     if spot <= 7:   return -25   # bottom third
     return -75                   # 8-9 hole
 
-_ROT_RANK_CACHE: dict = {}   # run_date -> {pitcher_id(int): {"rank","gs","recent","rookie"}}
+_ROT_RANK_CACHE: dict = {}    # run_date -> {pitcher_id(int): {"rank","gs","recent","rookie"}}
+_ROT_EDITOR_CACHE: dict = {}  # run_date -> {tid(str): {"name","pitchers":[...],"has_override"}}
+
+# ── Manual rotation override (admin-set, persisted in Supabase) ──────────
+# Render's filesystem is ephemeral, so the admin's hand-ranked rotation order
+# lives in the shared mpa_track_ledger table as a single special row:
+#   app=mlb, date=__rotation__, category=__rotation__, side=ALL,
+#   detail = { "<team_id>": [[pid, "Name"], ...], ... }   (list order = rank 1..n)
+# pipeline.py cannot import main.py, so it carries its own tiny read-only client.
+_SB_URL_RAW_PL = os.environ.get("SUPABASE_URL", "").strip().rstrip("/")
+_SB_URL_PL = (f"https://{_SB_URL_RAW_PL}.supabase.co"
+              if _SB_URL_RAW_PL and not _SB_URL_RAW_PL.startswith("http")
+              else _SB_URL_RAW_PL)
+_SB_KEY_PL = os.environ.get("SUPABASE_SERVICE_KEY", "")
+_ROT_OVR_CAT = "__rotation__"
+
+def _load_rot_override() -> dict:
+    """Read the admin rotation-override row. Returns
+    {team_id(str): [(pid(int), name(str)), ...]} or {} when unset/unavailable."""
+    if not (_SB_URL_PL and _SB_KEY_PL):
+        return {}
+    try:
+        hdrs = {"apikey": _SB_KEY_PL, "Authorization": f"Bearer {_SB_KEY_PL}"}
+        rsp = requests.get(
+            f"{_SB_URL_PL}/rest/v1/mpa_track_ledger", headers=hdrs,
+            params={"app": "eq.mlb", "category": f"eq.{_ROT_OVR_CAT}",
+                    "side": "eq.ALL", "date": f"eq.{_ROT_OVR_CAT}",
+                    "select": "detail", "limit": "1"}, timeout=10)
+        if rsp.status_code == 200 and rsp.json():
+            det = (rsp.json()[0] or {}).get("detail") or {}
+            out = {}
+            for tid, lst in det.items():
+                norm = []
+                for it in (lst or []):
+                    if isinstance(it, (list, tuple)) and it:
+                        norm.append((int(it[0]),
+                                     str(it[1]) if len(it) > 1 else ""))
+                    elif isinstance(it, dict) and it.get("id") is not None:
+                        norm.append((int(it["id"]), str(it.get("name", ""))))
+                if norm:
+                    out[str(tid)] = norm
+            return out
+    except Exception as e:
+        print(f"[rot] override load failed: {e}")
+    return {}
+
 def _build_rotation_ranks(run_date: str) -> dict:
     """Rank each team's CURRENT rotation via the MLB Stats API (official feed
     only, no scraping). Returns {pitcher_id: {"rank","gs","recent","rookie"}}.
@@ -188,15 +233,18 @@ def _build_rotation_ranks(run_date: str) -> dict:
     from datetime import datetime as _DT, timedelta as _TD
     season = run_date[:4]
     rank_map: dict = {}
+    editor: dict = {}
     try:
         _d0 = _DT.strptime(run_date, "%Y-%m-%d")
     except Exception:
         _ROT_RANK_CACHE[run_date] = rank_map
+        _ROT_EDITOR_CACHE[run_date] = editor
         return rank_map
     win_start = (_d0 - _TD(days=21)).strftime("%Y-%m-%d")
     win_end   = (_d0 + _TD(days=10)).strftime("%Y-%m-%d")
 
     team_ids = set()
+    team_names: dict = {}
     try:
         sched = requests.get(
             f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={run_date}",
@@ -205,19 +253,25 @@ def _build_rotation_ranks(run_date: str) -> dict:
             for g in d.get("games", []):
                 teams = g.get("teams", {}) or {}
                 for _sh in ("home", "away"):
-                    tid = ((teams.get(_sh) or {}).get("team") or {}).get("id")
+                    tm = ((teams.get(_sh) or {}).get("team") or {})
+                    tid = tm.get("id")
                     if tid:
                         team_ids.add(tid)
+                        if tm.get("name"):
+                            team_names[tid] = tm.get("name")
     except Exception:
         team_ids = set()
     if not team_ids:
         _ROT_RANK_CACHE[run_date] = rank_map
+        _ROT_EDITOR_CACHE[run_date] = editor
         return rank_map
+    tid_list = list(team_ids)
 
     def _team_rotation(tid):
         # Recent-turn workload: count probable/actual starts per pitcher in the
         # window -> defines who is actually in the current rotation.
         recent: dict = {}
+        names: dict = {}
         try:
             r = requests.get(
                 "https://statsapi.mlb.com/api/v1/schedule?sportId=1"
@@ -230,9 +284,12 @@ def _build_rotation_ranks(run_date: str) -> dict:
                         t = teams.get(_sh) or {}
                         if ((t.get("team") or {}).get("id")) != tid:
                             continue
-                        pid = ((t.get("probablePitcher") or {}).get("id"))
+                        pp = (t.get("probablePitcher") or {})
+                        pid = pp.get("id")
                         if pid:
                             recent[int(pid)] = recent.get(int(pid), 0) + 1
+                            if pp.get("fullName"):
+                                names[int(pid)] = pp.get("fullName")
         except Exception:
             recent = {}
         # Season games-started (durable ace signal + fallback pool).
@@ -244,10 +301,13 @@ def _build_rotation_ranks(run_date: str) -> dict:
                 timeout=15).json()
             for blk in r.get("stats", []):
                 for s in blk.get("splits", []):
-                    pid = (s.get("player") or {}).get("id")
+                    pl = (s.get("player") or {})
+                    pid = pl.get("id")
                     gs = (s.get("stat") or {}).get("gamesStarted", 0) or 0
                     if pid:
                         seas[int(pid)] = int(gs)
+                        if pl.get("fullName") and int(pid) not in names:
+                            names[int(pid)] = pl.get("fullName")
         except Exception:
             seas = {}
         # Active rotation = pitchers with >=1 recent start; order by season GS
@@ -258,19 +318,50 @@ def _build_rotation_ranks(run_date: str) -> dict:
         else:
             pool = [(seas[p], 0, p) for p in seas if seas[p]]
         pool.sort(key=lambda x: (x[0], x[1]), reverse=True)
-        return [(p, sgs, rc) for sgs, rc, p in pool]
+        return [(p, names.get(p, ""), sgs, rc) for sgs, rc, p in pool]
 
     try:
         with _TPEx(max_workers=8) as _ex:
-            results = list(_ex.map(_team_rotation, list(team_ids)))
+            results = list(_ex.map(_team_rotation, tid_list))
     except Exception:
-        results = [_team_rotation(t) for t in team_ids]
+        results = [_team_rotation(t) for t in tid_list]
+
+    override = _load_rot_override()
 
     pids = []
-    for rotation in results:
-        for i, (pid, sgs, rc) in enumerate(rotation, 1):
+    for tid, rotation in zip(tid_list, results):
+        auto = [(pid, nm) for (pid, nm, sgs, rc) in rotation]
+        meta = {pid: (sgs, rc) for (pid, nm, sgs, rc) in rotation}
+        name_by_pid = {pid: nm for (pid, nm) in auto if nm}
+        ovr = override.get(str(tid))
+        if ovr:
+            # Admin order wins: pinned pitchers take ranks 1..k in the saved
+            # order; any auto-detected starter not pinned is appended after.
+            seen = set(); final = []
+            for pid, nm in ovr:
+                if pid in seen:
+                    continue
+                seen.add(pid)
+                if nm:
+                    name_by_pid[pid] = nm
+                final.append(pid)
+            for pid, nm in auto:
+                if pid not in seen:
+                    seen.add(pid); final.append(pid)
+            has_ovr = True
+        else:
+            final = [pid for pid, nm in auto]
+            has_ovr = False
+        ed_pitchers = []
+        for i, pid in enumerate(final, 1):
+            sgs, rc = meta.get(pid, (0, 0))
             rank_map[pid] = {"rank": i, "gs": sgs, "recent": rc, "rookie": False}
             pids.append(pid)
+            ed_pitchers.append({"id": pid,
+                                "name": name_by_pid.get(pid, str(pid)),
+                                "rank": i, "override": has_ovr})
+        editor[str(tid)] = {"name": team_names.get(tid, str(tid)),
+                            "pitchers": ed_pitchers, "has_override": has_ovr}
 
     # Rookie flag — 10 or fewer career games pitched (batched career hydrate).
     try:
@@ -295,7 +386,24 @@ def _build_rotation_ranks(run_date: str) -> dict:
         pass
 
     _ROT_RANK_CACHE[run_date] = rank_map
+    _ROT_EDITOR_CACHE[run_date] = editor
     return rank_map
+
+
+def rotation_editor_data(run_date: str) -> dict:
+    """Per-team rotation (names + ranks + override flag) for the admin Rotation
+    Order panel. Builds (and caches) the ranks first if not already done."""
+    if run_date not in _ROT_EDITOR_CACHE:
+        _build_rotation_ranks(run_date)
+    data = _ROT_EDITOR_CACHE.get(run_date, {}) or {}
+    teams = []
+    for tid, info in data.items():
+        teams.append({"team_id": tid,
+                      "team_name": info.get("name", tid),
+                      "has_override": info.get("has_override", False),
+                      "pitchers": info.get("pitchers", [])})
+    teams.sort(key=lambda t: (t["team_name"] or ""))
+    return {"date": run_date, "teams": teams}
 
 
 def _pitch_adj(batter_id, pitcher_id) -> int:
