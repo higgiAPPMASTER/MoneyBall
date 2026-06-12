@@ -6574,6 +6574,97 @@ async function _saveBet(){
     if(mb && !mb.classList.contains('hidden')) openMyBets(false);
   }catch(e){ msg.textContent=(e.message||'Save failed'); btn.disabled=false; btn.textContent='Log Bet'; }
 }
+function _manualBetForm(){
+  var MCATS=[
+    {label:'Hits Over 0.5',        cat:'Hitter Hits',   sk:'hits',         sl:'Hits',          line:0.5, side:'OVER'},
+    {label:'Hits Under 1.5',       cat:'Hits Under',    sk:'hits',         sl:'Hits',          line:1.5, side:'UNDER'},
+    {label:'TB Over 1.5',          cat:'TB Over',       sk:'total_bases',  sl:'Total Bases',   line:1.5, side:'OVER'},
+    {label:'TB Under 1.5',         cat:'TB Under',      sk:'total_bases',  sl:'Total Bases',   line:1.5, side:'UNDER'},
+    {label:'Runs Over 0.5',        cat:'Runs',          sk:'runs',         sl:'Runs',          line:0.5, side:'OVER'},
+    {label:'Runs Under 0.5',       cat:'Runs',          sk:'runs',         sl:'Runs',          line:0.5, side:'UNDER'},
+    {label:'RBI Over 0.5',         cat:'RBI',           sk:'rbi',          sl:'RBI',           line:0.5, side:'OVER'},
+    {label:'RBI Under 0.5',        cat:'RBI',           sk:'rbi',          sl:'RBI',           line:0.5, side:'UNDER'},
+    {label:'HRR Over 1.5',         cat:'HRR',           sk:'hrr',          sl:'H+R+RBI',       line:1.5, side:'OVER'},
+    {label:'HRR Under 1.5',        cat:'HRR',           sk:'hrr',          sl:'H+R+RBI',       line:1.5, side:'UNDER'},
+    {label:'Batter Walks Over 0.5',cat:'Batter Walks',  sk:'walks_bat',    sl:'Walks',         line:0.5, side:'OVER'},
+    {label:'Batter Walks Under 0.5',cat:'Batter Walks', sk:'walks_bat',    sl:'Walks',         line:0.5, side:'UNDER'},
+    {label:'Pitcher K Over',       cat:'Pitcher K',     sk:'strikeOuts',   sl:'Strikeouts',    line:null,side:'OVER'},
+    {label:'Pitcher K Under',      cat:'Pitcher K',     sk:'strikeOuts',   sl:'Strikeouts',    line:null,side:'UNDER'},
+    {label:'Hits Allowed Over',    cat:'Pitcher Props', sk:'hits_allowed', sl:'Hits Allowed',  line:null,side:'OVER'},
+    {label:'Hits Allowed Under',   cat:'Pitcher Props', sk:'hits_allowed', sl:'Hits Allowed',  line:null,side:'UNDER'},
+    {label:'Outs Over',            cat:'Pitcher Props', sk:'outs',         sl:'Outs',          line:null,side:'OVER'},
+    {label:'Outs Under',           cat:'Pitcher Props', sk:'outs',         sl:'Outs',          line:null,side:'UNDER'},
+    {label:'Earned Runs Over',     cat:'Pitcher Props', sk:'earnedRuns',   sl:'Earned Runs',   line:null,side:'OVER'},
+    {label:'Earned Runs Under',    cat:'Pitcher Props', sk:'earnedRuns',   sl:'Earned Runs',   line:null,side:'UNDER'},
+    {label:'Walks Allowed Over',   cat:'Pitcher Props', sk:'walks',        sl:'Walks Allowed', line:null,side:'OVER'},
+    {label:'Walks Allowed Under',  cat:'Pitcher Props', sk:'walks',        sl:'Walks Allowed', line:null,side:'UNDER'}
+  ];
+  window.__MCATS__=MCATS;
+  var ov=document.getElementById('mbet-modal');
+  if(!ov){ ov=document.createElement('div'); ov.id='mbet-modal';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.85);z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; };
+    document.body.appendChild(ov);
+  }
+  var today=new Date().toISOString().slice(0,10);
+  var opts=MCATS.map(function(c,i){ return '<option value="'+i+'">'+c.label+'</option>'; }).join('');
+  var inp='display:block;width:100%;margin-top:5px;background:#0b1120;border:1px solid #334155;border-radius:8px;padding:9px 11px;color:#fff;font-size:.9rem;box-sizing:border-box';
+  ov.innerHTML='<div style="background:#0f172a;border:1px solid #312e81;border-radius:16px;max-width:380px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.6);max-height:90vh;overflow-y:auto">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid #1e293b">'
+      +'<div style="font-weight:800;color:#fff;font-size:1rem">Manual Bet Entry</div>'
+      +'<button onclick="document.getElementById(&#39;mbet-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem">&#215;</button>'
+    +'</div>'
+    +'<div style="padding:16px 18px;display:grid;gap:11px">'
+      +'<label style="font-size:.72rem;color:#94a3b8;font-weight:600">Player Name<input id="mbet-name" type="text" placeholder="e.g. Yordan Alvarez" style="'+inp+'"></label>'
+      +'<label style="font-size:.72rem;color:#94a3b8;font-weight:600">Opponent<input id="mbet-opp" type="text" placeholder="e.g. Red Sox" style="'+inp+'"></label>'
+      +'<label style="font-size:.72rem;color:#94a3b8;font-weight:600">Category<select id="mbet-cat" onchange="_mbetCatChange()" style="'+inp+';color:#e2e8f0">'+opts+'</select></label>'
+      +'<label style="font-size:.72rem;color:#94a3b8;font-weight:600">Line<input id="mbet-line" type="number" step="0.5" min="0" style="'+inp+';font-family:monospace;font-weight:700;font-size:.95rem"></label>'
+      +'<label style="font-size:.72rem;color:#94a3b8;font-weight:600">Odds (American)<input id="mbet-odds" type="number" placeholder="e.g. -150 or +110" style="'+inp+';color:#fbbf24;font-family:monospace;font-weight:700;font-size:.95rem"></label>'
+      +'<label style="font-size:.72rem;color:#94a3b8;font-weight:600">Bet size ($)<input id="mbet-stake" type="number" min="0" step="0.01" placeholder="e.g. 50" style="'+inp+';font-weight:700;font-size:.95rem"></label>'
+      +'<label style="font-size:.72rem;color:#94a3b8;font-weight:600">Date<input id="mbet-date" type="date" value="'+today+'" style="'+inp+'"></label>'
+      +'<div id="mbet-payout" style="font-size:.78rem;color:#64748b;min-height:1em"></div>'
+      +'<div id="mbet-msg" style="font-size:.76rem;color:#f87171;min-height:1em"></div>'
+      +'<button id="mbet-save" onclick="_saveManualBet()" style="background:#4338ca;color:#fff;border:none;border-radius:9px;padding:11px;font-weight:800;cursor:pointer;font-size:.92rem">Log Bet</button>'
+    +'</div></div>';
+  ov.style.display='flex';
+  _mbetCatChange();
+  var so=document.getElementById('mbet-odds'),ss=document.getElementById('mbet-stake');
+  function _calc(){ var o=parseFloat(so.value),s=parseFloat(ss.value),pay=document.getElementById('mbet-payout'); if(!isFinite(o)||!isFinite(s)||s<=0){pay.textContent='';return;} var win=o>0?s*(o/100):s*(100/Math.abs(o)); pay.innerHTML='To win <strong style="color:#4ade80">$'+win.toFixed(2)+'</strong> &middot; total <strong style="color:#cbd5e1">$'+(s+win).toFixed(2)+'</strong>'; }
+  so.oninput=_calc; ss.oninput=_calc; _calc();
+  setTimeout(function(){ document.getElementById('mbet-name').focus(); },50);
+}
+function _mbetCatChange(){
+  var sel=document.getElementById('mbet-cat'); if(!sel) return;
+  var c=(window.__MCATS__||[])[parseInt(sel.value)]; if(!c) return;
+  var li=document.getElementById('mbet-line');
+  if(li && c.line!=null) li.value=c.line;
+}
+async function _saveManualBet(){
+  var name=(document.getElementById('mbet-name').value||'').trim();
+  var opp=(document.getElementById('mbet-opp').value||'').trim();
+  var catSel=document.getElementById('mbet-cat');
+  var c=(window.__MCATS__||[])[parseInt(catSel?catSel.value:0)];
+  var line=parseFloat(document.getElementById('mbet-line').value);
+  var o=parseFloat(document.getElementById('mbet-odds').value);
+  var s=parseFloat(document.getElementById('mbet-stake').value);
+  var dt=(document.getElementById('mbet-date').value||new Date().toISOString().slice(0,10));
+  var msg=document.getElementById('mbet-msg');
+  if(!name){ msg.textContent='Enter a player name.'; return; }
+  if(!c){ msg.textContent='Select a category.'; return; }
+  if(!isFinite(line)||line<=0){ msg.textContent='Enter a valid line.'; return; }
+  if(!isFinite(o)){ msg.textContent='Enter the odds.'; return; }
+  if(!isFinite(s)||s<=0){ msg.textContent='Enter a bet size greater than 0.'; return; }
+  var btn=document.getElementById('mbet-save'); btn.disabled=true; btn.textContent='Saving...';
+  try{
+    var body={name:name,opp:opp,team:'',category:c.cat,stat_key:c.sk,stat_label:c.sl,side:c.side,line:line,odds:Math.round(o),stake:s,date:dt,placed_at:new Date().toISOString()};
+    var res=await fetch('/api/bets'+_betAuthQS(),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(!res.ok){ throw new Error(await res.text()); }
+    document.getElementById('mbet-modal').style.display='none';
+    _betToast('Bet logged');
+    var mb=document.getElementById('mybets-card');
+    if(mb && !mb.classList.contains('hidden')) openMyBets(false);
+  }catch(e){ msg.textContent=(e.message||'Save failed'); btn.disabled=false; btn.textContent='Log Bet'; }
+}
 function _legStatKey(l){
   if(l.type==='UNDER') return l.stat==='Total Bases'?'':'hits';
   var m={HIT:'hits',K:'strikeOuts',RUN:'runs',
@@ -7019,7 +7110,8 @@ function downloadMyBetsCSV(){
   <div class="card p-6">
     <div class="section-hdr" style="color:#a5b4fc;margin-bottom:16px">💰 My Bets — Record &amp; ROI</div>
     <div id="mybets-body"></div>
-    <div style="margin-top:18px;padding-top:14px;border-top:1px solid #1e293b;display:flex;align-items:center;gap:12px">
+    <div style="margin-top:18px;padding-top:14px;border-top:1px solid #1e293b;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <button onclick="_manualBetForm()" style="background:#0f766e;color:#fff;border:none;border-radius:10px;padding:10px 22px;font-size:.88rem;font-weight:800;cursor:pointer">+ Manual Entry</button>
       <button id="mybets-results-btn" onclick="getMyBetsResults()" style="background:#22c55e;color:#0f172a;border:none;border-radius:10px;padding:10px 22px;font-size:.88rem;font-weight:800;cursor:pointer">🔄 Get Results</button>
       <span style="font-size:.78rem;color:#64748b">Fetches box scores and grades all pending bets</span>
       <span id="mybets-spinner-wrap"></span>
