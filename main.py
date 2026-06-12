@@ -2393,6 +2393,7 @@ _HTML = """
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
         <button class="btn-primary" onclick="loadRotation()">Load Rotations</button>
         <button class="btn-primary" id="rot-save-btn" onclick="saveRotation()" style="background:#16a34a;color:#fff">Save Overrides</button>
+        <button class="btn-primary" id="rot-collapse-btn" onclick="_rotCollapseAll()" style="background:#334155;color:#e5e7eb">Collapse all</button>
         <span id="rot-status" style="font-size:.78rem;color:#9ca3af"></span>
       </div>
       <div id="rotation-list" style="display:flex;flex-direction:column;gap:14px"></div>
@@ -6246,11 +6247,12 @@ async function loadRotation(){
     var d=await r.json();
     window.__ROT__={reset:[],teams:(d.teams||[]).map(function(t){
       return {team_id:String(t.team_id),team_name:t.team_name||String(t.team_id),
-        has_override:!!t.has_override,dirty:false,collapsed:true,
+        has_override:!!t.has_override,dirty:false,collapsed:false,
         pitchers:(t.pitchers||[]).map(function(p){return {id:p.id,name:p.name||String(p.id),tier:p.tier||0};}),
         injured:(t.injured||[]).map(function(p){return {id:p.id,name:p.name||String(p.id)};})};
     })};
     _rotRender();
+    var cb=document.getElementById('rot-collapse-btn'); if(cb) cb.textContent='Collapse all';
     st.textContent=window.__ROT__.teams.length+' teams loaded for '+(d.date||ds);
     st.style.color='#9ca3af';
   }catch(e){ st.textContent='Could not load: '+((e&&e.message)||e); st.style.color='#f87171'; }
@@ -6322,6 +6324,14 @@ function _rotToggle(ti){
   var t=R.teams[ti]; if(!t) return;
   t.collapsed=!t.collapsed;
   _rotRender();
+}
+function _rotCollapseAll(){
+  var R=window.__ROT__; if(!R||!R.teams) return;
+  var anyOpen=R.teams.some(function(t){return !t.collapsed;});
+  R.teams.forEach(function(t){ t.collapsed=anyOpen; });
+  _rotRender();
+  var b=document.getElementById('rot-collapse-btn');
+  if(b) b.textContent=anyOpen?'Expand all':'Collapse all';
 }
 function _rotToInj(ti,pi){
   var R=window.__ROT__; if(!R) return;
@@ -6405,7 +6415,7 @@ async function saveRotation(){
       body:JSON.stringify({set:set,reset:reset})});
     if(!r.ok){ var t=await r.text(); throw new Error(t||'save failed'); }
     var d=await r.json();
-    R.teams.forEach(function(t){ if(t.dirty){ t.has_override=true; t.dirty=false; } t.collapsed=true; });
+    R.teams.forEach(function(t){ if(t.dirty){ t.has_override=true; t.dirty=false; } });
     R.reset=[];
     _rotRender();
     st.textContent='Saved '+(d.teams!=null?d.teams:'')+' team overrides. Now click Force Refresh to apply to today\u2019s cards.';
