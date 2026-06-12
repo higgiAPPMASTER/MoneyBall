@@ -167,6 +167,87 @@ def _lineup_adj(spot) -> int:
     if spot <= 7:   return -25   # bottom third
     return -75                   # 8-9 hole
 
+_ROT_RANK_CACHE: dict = {}   # run_date -> {pitcher_id(int): {"rank","gs","rookie"}}
+def _build_rotation_ranks(run_date: str) -> dict:
+    """Rank each team's starters by season games-started via the MLB Stats API.
+    Returns {pitcher_id: {"rank": 1.., "gs": n, "rookie": bool}}. The most-
+    started pitcher on a team is SP1 (the ace), next SP2, etc. Official feed
+    only (no scraping). Cached per run_date for the life of the process."""
+    if run_date in _ROT_RANK_CACHE:
+        return _ROT_RANK_CACHE[run_date]
+    season = run_date[:4]
+    rank_map: dict = {}
+    team_ids = set()
+    try:
+        sched = requests.get(
+            f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={run_date}",
+            timeout=15).json()
+        for d in sched.get("dates", []):
+            for g in d.get("games", []):
+                teams = g.get("teams", {}) or {}
+                for _sh in ("home", "away"):
+                    tid = ((teams.get(_sh) or {}).get("team") or {}).get("id")
+                    if tid:
+                        team_ids.add(tid)
+    except Exception:
+        team_ids = set()
+    if not team_ids:
+        _ROT_RANK_CACHE[run_date] = rank_map
+        return rank_map
+
+    def _team_rows(tid):
+        try:
+            r = requests.get(
+                "https://statsapi.mlb.com/api/v1/stats?stats=season&group=pitching"
+                f"&season={season}&gameType=R&teamId={tid}&playerPool=all&limit=200",
+                timeout=15).json()
+            rows = []
+            for blk in r.get("stats", []):
+                for s in blk.get("splits", []):
+                    st = s.get("stat", {}) or {}
+                    pl = s.get("player", {}) or {}
+                    gs = st.get("gamesStarted", 0) or 0
+                    pid = pl.get("id")
+                    if gs and pid:
+                        rows.append((int(gs), int(pid)))
+            rows.sort(key=lambda x: x[0], reverse=True)
+            return rows
+        except Exception:
+            return []
+
+    try:
+        with _TPEx(max_workers=8) as _ex:
+            all_rows = list(_ex.map(_team_rows, list(team_ids)))
+    except Exception:
+        all_rows = [_team_rows(t) for t in team_ids]
+
+    pids = []
+    for rows in all_rows:
+        for i, (gs, pid) in enumerate(rows, 1):
+            rank_map[pid] = {"rank": i, "gs": gs, "rookie": False}
+            pids.append(pid)
+
+    # Rookie flag — MLB debut this season or last (batched people lookup).
+    try:
+        cutoff = int(season) - 1
+        for i in range(0, len(pids), 40):
+            chunk = pids[i:i + 40]
+            r = requests.get(
+                "https://statsapi.mlb.com/api/v1/people?personIds=" +
+                ",".join(str(x) for x in chunk),
+                timeout=15).json()
+            for person in r.get("people", []):
+                pid = person.get("id")
+                deb = (person.get("mlbDebutDate") or "")[:4]
+                if pid in rank_map and deb.isdigit() and int(deb) >= cutoff:
+                    rank_map[pid]["rookie"] = True
+    except Exception:
+        pass
+
+    _ROT_RANK_CACHE[run_date] = rank_map
+    return rank_map
+
+
 def _pitch_adj(batter_id, pitcher_id) -> int:
     """Ranking-only nudge [-150, +150] from BvP pitch-type matchup.
     High = batter excels vs pitcher's primary pitches; Low = struggles.
@@ -1670,6 +1751,48 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         if padj or ladj:
             _nh_enriched += 1
     emit({"type": "log", "msg": f"  ✅ Pitch/lineup adj attached to {_nh_enriched}/{len(_nonhit_all)} non-hits picks"})
+
+    # ── Rotation rank (SP1..SP5) — drives the card depth-chart dot ──────────
+    # Rank each team's pitchers by season games-started (most-started = ace,
+    # SP1). Hitters get opp_rot_rank (the arm they face); pitchers get rot_rank
+    # (their own). Frontend tiers: SP1 ace, SP2-3 mid (neutral), SP4+/rookie
+    # back-end. MLB Stats API only — no scraping.
+    try:
+        _rot = _build_rotation_ranks(run_date)
+    except Exception as _rexc:
+        emit({"type": "log", "msg": f"⚠️ Rotation ranks skipped: {_rexc}"})
+        _rot = {}
+
+    def _rot_get(pid):
+        try:
+            return _rot.get(int(pid)) if pid else None
+        except Exception:
+            return None
+
+    def _set_opp_rot(pick, pid):
+        info = _rot_get(pid)
+        if info:
+            pick["opp_rot_rank"]   = info.get("rank")
+            pick["opp_rot_rookie"] = info.get("rookie", False)
+
+    def _set_own_rot(pick, pid):
+        info = _rot_get(pid)
+        if info:
+            pick["rot_rank"]   = info.get("rank")
+            pick["rot_rookie"] = info.get("rookie", False)
+
+    for _hp in list(top9) + list(also_ran):
+        _set_opp_rot(_hp, _hp.get("pit_id"))
+    for _np in _nonhit_all:
+        _set_opp_rot(_np, _np.get("pit_id") or _opp_pit_id(_np.get("opp", "")))
+    _pk_all = list(pitcher_k_result.get("picks", [])) + list(pitcher_k_result.get("all", []))
+    for _mkt, _bucket in (pitcher_k_result.get("props", {}) or {}).items():
+        _pk_all += list(_bucket.get("picks", [])) + list(_bucket.get("all", []))
+    for _pk in _pk_all:
+        _set_own_rot(_pk, _pk.get("pid"))
+    _rot_hit = sum(1 for x in (list(top9) + list(also_ran) + _nonhit_all) if x.get("opp_rot_rank"))
+    _rot_pit = sum(1 for x in _pk_all if x.get("rot_rank"))
+    emit({"type": "log", "msg": f"  ✅ Rotation rank: {len(_rot)} pitchers ranked, attached to {_rot_hit} hitters + {_rot_pit} pitcher picks"})
 
     # ── Phase B: combined env + umpire RE-RANKING (reorder only) ──
     # Offense axis = weather/park env × umpire RUN factor (a wide strike zone
