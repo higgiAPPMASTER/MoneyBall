@@ -505,15 +505,29 @@ async def save_rotation(request: Request, token: str = "", admin: str = ""):
         raise HTTPException(status_code=403, detail="admin only")
     body = await request.json()
     doc = _load_rot_override_doc()
-    for tid, lst in (body.get("set") or {}).items():
-        arr = []
+
+    def _pairs(lst):
+        out = []
         for it in (lst or []):
-            pid = it.get("id") if isinstance(it, dict) else None
+            if isinstance(it, dict):
+                pid = it.get("id"); nm = it.get("name", "")
+            elif isinstance(it, (list, tuple)) and it:
+                pid = it[0]; nm = it[1] if len(it) > 1 else ""
+            else:
+                pid = None; nm = ""
             if pid is None:
                 continue
-            arr.append([int(pid), str(it.get("name", ""))])
-        if arr:
-            doc[str(tid)] = arr
+            out.append([int(pid), str(nm)])
+        return out
+
+    for tid, val in (body.get("set") or {}).items():
+        if isinstance(val, dict):
+            order = _pairs(val.get("order"))
+            inj = _pairs(val.get("inj"))
+        else:
+            order = _pairs(val); inj = []
+        if order or inj:
+            doc[str(tid)] = {"order": order, "inj": inj}
         else:
             doc.pop(str(tid), None)
     for tid in (body.get("reset") or []):
@@ -2330,7 +2344,7 @@ _HTML = """
     </div>
     <div id="rotation-card" class="card p-6 admin-only">
       <div class="section-hdr" style="color:#f59e0b">🔧 Rotation Order <span style="font-size:.7rem;color:#777;font-weight:400">admin only</span></div>
-      <p class="text-xs text-slate-400 mb-3" style="margin-top:-4px">Pin each team's true rotation. Use the arrows to reorder. SP1-2 = ace (green), SP3-4 = mid (amber), SP5+ = back-end (red). Leave a team alone to keep the automatic ranking. Save, then Force Refresh to apply to today's cards.</p>
+      <p class="text-xs text-slate-400 mb-3" style="margin-top:-4px">Pin each team's true rotation. Use the arrows to reorder. SP1-2 = ace (green), SP3-4 = mid (amber), SP5+ = back-end (red). Hit "INJ &#8595;" to drop an injured or optioned arm out of the count so the rest re-rank; "&#8593; Active" puts them back. Leave a team alone to keep the automatic ranking. Save, then Force Refresh to apply to today's cards.</p>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
         <button class="btn-primary" onclick="loadRotation()">Load Rotations</button>
         <button class="btn-primary" id="rot-save-btn" onclick="saveRotation()" style="background:#16a34a;color:#fff">Save Overrides</button>
@@ -6185,7 +6199,8 @@ async function loadRotation(){
     window.__ROT__={reset:[],teams:(d.teams||[]).map(function(t){
       return {team_id:String(t.team_id),team_name:t.team_name||String(t.team_id),
         has_override:!!t.has_override,dirty:false,
-        pitchers:(t.pitchers||[]).map(function(p){return {id:p.id,name:p.name||String(p.id)};})};
+        pitchers:(t.pitchers||[]).map(function(p){return {id:p.id,name:p.name||String(p.id)};}),
+        injured:(t.injured||[]).map(function(p){return {id:p.id,name:p.name||String(p.id)};})};
     })};
     _rotRender();
     st.textContent=window.__ROT__.teams.length+' teams loaded for '+(d.date||ds);
@@ -6202,17 +6217,25 @@ function _rotRender(){
       var bg=rank<=2?'rgba(16,185,129,.15)':rank<=4?'rgba(245,158,11,.15)':'rgba(239,68,68,.15)';
       var up=pi===0?'<span style="width:26px;display:inline-block"></span>':'<button onclick="_rotMove('+ti+','+pi+',-1)" style="background:#1f2937;color:#fff;border:none;border-radius:5px;width:26px;height:26px;cursor:pointer;font-size:.8rem">&#9650;</button>';
       var dn=pi===t.pitchers.length-1?'<span style="width:26px;display:inline-block"></span>':'<button onclick="_rotMove('+ti+','+pi+',1)" style="background:#1f2937;color:#fff;border:none;border-radius:5px;width:26px;height:26px;cursor:pointer;font-size:.8rem">&#9660;</button>';
+      var inj='<button onclick="_rotToInj('+ti+','+pi+')" title="Move to Injured / Out &#8212; drops this arm out of the rotation count so the rest re-rank" style="background:#3f1d1d;color:#fca5a5;border:1px solid #7f1d1d;border-radius:5px;height:26px;padding:0 8px;cursor:pointer;font-size:.62rem;font-weight:800;white-space:nowrap">INJ &#8595;</button>';
       return '<div style="display:flex;align-items:center;gap:8px;padding:4px 0">'
         +'<span style="font-size:.62rem;font-weight:900;padding:2px 7px;border-radius:5px;background:'+bg+';color:'+clr+';min-width:40px;text-align:center">SP'+rank+'</span>'
         +'<span style="flex:1;color:#e5e7eb;font-size:.9rem">'+p.name+'</span>'
-        +'<span style="display:flex;gap:5px">'+up+dn+'</span></div>';
+        +'<span style="display:flex;gap:5px;align-items:center">'+up+dn+inj+'</span></div>';
     }).join('');
+    var injRows=(t.injured||[]).map(function(p,ii){
+      return '<div style="display:flex;align-items:center;gap:8px;padding:3px 0">'
+        +'<span style="font-size:.6rem;font-weight:900;padding:2px 7px;border-radius:5px;background:rgba(127,29,29,.35);color:#fca5a5;min-width:40px;text-align:center">INJ</span>'
+        +'<span style="flex:1;color:#9ca3af;font-size:.88rem;text-decoration:line-through">'+p.name+'</span>'
+        +'<button onclick="_rotFromInj('+ti+','+ii+')" title="Return to the active rotation" style="background:#14321f;color:#86efac;border:1px solid #166534;border-radius:5px;height:26px;padding:0 9px;cursor:pointer;font-size:.62rem;font-weight:800;white-space:nowrap">&#8593; Active</button></div>';
+    }).join('');
+    var injBlock=(t.injured&&t.injured.length)?('<div style="margin-top:8px;padding-top:8px;border-top:1px dashed #3f3f46"><div style="font-size:.58rem;color:#f87171;font-weight:800;letter-spacing:.06em;margin-bottom:3px">INJURED / OUT &#8212; not ranked</div>'+injRows+'</div>'):'';
     var tag=t.has_override?'<span style="font-size:.6rem;color:#34d399;font-weight:800;margin-left:8px">PINNED</span>':(t.dirty?'<span style="font-size:.6rem;color:#fbbf24;font-weight:800;margin-left:8px">EDITED</span>':'');
     var resetLink=(t.has_override||t.dirty)?'<a onclick="_rotReset('+ti+')" style="color:#ff8a65;cursor:pointer;font-size:.7rem;font-weight:700">Reset to auto</a>':'';
     return '<div style="background:rgba(255,255,255,.03);border:1px solid #262626;border-radius:10px;padding:12px 14px">'
       +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'
       +'<div style="font-weight:800;color:#fff;font-size:.95rem">'+t.team_name+tag+'</div>'+resetLink+'</div>'
-      +(rows||'<div style="color:#64748b;font-size:.8rem">No probable starters posted.</div>')+'</div>';
+      +(rows||'<div style="color:#64748b;font-size:.8rem">No active starters.</div>')+injBlock+'</div>';
   }).join('')||'<div style="color:#64748b;font-size:.85rem">No teams on this date. Pick a slate date and Load again.</div>';
 }
 function _rotMove(ti,pi,dir){
@@ -6224,9 +6247,26 @@ function _rotMove(ti,pi,dir){
   var ri=(R.reset||[]).indexOf(t.team_id); if(ri>=0) R.reset.splice(ri,1);
   _rotRender();
 }
+function _rotToInj(ti,pi){
+  var R=window.__ROT__; if(!R) return;
+  var t=R.teams[ti]; if(!t) return;
+  var p=t.pitchers.splice(pi,1)[0]; if(!p) return;
+  t.injured=t.injured||[]; t.injured.push(p); t.dirty=true;
+  var ri=(R.reset||[]).indexOf(t.team_id); if(ri>=0) R.reset.splice(ri,1);
+  _rotRender();
+}
+function _rotFromInj(ti,ii){
+  var R=window.__ROT__; if(!R) return;
+  var t=R.teams[ti]; if(!t) return;
+  var p=(t.injured||[]).splice(ii,1)[0]; if(!p) return;
+  t.pitchers.push(p); t.dirty=true;
+  var ri=(R.reset||[]).indexOf(t.team_id); if(ri>=0) R.reset.splice(ri,1);
+  _rotRender();
+}
 function _rotReset(ti){
   var R=window.__ROT__; if(!R) return;
   var t=R.teams[ti]; if(!t) return;
+  if(t.injured&&t.injured.length){ t.pitchers=t.pitchers.concat(t.injured); t.injured=[]; }
   t.dirty=false; t.has_override=false;
   R.reset=R.reset||[];
   if(R.reset.indexOf(t.team_id)<0) R.reset.push(t.team_id);
@@ -6240,7 +6280,8 @@ async function saveRotation(){
   var set={};
   R.teams.forEach(function(t){
     if(t.dirty||t.has_override){
-      set[t.team_id]=t.pitchers.map(function(p){return {id:p.id,name:p.name};});
+      set[t.team_id]={order:t.pitchers.map(function(p){return {id:p.id,name:p.name};}),
+                      inj:(t.injured||[]).map(function(p){return {id:p.id,name:p.name};})};
     }
   });
   var reset=(R.reset||[]).filter(function(tid){ return !set[tid]; });
