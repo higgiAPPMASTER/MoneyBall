@@ -466,6 +466,73 @@ async def start_run(request: Request, date_str: str, force: bool = False, token:
     executor.submit(run_in_thread)
     return {"task_id": task_id, "cached": False}
 
+# ── Rotation order override (admin-editable, persisted in Supabase) ──────
+# The card rotation-rank dot defaults to an automatic ranking; admins pin a
+# team's true SP1..SPn order here. Stored as one special mpa_track_ledger row
+# (app=mlb, date=__rotation__, category=__rotation__, side=ALL) with
+# detail = { "<team_id>": [[pid, "Name"], ...] }. The save MERGES per team, so
+# editing today's slate never wipes an override on a team that plays another day.
+_ROT_OVR_CAT = "__rotation__"
+
+def _load_rot_override_doc() -> dict:
+    rows = _sb_get("mpa_track_ledger", {"app": "eq.mlb",
+                   "category": f"eq.{_ROT_OVR_CAT}", "side": "eq.ALL",
+                   "date": f"eq.{_ROT_OVR_CAT}", "select": "detail", "limit": "1"})
+    if rows:
+        return rows[0].get("detail") or {}
+    return {}
+
+@app.get("/api/rotation")
+async def get_rotation(request: Request, date_str: str = "",
+                       token: str = "", admin: str = ""):
+    tok = token or request.headers.get("Authorization", "").replace("Bearer ", "").strip()
+    if not _bet_admin_ok(tok, admin):
+        raise HTTPException(status_code=403, detail="admin only")
+    ds = date_str or date.today().isoformat()
+    import sys as _sys
+    _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from pipeline import rotation_editor_data
+    loop = asyncio.get_event_loop()
+    data = await loop.run_in_executor(executor, rotation_editor_data, ds)
+    return data
+
+@app.post("/api/rotation")
+async def save_rotation(request: Request, token: str = "", admin: str = ""):
+    tok = token or request.headers.get("Authorization", "").replace("Bearer ", "").strip()
+    is_admin = _is_admin_token(tok) or (
+        bool(admin) and admin == os.environ.get("INTERNAL_API_TOKEN", "__none__"))
+    if not is_admin:
+        raise HTTPException(status_code=403, detail="admin only")
+    body = await request.json()
+    doc = _load_rot_override_doc()
+    for tid, lst in (body.get("set") or {}).items():
+        arr = []
+        for it in (lst or []):
+            pid = it.get("id") if isinstance(it, dict) else None
+            if pid is None:
+                continue
+            arr.append([int(pid), str(it.get("name", ""))])
+        if arr:
+            doc[str(tid)] = arr
+        else:
+            doc.pop(str(tid), None)
+    for tid in (body.get("reset") or []):
+        doc.pop(str(tid), None)
+    import datetime as _dt
+    row = {"app": "mlb", "date": _ROT_OVR_CAT, "category": _ROT_OVR_CAT,
+           "side": "ALL", "wins": 0, "losses": 0, "locked": False,
+           "locked_at": _dt.datetime.utcnow().isoformat() + "Z", "detail": doc}
+    ok = _sb_upsert("mpa_track_ledger", [row], on_conflict="app,date,category,side")
+    try:
+        import sys as _sys
+        _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import pipeline as _pl
+        _pl._ROT_RANK_CACHE.clear()
+        _pl._ROT_EDITOR_CACHE.clear()
+    except Exception as _e:
+        print(f"[rot] cache clear failed: {_e}")
+    return {"ok": bool(ok), "teams": len(doc)}
+
 @app.get("/api/stream/{task_id}")
 async def stream_task(task_id: str):
     if task_id not in _tasks:
@@ -2260,6 +2327,16 @@ _HTML = """
       <div id="run-spinner" class="hidden" style="margin-top:12px;color:#6b7280;font-size:13px">
         <span class="spinner"></span> Analyzing player histories…
       </div>
+    </div>
+    <div id="rotation-card" class="card p-6 admin-only">
+      <div class="section-hdr" style="color:#f59e0b">🔧 Rotation Order <span style="font-size:.7rem;color:#777;font-weight:400">admin only</span></div>
+      <p class="text-xs text-slate-400 mb-3" style="margin-top:-4px">Pin each team's true rotation. Use the arrows to reorder. SP1-2 = ace (green), SP3-4 = mid (amber), SP5+ = back-end (red). Leave a team alone to keep the automatic ranking. Save, then Force Refresh to apply to today's cards.</p>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+        <button class="btn-primary" onclick="loadRotation()">Load Rotations</button>
+        <button class="btn-primary" id="rot-save-btn" onclick="saveRotation()" style="background:#16a34a;color:#fff">Save Overrides</button>
+        <span id="rot-status" style="font-size:.78rem;color:#9ca3af"></span>
+      </div>
+      <div id="rotation-list" style="display:flex;flex-direction:column;gap:14px"></div>
     </div>
     <div id="progress-card" class="card p-6 hidden admin-only">
       <div class="flex justify-between items-center mb-3">
@@ -4105,10 +4182,11 @@ function _rotInfo(p,isPit){
   var rookie=isPit?p.rot_rookie:p.opp_rot_rookie;
   if((rank==null||rank===0)&&!rookie) return null;
   var tier;
-  if(rookie) tier=3;
-  else if(rank===1) tier=1;
-  else if(rank===2||rank===3) tier=2;
-  else if(rank>=4) tier=3;
+  if(rank!=null&&rank>0){
+    if(rank<=2) tier=1;            // SP1-2 = ace (two-ace staffs both read ace)
+    else if(rank<=4) tier=2;       // SP3-4 = mid
+    else tier=3;                   // SP5+  = back-end
+  } else if(rookie) tier=3;        // unranked rookie = back-end fallback
   else return null;
   return {rank:rank,rookie:!!rookie,tier:tier};
 }
@@ -4118,7 +4196,7 @@ function _seriesBadge(p,isPit){
   var bg=ri.tier===1?'rgba(16,185,129,.2)':ri.tier===2?'rgba(245,158,11,.18)':'rgba(239,68,68,.2)';
   var clr=ri.tier===1?'#34d399':ri.tier===2?'#fbbf24':'#f87171';
   var rk=ri.rookie?'<span style="font-size:.55rem;font-weight:900;color:#fca5a5;margin-left:3px">R</span>':'';
-  var tip=ri.tier===1?'Staff ace (SP1) on the mound'
+  var tip=ri.tier===1?('Staff ace (SP'+ri.rank+') on the mound')
     :ri.tier===2?('Mid-rotation arm (SP'+ri.rank+')')
     :(((ri.rank!=null&&ri.rank>0)?('Back-end starter (SP'+ri.rank+')'):'Spot starter')+(ri.rookie?' \u2014 rookie':''));
   return '<span title="'+tip+'" style="font-size:.62rem;font-weight:900;padding:2px 6px;border-radius:4px;background:'+bg+';color:'+clr+';letter-spacing:.06em">'+lbl+rk+'</span>';
@@ -4140,7 +4218,7 @@ function _slotDot(p, side, isPit, catIdx){
   var agree=(sLean===side);
   var clr=agree?'#22c55e':'#ef4444';
   var glow=agree?'rgba(34,197,94,.75)':'rgba(239,68,68,.75)';
-  var tierTxt=ri.tier===1?'ace (SP1)'
+  var tierTxt=ri.tier===1?('ace (SP'+ri.rank+')')
     :(((ri.rank!=null&&ri.rank>0)?('back-end arm (SP'+ri.rank+')'):'spot starter')+(ri.rookie?', rookie':''));
   var lean=who+' is a '+tierTxt+', leaning '+sTxt+' on this market';
   var tip=agree?(lean+' \u2014 matches this '+sideTxt+' pick. Good spot.')
@@ -4151,7 +4229,7 @@ function _seriesTag(p, side, isPit, catIdx){
   return _seriesBadge(p,isPit)+_slotDot(p, side, isPit, catIdx);
 }
 // Plain-English depth-chart writeup for a detail popup. Maps the starter&#39;s
-// rotation rank (SP1 ace / SP2-3 mid / SP4+ back-end) to the market lean in
+// rotation rank (SP1-2 ace / SP3-4 mid / SP5+ back-end) to the market lean in
 // window.__MPA_SLOTS__, compares to the pick side, and renders a green
 // "agrees" / red "fade" / amber "lean light" block with reasoning.
 function _matrixWriteup(p, side, catIdx, isPit, marketWord, pickLabel){
@@ -4172,7 +4250,7 @@ function _matrixWriteup(p, side, catIdx, isPit, marketWord, pickLabel){
   var sClr=sLean==='O'?'#4ade80':'#ff8a65';
   var rankTxt=(ri.rank!=null&&ri.rank>0)?('SP'+ri.rank):'spot';
   var why=ri.tier===1
-    ?(who+' is the staff <b style="color:#fff">ace (SP1)</b>, the toughest arm in the rotation')
+    ?(who+' is the staff <b style="color:#fff">ace (SP'+ri.rank+')</b>, the toughest arm in the rotation')
     :(who+' is a <b style="color:#fff">back-end '+rankTxt+' starter</b>'+(ri.rookie?' and a rookie':'')+', usually the most hittable arm');
   var agree=(sLean===side);
   var clr=agree?'#22c55e':'#ef4444';
@@ -6089,6 +6167,98 @@ function _betAuthQS(){
   var tok=localStorage.getItem('__mpa_token')||localStorage.getItem('hub_token')||'';
   var adm=new URLSearchParams(location.search).get('admin')||'';
   return '?token='+encodeURIComponent(tok)+(adm?('&admin='+encodeURIComponent(adm)):'');
+}
+// ── Rotation Order editor (admin-only) ─────────────────────────────────
+// Loads today's per-team rotation, lets an admin pin the true SP1..SPn order
+// with up/down arrows, and saves it to Supabase. SP1-2 = ace, SP3-4 = mid,
+// SP5+ = back-end. Reorder marks a team dirty; Save sends every dirty/pinned
+// team plus any teams reset to auto. Server merges so off-slate pins survive.
+async function loadRotation(){
+  var st=document.getElementById('rot-status');
+  st.textContent='Loading rotations...'; st.style.color='#9ca3af';
+  var ds=document.getElementById('date-picker').value||'';
+  try{
+    var url='/api/rotation'+_betAuthQS()+(ds?('&date_str='+encodeURIComponent(ds)):'');
+    var r=await fetch(url);
+    if(!r.ok){ var t=await r.text(); throw new Error(t||'load failed'); }
+    var d=await r.json();
+    window.__ROT__={reset:[],teams:(d.teams||[]).map(function(t){
+      return {team_id:String(t.team_id),team_name:t.team_name||String(t.team_id),
+        has_override:!!t.has_override,dirty:false,
+        pitchers:(t.pitchers||[]).map(function(p){return {id:p.id,name:p.name||String(p.id)};})};
+    })};
+    _rotRender();
+    st.textContent=window.__ROT__.teams.length+' teams loaded for '+(d.date||ds);
+    st.style.color='#9ca3af';
+  }catch(e){ st.textContent='Could not load: '+((e&&e.message)||e); st.style.color='#f87171'; }
+}
+function _rotRender(){
+  var box=document.getElementById('rotation-list'); if(!box) return;
+  var R=window.__ROT__; if(!R){ box.innerHTML=''; return; }
+  box.innerHTML=R.teams.map(function(t,ti){
+    var rows=t.pitchers.map(function(p,pi){
+      var rank=pi+1;
+      var clr=rank<=2?'#34d399':rank<=4?'#fbbf24':'#f87171';
+      var bg=rank<=2?'rgba(16,185,129,.15)':rank<=4?'rgba(245,158,11,.15)':'rgba(239,68,68,.15)';
+      var up=pi===0?'<span style="width:26px;display:inline-block"></span>':'<button onclick="_rotMove('+ti+','+pi+',-1)" style="background:#1f2937;color:#fff;border:none;border-radius:5px;width:26px;height:26px;cursor:pointer;font-size:.8rem">&#9650;</button>';
+      var dn=pi===t.pitchers.length-1?'<span style="width:26px;display:inline-block"></span>':'<button onclick="_rotMove('+ti+','+pi+',1)" style="background:#1f2937;color:#fff;border:none;border-radius:5px;width:26px;height:26px;cursor:pointer;font-size:.8rem">&#9660;</button>';
+      return '<div style="display:flex;align-items:center;gap:8px;padding:4px 0">'
+        +'<span style="font-size:.62rem;font-weight:900;padding:2px 7px;border-radius:5px;background:'+bg+';color:'+clr+';min-width:40px;text-align:center">SP'+rank+'</span>'
+        +'<span style="flex:1;color:#e5e7eb;font-size:.9rem">'+p.name+'</span>'
+        +'<span style="display:flex;gap:5px">'+up+dn+'</span></div>';
+    }).join('');
+    var tag=t.has_override?'<span style="font-size:.6rem;color:#34d399;font-weight:800;margin-left:8px">PINNED</span>':(t.dirty?'<span style="font-size:.6rem;color:#fbbf24;font-weight:800;margin-left:8px">EDITED</span>':'');
+    var resetLink=(t.has_override||t.dirty)?'<a onclick="_rotReset('+ti+')" style="color:#ff8a65;cursor:pointer;font-size:.7rem;font-weight:700">Reset to auto</a>':'';
+    return '<div style="background:rgba(255,255,255,.03);border:1px solid #262626;border-radius:10px;padding:12px 14px">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'
+      +'<div style="font-weight:800;color:#fff;font-size:.95rem">'+t.team_name+tag+'</div>'+resetLink+'</div>'
+      +(rows||'<div style="color:#64748b;font-size:.8rem">No probable starters posted.</div>')+'</div>';
+  }).join('')||'<div style="color:#64748b;font-size:.85rem">No teams on this date. Pick a slate date and Load again.</div>';
+}
+function _rotMove(ti,pi,dir){
+  var R=window.__ROT__; if(!R) return;
+  var t=R.teams[ti]; if(!t) return;
+  var j=pi+dir; if(j<0||j>=t.pitchers.length) return;
+  var tmp=t.pitchers[pi]; t.pitchers[pi]=t.pitchers[j]; t.pitchers[j]=tmp;
+  t.dirty=true;
+  var ri=(R.reset||[]).indexOf(t.team_id); if(ri>=0) R.reset.splice(ri,1);
+  _rotRender();
+}
+function _rotReset(ti){
+  var R=window.__ROT__; if(!R) return;
+  var t=R.teams[ti]; if(!t) return;
+  t.dirty=false; t.has_override=false;
+  R.reset=R.reset||[];
+  if(R.reset.indexOf(t.team_id)<0) R.reset.push(t.team_id);
+  _rotRender();
+}
+async function saveRotation(){
+  var R=window.__ROT__;
+  var st=document.getElementById('rot-status');
+  var btn=document.getElementById('rot-save-btn');
+  if(!R){ st.textContent='Load rotations first.'; st.style.color='#f87171'; return; }
+  var set={};
+  R.teams.forEach(function(t){
+    if(t.dirty||t.has_override){
+      set[t.team_id]=t.pitchers.map(function(p){return {id:p.id,name:p.name};});
+    }
+  });
+  var reset=(R.reset||[]).filter(function(tid){ return !set[tid]; });
+  var orig=btn.textContent; btn.disabled=true; btn.textContent='Saving...';
+  st.textContent='Saving...'; st.style.color='#9ca3af';
+  try{
+    var r=await fetch('/api/rotation'+_betAuthQS(),{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({set:set,reset:reset})});
+    if(!r.ok){ var t=await r.text(); throw new Error(t||'save failed'); }
+    var d=await r.json();
+    R.teams.forEach(function(t){ if(t.dirty){ t.has_override=true; t.dirty=false; } });
+    R.reset=[];
+    _rotRender();
+    st.textContent='Saved '+(d.teams!=null?d.teams:'')+' team overrides. Now click Force Refresh to apply to today\u2019s cards.';
+    st.style.color='#34d399';
+  }catch(e){ st.textContent='Save failed: '+((e&&e.message)||e); st.style.color='#f87171'; }
+  finally{ btn.disabled=false; btn.textContent=orig; }
 }
 // Builds the "＋ Track Bet" control (admin-only). Registers the pick in
 // __BET_SRC__ and opens the stake form. No line ⇒ no button (can't grade).
