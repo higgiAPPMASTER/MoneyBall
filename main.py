@@ -6252,6 +6252,7 @@ async function loadRotation(){
         injured:(t.injured||[]).map(function(p){return {id:p.id,name:p.name||String(p.id)};})};
     })};
     _rotRender();
+    var box=document.getElementById('rotation-list'); if(box) box.style.display='flex';
     var cb=document.getElementById('rot-collapse-btn'); if(cb) cb.textContent='Collapse all';
     st.textContent=window.__ROT__.teams.length+' teams loaded for '+(d.date||ds);
     st.style.color='#9ca3af';
@@ -6326,12 +6327,11 @@ function _rotToggle(ti){
   _rotRender();
 }
 function _rotCollapseAll(){
-  var R=window.__ROT__; if(!R||!R.teams) return;
-  var anyOpen=R.teams.some(function(t){return !t.collapsed;});
-  R.teams.forEach(function(t){ t.collapsed=anyOpen; });
-  _rotRender();
+  var box=document.getElementById('rotation-list'); if(!box) return;
   var b=document.getElementById('rot-collapse-btn');
-  if(b) b.textContent=anyOpen?'Expand all':'Collapse all';
+  var hidden=(box.style.display==='none');
+  if(hidden){ box.style.display='flex'; if(b) b.textContent='Collapse all'; }
+  else { box.style.display='none'; if(b) b.textContent='Expand all'; }
 }
 function _rotToInj(ti,pi){
   var R=window.__ROT__; if(!R) return;
