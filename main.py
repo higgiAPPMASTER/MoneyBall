@@ -970,7 +970,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
         })
 
-    return {
+    result = {
         "date": date_str,
         "hitter_overs":  hitter_overs,
         "hitter_unders": hitter_unders,
@@ -987,6 +987,30 @@ def _grade_date(date_str: str, picks: dict) -> dict:
         "any_game":      any_game,
         "all_final":     all_final,
     }
+    # Matrix Scorecard: stamp each graded row with its series position (G1/G2/G3)
+    # so the SERIES half of the strategy chart can be scored going forward. Past
+    # locked days carry no series_pos (the day-of-week half still scores there).
+    _pos_by_name: dict = {}
+    def _harvest_pos(o):
+        if isinstance(o, dict):
+            nm = (o.get("name") or o.get("full_name") or "").strip().lower()
+            ss = o.get("series_splits")
+            if nm and isinstance(ss, dict) and ss.get("today_pos"):
+                _pos_by_name.setdefault(nm, ss.get("today_pos"))
+            for v in o.values():
+                _harvest_pos(v)
+        elif isinstance(o, list):
+            for v in o:
+                _harvest_pos(v)
+    _harvest_pos(picks)
+    for _key in ("hitter_overs", "hitter_unders", "runs", "tb_under", "tb_over",
+                 "rbi", "batter_walks", "hrr", "pitcher_ks", "pitcher_props",
+                 "top10_batter", "top10_pitcher"):
+        for _r in (result.get(_key) or []):
+            if isinstance(_r, dict):
+                _r["series_pos"] = _pos_by_name.get(
+                    (_r.get("name") or _r.get("full_name") or "").strip().lower())
+    return result
 
 
 # ── Track Record: permanent W/L ledger across all graded days ────────────
@@ -1115,6 +1139,7 @@ def _detail_graded(graded: dict) -> list:
                 "result": res,
                 "ev": r.get("ev"),
                 "ev_prob": r.get("ev_prob"),
+                "series_pos": r.get("series_pos"),
             })
     return out
 
@@ -2064,12 +2089,19 @@ _HTML = """
           'the weekend opens with high energy and softer back-end arms',
           'the weekend slate runs at full strength'
         ];
-        function _dayName(){return _DOW_NAMES[new Date().getDay()];}
+        // The matrix keys off the SLATE date of the picks you ran (window._lastResult.date),
+        // not the wall clock \u2014 so simulating a future day shows that day&#39;s leans. Falls
+        // back to today before any run.
+        function _slateDay(){
+          try{ var ds=(window._lastResult&&window._lastResult.date); if(ds){ var w=new Date(ds+'T12:00:00').getDay(); if(!isNaN(w)) return w; } }catch(e){}
+          return new Date().getDay();
+        }
+        function _dayName(){return _DOW_NAMES[_slateDay()];}
         function _dayLean(isPit,catIdx){
           if(catIdx==null) return '';
           var map=isPit?_DOW_PIT:_DOW_BAT;
           var idx=map[catIdx]; if(idx==null) return '';
-          var row=_DOW_SIG[new Date().getDay()]||[];
+          var row=_DOW_SIG[_slateDay()]||[];
           return row[idx]||'';
         }
         var SLOTS=[null,
@@ -2091,12 +2123,10 @@ _HTML = """
           });
           return h+'</tbody></table>';
         }
-        document.addEventListener('DOMContentLoaded',function(){
-          var day=new Date().getDay();
+        function _renderLeanBanner(){
+          var day=_slateDay();
           var sig=_DOW_SIG[day]||[];
           var oc=function(v){return v==='O'?'<b style="color:#4ade80">OVER</b>':'<b style="color:#ff8a65">UNDER</b>';};
-          var bd=document.getElementById('bc-bat-dow'); if(bd) bd.innerHTML=_buildDowTable(false);
-          var pd=document.getElementById('bc-pit-dow'); if(pd) pd.innerHTML=_buildDowTable(true);
           var el=document.getElementById('bc-today-lean'), tx=document.getElementById('bc-lean-text');
           if(el&&tx){
             el.style.display='block';
@@ -2105,8 +2135,14 @@ _HTML = """
               +'<br><span style="color:#94a3b8">Pitchers:</span> K '+oc(sig[5])+' \u00b7 Hits Allowed '+oc(sig[7])+' \u00b7 Outs '+oc(sig[6])+' \u00b7 ER '+oc(sig[8])+' \u00b7 BB '+oc(sig[9]);
           }
           document.querySelectorAll('[data-dow]').forEach(function(tr){
-            if(tr.dataset.dow===String(day)) tr.style.background='rgba(245,158,11,.08)';
+            tr.style.background=(tr.dataset.dow===String(day))?'rgba(245,158,11,.08)':'';
           });
+        }
+        window._renderLeanBanner=_renderLeanBanner;
+        document.addEventListener('DOMContentLoaded',function(){
+          var bd=document.getElementById('bc-bat-dow'); if(bd) bd.innerHTML=_buildDowTable(false);
+          var pd=document.getElementById('bc-pit-dow'); if(pd) pd.innerHTML=_buildDowTable(true);
+          _renderLeanBanner();
         });
         </script>
         <div style="display:flex;gap:8px;margin:4px 0 12px">
@@ -2641,6 +2677,7 @@ function showResults(result) {
   // and CSV only show bettable plays. Re-run picks after deploy to populate game_start.
   result = _filterStarted(result);
   window._lastResult = result;
+  if(typeof _renderLeanBanner==='function') _renderLeanBanner();
   // Admin-only "Unders Only" view: hide every OVER-based pick (hitter Top Picks,
   // Money Ball, pitcher K OVERs) and keep only UNDER plays. window._lastResult
   // stays the FULL result so parlay/CSV/search are unaffected — we only filter a
@@ -4126,7 +4163,7 @@ function _matrixWriteup(p, side, catIdx, isPit, marketWord, pickLabel){
   var dLeanTxt=dLean==='O'?'OVER':'UNDER';
   var dLeanClr=dLean==='O'?'#4ade80':'#ff8a65';
   var dn=_dayName();
-  var dWhy=_DOW_WHY[new Date().getDay()];
+  var dWhy=_DOW_WHY[_slateDay()];
   var ba=pos===1?ss.g1_ba:pos===2?ss.g2_ba:ss.g3_ba;
   var slotShort=pos===1?'Game 1':pos===2?'Game 2':'Game 3+';
   var baSent='';
@@ -5489,9 +5526,132 @@ function renderTrackRecord(d){
     +'<span style="color:#94a3b8;font-size:.8rem">flat on every pick \u2014 drives every $ below</span>'
     +'</div>';
   var tabs='<div style="display:flex;gap:8px;margin-bottom:4px">'+_trkTabBtn('daily','Daily')+_trkTabBtn('weekly','Weekly')+_trkTabBtn('monthly','Monthly')+'</div>';
-  var he=document.getElementById('track-head'); if(he) he.innerHTML=hdr+tabs;
+  var sc=_matrixScorecard(d);
+  var he=document.getElementById('track-head'); if(he) he.innerHTML=hdr+sc+tabs;
   var be=document.getElementById('track-body'); if(be) be.innerHTML='';
   _trkRenderActive();
+}
+
+// ── Matrix Scorecard: is the strategy chart actually predictive? ──────────
+// Section 1 (day-of-week half) scores ALL graded history retroactively from
+// each pick&#39;s date+category+side. Section 2 (combined series+day verdict)
+// scores only rows that carry series_pos (banked going forward).
+function _mtxCatInfo(cat){
+  var M={
+    'Hitter Hits':[false,0],'Runs':[false,3],'TB Under':[false,1],'TB Over':[false,1],
+    'RBI':[false,4],'Batter Walks':[false,5],'HRR':[false,2],
+    'Pitcher Ks':[true,0],'Pitcher Hits Allowed':[true,1],'Pitcher Outs':[true,2],
+    'Pitcher Earned Runs':[true,3],'Pitcher Walks':[true,4]
+  };
+  return M[cat]||null;
+}
+function _mtxDayLean(weekday,isPit,catIdx){
+  if(typeof _DOW_SIG==='undefined') return '';
+  var map=isPit?_DOW_PIT:_DOW_BAT; var idx=map[catIdx]; if(idx==null) return '';
+  var row=_DOW_SIG[weekday]||[]; return row[idx]||'';
+}
+function _mtxSeriesLean(pos,isPit,catIdx){
+  var slots=window.__MPA_SLOTS__; if(!slots||!slots[pos]) return '';
+  var arr=isPit?slots[pos].pit:slots[pos].bat; if(!arr||arr[catIdx]==null) return '';
+  return arr[catIdx];
+}
+function _mtxWeekday(ds){ if(!ds) return null; var dt=new Date(ds+'T12:00:00'); var w=dt.getDay(); return isNaN(w)?null:w; }
+function _matrixScorecard(d){
+  var det=(d&&d.detail)||[]; var stake=_trkStake();
+  function B(){ return {w:0,l:0,net:0,counted:0}; }
+  function add(b,win,odds){ if(win) b.w++; else b.l++; var pl=_amProfit(odds,stake,win); if(pl!==null){ b.net+=pl; b.counted++; } }
+  function tot(b){ return b.w+b.l; }
+  function pct(b){ var n=tot(b); return n?(b.w/n*100):0; }
+  function roi(b){ return b.counted?(b.net/(b.counted*stake)*100):0; }
+  var dayAgree=B(), dayFade=B();
+  var vGreen=B(), vRed=B(), vAmber=B();
+  var perMkt={};
+  det.forEach(function(r){
+    if(_trkSkipMeta(r)) return;
+    if(r.result!=='WIN'&&r.result!=='LOSS') return;
+    var info=_mtxCatInfo(r.category); if(!info) return;
+    var isPit=info[0], ci=info[1];
+    var side=(r.side==='UNDER')?'U':'O';
+    var wd=_mtxWeekday(r.date); if(wd==null) return;
+    var dLean=_mtxDayLean(wd,isPit,ci); if(!dLean) return;
+    var win=r.result==='WIN';
+    var dAgree=(dLean===side);
+    add(dAgree?dayAgree:dayFade, win, r.odds);
+    var mk=perMkt[r.category]=perMkt[r.category]||{a:B(),f:B()};
+    add(dAgree?mk.a:mk.f, win, r.odds);
+    var pos=r.series_pos;
+    if(pos===1||pos===2||pos===3){
+      var sLean=_mtxSeriesLean(pos,isPit,ci);
+      if(sLean){
+        if(dLean&&sLean!==dLean) add(vAmber,win,r.odds);
+        else if(sLean===side) add(vGreen,win,r.odds);
+        else add(vRed,win,r.odds);
+      }
+    }
+  });
+  function statRow(label,b,clr){
+    if(!tot(b)) return '';
+    var p=pct(b).toFixed(0); var rv=roi(b); var rc=rv>=0?'#4ade80':'#f87171';
+    return '<div style="display:flex;align-items:center;gap:10px;padding:7px 2px;border-bottom:1px solid #16233a">'
+      +'<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:'+clr+';flex:none"></span>'
+      +'<span style="flex:1;color:#cbd5e1;font-size:.8rem;font-weight:700">'+label+'</span>'
+      +'<span style="font-family:monospace;color:#e2e8f0;font-size:.78rem;width:54px;text-align:right">'+b.w+'-'+b.l+'</span>'
+      +'<span style="font-family:monospace;color:#fff;font-weight:800;font-size:.78rem;width:46px;text-align:right">'+p+'%</span>'
+      +'<span style="font-family:monospace;font-weight:800;font-size:.78rem;width:60px;text-align:right;color:'+rc+'">'+(rv>=0?'+':'\u2212')+Math.abs(rv).toFixed(0)+'%</span>'
+      +'</div>';
+  }
+  var colHdr='<div style="display:flex;align-items:center;gap:10px;padding:2px 2px 4px">'
+    +'<span style="width:9px;flex:none"></span><span style="flex:1"></span>'
+    +'<span style="color:#64748b;font-size:.6rem;font-weight:800;letter-spacing:.05em;width:54px;text-align:right">W-L</span>'
+    +'<span style="color:#64748b;font-size:.6rem;font-weight:800;letter-spacing:.05em;width:46px;text-align:right">WIN%</span>'
+    +'<span style="color:#64748b;font-size:.6rem;font-weight:800;letter-spacing:.05em;width:60px;text-align:right">ROI</span></div>';
+  // Section 1 verdict
+  var n1=tot(dayAgree)+tot(dayFade);
+  var diff=pct(dayAgree)-pct(dayFade);
+  var vClr,vTxt;
+  if(n1<10){ vClr='#94a3b8'; vTxt='Only '+n1+' graded picks so far \u2014 too few to judge. Keep logging slates.'; }
+  else if(diff>=5){ vClr='#4ade80'; vTxt='Chart-backed picks are winning '+diff.toFixed(0)+' points more than fades \u2014 the day-of-week chart is adding real signal.'; }
+  else if(diff<=-5){ vClr='#f87171'; vTxt='Chart-backed picks are LOSING to fades by '+Math.abs(diff).toFixed(0)+' points \u2014 the day-of-week chart is not predictive right now.'; }
+  else { vClr='#fbbf24'; vTxt='Chart-backed and faded picks are about even ('+diff.toFixed(0)+' pts) \u2014 no clear edge yet.'; }
+  var s1='<div style="margin-bottom:6px;color:#93c5fd;font-size:.72rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase">1 \u00b7 Day-of-Week Signal \u2014 All History</div>'
+    +colHdr
+    +statRow('Chart agrees with pick (play)',dayAgree,'#22c55e')
+    +statRow('Chart disagrees (fade)',dayFade,'#ef4444')
+    +'<div style="margin-top:8px;font-size:.74rem;line-height:1.5;color:'+vClr+'">'+vTxt+'</div>';
+  // per-market breakdown (day signal)
+  var mkRows='';
+  Object.keys(perMkt).sort(function(a,b){ return pct(perMkt[b].a)-pct(perMkt[a].a); }).forEach(function(cat){
+    var m=perMkt[cat]; if(!tot(m.a)&&!tot(m.f)) return;
+    function cell(b){ if(!tot(b)) return '<span style="color:#475569">\u2014</span>'; var p=pct(b); var c=p>=55?'#4ade80':p>=45?'#fbbf24':'#f87171'; return '<span style="color:'+c+';font-weight:700">'+b.w+'-'+b.l+'</span> <span style="color:#64748b">('+p.toFixed(0)+'%)</span>'; }
+    mkRows+='<div style="display:flex;align-items:center;gap:8px;padding:5px 2px;border-bottom:1px solid #111c2e;font-size:.74rem">'
+      +'<span style="flex:1;color:#cbd5e1">'+cat+'</span>'
+      +'<span style="width:96px;text-align:right;font-family:monospace">'+cell(m.a)+'</span>'
+      +'<span style="width:96px;text-align:right;font-family:monospace">'+cell(m.f)+'</span></div>';
+  });
+  var s1mk = mkRows ? ('<details style="margin-top:10px"><summary style="cursor:pointer;color:#64748b;font-size:.7rem;font-weight:700;letter-spacing:.04em">Per-market breakdown (which markets the chart predicts)</summary>'
+    +'<div style="margin-top:6px"><div style="display:flex;gap:8px;padding:2px;font-size:.6rem;color:#64748b;font-weight:800"><span style="flex:1"></span><span style="width:96px;text-align:right">AGREE</span><span style="width:96px;text-align:right">FADE</span></div>'+mkRows+'</div></details>') : '';
+  // Section 2
+  var n2=tot(vGreen)+tot(vRed)+tot(vAmber);
+  var s2;
+  if(!n2){
+    s2='<div style="margin-bottom:6px;color:#a78bfa;font-size:.72rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase">2 \u00b7 Combined Verdict \u2014 Series + Day</div>'
+      +'<div style="font-size:.74rem;line-height:1.5;color:#94a3b8">Banks from your next graded slate forward. Older picks were logged before the series position (G1/G2/G3) was stored, so the full green/red/amber verdict starts filling in now.</div>';
+  } else {
+    s2='<div style="margin-bottom:6px;color:#a78bfa;font-size:.72rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase">2 \u00b7 Combined Verdict \u2014 Series + Day</div>'
+      +colHdr
+      +statRow('Green \u2014 both signals back the pick',vGreen,'#22c55e')
+      +statRow('Red \u2014 chart says fade',vRed,'#ef4444')
+      +statRow('Amber \u2014 split signal (lean light)',vAmber,'#f59e0b')
+      +'<div style="margin-top:8px;font-size:.7rem;color:#64748b;line-height:1.5">Green should beat Red. Red picks are bets the chart told you to fade \u2014 a LOW red win% means the fade was right.</div>';
+  }
+  return '<div style="background:#0a1424;border:1px solid #1e293b;border-radius:12px;padding:14px 18px;margin-bottom:14px">'
+    +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">'
+    +'<span style="font-size:1rem">🧮</span>'
+    +'<span style="font-weight:800;color:#e2e8f0;font-size:.95rem">Matrix Scorecard</span>'
+    +'<span style="color:#64748b;font-size:.7rem">is the strategy chart actually winning?</span></div>'
+    +s1+s1mk
+    +'<div style="height:1px;background:#1e293b;margin:14px 0"></div>'
+    +s2+'</div>';
 }
 
 // American-odds profit on a winning bet; a loss always costs the full stake.
@@ -6292,7 +6452,7 @@ function _bcToggle(){
 }
 // _DOW_SIG / _DOW_IDX defined in the strategy-chart script block near the top.
 function _dowChip(mkt,pickDir){
-  var day=new Date().getDay();
+  var day=_slateDay();
   var idx=_DOW_IDX[mkt]; if(idx===undefined) return '';
   var sig=(_DOW_SIG[day]||[])[idx]; if(!sig) return '';
   var match=sig===(pickDir||'').toUpperCase().charAt(0);
