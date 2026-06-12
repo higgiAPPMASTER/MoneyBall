@@ -167,16 +167,35 @@ def _lineup_adj(spot) -> int:
     if spot <= 7:   return -25   # bottom third
     return -75                   # 8-9 hole
 
-_ROT_RANK_CACHE: dict = {}   # run_date -> {pitcher_id(int): {"rank","gs","rookie"}}
+_ROT_RANK_CACHE: dict = {}   # run_date -> {pitcher_id(int): {"rank","gs","recent","rookie"}}
 def _build_rotation_ranks(run_date: str) -> dict:
-    """Rank each team's starters by season games-started via the MLB Stats API.
-    Returns {pitcher_id: {"rank": 1.., "gs": n, "rookie": bool}}. The most-
-    started pitcher on a team is SP1 (the ace), next SP2, etc. Official feed
-    only (no scraping). Cached per run_date for the life of the process."""
+    """Rank each team's CURRENT rotation via the MLB Stats API (official feed
+    only, no scraping). Returns {pitcher_id: {"rank","gs","recent","rookie"}}.
+
+    Membership is recency-driven: the active rotation = distinct starters who
+    appear in the recent turn (last 21 days of actual starts + upcoming probable
+    starts). Spot starters, optioned arms and injured/long-IL pitchers fall out
+    of that window, so they no longer pad the ranking and push real starters down
+    (the old 'season games-started' count ranked every fill-in the team ever used,
+    which mislabeled recent callups as SP7/SP8). Within the active rotation the
+    order is by season games-started desc (the durable ace signal), recent-start
+    count breaking ties, so SP1 is the staff ace.
+
+    Rookie = 10 or fewer career games pitched (0-10 rookie, 11+ established).
+    Cached per run_date for the life of the process."""
     if run_date in _ROT_RANK_CACHE:
         return _ROT_RANK_CACHE[run_date]
+    from datetime import datetime as _DT, timedelta as _TD
     season = run_date[:4]
     rank_map: dict = {}
+    try:
+        _d0 = _DT.strptime(run_date, "%Y-%m-%d")
+    except Exception:
+        _ROT_RANK_CACHE[run_date] = rank_map
+        return rank_map
+    win_start = (_d0 - _TD(days=21)).strftime("%Y-%m-%d")
+    win_end   = (_d0 + _TD(days=10)).strftime("%Y-%m-%d")
+
     team_ids = set()
     try:
         sched = requests.get(
@@ -195,51 +214,82 @@ def _build_rotation_ranks(run_date: str) -> dict:
         _ROT_RANK_CACHE[run_date] = rank_map
         return rank_map
 
-    def _team_rows(tid):
+    def _team_rotation(tid):
+        # Recent-turn workload: count probable/actual starts per pitcher in the
+        # window -> defines who is actually in the current rotation.
+        recent: dict = {}
+        try:
+            r = requests.get(
+                "https://statsapi.mlb.com/api/v1/schedule?sportId=1"
+                f"&teamId={tid}&startDate={win_start}&endDate={win_end}"
+                "&hydrate=probablePitcher", timeout=15).json()
+            for d in r.get("dates", []):
+                for g in d.get("games", []):
+                    teams = g.get("teams", {}) or {}
+                    for _sh in ("home", "away"):
+                        t = teams.get(_sh) or {}
+                        if ((t.get("team") or {}).get("id")) != tid:
+                            continue
+                        pid = ((t.get("probablePitcher") or {}).get("id"))
+                        if pid:
+                            recent[int(pid)] = recent.get(int(pid), 0) + 1
+        except Exception:
+            recent = {}
+        # Season games-started (durable ace signal + fallback pool).
+        seas: dict = {}
         try:
             r = requests.get(
                 "https://statsapi.mlb.com/api/v1/stats?stats=season&group=pitching"
                 f"&season={season}&gameType=R&teamId={tid}&playerPool=all&limit=200",
                 timeout=15).json()
-            rows = []
             for blk in r.get("stats", []):
                 for s in blk.get("splits", []):
-                    st = s.get("stat", {}) or {}
-                    pl = s.get("player", {}) or {}
-                    gs = st.get("gamesStarted", 0) or 0
-                    pid = pl.get("id")
-                    if gs and pid:
-                        rows.append((int(gs), int(pid)))
-            rows.sort(key=lambda x: x[0], reverse=True)
-            return rows
+                    pid = (s.get("player") or {}).get("id")
+                    gs = (s.get("stat") or {}).get("gamesStarted", 0) or 0
+                    if pid:
+                        seas[int(pid)] = int(gs)
         except Exception:
-            return []
+            seas = {}
+        # Active rotation = pitchers with >=1 recent start; order by season GS
+        # desc (ace first), recent-start count breaking ties. Fall back to
+        # season GS only if the recent window came back empty.
+        if recent:
+            pool = [(seas.get(p, 0), recent[p], p) for p in recent]
+        else:
+            pool = [(seas[p], 0, p) for p in seas if seas[p]]
+        pool.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        return [(p, sgs, rc) for sgs, rc, p in pool]
 
     try:
         with _TPEx(max_workers=8) as _ex:
-            all_rows = list(_ex.map(_team_rows, list(team_ids)))
+            results = list(_ex.map(_team_rotation, list(team_ids)))
     except Exception:
-        all_rows = [_team_rows(t) for t in team_ids]
+        results = [_team_rotation(t) for t in team_ids]
 
     pids = []
-    for rows in all_rows:
-        for i, (gs, pid) in enumerate(rows, 1):
-            rank_map[pid] = {"rank": i, "gs": gs, "rookie": False}
+    for rotation in results:
+        for i, (pid, sgs, rc) in enumerate(rotation, 1):
+            rank_map[pid] = {"rank": i, "gs": sgs, "recent": rc, "rookie": False}
             pids.append(pid)
 
-    # Rookie flag — MLB debut this season or last (batched people lookup).
+    # Rookie flag — 10 or fewer career games pitched (batched career hydrate).
     try:
-        cutoff = int(season) - 1
         for i in range(0, len(pids), 40):
             chunk = pids[i:i + 40]
             r = requests.get(
                 "https://statsapi.mlb.com/api/v1/people?personIds=" +
-                ",".join(str(x) for x in chunk),
+                ",".join(str(x) for x in chunk) +
+                "&hydrate=stats(group=[pitching],type=[career])",
                 timeout=15).json()
             for person in r.get("people", []):
                 pid = person.get("id")
-                deb = (person.get("mlbDebutDate") or "")[:4]
-                if pid in rank_map and deb.isdigit() and int(deb) >= cutoff:
+                cg = None
+                for blk in person.get("stats", []):
+                    for s in blk.get("splits", []):
+                        v = (s.get("stat") or {}).get("gamesPitched")
+                        if v is not None:
+                            cg = v
+                if pid in rank_map and cg is not None and int(cg) <= 10:
                     rank_map[pid]["rookie"] = True
     except Exception:
         pass
