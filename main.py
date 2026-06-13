@@ -7290,7 +7290,6 @@ def _scheduler_loop():
         _time.sleep(30)
 
 
-@app.on_event("startup")
 def _start_auto_run_scheduler():
     t = _threading.Thread(target=_scheduler_loop, name="mlb-autorun", daemon=True)
     t.start()
