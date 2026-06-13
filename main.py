@@ -754,7 +754,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             return "WIN" if actual > float(line) else "LOSS"
         return "WIN" if actual < float(line) else "LOSS"
 
-    # Hitter OVERs — top 10 only (top9 list); also_ran "solid plays" excluded from Track Record
+    # Hitter OVERs — top 10 (top9 list)
     hitter_overs = []
     for p in (picks.get("top9") or [])[:10]:
         st = _lookup(p.get("player_id"), p.get("full_name") or p.get("name"))
@@ -763,6 +763,26 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "name": p.get("full_name") or p.get("name", ""),
             "team": p.get("team", ""),
             "category": "Hitter Hits", "side": "OVER",
+            "pick": "OVER 0.5 Hits",
+            "odds": p.get("hit_odds"),
+            "line": 0.5,
+            "actual": actual,
+            "stat": "Hits",
+            "result": _grade("OVER", 0.5, actual, (st or {}).get("final", False)),
+            "game_status": (st or {}).get("status", "—"),
+            "ev": p.get("ev"),
+            "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
+        })
+
+    # Overflow / also_ran hits (positions 11+) — tracked as "Hitter Hits (More)"
+    hitter_more = []
+    for p in (picks.get("also_ran") or []):
+        st = _lookup(p.get("player_id"), p.get("full_name") or p.get("name"))
+        actual = st["hits"] if st else None
+        hitter_more.append({
+            "name": p.get("full_name") or p.get("name", ""),
+            "team": p.get("team", ""),
+            "category": "Hitter Hits (More)", "side": "OVER",
             "pick": "OVER 0.5 Hits",
             "odds": p.get("hit_odds"),
             "line": 0.5,
@@ -1106,6 +1126,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
     result = {
         "date": date_str,
         "hitter_overs":  hitter_overs,
+        "hitter_more":   hitter_more,
         "hitter_unders": hitter_unders,
         "runs":          runs,
         "tb_under":      tb_under,
@@ -1136,7 +1157,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             for v in o:
                 _harvest_pos(v)
     _harvest_pos(picks)
-    for _key in ("hitter_overs", "hitter_unders", "runs", "tb_under", "tb_over",
+    for _key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over",
                  "rbi", "batter_walks", "hrr", "pitcher_ks", "pitcher_props",
                  "top10_batter", "top10_pitcher"):
         for _r in (result.get(_key) or []):
@@ -1150,7 +1171,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
 _TRACK_LEDGER_PATH = os.path.join(_CACHE_DIR, "_track_record.json")
 _TRACK_CAT_ORDER = [
     "Top 10 Batter", "Top 10 Pitcher",
-    "Hitter Hits", "Runs", "TB Under", "TB Over", "RBI", "Batter Walks", "HRR", "Pitcher Ks",
+    "Hitter Hits", "Hitter Hits (More)", "Runs", "TB Under", "TB Over", "RBI", "Batter Walks", "HRR", "Pitcher Ks",
     "Pitcher Hits Allowed", "Pitcher Outs", "Pitcher Earned Runs", "Pitcher Walks",
 ]
 
@@ -1236,7 +1257,7 @@ def _aggregate_graded(graded: dict) -> dict:
     """Collapse a graded day into {category: {side: [W, L]}} counting only decided picks
     that had odds posted — no-odds picks are excluded from the record."""
     agg: dict = {}
-    for key in ("hitter_overs", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "batter_walks", "hrr", "pitcher_ks", "pitcher_props", "top10_batter", "top10_pitcher"):
+    for key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "batter_walks", "hrr", "pitcher_ks", "pitcher_props", "top10_batter", "top10_pitcher"):
         for r in graded.get(key, []):
             res = r.get("result")
             if res not in ("WIN", "LOSS"):
@@ -1257,7 +1278,7 @@ def _detail_graded(graded: dict) -> list:
     fields an earnings sheet needs: player, team, category, side, pick, odds,
     line, result. No-odds picks are excluded — they don't count in the record."""
     out = []
-    for key in ("hitter_overs", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "batter_walks", "hrr", "pitcher_ks", "pitcher_props", "top10_batter", "top10_pitcher"):
+    for key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "batter_walks", "hrr", "pitcher_ks", "pitcher_props", "top10_batter", "top10_pitcher"):
         for r in graded.get(key, []):
             res = r.get("result")
             if res not in ("WIN", "LOSS"):
@@ -1340,7 +1361,11 @@ def _update_track_ledger() -> dict:
         for bn in sorted(cand):
             if bn >= today:
                 continue          # today/future — games not final yet
-            need_led = bn not in led or not led.get(bn)
+            _bn_led = led.get(bn) or {}
+            need_led = (not _bn_led or
+                        "Top 10 Batter" not in _bn_led or
+                        "Top 10 Pitcher" not in _bn_led or
+                        "Hitter Hits (More)" not in _bn_led)
             need_det = bn not in det or not det.get(bn)
             if not need_led and not need_det:
                 continue          # already locked — W/L and detail both present
@@ -5676,6 +5701,7 @@ function renderTrackRecord(d){
     'Top 10 Pitcher|OVER':       {lbl:'Top 10 Pitcher (Over)',      icon:'🎯', abbr:'T10P+'},
     'Top 10 Pitcher|UNDER':      {lbl:'Top 10 Pitcher (Under)',     icon:'🎯', abbr:'T10P-'},
     'Hitter Hits|OVER':          {lbl:'Top Picks (Over 0.5 Hits)', icon:'🎯', abbr:'Hits'},
+    'Hitter Hits (More)|OVER':   {lbl:'Hit Picks - Overflow (Over 0.5)', icon:'⭐', abbr:'Hits+'},
     'Hitter Hits|UNDER':         {lbl:'Under 1.5 Hits',            icon:'📉', abbr:'Unders'},
     'Runs|OVER':                 {lbl:'Runs (Over 0.5)',            icon:'🏃', abbr:'Runs+'},
     'Runs|UNDER':                {lbl:'Runs (Under 0.5)',           icon:'🏃', abbr:'Runs-'},
@@ -5699,7 +5725,7 @@ function renderTrackRecord(d){
     'Pitcher Walks|UNDER':       {lbl:'Walks Allowed (Under)',      icon:'🚶', abbr:'BB-'},
   };
   var CAT_ORDER=['Top 10 Batter|OVER','Top 10 Batter|UNDER','Top 10 Pitcher|OVER','Top 10 Pitcher|UNDER',
-    'Hitter Hits|OVER','Hitter Hits|UNDER','Runs|OVER','Runs|UNDER',
+    'Hitter Hits|OVER','Hitter Hits (More)|OVER','Hitter Hits|UNDER','Runs|OVER','Runs|UNDER',
     'TB Under|UNDER','TB Over|OVER','RBI|OVER','RBI|UNDER','Batter Walks|OVER','Batter Walks|UNDER','HRR|OVER','HRR|UNDER',
     'Pitcher Ks|OVER','Pitcher Ks|UNDER','Pitcher Hits Allowed|OVER','Pitcher Hits Allowed|UNDER',
     'Pitcher Outs|OVER','Pitcher Outs|UNDER','Pitcher Earned Runs|OVER','Pitcher Earned Runs|UNDER',
