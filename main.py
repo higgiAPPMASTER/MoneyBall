@@ -1013,6 +1013,97 @@ def _grade_date(date_str: str, picks: dict) -> dict:
                 "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
             })
 
+    # ── Overflow (ranks 11-30 per side) — every pick BEYOND each category's top
+    #    10, graded & banked permanently for the Overflow Tracker tab (kept OUT
+    #    of the main daily Track Record). Hits overflow keeps the legacy
+    #    "Hitter Hits (More)" label; every other category gets a " (OVF)" suffix
+    #    so it never mixes with its own top-10 record.
+    overflow = []
+    def _ovf(p, name, team, cat, side, pick, odds, line, actual, stat, st):
+        overflow.append({
+            "name": name or "", "team": team or "",
+            "category": cat, "side": side, "pick": pick,
+            "odds": odds, "line": line, "actual": actual, "stat": stat,
+            "result": _grade(side, line, actual, (st or {}).get("final", False)),
+            "game_status": (st or {}).get("status", "—"),
+            "ev": p.get("ev"),
+            "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
+        })
+    for p in (picks.get("under_picks") or [])[10:30]:
+        st = _lookup(p.get("batter_id"), p.get("name"))
+        actual = st["hits"] if st else None
+        pd = p.get("pick", "UNDER")
+        _ovf(p, p.get("name", ""), p.get("team", ""), "Hitter Hits (More)", pd,
+             f"{pd} 1.5 Hits", p.get("under_odds") if pd == "UNDER" else p.get("over_odds"),
+             1.5, actual, "Hits", st)
+    for p in ([q for q in _runs_all if q.get("pick") == "OVER"][10:30] +
+              [q for q in _runs_all if q.get("pick") == "UNDER"][10:30]):
+        st = _lookup(p.get("batter_id"), p.get("name"))
+        actual = st["runs"] if st else None
+        pd = p.get("pick", "OVER")
+        _ovf(p, p.get("name", ""), p.get("team", ""), "Runs (OVF)", pd,
+             f"{pd} 0.5 Runs", p.get("over_odds") if pd == "OVER" else p.get("under_odds"),
+             0.5, actual, "Runs", st)
+    for p in (picks.get("tb_picks") or [])[10:30]:
+        st = _lookup(p.get("batter_id"), p.get("name"))
+        actual = st["total_bases"] if st else None
+        _ovf(p, p.get("name", ""), p.get("team", ""), "TB Under (OVF)", "UNDER",
+             "UNDER 1.5 Total Bases", p.get("tb_under_odds"), 1.5, actual, "Total Bases", st)
+    for p in (picks.get("tb_over_picks") or [])[10:30]:
+        st = _lookup(p.get("batter_id"), p.get("name"))
+        actual = st["total_bases"] if st else None
+        _ovf(p, p.get("name", ""), p.get("team", ""), "TB Over (OVF)", "OVER",
+             "OVER 1.5 Total Bases", p.get("tb_over_odds"), 1.5, actual, "Total Bases", st)
+    for p in ([q for q in _rbi_all if q.get("pick") == "OVER"][10:30] +
+              [q for q in _rbi_all if q.get("pick") == "UNDER"][10:30]):
+        st = _lookup(p.get("batter_id"), p.get("name"))
+        actual = st["rbi"] if st else None
+        pd = p.get("pick", "OVER"); ln = p.get("line") if p.get("line") is not None else 0.5
+        _ovf(p, p.get("name", ""), p.get("team", ""), "RBI (OVF)", pd,
+             f"{pd} {ln} RBI", p.get("over_odds") if pd == "OVER" else p.get("under_odds"),
+             ln, actual, "RBI", st)
+    for p in ([q for q in _walks_all if q.get("pick") == "OVER"][10:30] +
+              [q for q in _walks_all if q.get("pick") == "UNDER"][10:30]):
+        st = _lookup(p.get("batter_id"), p.get("name"))
+        actual = st["walks_bat"] if st else None
+        pd = p.get("pick", "OVER"); ln = p.get("line") if p.get("line") is not None else 0.5
+        _ovf(p, p.get("name", ""), p.get("team", ""), "Batter Walks (OVF)", pd,
+             f"{pd} {ln} Walks", p.get("over_odds") if pd == "OVER" else p.get("under_odds"),
+             ln, actual, "Walks", st)
+    for p in ([q for q in _hrr_all if q.get("pick") == "OVER"][10:30] +
+              [q for q in _hrr_all if q.get("pick") == "UNDER"][10:30]):
+        st = _lookup(p.get("batter_id"), p.get("name"))
+        actual = st["hrr"] if st else None
+        pd = p.get("pick", "OVER")
+        _ovf(p, p.get("name", ""), p.get("team", ""), "HRR (OVF)", pd,
+             f"{pd} 1.5 H+R+RBI", p.get("hrr_over_odds") if pd == "OVER" else p.get("hrr_under_odds"),
+             1.5, actual, "H+R+RBI", st)
+    for p in ((picks.get("pitcher_k") or {}).get("picks") or [])[10:30]:
+        if not p.get("pick"):
+            continue
+        st = _lookup(None, p.get("name"))
+        actual = st["strikeOuts"] if st else None
+        ln = p.get("sugg_line") if p.get("sugg_line") is not None else p.get("line")
+        if ln is None:
+            continue
+        pd = p.get("pick")
+        _ovf(p, p.get("name", ""), p.get("team", ""), "Pitcher Ks (OVF)", pd,
+             f"{pd} {ln} Ks", p.get("over_odds") if pd == "OVER" else p.get("under_odds"),
+             ln, actual, "Ks", st)
+    for mkt, mdata in (picks.get("pitcher_props") or {}).items():
+        stat_key, stat_label = PROP_STAT_MAP.get(mkt, (None, None))
+        if not stat_key:
+            continue
+        for p in (mdata.get("picks") or [])[10:30]:
+            if not p.get("pick") or p.get("line") is None:
+                continue
+            st = _lookup(None, p.get("name"))
+            actual = st[stat_key] if (st and stat_key) else None
+            pd = p.get("pick"); ln = p.get("line")
+            _ovf(p, p.get("name", ""), p.get("team", ""), f"Pitcher {stat_label} (OVF)", pd,
+                 f"{pd} {ln} {stat_label}", p.get("over_odds") if pd == "OVER" else p.get("under_odds"),
+                 ln, actual, stat_label, st)
+
     # Top 10 Batter — combine all batter categories, rank by EV, take top 10
     _bat_cands = []
     for p in (picks.get("top9") or []):
@@ -1138,6 +1229,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
         "pitcher_props": pitcher_props,
         "top10_batter":  top10_batter,
         "top10_pitcher": top10_pitcher,
+        "overflow":      overflow,
         "any_game":      any_game,
         "all_final":     all_final,
     }
@@ -1159,7 +1251,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
     _harvest_pos(picks)
     for _key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over",
                  "rbi", "batter_walks", "hrr", "pitcher_ks", "pitcher_props",
-                 "top10_batter", "top10_pitcher"):
+                 "top10_batter", "top10_pitcher", "overflow"):
         for _r in (result.get(_key) or []):
             if isinstance(_r, dict):
                 _r["series_pos"] = _pos_by_name.get(
@@ -1174,6 +1266,13 @@ _TRACK_CAT_ORDER = [
     "Hitter Hits", "Hitter Hits (More)", "Runs", "TB Under", "TB Over", "RBI", "Batter Walks", "HRR", "Pitcher Ks",
     "Pitcher Hits Allowed", "Pitcher Outs", "Pitcher Earned Runs", "Pitcher Walks",
 ]
+
+def _is_ovf_cat(cat) -> bool:
+    """Overflow categories (ranks 11-30) — banked permanently but kept OUT of the
+    main Track Record; they surface only in the separate Overflow Tracker tab.
+    Hits overflow keeps the legacy 'Hitter Hits (More)' label; every other
+    category carries a ' (OVF)' suffix."""
+    return cat == "Hitter Hits (More)" or (isinstance(cat, str) and cat.endswith(" (OVF)"))
 
 def _load_ledger() -> dict:
     if _SB_URL and _SB_KEY:
@@ -1257,7 +1356,7 @@ def _aggregate_graded(graded: dict) -> dict:
     """Collapse a graded day into {category: {side: [W, L]}} counting only decided picks
     that had odds posted — no-odds picks are excluded from the record."""
     agg: dict = {}
-    for key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "batter_walks", "hrr", "pitcher_ks", "pitcher_props", "top10_batter", "top10_pitcher"):
+    for key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "batter_walks", "hrr", "pitcher_ks", "pitcher_props", "top10_batter", "top10_pitcher", "overflow"):
         for r in graded.get(key, []):
             res = r.get("result")
             if res not in ("WIN", "LOSS"):
@@ -1271,6 +1370,10 @@ def _aggregate_graded(graded: dict) -> dict:
                 rec[0] += 1
             else:
                 rec[1] += 1
+    # Version sentinel: marks a date as "Overflow Tracker graded" so the ledger
+    # backfill re-grades each locked day exactly ONCE to bank its overflow rows,
+    # then leaves it alone (no perpetual re-grading / box-score re-fetching).
+    agg["__ovf_v1__"] = {"ALL": [0, 0]}
     return agg
 
 def _detail_graded(graded: dict) -> list:
@@ -1278,7 +1381,7 @@ def _detail_graded(graded: dict) -> list:
     fields an earnings sheet needs: player, team, category, side, pick, odds,
     line, result. No-odds picks are excluded — they don't count in the record."""
     out = []
-    for key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "batter_walks", "hrr", "pitcher_ks", "pitcher_props", "top10_batter", "top10_pitcher"):
+    for key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "batter_walks", "hrr", "pitcher_ks", "pitcher_props", "top10_batter", "top10_pitcher", "overflow"):
         for r in graded.get(key, []):
             res = r.get("result")
             if res not in ("WIN", "LOSS"):
@@ -1362,11 +1465,13 @@ def _update_track_ledger() -> dict:
             if bn >= today:
                 continue          # today/future — games not final yet
             _bn_led = led.get(bn) or {}
+            _need_ovf = "__ovf_v1__" not in _bn_led   # one-shot Overflow Tracker backfill
             need_led = (not _bn_led or
                         "Top 10 Batter" not in _bn_led or
                         "Top 10 Pitcher" not in _bn_led or
-                        "Hitter Hits (More)" not in _bn_led)
-            need_det = bn not in det or not det.get(bn)
+                        "Hitter Hits (More)" not in _bn_led or
+                        _need_ovf)
+            need_det = (bn not in det or not det.get(bn) or _need_ovf)
             if not need_led and not need_det:
                 continue          # already locked — W/L and detail both present
             picks = _load_pick_cache(bn)
@@ -1852,6 +1957,8 @@ async def track_record(request: Request, token: str = "", admin: str = ""):
     for ds in sorted(led.keys()):
         day_w = day_l = 0
         for cat, sides in (led[ds] or {}).items():
+            if cat == "__ovf_v1__" or _is_ovf_cat(cat):
+                continue   # overflow + version sentinel never count toward the main record
             for side, wl in sides.items():
                 rec = alltime.setdefault(cat, {}).setdefault(side, [0, 0])
                 rec[0] += wl[0]; rec[1] += wl[1]
@@ -2208,6 +2315,7 @@ _HTML = """
     <div style="display:flex;gap:10px;align-items:center">
       <button class="admin-only" id="track-btn" onclick="openTrackRecord()" title="All-time + daily Win/Loss record across every graded day, by category" style="background:#7c3aed;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">🏆 Track Record</button>
       <button class="admin-only" id="mybets-btn" onclick="openMyBets()" title="Your personal logged bets — click Get Results to grade against box scores" style="background:#4338ca;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">💰 My Bets</button>
+      <button class="admin-only" id="ovf-btn" onclick="openOverflow()" title="Every pick beyond each category's top 10 — graded and banked in its own permanent record" style="background:#b45309;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">⭐ Overflow</button>
       <button class="admin-only" onclick="_manualParlayForm()" title="Manually log a parlay — add legs one by one then save" style="background:#7e22ce;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">📋 Log Parlay</button>
     </div>
   </nav>
@@ -5691,17 +5799,22 @@ function _twPct(w,l){ var n=w+l; return n? (w/n*100).toFixed(1)+'%' : '—'; }
 function _twColor(w,l){ var n=w+l; if(!n) return '#94a3b8'; var p=w/n*100; return p>=60?'#4ade80':(p>=50?'#facc15':'#f87171'); }
 function _twSide(s){ return s==='OVER' ? '<span style="color:#4ade80">OVER</span>' : '<span style="color:#ff8a65">UNDER</span>'; }
 
-function renderTrackRecord(d){
-  var rows=d.alltime||[]; var daily=d.daily||[];
-  var tw=0,tl=0;
-  rows.forEach(function(r){ tw+=r.wins; tl+=r.losses; });
+// Overflow = every pick beyond a category's top 10. Hits overflow keeps the
+// legacy "Hitter Hits (More)" label; every other category gets a " (OVF)" suffix.
+function _isOvfCat(c){ c=c||''; return c==='Hitter Hits (More)'||c.slice(-6)===' (OVF)'; }
+function _ovfBaseCat(c){ c=c||''; if(c==='Hitter Hits (More)') return 'Hitter Hits'; if(c.slice(-6)===' (OVF)') return c.slice(0,-6); return c; }
+var _OVF_KEYS=['hitter_more','overflow'];
+function _ovfFlatten(g){ var out=[]; if(!g||g==='LOADING'||g.__error__) return out; _OVF_KEYS.forEach(function(k){ (g[k]||[]).forEach(function(r){ out.push(r); }); }); return out; }
+// Single source of truth for category labels/order — shared by the main Track
+// Record AND the Overflow Tracker. Overflow categories are merged in so the
+// reused table/CSV helpers resolve their labels; ordering lives in __OVF_ORDER__.
+function _trkBuildCfg(){
   var CAT_CFG={
     'Top 10 Batter|OVER':        {lbl:'Top 10 Batter (Over)',       icon:'⭐', abbr:'T10B+'},
     'Top 10 Batter|UNDER':       {lbl:'Top 10 Batter (Under)',      icon:'⭐', abbr:'T10B-'},
     'Top 10 Pitcher|OVER':       {lbl:'Top 10 Pitcher (Over)',      icon:'🎯', abbr:'T10P+'},
     'Top 10 Pitcher|UNDER':      {lbl:'Top 10 Pitcher (Under)',     icon:'🎯', abbr:'T10P-'},
     'Hitter Hits|OVER':          {lbl:'Top Picks (Over 0.5 Hits)', icon:'🎯', abbr:'Hits'},
-    'Hitter Hits (More)|OVER':   {lbl:'Hit Picks - Overflow (Over 0.5)', icon:'⭐', abbr:'Hits+'},
     'Hitter Hits|UNDER':         {lbl:'Under 1.5 Hits',            icon:'📉', abbr:'Unders'},
     'Runs|OVER':                 {lbl:'Runs (Over 0.5)',            icon:'🏃', abbr:'Runs+'},
     'Runs|UNDER':                {lbl:'Runs (Under 0.5)',           icon:'🏃', abbr:'Runs-'},
@@ -5723,14 +5836,49 @@ function renderTrackRecord(d){
     'HRR|UNDER':                 {lbl:'HRR (Under 1.5 H+R+RBI)',    icon:'🔥', abbr:'HRR-'},
     'Pitcher Walks|OVER':        {lbl:'Walks Allowed (Over)',       icon:'🚶', abbr:'BB+'},
     'Pitcher Walks|UNDER':       {lbl:'Walks Allowed (Under)',      icon:'🚶', abbr:'BB-'},
+    'Hitter Hits (More)|OVER':   {lbl:'Hits Overflow (Over 0.5)',   icon:'⭐'},
+    'Hitter Hits (More)|UNDER':  {lbl:'Under 1.5 Hits Overflow',    icon:'📉'},
+    'Runs (OVF)|OVER':           {lbl:'Runs Overflow (Over 0.5)',   icon:'🏃'},
+    'Runs (OVF)|UNDER':          {lbl:'Runs Overflow (Under 0.5)',  icon:'🏃'},
+    'TB Under (OVF)|UNDER':      {lbl:'TB Under 1.5 Overflow',      icon:'📊'},
+    'TB Over (OVF)|OVER':        {lbl:'TB Over 1.5 Overflow',       icon:'📈'},
+    'RBI (OVF)|OVER':            {lbl:'RBI Overflow (Over)',        icon:'💥'},
+    'RBI (OVF)|UNDER':           {lbl:'RBI Overflow (Under)',       icon:'💥'},
+    'Batter Walks (OVF)|OVER':   {lbl:'Batter Walks Overflow (Over)',  icon:'🚶'},
+    'Batter Walks (OVF)|UNDER':  {lbl:'Batter Walks Overflow (Under)', icon:'🚶'},
+    'HRR (OVF)|OVER':            {lbl:'HRR Overflow (Over 1.5)',    icon:'🔥'},
+    'HRR (OVF)|UNDER':           {lbl:'HRR Overflow (Under 1.5)',   icon:'🔥'},
+    'Pitcher Ks (OVF)|OVER':     {lbl:'Pitcher Ks Overflow (Over)', icon:'⚾'},
+    'Pitcher Ks (OVF)|UNDER':    {lbl:'Pitcher Ks Overflow (Under)',icon:'⚾'},
+    'Pitcher Hits Allowed (OVF)|OVER': {lbl:'Hits Allowed Overflow (Over)',  icon:'🎯'},
+    'Pitcher Hits Allowed (OVF)|UNDER':{lbl:'Hits Allowed Overflow (Under)', icon:'🎯'},
+    'Pitcher Outs (OVF)|OVER':   {lbl:'Pitcher Outs Overflow (Over)',  icon:'🔢'},
+    'Pitcher Outs (OVF)|UNDER':  {lbl:'Pitcher Outs Overflow (Under)', icon:'🔢'},
+    'Pitcher Earned Runs (OVF)|OVER':  {lbl:'Earned Runs Overflow (Over)',  icon:'🔥'},
+    'Pitcher Earned Runs (OVF)|UNDER': {lbl:'Earned Runs Overflow (Under)', icon:'🔥'},
+    'Pitcher Walks (OVF)|OVER':  {lbl:'Walks Allowed Overflow (Over)',  icon:'🚶'},
+    'Pitcher Walks (OVF)|UNDER': {lbl:'Walks Allowed Overflow (Under)', icon:'🚶'},
   };
   var CAT_ORDER=['Top 10 Batter|OVER','Top 10 Batter|UNDER','Top 10 Pitcher|OVER','Top 10 Pitcher|UNDER',
-    'Hitter Hits|OVER','Hitter Hits (More)|OVER','Hitter Hits|UNDER','Runs|OVER','Runs|UNDER',
+    'Hitter Hits|OVER','Hitter Hits|UNDER','Runs|OVER','Runs|UNDER',
     'TB Under|UNDER','TB Over|OVER','RBI|OVER','RBI|UNDER','Batter Walks|OVER','Batter Walks|UNDER','HRR|OVER','HRR|UNDER',
     'Pitcher Ks|OVER','Pitcher Ks|UNDER','Pitcher Hits Allowed|OVER','Pitcher Hits Allowed|UNDER',
     'Pitcher Outs|OVER','Pitcher Outs|UNDER','Pitcher Earned Runs|OVER','Pitcher Earned Runs|UNDER',
     'Pitcher Walks|OVER','Pitcher Walks|UNDER'];
-  window.__TRK_CFG__=CAT_CFG; window.__TRK_ORDER__=CAT_ORDER;
+  var OVF_ORDER=['Hitter Hits (More)|OVER','Hitter Hits (More)|UNDER','Runs (OVF)|OVER','Runs (OVF)|UNDER',
+    'TB Under (OVF)|UNDER','TB Over (OVF)|OVER','RBI (OVF)|OVER','RBI (OVF)|UNDER',
+    'Batter Walks (OVF)|OVER','Batter Walks (OVF)|UNDER','HRR (OVF)|OVER','HRR (OVF)|UNDER',
+    'Pitcher Ks (OVF)|OVER','Pitcher Ks (OVF)|UNDER','Pitcher Hits Allowed (OVF)|OVER','Pitcher Hits Allowed (OVF)|UNDER',
+    'Pitcher Outs (OVF)|OVER','Pitcher Outs (OVF)|UNDER','Pitcher Earned Runs (OVF)|OVER','Pitcher Earned Runs (OVF)|UNDER',
+    'Pitcher Walks (OVF)|OVER','Pitcher Walks (OVF)|UNDER'];
+  window.__TRK_CFG__=CAT_CFG; window.__TRK_ORDER__=CAT_ORDER; window.__OVF_ORDER__=OVF_ORDER;
+}
+
+function renderTrackRecord(d){
+  var rows=d.alltime||[]; var daily=d.daily||[];
+  var tw=0,tl=0;
+  rows.forEach(function(r){ tw+=r.wins; tl+=r.losses; });
+  _trkBuildCfg();
   if(!window.__TRK_TAB__) window.__TRK_TAB__='daily';
   if(!window.__TRK_MONTH__) window.__TRK_MONTH__=_trkTodayISO().slice(0,7);
   var bet=(window.__TRK_BET__!=null?window.__TRK_BET__:20);
@@ -5984,7 +6132,7 @@ function _trkRenderDaily(stake){
   de.innerHTML=daily.length?'<details open style="margin-top:0"><summary style="cursor:pointer;font-weight:700;color:#a78bfa;padding:10px 0;border-bottom:1px solid #1f2937">📅 Daily \u2014 every pick by category ('+daily.length+' day'+(daily.length===1?'':'s')+')</summary><div style="margin-top:6px">'+dayBlocks+'</div></details>':'';
 }
 // ===== Track Record tabs: Daily / Weekly (last 7 days) / Monthly =====
-var _TRK_KEYS=['top10_batter','top10_pitcher','hitter_overs','hitter_more','hitter_unders','runs','tb_under','tb_over','rbi','batter_walks','hrr','pitcher_ks','pitcher_props'];
+var _TRK_KEYS=['top10_batter','top10_pitcher','hitter_overs','hitter_unders','runs','tb_under','tb_over','rbi','batter_walks','hrr','pitcher_ks','pitcher_props'];
 function _trkTodayISO(){ var dp=document.getElementById('date-picker'); if(dp&&dp.value) return dp.value; var d=new Date(); var z=d.getTimezoneOffset()*60000; return new Date(d.getTime()-z).toISOString().slice(0,10); }
 function _isoShift(iso,days){ var d=new Date(iso+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()+days); return d.toISOString().slice(0,10); }
 function _trkRC(w,n){ if(!n) return '#64748b'; var p=w/n; return p>=0.70?'#4ade80':(p>=0.55?'#facc15':'#f87171'); }
@@ -5994,7 +6142,7 @@ function _trkTab(t){ window.__TRK_BET__=_trkStake(); window.__TRK_TAB__=t; rende
 function _trkBetInput(){ window.__TRK_BET__=_trkStake(); _trkRenderActive(); }
 function _trkRenderActive(){ var be=document.getElementById('track-body'); if(!be) return; var stake=_trkStake(); var t=window.__TRK_TAB__||'daily'; if(t==='daily') _trkRenderDailyTab(be,stake); else _trkRenderRangeTab(be,stake,t); }
 function _trkFlatten(g){ var out=[]; if(!g||g==='LOADING'||g.__error__) return out; _TRK_KEYS.forEach(function(k){ (g[k]||[]).forEach(function(r){ out.push(r); }); }); return out; }
-function _trkRangePool(from,to){ var d=window.__TRACK__||{}; var pool=[]; var have={}; (d.detail||[]).forEach(function(r){ if(r.date>=from&&r.date<=to){ pool.push(r); have[r.date]=true; } }); var cache=window.__TRK_GRADE_CACHE__||{}; var cur=from; while(cur<=to){ if(!have[cur]){ _trkFlatten(cache[cur]).forEach(function(r){ if(r.result==='WIN'||r.result==='LOSS'){ var c={}; for(var kk in r) c[kk]=r[kk]; c.date=cur; pool.push(c); } }); } cur=_isoShift(cur,1); } return pool; }
+function _trkRangePool(from,to){ var d=window.__TRACK__||{}; var pool=[]; var have={}; (d.detail||[]).forEach(function(r){ if(r.date>=from&&r.date<=to){ have[r.date]=true; if(_isOvfCat(r.category)) return; pool.push(r); } }); var cache=window.__TRK_GRADE_CACHE__||{}; var cur=from; while(cur<=to){ if(!have[cur]){ _trkFlatten(cache[cur]).forEach(function(r){ if(r.result==='WIN'||r.result==='LOSS'){ var c={}; for(var kk in r) c[kk]=r[kk]; c.date=cur; pool.push(c); } }); } cur=_isoShift(cur,1); } return pool; }
 // Days in [from,to] (up to today) that are neither locked into the permanent ledger
 // nor yet fetched into the grade cache. These must be graded on demand so Weekly/
 // Monthly sum EVERY day (postponed / still-pending days included), not just locked
@@ -6110,6 +6258,222 @@ function _trkLogBet(idx){
   };
   _betForm('__trklog__');
 }
+// ===== Overflow Tracker (admin) — ranks 11-30 per side, its own permanent book =====
+function _ovfStake(){ var inp=document.getElementById('ovfBet'); var s=inp?Number(inp.value):NaN; if(!isFinite(s)||s<=0){ s=(window.__OVF_BET__!=null?window.__OVF_BET__:(window.__TRK_BET__!=null?window.__TRK_BET__:20)); } if(!isFinite(s)||s<=0) s=20; return s; }
+function _ovfBetInput(){ window.__OVF_BET__=_ovfStake(); _ovfRenderActive(); }
+function _ovfTabBtn(id,label){ var active=(window.__OVF_TAB__||'daily')===id; return '<button onclick="_ovfTab(&#39;'+id+'&#39;)" style="background:'+(active?'#b45309':'#1e293b')+';color:'+(active?'#fff':'#cbd5e1')+';border:none;border-radius:8px;padding:8px 20px;font-size:.86rem;font-weight:800;cursor:pointer">'+label+'</button>'; }
+function _ovfTab(t){ window.__OVF_BET__=_ovfStake(); window.__OVF_TAB__=t; renderOverflow(window.__TRACK__); }
+function _ovfDViewBtn(id,label){ var active=(window.__OVF_DVIEW__||'cat')===id; return '<button onclick="_ovfDView(&#39;'+id+'&#39;)" style="background:'+(active?'#0e7490':'#1e293b')+';color:'+(active?'#fff':'#cbd5e1')+';border:none;border-radius:7px;padding:6px 14px;font-size:.78rem;font-weight:700;cursor:pointer">'+label+'</button>'; }
+function _ovfDView(v){ window.__OVF_BET__=_ovfStake(); window.__OVF_DVIEW__=v; _ovfRenderActive(); }
+function _ovfMonthShift(n){ window.__OVF_BET__=_ovfStake(); var m=window.__OVF_MONTH__||_trkTodayISO().slice(0,7); var y=parseInt(m.slice(0,4),10), mo=parseInt(m.slice(5,7),10)-1+n; while(mo<0){mo+=12;y--;} while(mo>11){mo-=12;y++;} var nm=y+'-'+((mo+1)<10?'0':'')+(mo+1); var cur=_trkTodayISO().slice(0,7); if(nm>cur) nm=cur; window.__OVF_MONTH__=nm; _ovfRenderActive(); }
+function _ovfRenderActive(){ var be=document.getElementById('ovf-body'); if(!be) return; var stake=_ovfStake(); var t=window.__OVF_TAB__||'daily'; if(t==='daily') _ovfRenderDailyTab(be,stake); else _ovfRenderRangeTab(be,stake,t); }
+// Range pool = overflow rows ONLY. Locked days come from d.detail (filtered to
+// overflow); unlocked days are graded on demand into the shared grade cache.
+function _ovfRangePool(from,to){ var d=window.__TRACK__||{}; var pool=[]; var have={}; (d.detail||[]).forEach(function(r){ if(r.date>=from&&r.date<=to){ have[r.date]=true; if(_isOvfCat(r.category)) pool.push(r); } }); var cache=window.__TRK_GRADE_CACHE__||{}; var cur=from; while(cur<=to){ if(!have[cur]){ _ovfFlatten(cache[cur]).forEach(function(r){ if(r.result==='WIN'||r.result==='LOSS'){ var c={}; for(var kk in r) c[kk]=r[kk]; c.date=cur; pool.push(c); } }); } cur=_isoShift(cur,1); } return pool; }
+async function _ovfLoadDaily(date){ window.__OVF_DAILY_DATE__=date; window.__TRK_GRADE_CACHE__=window.__TRK_GRADE_CACHE__||{}; var cur=window.__TRK_GRADE_CACHE__[date]; if(cur&&cur!=='LOADING'){ _ovfRenderActive(); return; } var tok=localStorage.getItem('__mpa_token')||localStorage.getItem('hub_token')||''; var adm=new URLSearchParams(location.search).get('admin')||''; window.__TRK_GRADE_CACHE__[date]='LOADING'; _ovfRenderActive(); try{ var res=await fetch('/api/grade/'+date+'?token='+encodeURIComponent(tok)+(adm?('&admin='+encodeURIComponent(adm)):'')); if(!res.ok){ var t=await res.text(); window.__TRK_GRADE_CACHE__[date]={__error__:(t||'No picks for this date')}; } else { window.__TRK_GRADE_CACHE__[date]=await res.json(); } }catch(e){ window.__TRK_GRADE_CACHE__[date]={__error__:String((e&&e.message)||e)}; } _ovfRenderActive(); }
+function _ovfRenderDailyTab(be,stake){
+  var date=window.__OVF_DAILY_DATE__||_trkTodayISO();
+  var cache=window.__TRK_GRADE_CACHE__=window.__TRK_GRADE_CACHE__||{};
+  var g=cache[date];
+  var CAT_CFG=window.__TRK_CFG__||{}, CAT_ORDER=window.__OVF_ORDER__||[];
+  var view=window.__OVF_DVIEW__||'cat';
+  var datesel='<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:12px"><label style="font-size:.82rem;color:#94a3b8">Day <input type="date" value="'+date+'" max="'+_trkTodayISO()+'" onchange="_ovfLoadDaily(this.value)" style="margin-left:6px;background:#020617;border:1px solid #334155;color:#fff;border-radius:6px;padding:6px 8px;font-size:.82rem"></label><span style="display:flex;gap:6px;margin-left:auto">'+_ovfDViewBtn('cat','By Category')+_ovfDViewBtn('full','Full List')+'</span></div>';
+  if(g===undefined){ be.innerHTML=datesel+'<p style="color:#94a3b8;padding:12px">Loading\u2026</p>'; _ovfLoadDaily(date); return; }
+  if(g==='LOADING'){ be.innerHTML=datesel+'<p style="color:#94a3b8;padding:12px">Loading\u2026</p>'; return; }
+  if(g&&g.__error__){ be.innerHTML=datesel+'<p style="color:#94a3b8;padding:12px">'+(g.__error__)+'</p>'; return; }
+  var rows=_ovfFlatten(g);
+  if(!rows.length){ be.innerHTML=datesel+'<p style="color:#94a3b8;padding:12px">No overflow picks recorded for '+date+'.</p>'; return; }
+  if(view==='cat'){
+    var cpool=rows.map(function(r){ var c={}; for(var ck in r) c[ck]=r[ck]; c.date=date; return c; });
+    var ct=_trkCatTable(cpool,stake,'No decided overflow picks for this day yet \u2014 fills in as games go Final.');
+    var co=ct.overall, con=co.w+co.l, crisk=co.counted*stake, croi=crisk?co.net/crisk*100:0, cclr=co.net>=0?'#4ade80':'#f87171', cwclr=_trkRC(co.w,con);
+    var cpend=rows.filter(function(r){ return r.result!=='WIN'&&r.result!=='LOSS'; }).length;
+    var csum='<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;background:#0c1829;border:1px solid #1e293b;border-radius:12px;padding:12px 16px;margin-bottom:12px"><div style="font-weight:800"><span style="color:'+cwclr+'">'+co.w+'/'+con+'</span> <span style="color:#94a3b8;font-size:.8rem">('+(con?(co.w/con*100).toFixed(1):'0.0')+'%)</span>'+(cpend?' <span style="color:#94a3b8;font-size:.8rem">'+cpend+' pending</span>':'')+'</div><div style="font-size:.86rem">Net <span style="color:'+cclr+';font-weight:900">'+(co.net>=0?'+$':'\u2212$')+Math.abs(co.net).toFixed(0)+'</span> <span style="color:#64748b">\u00b7 ROI '+(croi>=0?'+':'\u2212')+Math.abs(croi).toFixed(1)+'% on $'+crisk.toFixed(0)+'</span></div><button onclick="downloadOvfDailyCSV()" style="margin-left:auto;background:#16a34a;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:.78rem;font-weight:700;cursor:pointer">\u2b07 CSV</button></div>';
+    be.innerHTML=datesel+csum+ct.html;
+    return;
+  }
+  var groups={}; rows.forEach(function(r){ var k=(r.category||'?')+'|'+(r.side||'OVER'); (groups[k]=groups[k]||[]).push(r); });
+  function _rank(k){ var i=CAT_ORDER.indexOf(k); return i<0?999:i; }
+  var keys=Object.keys(groups).sort(function(a,b){ return _rank(a)-_rank(b); });
+  var win=0,loss=0,pend=0,net=0,counted=0,body='';
+  window.__TRK_LOG_ROWS__=[];
+  keys.forEach(function(k){
+    var cfg=CAT_CFG[k]||{lbl:k.split('|').join(' '),icon:'⭐'};
+    var picks=groups[k];
+    var gw=picks.filter(function(p){ return p.result==='WIN'; }).length;
+    var gn=picks.filter(function(p){ return p.result==='WIN'||p.result==='LOSS'; }).length;
+    var gclr=_trkRC(gw,gn);
+    body+='<div style="margin:12px 0 4px;font-weight:800;font-size:.83rem;color:#cbd5e1">'+(cfg.icon||'')+' '+cfg.lbl+' <span style="color:'+gclr+';font-family:monospace;font-weight:900">'+gw+'/'+gn+'</span></div>';
+    picks.forEach(function(p){
+      var logIdx=window.__TRK_LOG_ROWS__.length; window.__TRK_LOG_ROWS__.push(p);
+      var rr=p.result;
+      var mk=rr==='WIN'?'<span style="color:#4ade80">\u2713</span>':(rr==='LOSS'?'<span style="color:#f87171">\u2717</span>':'<span style="color:#64748b">\u00b7</span>');
+      if(rr==='WIN')win++; else if(rr==='LOSS')loss++; else pend++;
+      var act=(p.actual!=null)?('<span style="color:#cbd5e1">\u2192 '+p.actual+(p.stat?(' '+p.stat):'')+'</span>'):'';
+      var odd=(p.odds!=null&&p.odds!=='')?('<span style="color:#64748b;font-family:monospace">'+((Number(p.odds)>0?'+':'')+p.odds)+'</span>'):'';
+      var plHtml,roiHtml='';
+      if(rr==='WIN'||rr==='LOSS'){ var pl=_amProfit(p.odds,stake,rr==='WIN'); if(pl===null){ plHtml='<span style="color:#475569;font-family:monospace">\u2014</span>'; } else { net+=pl; counted++; var c=pl>=0?'#4ade80':'#f87171', rp=pl/stake*100; plHtml='<span style="font-family:monospace;font-weight:800;color:'+c+'">'+(pl>=0?'+$':'\u2212$')+Math.abs(pl).toFixed(0)+'</span>'; roiHtml='<span style="font-family:monospace;font-weight:700;color:'+c+'">'+(rp>=0?'+':'\u2212')+Math.abs(rp).toFixed(0)+'%</span>'; } }
+      else { plHtml='<span style="color:#64748b;font-size:.72rem">pending</span>'; }
+      var logBtn='<button onclick="_trkLogBet('+logIdx+')" title="Log as bet" style="background:#1e3a8a;color:#bfdbfe;border:1px solid #1d4ed8;border-radius:5px;padding:1px 7px;font-size:.66rem;font-weight:800;cursor:pointer;flex-shrink:0">+Log</button>';
+      body+='<div style="display:flex;gap:8px;align-items:center;padding:2px 0 2px 6px;font-size:.79rem">'+mk+'<span style="color:#e2e8f0;min-width:130px">'+(p.name||'')+'</span><span style="color:#94a3b8;min-width:120px">'+(p.pick||'')+'</span>'+act+odd+'<span style="margin-left:auto;display:flex;gap:8px;align-items:center"><span style="min-width:52px;text-align:right">'+plHtml+'</span><span style="min-width:44px;text-align:right">'+roiHtml+'</span>'+logBtn+'</span></div>';
+    });
+  });
+  var risk=counted*stake, roi=risk?net/risk*100:0, nclr=net>=0?'#4ade80':'#f87171';
+  var summary='<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;background:#0c1829;border:1px solid #1e293b;border-radius:12px;padding:12px 16px;margin-bottom:12px"><div style="font-weight:800"><span style="color:#4ade80">'+win+'W</span> <span style="color:#f87171">'+loss+'L</span>'+(pend?' <span style="color:#94a3b8;font-size:.82rem">'+pend+' pending</span>':'')+'</div><div style="font-size:.86rem">Net <span style="color:'+nclr+';font-weight:900">'+(net>=0?'+$':'\u2212$')+Math.abs(net).toFixed(0)+'</span> <span style="color:#64748b">\u00b7 ROI '+(roi>=0?'+':'\u2212')+Math.abs(roi).toFixed(1)+'% on $'+risk.toFixed(0)+'</span></div><button onclick="downloadOvfDailyCSV()" style="margin-left:auto;background:#16a34a;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:.78rem;font-weight:700;cursor:pointer">\u2b07 CSV</button></div>';
+  be.innerHTML=datesel+summary+body;
+}
+function _ovfRenderRangeTab(be,stake,which){
+  var from,to,label,nav='';
+  if(which==='weekly'){ to=window.__TRK_TODAY__||_trkTodayISO(); from=_isoShift(to,-6); label='Last 7 days'; }
+  else { var m=window.__OVF_MONTH__||_trkTodayISO().slice(0,7); from=m+'-01'; to=m+'-31'; var mn=['January','February','March','April','May','June','July','August','September','October','November','December']; label=mn[parseInt(m.slice(5,7),10)-1]+' '+m.slice(0,4); var canNext=(m<_trkTodayISO().slice(0,7)); nav='<span style="display:flex;gap:6px;align-items:center;margin-left:10px"><button onclick="_ovfMonthShift(-1)" style="background:#1e293b;color:#fff;border:none;border-radius:6px;padding:4px 11px;cursor:pointer;font-weight:800">\u25c0</button><button onclick="_ovfMonthShift(1)"'+(canNext?'':' disabled')+' style="background:'+(canNext?'#1e293b':'#0f172a')+';color:'+(canNext?'#fff':'#475569')+';border:none;border-radius:6px;padding:4px 11px;cursor:'+(canNext?'pointer':'default')+';font-weight:800">\u25b6</button></span>'; }
+  var _miss=_trkRangeMissing(from,to);
+  if(_miss.length){ be.innerHTML='<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;background:#2a1c08;border:1px solid #5b3d12;border-radius:12px;padding:12px 16px;margin-bottom:12px"><div style="font-weight:800;color:#fcd34d;display:flex;align-items:center">'+label+nav+'</div><div style="margin-left:auto;color:#94a3b8;font-size:.84rem">Grading '+_miss.length+' day'+(_miss.length>1?'s':'')+'\u2026</div></div>'; _trkFetchDays(_miss).then(function(){ if((window.__OVF_TAB__||'daily')===which) _ovfRenderActive(); }); return; }
+  var ct=_trkCatTable(_ovfRangePool(from,to),stake,'No graded overflow picks in this range yet \u2014 fills in as slates go Final.');
+  var o=ct.overall, on=o.w+o.l, orisk=o.counted*stake, oroi=orisk?o.net/orisk*100:0, oclr=o.net>=0?'#4ade80':'#f87171', owclr=_trkRC(o.w,on);
+  var summary='<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;background:#2a1c08;border:1px solid #5b3d12;border-radius:12px;padding:12px 16px;margin-bottom:12px"><div style="font-weight:800;color:#fcd34d;display:flex;align-items:center">'+label+nav+'</div><div style="margin-left:auto;text-align:right"><div style="font-weight:800;font-size:.92rem"><span style="color:'+owclr+'">'+o.w+'/'+on+'</span> <span style="color:#94a3b8;font-size:.8rem">('+(on?(o.w/on*100).toFixed(1):'0.0')+'%)</span></div><div style="font-size:.82rem">Net <span style="color:'+oclr+';font-weight:900">'+(o.net>=0?'+$':'\u2212$')+Math.abs(o.net).toFixed(0)+'</span> <span style="color:#64748b">\u00b7 ROI '+(oroi>=0?'+':'\u2212')+Math.abs(oroi).toFixed(1)+'% on $'+orisk.toFixed(0)+'</span></div></div></div>';
+  var csvBtn='<div style="display:flex;margin-top:10px"><button onclick="downloadOvfRangeCSV(&#39;'+which+'&#39;)" style="margin-left:auto;background:#16a34a;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:.78rem;font-weight:700;cursor:pointer">\u2b07 CSV</button></div>';
+  be.innerHTML=summary+ct.html+csvBtn;
+}
+function _ovfMatrixScorecard(d){
+  var det=((d&&d.detail)||[]).filter(function(r){ return _isOvfCat(r.category); }); var stake=_ovfStake();
+  function B(){ return {w:0,l:0,net:0,counted:0}; }
+  function add(b,win,odds){ if(win) b.w++; else b.l++; var pl=_amProfit(odds,stake,win); if(pl!==null){ b.net+=pl; b.counted++; } }
+  function tot(b){ return b.w+b.l; }
+  function pct(b){ var n=tot(b); return n?(b.w/n*100):0; }
+  function roi(b){ return b.counted?(b.net/(b.counted*stake)*100):0; }
+  var dayAgree=B(), dayFade=B();
+  var vGreen=B(), vRed=B(), vAmber=B();
+  var perMkt={};
+  det.forEach(function(r){
+    if(r.result!=='WIN'&&r.result!=='LOSS') return;
+    var info=_mtxCatInfo(_ovfBaseCat(r.category)); if(!info) return;
+    var isPit=info[0], ci=info[1];
+    var side=(r.side==='UNDER')?'U':'O';
+    var wd=_mtxWeekday(r.date); if(wd==null) return;
+    var dLean=_mtxDayLean(wd,isPit,ci); if(!dLean) return;
+    var win=r.result==='WIN';
+    var dAgree=(dLean===side);
+    add(dAgree?dayAgree:dayFade, win, r.odds);
+    var mk=perMkt[r.category]=perMkt[r.category]||{a:B(),f:B()};
+    add(dAgree?mk.a:mk.f, win, r.odds);
+    var pos=r.series_pos;
+    if(pos===1||pos===2||pos===3){
+      var sLean=_mtxSeriesLean(pos,isPit,ci);
+      if(sLean){
+        if(dLean&&sLean!==dLean) add(vAmber,win,r.odds);
+        else if(sLean===side) add(vGreen,win,r.odds);
+        else add(vRed,win,r.odds);
+      }
+    }
+  });
+  function statRow(label,b,clr){
+    if(!tot(b)) return '';
+    var p=pct(b).toFixed(0); var rv=roi(b); var rc=rv>=0?'#4ade80':'#f87171';
+    return '<div style="display:flex;align-items:center;gap:10px;padding:7px 2px;border-bottom:1px solid #16233a">'
+      +'<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:'+clr+';flex:none"></span>'
+      +'<span style="flex:1;color:#cbd5e1;font-size:.8rem;font-weight:700">'+label+'</span>'
+      +'<span style="font-family:monospace;color:#e2e8f0;font-size:.78rem;width:54px;text-align:right">'+b.w+'-'+b.l+'</span>'
+      +'<span style="font-family:monospace;color:#fff;font-weight:800;font-size:.78rem;width:46px;text-align:right">'+p+'%</span>'
+      +'<span style="font-family:monospace;font-weight:800;font-size:.78rem;width:60px;text-align:right;color:'+rc+'">'+(rv>=0?'+':'\u2212')+Math.abs(rv).toFixed(0)+'%</span>'
+      +'</div>';
+  }
+  var colHdr='<div style="display:flex;align-items:center;gap:10px;padding:2px 2px 4px">'
+    +'<span style="width:9px;flex:none"></span><span style="flex:1"></span>'
+    +'<span style="color:#64748b;font-size:.6rem;font-weight:800;letter-spacing:.05em;width:54px;text-align:right">W-L</span>'
+    +'<span style="color:#64748b;font-size:.6rem;font-weight:800;letter-spacing:.05em;width:46px;text-align:right">WIN%</span>'
+    +'<span style="color:#64748b;font-size:.6rem;font-weight:800;letter-spacing:.05em;width:60px;text-align:right">ROI</span></div>';
+  var n1=tot(dayAgree)+tot(dayFade);
+  var diff=pct(dayAgree)-pct(dayFade);
+  var vClr,vTxt;
+  if(n1<10){ vClr='#94a3b8'; vTxt='Only '+n1+' graded overflow picks so far \u2014 too few to judge. Banks as more slates go Final.'; }
+  else if(diff>=5){ vClr='#4ade80'; vTxt='Overflow picks the chart backs are winning '+diff.toFixed(0)+' points more than fades \u2014 the day-of-week chart adds signal here too.'; }
+  else if(diff<=-5){ vClr='#f87171'; vTxt='Chart-backed overflow picks are LOSING to fades by '+Math.abs(diff).toFixed(0)+' points \u2014 the chart is not predictive on overflow right now.'; }
+  else { vClr='#fbbf24'; vTxt='Chart-backed and faded overflow picks are about even ('+diff.toFixed(0)+' pts) \u2014 no clear edge yet.'; }
+  var s1='<div style="margin-bottom:6px;color:#fbbf24;font-size:.72rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase">1 \u00b7 Day-of-Week Signal \u2014 Overflow History</div>'
+    +colHdr
+    +statRow('Chart agrees with pick (play)',dayAgree,'#22c55e')
+    +statRow('Chart disagrees (fade)',dayFade,'#ef4444')
+    +'<div style="margin-top:8px;font-size:.74rem;line-height:1.5;color:'+vClr+'">'+vTxt+'</div>';
+  var mkRows='';
+  Object.keys(perMkt).sort(function(a,b){ return pct(perMkt[b].a)-pct(perMkt[a].a); }).forEach(function(cat){
+    var m=perMkt[cat]; if(!tot(m.a)&&!tot(m.f)) return;
+    function cell(b){ if(!tot(b)) return '<span style="color:#475569">\u2014</span>'; var p=pct(b); var c=p>=55?'#4ade80':p>=45?'#fbbf24':'#f87171'; return '<span style="color:'+c+';font-weight:700">'+b.w+'-'+b.l+'</span> <span style="color:#64748b">('+p.toFixed(0)+'%)</span>'; }
+    mkRows+='<div style="display:flex;align-items:center;gap:8px;padding:5px 2px;border-bottom:1px solid #111c2e;font-size:.74rem">'
+      +'<span style="flex:1;color:#cbd5e1">'+cat+'</span>'
+      +'<span style="width:96px;text-align:right;font-family:monospace">'+cell(m.a)+'</span>'
+      +'<span style="width:96px;text-align:right;font-family:monospace">'+cell(m.f)+'</span></div>';
+  });
+  var s1mk = mkRows ? ('<details style="margin-top:10px"><summary style="cursor:pointer;color:#64748b;font-size:.7rem;font-weight:700;letter-spacing:.04em">Per-market breakdown (which overflow markets the chart predicts)</summary>'
+    +'<div style="margin-top:6px"><div style="display:flex;gap:8px;padding:2px;font-size:.6rem;color:#64748b;font-weight:800"><span style="flex:1"></span><span style="width:96px;text-align:right">AGREE</span><span style="width:96px;text-align:right">FADE</span></div>'+mkRows+'</div></details>') : '';
+  var n2=tot(vGreen)+tot(vRed)+tot(vAmber);
+  var s2;
+  if(!n2){
+    s2='<div style="margin-bottom:6px;color:#a78bfa;font-size:.72rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase">2 \u00b7 Combined Verdict \u2014 Series + Day</div>'
+      +'<div style="font-size:.74rem;line-height:1.5;color:#94a3b8">Banks from your next graded slate forward. Older overflow picks were logged before the series position (G1/G2/G3) was stored, so the full verdict starts filling in now.</div>';
+  } else {
+    s2='<div style="margin-bottom:6px;color:#a78bfa;font-size:.72rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase">2 \u00b7 Combined Verdict \u2014 Series + Day</div>'
+      +colHdr
+      +statRow('Green \u2014 both signals back the pick',vGreen,'#22c55e')
+      +statRow('Red \u2014 chart says fade',vRed,'#ef4444')
+      +statRow('Amber \u2014 split signal (lean light)',vAmber,'#f59e0b')
+      +'<div style="margin-top:8px;font-size:.7rem;color:#64748b;line-height:1.5">Green should beat Red. Red picks are bets the chart told you to fade \u2014 a LOW red win% means the fade was right.</div>';
+  }
+  return '<div style="background:#1a1206;border:1px solid #5b3d12;border-radius:12px;padding:14px 18px;margin-bottom:14px">'
+    +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">'
+    +'<span style="font-size:1rem">🧮</span>'
+    +'<span style="font-weight:800;color:#fde68a;font-size:.95rem">Overflow Matrix Scorecard</span>'
+    +'<span style="color:#64748b;font-size:.7rem">is the chart winning on the overflow plays?</span></div>'
+    +s1+s1mk
+    +'<div style="height:1px;background:#5b3d12;margin:14px 0"></div>'
+    +s2+'</div>';
+}
+function downloadOvfDailyCSV(){ var date=window.__OVF_DAILY_DATE__||_trkTodayISO(); var g=(window.__TRK_GRADE_CACHE__||{})[date]; var rows=_ovfFlatten(g); if(!rows.length){ alert('No overflow picks to export for '+date+'.'); return; } var stake=_ovfStake(); var CAT_CFG=window.__TRK_CFG__||{}; var out=[['Date','Category','Side','Player','Pick','Odds','Actual','Result','Bet','Profit/Loss']]; var net=0,counted=0; rows.forEach(function(r){ var dec=(r.result==='WIN'||r.result==='LOSS'); var pl=dec?_amProfit(r.odds,stake,r.result==='WIN'):null; var plStr=''; if(pl!==null){ plStr=pl.toFixed(2); net+=pl; counted++; } var cfg=CAT_CFG[(r.category||'')+'|'+(r.side||'OVER')]; out.push([date,(cfg&&cfg.lbl)||r.category||'',r.side||'',r.name||'',r.pick||'',(r.odds!=null&&r.odds!==''?((Number(r.odds)>0?'+':'')+r.odds):''),(r.actual!=null?r.actual:''),r.result||'pending',stake,plStr]); }); out.push([]); out.push(['','','','','','','','TOTALS ('+counted+' graded)',(counted*stake),net.toFixed(2)]); _trkDownloadCSV(out,'mlb-overflow-'+date+'-flat'+stake+'.csv'); }
+function downloadOvfRangeCSV(which){ var stake=_ovfStake(), from,to,tag; if(which==='weekly'){ to=window.__TRK_TODAY__||_trkTodayISO(); from=_isoShift(to,-6); tag='last7-'+from+'_'+to; } else { var m=window.__OVF_MONTH__||_trkTodayISO().slice(0,7); from=m+'-01'; to=m+'-31'; tag='month-'+m; } var ag=_trkAgg(_ovfRangePool(from,to),stake); var CAT_CFG=window.__TRK_CFG__||{}; var arr=Object.keys(ag.cats).map(function(k){ var c=ag.cats[k]; c.roi=c.counted?c.net/(c.counted*stake)*100:null; return [k,c]; }); arr.sort(function(a,b){ var ra=a[1].counted?a[1].roi:-1e9, rb=b[1].counted?b[1].roi:-1e9; return rb-ra; }); if(!arr.length){ alert('No graded overflow picks in this range yet.'); return; } var out=[['Range','Category','Side','Wins','Losses','Plays','Win%','Bet','Net P/L','ROI%']]; arr.forEach(function(x){ var k=x[0], c=x[1], n=c.w+c.l; if(!n) return; var parts=k.split('|'); out.push([from+'_'+to,(CAT_CFG[k]&&CAT_CFG[k].lbl)||parts[0],parts[1],c.w,c.l,n,(c.w/n*100).toFixed(1),stake,(c.counted?c.net.toFixed(2):''),(c.counted?c.roi.toFixed(1):'')]); }); var o=ag.overall, on=o.w+o.l; out.push([]); out.push([from+'_'+to,'OVERALL','',o.w,o.l,on,(on?(o.w/on*100).toFixed(1):'0.0'),stake,o.net.toFixed(2),(o.counted?(o.net/(o.counted*stake)*100).toFixed(1):'')]); _trkDownloadCSV(out,'mlb-overflow-'+tag+'-flat'+stake+'.csv'); }
+async function openOverflow(){
+  var btn=document.getElementById('ovf-btn');
+  var tok=localStorage.getItem('__mpa_token')||localStorage.getItem('hub_token')||'';
+  var adm=new URLSearchParams(location.search).get('admin')||'';
+  var lbl=btn?btn.textContent:''; if(btn){ btn.disabled=true; btn.textContent='Loading...'; }
+  show('ovf-card');
+  document.getElementById('ovf-card').scrollIntoView({behavior:'smooth',block:'start'});
+  document.getElementById('ovf-spinner').classList.remove('hidden');
+  document.getElementById('ovf-head').innerHTML='';
+  document.getElementById('ovf-body').innerHTML='';
+  var today=_trkTodayISO();
+  window.__TRK_TODAY__=today; window.__OVF_DAILY_DATE__=today;
+  window.__TRK_GRADE_CACHE__=window.__TRK_GRADE_CACHE__||{};
+  if(!window.__OVF_MONTH__) window.__OVF_MONTH__=today.slice(0,7);
+  try{
+    var q='?token='+encodeURIComponent(tok)+(adm?('&admin='+encodeURIComponent(adm)):'');
+    var trP=fetch('/api/track-record'+q).then(function(r){ if(!r.ok) return r.text().then(function(t){ throw new Error(t); }); return r.json(); });
+    var grP=fetch('/api/grade/'+today+q).then(function(r){ return r.ok?r.json():null; }).catch(function(){ return null; });
+    var arr=await Promise.all([trP,grP]);
+    window.__TRACK__=arr[0];
+    if(arr[1]) window.__TRK_GRADE_CACHE__[today]=arr[1];
+    renderOverflow(window.__TRACK__);
+  }catch(e){
+    document.getElementById('ovf-body').innerHTML='<p style="color:#f87171;padding:16px">'+(e.message||'Error loading overflow tracker')+'</p>';
+  }finally{
+    if(btn){ btn.disabled=false; btn.textContent=lbl; }
+    document.getElementById('ovf-spinner').classList.add('hidden');
+  }
+}
+function renderOverflow(d){
+  _trkBuildCfg();
+  if(!window.__OVF_TAB__) window.__OVF_TAB__='daily';
+  if(!window.__OVF_MONTH__) window.__OVF_MONTH__=_trkTodayISO().slice(0,7);
+  var bet=(window.__OVF_BET__!=null?window.__OVF_BET__:(window.__TRK_BET__!=null?window.__TRK_BET__:20));
+  var hdr='<div style="display:flex;flex-wrap:wrap;gap:14px;align-items:center;background:#2a1c08;border:1px solid #5b3d12;border-radius:12px;padding:14px 18px;margin-bottom:14px">'
+    +'<span style="font-weight:800;color:#fcd34d;font-size:1rem">💰 Bet amount $</span>'
+    +'<input id="ovfBet" type="number" min="1" step="1" value="'+bet+'" oninput="_ovfBetInput()" style="width:104px;background:#020617;border:1px solid #334155;color:#fff;border-radius:8px;padding:8px 12px;font-size:1.05rem;font-weight:800;text-align:center">'
+    +'<span style="color:#94a3b8;font-size:.8rem">flat on every overflow pick</span>'
+    +'</div>';
+  var tabs='<div style="display:flex;gap:8px;margin-bottom:4px">'+_ovfTabBtn('daily','Daily')+_ovfTabBtn('weekly','Weekly')+_ovfTabBtn('monthly','Monthly')+'</div>';
+  var sc=_ovfMatrixScorecard(d);
+  var he=document.getElementById('ovf-head'); if(he) he.innerHTML=hdr+sc+tabs;
+  var be=document.getElementById('ovf-body'); if(be) be.innerHTML='';
+  _ovfRenderActive();
+}
 // American odds -> decimal payout multiplier (incl. stake). null if unpriceable.
 function _amDec(o){ if(o==null||o==='') return null; o=Number(o); if(!isFinite(o)||o===0) return null; return o>0?(1+o/100):(1+100/Math.abs(o)); }
 // Meta-ranking buckets duplicate the per-category picks — exclude them so CLV
@@ -6123,7 +6487,7 @@ function _trkAmOdds(o){ o=Number(o); return (o>0?'+':'')+o; }
 function _trkRenderCLV(){
   var d=window.__TRACK__; var el=document.getElementById('trk-clv'); if(!el||!d) return;
   var CAT_CFG=window.__TRK_CFG__||{};
-  var det=(d.detail||[]).filter(function(r){ return !_trkSkipMeta(r); });
+  var det=(d.detail||[]).filter(function(r){ return !_trkSkipMeta(r)&&!_isOvfCat(r.category); });
   var rows=[];
   det.forEach(function(r){
     var od=_amDec(r.open_odds), cd=_amDec(r.close_odds);
@@ -6185,7 +6549,7 @@ function _trkRenderCLV(){
 function _trkRenderCalib(stake){
   var d=window.__TRACK__; var el=document.getElementById('trk-calib'); if(!el||!d) return;
   var CAT_CFG=window.__TRK_CFG__||{};
-  var det=(d.detail||[]).filter(function(r){ return !_trkSkipMeta(r); });
+  var det=(d.detail||[]).filter(function(r){ return !_trkSkipMeta(r)&&!_isOvfCat(r.category); });
   var ttl='<div style="font-size:.9rem;color:#e2e8f0;font-weight:800;margin:2px 2px 4px">🔬 Model Check</div>'
     +'<div style="font-size:.74rem;color:#64748b;margin:0 2px 10px">Is the +EV badge real, and do the model probabilities match what actually happens? This proves (or exposes) the model from your own results.</div>';
   var withEv=det.filter(function(r){ return r.ev!=null; });
@@ -7176,6 +7540,15 @@ function downloadMyBetsCSV(){
     <div id="track-spinner" class="hidden" style="color:#94a3b8;font-size:.9rem;margin-bottom:12px;display:flex;align-items:center;gap:8px"><span class="spinner"></span> Grading history…</div>
     <div id="track-head"></div>
     <div id="track-body"></div>
+  </div>
+</div>
+<div id="ovf-card" class="hidden space-y-6" style="max-width:960px;margin:0 auto 24px;padding:0 16px">
+  <div class="card p-6">
+    <div class="section-hdr" style="color:#fbbf24;margin-bottom:8px">⭐ Overflow Tracker</div>
+    <div style="font-size:.78rem;color:#94a3b8;margin:0 0 14px">Every pick BEYOND each category&#39;s top 10 (ranks 11-30 per side), graded &amp; banked permanently &mdash; kept separate from the main Track Record.</div>
+    <div id="ovf-spinner" class="hidden" style="color:#94a3b8;font-size:.9rem;margin-bottom:12px;display:flex;align-items:center;gap:8px"><span class="spinner"></span> Grading overflow history&hellip;</div>
+    <div id="ovf-head"></div>
+    <div id="ovf-body"></div>
   </div>
 </div>
 <div id="mybets-card" class="hidden space-y-6" style="max-width:960px;margin:0 auto 24px;padding:0 16px">
