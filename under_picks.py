@@ -88,6 +88,10 @@ HRR_ODDS: dict = {}
 # away_team, over, under} for the batter_walks (Over/Under 0.5) market.
 # Read by run_walks_picks. Cleared each call. Distinct from PITCHER walks.
 WALKS_ODDS: dict = {}
+# Populated by _fetch_hits_lines: normalized name → {name, line, home_team,
+# away_team, over, under} for the batter_home_runs (Over/Under 0.5) market.
+# Read by run_hr_picks. Cleared each call.
+HR_ODDS: dict = {}
 
 _BATTER_SAV_CACHE_UP: dict = {}  # {year: {player_id: {xba, hard_hit_pct}}}
 LEAGUE_HARD_HIT_UP   = 35.0      # MLB avg hard-hit rate %, 2024-2025
@@ -243,9 +247,10 @@ def _get_s1_vs_pitcher(batter_id, pitcher_id) -> dict:
         stat = splits[0].get("stat", {})
         ab = int(stat.get("atBats", 0) or 0)
         h  = int(stat.get("hits",   0) or 0)
-        if ab == 0: return {"ba": None, "display": "N/A", "ab": 0}
+        hr = int(stat.get("homeRuns", 0) or 0)
+        if ab == 0: return {"ba": None, "display": "N/A", "ab": 0, "hr": 0}
         ba = h / ab
-        return {"ba": ba, "display": f".{int(ba*1000):03d} ({ab}AB)", "ab": ab}
+        return {"ba": ba, "display": f".{int(ba*1000):03d} ({ab}AB)", "ab": ab, "hr": hr}
     except Exception:
         return {"ba": None, "display": "N/A", "ab": 0}
 
@@ -325,6 +330,7 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
     RBI_ODDS.clear()
     HRR_ODDS.clear()
     WALKS_ODDS.clear()
+    HR_ODDS.clear()
     PREFERRED = ["draftkings", "fanduel", "betmgm", "williamhill_us", "caesars", "betrivers", "ballybet", "bet365", "espnbet", "bet99", "thescore", "fliff", "mybookieag", "betonlineag", "bovada"]
     tomorrow  = (time.strftime("%Y-%m-%d",
                   time.gmtime(time.mktime(time.strptime(run_date, "%Y-%m-%d")) + 86400)))
@@ -369,7 +375,7 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
             r2 = requests.get(
                 f"https://api.the-odds-api.com/v4/sports/baseball_mlb/events/{ev['id']}/odds",
                 params={"apiKey": ODDS_API_KEY, "regions": "us,us2,ca",
-                        "markets": "batter_hits,batter_hits_alternate,batter_total_bases,batter_total_bases_alternate,batter_runs_scored,batter_rbis,batter_hits_runs_rbis,batter_walks",
+                        "markets": "batter_hits,batter_hits_alternate,batter_total_bases,batter_total_bases_alternate,batter_runs_scored,batter_rbis,batter_hits_runs_rbis,batter_walks,batter_home_runs",
                         "oddsFormat": "american"}, timeout=15)
             if r2.status_code != 200: continue
             all_bms = r2.json().get("bookmakers", [])
@@ -562,7 +568,31 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
                         elif side == "Under":
                             _take_odds(entry, "under", "under_book", price, bk)
 
-        _log(emit, f"  ✅ {len(seen)} players on 1.5 hits line | {len(HIT_ODDS)} players with 0.5 hit odds | {len(RUNS_ODDS)} with runs odds | {len(TB_ODDS)} with TB under odds | {len(RBI_ODDS)} with RBI odds | {len(HRR_ODDS)} with HRR odds | {len(WALKS_ODDS)} with walks odds")
+            # Batter Home Runs (Over/Under 0.5) for the HR Picks category.
+            # ZERO extra Odds API calls — market added to the same per-game request.
+            for book in ordered_books:
+                bk = book.get("key")
+                for mkt in book.get("markets", []):
+                    if mkt.get("key") != "batter_home_runs": continue
+                    for oc in mkt.get("outcomes", []):
+                        player = oc.get("description", "").strip()
+                        pt     = oc.get("point")
+                        side   = oc.get("name", "")
+                        price  = oc.get("price")
+                        if not player or pt != 0.5 or price is None: continue
+                        nk = _norm_name(player)
+                        entry = HR_ODDS.get(nk)
+                        if entry is None:
+                            entry = {"name": player, "line": pt,
+                                     "home_team": home_team, "away_team": away_team,
+                                     "over": None, "under": None}
+                            HR_ODDS[nk] = entry
+                        if side == "Over":
+                            _take_odds(entry, "over", "over_book", price, bk); entry["line"] = pt
+                        elif side == "Under":
+                            _take_odds(entry, "under", "under_book", price, bk)
+
+        _log(emit, f"  ✅ {len(seen)} players on 1.5 hits line | {len(HIT_ODDS)} players with 0.5 hit odds | {len(RUNS_ODDS)} with runs odds | {len(TB_ODDS)} with TB under odds | {len(RBI_ODDS)} with RBI odds | {len(HRR_ODDS)} with HRR odds | {len(WALKS_ODDS)} with walks odds | {len(HR_ODDS)} with HR odds")
         # Scan ALL players who have any posted hit odds (the 0.5 set), not just
         # the ~57 with a 1.5 line. Players who DO have a 1.5 line keep their
         # Under 1.5 / total-bases odds; 0.5-only players are still evaluated as
@@ -1080,6 +1110,237 @@ def run_rbi_picks(run_date: str, team_schedule: dict, emit=None) -> list:
     _log(emit, f"✅ RBI Picks: {len(picks)} "
                f"({sum(1 for p in picks if p['pick']=='OVER')} over / "
                f"{sum(1 for p in picks if p['pick']=='UNDER')} under)")
+    return picks
+
+
+# ── HR Picks (Batter Home Runs, Over/Under 0.5) ────────────────────────────
+# Two-sided category. Blended HR likelihood = recent form 50% + vs-pitcher 30%
+# + vs-team 20% (weights renormalized over whatever components have data), each
+# component shrunk toward the league base rate so tiny samples can't run away.
+# Recent form gets a "bunch" bump when the hitter homered in his last 3 games
+# (homers come in bunches). OVER when blended >= HR_OVER_CUT %, UNDER when
+# <= HR_UNDER_CUT %. Odds from HR_ODDS (batter_home_runs), zero extra API calls.
+
+HR_OVER_CUT  = 20     # blended HR% >= this → OVER (likely to homer)
+HR_UNDER_CUT = 8      # blended HR% <= this → UNDER (very unlikely to homer)
+HR_TOP_N     = 20     # cap per side (top 10 on cards + 11-20 overflow)
+HR_LG_PA     = 0.035  # league HR per plate appearance (vs-pitcher prior)
+HR_LG_PG     = 0.11   # league HR per game for a rostered hitter (recent/team prior)
+
+
+def _hr_recent(player_id, n: int = 15) -> dict:
+    """Last n games (any opp, any side, >=1 AB): games with 1+ HR + a 'bunch'
+       flag (homered in the last 3 games). Newest-first over up to 2 seasons."""
+    if not player_id:
+        return {"hr_games": 0, "games": 0, "rate": None, "bunch": False, "display": "N/A"}
+    try:
+        from mlb_stats_splits import _get_game_logs
+        from datetime import date as _dt
+        cy = _dt.today().year
+        flags = []
+        for season in range(cy, cy - 2, -1):
+            for sp in reversed(_get_game_logs(player_id, season)):
+                stat = sp.get("stat", {})
+                ab = int(stat.get("atBats", 0) or 0)
+                if ab < 1:
+                    continue
+                hr = int(stat.get("homeRuns", 0) or 0)
+                flags.append(1 if hr >= 1 else 0)
+                if len(flags) >= n:
+                    break
+            if len(flags) >= n:
+                break
+        games = len(flags)
+        hr_games = sum(flags)
+        if games == 0:
+            return {"hr_games": 0, "games": 0, "rate": None, "bunch": False, "display": "N/A"}
+        return {"hr_games": hr_games, "games": games,
+                "rate": hr_games / games, "bunch": sum(flags[:3]) >= 1,
+                "display": f"{hr_games}/{games}"}
+    except Exception:
+        return {"hr_games": 0, "games": 0, "rate": None, "bunch": False, "display": "ERR"}
+
+
+def _hr_vs_team(player_id, side: str, opp_name: str, max_games: int = 10) -> dict:
+    """Last max_games career H/A games vs opp_name: games with 1+ HR."""
+    if not player_id:
+        return {"hr_games": 0, "games": 0, "rate": None, "display": "N/A"}
+    try:
+        from mlb_stats_splits import _get_game_logs, _team_name_match
+        from datetime import date as _dt
+        cy = _dt.today().year
+        flags = []
+        for season in range(cy, cy - 5, -1):
+            for sp in reversed(_get_game_logs(player_id, season)):
+                is_home = sp.get("isHome", False)
+                if (side.upper() == "HOME") != is_home:
+                    continue
+                if opp_name:
+                    opp = sp.get("opponent", {}).get("name", "")
+                    if not _team_name_match(opp, opp_name):
+                        continue
+                stat = sp.get("stat", {})
+                ab = int(stat.get("atBats", 0) or 0)
+                if ab < 1:
+                    continue
+                hr = int(stat.get("homeRuns", 0) or 0)
+                flags.append(1 if hr >= 1 else 0)
+                if len(flags) >= max_games:
+                    break
+            if len(flags) >= max_games:
+                break
+        games = len(flags)
+        hr_games = sum(flags)
+        if games == 0:
+            return {"hr_games": 0, "games": 0, "rate": None, "display": "N/A"}
+        return {"hr_games": hr_games, "games": games,
+                "rate": hr_games / games, "display": f"{hr_games}/{games}"}
+    except Exception:
+        return {"hr_games": 0, "games": 0, "rate": None, "display": "ERR"}
+
+
+def _recent_hr_log(player_id, n: int = 8) -> list:
+    """Last n games (any opp), newest-first: date, hr, hits, opp, H/A."""
+    if not player_id:
+        return []
+    try:
+        from mlb_stats_splits import _get_game_logs
+        from datetime import date as _dt
+        cy = _dt.today().year
+        games = []
+        for season in range(cy, cy - 2, -1):
+            for sp in reversed(_get_game_logs(player_id, season)):
+                stat = sp.get("stat", {})
+                ab = int(stat.get("atBats", 0) or 0)
+                if ab < 1:
+                    continue
+                games.append({
+                    "d":   (sp.get("date") or "")[5:],
+                    "hr":  int(stat.get("homeRuns", 0) or 0),
+                    "h":   int(stat.get("hits", 0) or 0),
+                    "opp": (sp.get("opponent", {}) or {}).get("name", ""),
+                    "ha":  "H" if sp.get("isHome") else "A",
+                })
+                if len(games) >= n:
+                    break
+            if len(games) >= n:
+                break
+        return games
+    except Exception:
+        return []
+
+
+def run_hr_picks(run_date: str, team_schedule: dict, emit=None) -> list:
+    _log(emit, "", "log")
+    _log(emit, "▸ HR Picks — Batter Home Runs (Over/Under 0.5)", "section")
+    season = int(run_date[:4])
+
+    if not HR_ODDS:
+        _fetch_hits_lines(run_date, emit)   # populates HR_ODDS as a side effect
+    candidates = list(HR_ODDS.values())
+    if not candidates:
+        _log(emit, "  No batter HR lines posted today.")
+        return []
+    _log(emit, f"  {len(candidates)} players with an HR line")
+
+    _build_player_map(season)
+    id_map = {}
+    for c in candidates:
+        pid = _resolve_id(c["name"])
+        if pid:
+            id_map[c["name"]] = pid
+    team_map = _get_teams_batch(list(id_map.values()))
+    pitchers = _get_probable_pitchers(run_date)
+
+    def _shrunk_pg(hr_games, games, k=4):
+        if not games:
+            return None
+        return (hr_games + k * HR_LG_PG) / (games + k)
+
+    def _eval(c):
+        name = c["name"]
+        batter_id = id_map.get(name)
+        player_team = team_map.get(batter_id, "") if batter_id else ""
+        if not batter_id or not player_team:
+            return None
+        if _team_match(player_team, c["home_team"]):
+            side, opp_name = "HOME", c["away_team"]
+        elif _team_match(player_team, c["away_team"]):
+            side, opp_name = "AWAY", c["home_team"]
+        else:
+            return None
+        pitcher_name, pitcher_id = "TBD", None
+        for pteam, pinfo in pitchers.items():
+            if _team_match(pteam, opp_name):
+                pitcher_name = pinfo["name"]
+                pitcher_id   = pinfo.get("id")
+                break
+
+        recent = _hr_recent(batter_id, 15)
+        team   = _hr_vs_team(batter_id, side, opp_name, 10)
+        pit    = _get_s1_vs_pitcher(batter_id, pitcher_id)
+
+        r_recent = _shrunk_pg(recent["hr_games"], recent["games"], 4)
+        if r_recent is not None and recent.get("bunch"):
+            r_recent = min(0.60, r_recent * 1.15)
+        r_team = _shrunk_pg(team["hr_games"], team["games"], 4)
+        r_pit  = None
+        pit_ab = int(pit.get("ab", 0) or 0)
+        pit_hr = int(pit.get("hr", 0) or 0)
+        if pit_ab > 0:
+            p_pa  = (pit_hr + 15 * HR_LG_PA) / (pit_ab + 15)
+            r_pit = 1.0 - (1.0 - p_pa) ** 4
+
+        comps = []
+        if r_recent is not None: comps.append((0.50, r_recent))
+        if r_pit    is not None: comps.append((0.30, r_pit))
+        if r_team   is not None: comps.append((0.20, r_team))
+        if not comps:
+            return None
+        wsum = sum(w for w, _ in comps)
+        blended = sum(w * v for w, v in comps) / wsum
+        score = round(blended * 100)
+
+        if score >= HR_OVER_CUT:
+            pick = "OVER"
+        elif score <= HR_UNDER_CUT:
+            pick = "UNDER"
+        else:
+            return None
+
+        pit_disp = f"{pit_hr}HR/{pit_ab}AB" if pit_ab > 0 else "N/A"
+        return {"name": name, "team": player_team, "side": side, "opp": opp_name,
+                "pick": pick, "line": c.get("line", 0.5),
+                "score": score, "blended": score, "games": recent["games"],
+                "recent_disp": recent["display"], "team_disp": team["display"],
+                "pit_disp": pit_disp, "basis": "blend",
+                "wilson": round(blended, 4),
+                "over_odds": c.get("over"), "under_odds": c.get("under"),
+                "book": _book_label(c.get("over_book") if pick == "OVER" else c.get("under_book")),
+                "batter_id": batter_id,
+                "pitcher": pitcher_name,
+                "recent_hr_log": _recent_hr_log(batter_id)}
+
+    picks = []
+    with ThreadPoolExecutor(max_workers=8) as _ex:
+        _futs = {_ex.submit(_eval, c): c for c in candidates}
+        for _fut in as_completed(_futs):
+            try:
+                pk = _fut.result()
+            except Exception:
+                pk = None
+            if pk:
+                picks.append(pk)
+
+    overs  = [p for p in picks if p["pick"] == "OVER"]
+    unders = [p for p in picks if p["pick"] == "UNDER"]
+    overs.sort(key=lambda p: (-p["score"], -p["games"]))
+    unders.sort(key=lambda p: (p["score"], -p["games"]))
+    overs  = overs[:HR_TOP_N]
+    unders = unders[:HR_TOP_N]
+    picks = overs + unders
+    _log(emit, f"✅ HR Picks: {len(picks)} "
+               f"({len(overs)} over / {len(unders)} under)")
     return picks
 
 
