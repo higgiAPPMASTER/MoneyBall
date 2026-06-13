@@ -837,6 +837,7 @@ def run_runs_picks(run_date: str, team_schedule: dict, emit=None) -> list:
         if pid:
             id_map[c["name"]] = pid
     team_map = _get_teams_batch(list(id_map.values()))
+    pitchers = _get_probable_pitchers(run_date)
 
     def _eval(c):
         name = c["name"]
@@ -850,6 +851,13 @@ def run_runs_picks(run_date: str, team_schedule: dict, emit=None) -> list:
             side, opp_name = "AWAY", c["home_team"]
         else:
             return None
+        pitcher_name, pitcher_id = "TBD", None
+        for pteam, pinfo in pitchers.items():
+            if _team_match(pteam, opp_name):
+                pitcher_name = pinfo["name"]
+                pitcher_id   = pinfo.get("id")
+                break
+        s1_pit = _get_s1_vs_pitcher(batter_id, pitcher_id)
         rate = _runs_rate(batter_id, side, opp_name)
         # Vs-opponent ONLY (no L10 any-opp fallback) and minimum head-to-head games.
         if rate.get("basis") != "vs opp" or rate["games"] < RUNS_MIN_GAMES:
@@ -869,6 +877,7 @@ def run_runs_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 "over_odds": c.get("over"), "under_odds": c.get("under"),
                 "book": _book_label(c.get("over_book") if pick == "OVER" else c.get("under_book")),
                 "batter_id": batter_id,
+                "pitcher": pitcher_name, "s1_disp": s1_pit["display"], "s1_ab": s1_pit["ab"],
                 "recent_runs_log": _recent_runs_log(batter_id)}
 
     picks = []
@@ -1010,6 +1019,7 @@ def run_rbi_picks(run_date: str, team_schedule: dict, emit=None) -> list:
         if pid:
             id_map[c["name"]] = pid
     team_map = _get_teams_batch(list(id_map.values()))
+    pitchers = _get_probable_pitchers(run_date)
 
     def _eval(c):
         name = c["name"]
@@ -1023,6 +1033,13 @@ def run_rbi_picks(run_date: str, team_schedule: dict, emit=None) -> list:
             side, opp_name = "AWAY", c["home_team"]
         else:
             return None
+        pitcher_name, pitcher_id = "TBD", None
+        for pteam, pinfo in pitchers.items():
+            if _team_match(pteam, opp_name):
+                pitcher_name = pinfo["name"]
+                pitcher_id   = pinfo.get("id")
+                break
+        s1_pit = _get_s1_vs_pitcher(batter_id, pitcher_id)
         rate = _rbi_rate(batter_id, side, opp_name)
         if rate["games"] < RBI_MIN_GAMES:
             return None
@@ -1041,6 +1058,7 @@ def run_rbi_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 "over_odds": c.get("over"), "under_odds": c.get("under"),
                 "book": _book_label(c.get("over_book") if pick == "OVER" else c.get("under_book")),
                 "batter_id": batter_id,
+                "pitcher": pitcher_name, "s1_disp": s1_pit["display"], "s1_ab": s1_pit["ab"],
                 "recent_rbi_log": _recent_rbi_log(batter_id)}
 
     picks = []
@@ -1527,6 +1545,7 @@ def run_hrr_picks(run_date: str, team_schedule: dict, emit=None) -> list:
         if pid:
             id_map[c["name"]] = pid
     team_map = _get_teams_batch(list(id_map.values()))
+    pitchers = _get_probable_pitchers(run_date)
 
     def _eval(c):
         name = c["name"]
@@ -1540,6 +1559,13 @@ def run_hrr_picks(run_date: str, team_schedule: dict, emit=None) -> list:
             side, opp_name = "AWAY", c["home_team"]
         else:
             return None
+        pitcher_name, pitcher_id = "TBD", None
+        for pteam, pinfo in pitchers.items():
+            if _team_match(pteam, opp_name):
+                pitcher_name = pinfo["name"]
+                pitcher_id   = pinfo.get("id")
+                break
+        s1_pit = _get_s1_vs_pitcher(batter_id, pitcher_id)
         vs = _hrr_consistency_over(batter_id, side, opp_name, 10)
         if vs["games"] < HRR_OVER_MIN_VS:
             return None
@@ -1559,6 +1585,7 @@ def run_hrr_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 "hrr_under_odds": c.get("hrr_under_odds"),
                 "book": _book_label(c.get("hrr_over_odds_book") if pick == "OVER" else c.get("hrr_under_odds_book")),
                 "batter_id": batter_id,
+                "pitcher": pitcher_name, "s1_disp": s1_pit["display"], "s1_ab": s1_pit["ab"],
                 "recent_hrr_log": _recent_hrr_log(batter_id)}
 
     picks = []
@@ -1610,6 +1637,7 @@ def run_tb_over_picks(run_date: str, team_schedule: dict, emit=None) -> list:
         if pid:
             id_map[c["name"]] = pid
     team_map = _get_teams_batch(list(id_map.values()))
+    pitchers = _get_probable_pitchers(run_date)
 
     def _eval(c):
         name = c["name"]
@@ -1623,6 +1651,13 @@ def run_tb_over_picks(run_date: str, team_schedule: dict, emit=None) -> list:
             side, opp_name = "AWAY", c["home_team"]
         else:
             return None
+        pitcher_name, pitcher_id = "TBD", None
+        for pteam, pinfo in pitchers.items():
+            if _team_match(pteam, opp_name):
+                pitcher_name = pinfo["name"]
+                pitcher_id   = pinfo.get("id")
+                break
+        s1_pit = _get_s1_vs_pitcher(batter_id, pitcher_id)
         vs = _tb_consistency_over(batter_id, side, opp_name, 10)
         if vs["games"] < TB_OVER_MIN_VS:
             return None
@@ -1636,6 +1671,7 @@ def run_tb_over_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 "tb_over_odds": c.get("tb_over_odds"),
                 "book": _book_label(c.get("tb_over_odds_book")),
                 "batter_id": batter_id,
+                "pitcher": pitcher_name, "s1_disp": s1_pit["display"], "s1_ab": s1_pit["ab"],
                 "recent_tb_log": _recent_tb_log(batter_id)}
 
     picks = []
@@ -1675,6 +1711,7 @@ def run_tb_under_picks(run_date: str, team_schedule: dict, emit=None) -> list:
         if pid:
             id_map[c["name"]] = pid
     team_map = _get_teams_batch(list(id_map.values()))
+    pitchers = _get_probable_pitchers(run_date)
 
     def _eval(c):
         name = c["name"]
@@ -1688,6 +1725,13 @@ def run_tb_under_picks(run_date: str, team_schedule: dict, emit=None) -> list:
             side, opp_name = "AWAY", c["home_team"]
         else:
             return None
+        pitcher_name, pitcher_id = "TBD", None
+        for pteam, pinfo in pitchers.items():
+            if _team_match(pteam, opp_name):
+                pitcher_name = pinfo["name"]
+                pitcher_id   = pinfo.get("id")
+                break
+        s1_pit = _get_s1_vs_pitcher(batter_id, pitcher_id)
         vs = _tb_consistency(batter_id, side, opp_name, 10)
         if vs["games"] >= TB_MIN_VS:
             rate = vs; rate["basis"] = "vs opp"
@@ -1706,6 +1750,7 @@ def run_tb_under_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 "tb_under_odds": c.get("tb_under_odds"),
                 "book": _book_label(c.get("tb_under_odds_book")),
                 "batter_id": batter_id,
+                "pitcher": pitcher_name, "s1_disp": s1_pit["display"], "s1_ab": s1_pit["ab"],
                 "recent_tb_log": _recent_tb_log(batter_id)}
 
     picks = []
