@@ -707,6 +707,7 @@ def _mlb_box_lookup(date_str: str):
                     "total_bases":  bat.get("totalBases"),
                     "rbi":          bat.get("rbi"),
                     "walks_bat":    bat.get("baseOnBalls"),
+                    "homeRuns":     bat.get("homeRuns"),
                     "hrr":          _hrr,
                     "strikeOuts":   pit.get("strikeOuts"),
                     "earnedRuns":   pit.get("earnedRuns"),
@@ -910,6 +911,31 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
         })
 
+    # HR OVER/UNDER — top 10 per side for Track Record
+    _hr_all = picks.get("hr_picks") or []
+    _hr_capped = [p for p in _hr_all if p.get("pick") == "OVER"][:10] + \
+                 [p for p in _hr_all if p.get("pick") == "UNDER"][:10]
+    hr_picks = []
+    for p in _hr_capped:
+        st = _lookup(p.get("batter_id"), p.get("name"))
+        actual = st.get("homeRuns") if st else None
+        pick_dir = p.get("pick", "OVER")
+        line = p.get("line") if p.get("line") is not None else 0.5
+        hr_picks.append({
+            "name": p.get("name", ""),
+            "team": p.get("team", ""),
+            "category": "HR", "side": pick_dir,
+            "pick": f"{pick_dir} {line} HR",
+            "odds": p.get("over_odds") if pick_dir == "OVER" else p.get("under_odds"),
+            "line": line,
+            "actual": actual,
+            "stat": "HR",
+            "result": _grade(pick_dir, line, actual, (st or {}).get("final", False)),
+            "game_status": (st or {}).get("status", "—"),
+            "ev": p.get("ev"),
+            "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
+        })
+
     # Batter Walks OVER/UNDER 0.5 — top 10 per side for Track Record
     _walks_all = picks.get("walks_picks") or []
     _walks_capped = [p for p in _walks_all if p.get("pick") == "OVER"][:10] + \
@@ -1076,6 +1102,14 @@ def _grade_date(date_str: str, picks: dict) -> dict:
         _ovf(p, p.get("name", ""), p.get("team", ""), "RBI (OVF)", pd,
              f"{pd} {ln} RBI", p.get("over_odds") if pd == "OVER" else p.get("under_odds"),
              ln, actual, "RBI", st)
+    for p in ([q for q in _hr_all if q.get("pick") == "OVER"][10:20] +
+              [q for q in _hr_all if q.get("pick") == "UNDER"][10:20]):
+        st = _lookup(p.get("batter_id"), p.get("name"))
+        actual = st.get("homeRuns") if st else None
+        pd = p.get("pick", "OVER"); ln = p.get("line") if p.get("line") is not None else 0.5
+        _ovf(p, p.get("name", ""), p.get("team", ""), "HR (OVF)", pd,
+             f"{pd} {ln} HR", p.get("over_odds") if pd == "OVER" else p.get("under_odds"),
+             ln, actual, "HR", st)
     for p in ([q for q in _walks_all if q.get("pick") == "OVER"][10:20] +
               [q for q in _walks_all if q.get("pick") == "UNDER"][10:20]):
         st = _lookup(p.get("batter_id"), p.get("name"))
@@ -1163,6 +1197,12 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "side":pd,"stat_key":"hrr","stat_label":"H+R+RBI","line":1.5,
             "odds":p.get("hrr_over_odds") if pd=="OVER" else p.get("hrr_under_odds"),
             "ev":p.get("ev") or 0,"pid":p.get("batter_id"),"fname":p.get("name")})
+    for p in (picks.get("hr_picks") or []):
+        pd = p.get("pick","OVER"); ln = p.get("line") if p.get("line") is not None else 0.5
+        _bat_cands.append({"name":p.get("name",""),"team":p.get("team",""),
+            "side":pd,"stat_key":"homeRuns","stat_label":"HR","line":ln,
+            "odds":p.get("over_odds") if pd=="OVER" else p.get("under_odds"),
+            "ev":p.get("ev") or 0,"pid":p.get("batter_id"),"fname":p.get("name")})
     _bat_cands.sort(key=lambda x: -(x.get("ev") or 0))
     _bat_seen = set()
     _bat_dedup = []
@@ -1240,6 +1280,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
         "tb_under":      tb_under,
         "tb_over":       tb_over,
         "rbi":           rbi_picks,
+        "hr":            hr_picks,
         "batter_walks":  walks_rows,
         "hrr":           hrr_rows,
         "pitcher_ks":    pitcher_ks,
@@ -1267,7 +1308,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
                 _harvest_pos(v)
     _harvest_pos(picks)
     for _key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over",
-                 "rbi", "batter_walks", "hrr", "pitcher_ks", "pitcher_props",
+                 "rbi", "hr", "batter_walks", "hrr", "pitcher_ks", "pitcher_props",
                  "top10_batter", "top10_pitcher", "overflow"):
         for _r in (result.get(_key) or []):
             if isinstance(_r, dict):
@@ -1280,7 +1321,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
 _TRACK_LEDGER_PATH = os.path.join(_CACHE_DIR, "_track_record.json")
 _TRACK_CAT_ORDER = [
     "Top 10 Batter", "Top 10 Pitcher",
-    "Hitter Hits", "Hitter Hits (More)", "Runs", "TB Under", "TB Over", "RBI", "Batter Walks", "HRR", "Pitcher Ks",
+    "Hitter Hits", "Hitter Hits (More)", "Runs", "TB Under", "TB Over", "RBI", "HR", "Batter Walks", "HRR", "Pitcher Ks",
     "Pitcher Hits Allowed", "Pitcher Outs", "Pitcher Earned Runs", "Pitcher Walks",
 ]
 
@@ -1373,7 +1414,7 @@ def _aggregate_graded(graded: dict) -> dict:
     """Collapse a graded day into {category: {side: [W, L]}} counting only decided picks
     that had odds posted — no-odds picks are excluded from the record."""
     agg: dict = {}
-    for key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "batter_walks", "hrr", "pitcher_ks", "pitcher_props", "top10_batter", "top10_pitcher", "overflow"):
+    for key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "hr", "batter_walks", "hrr", "pitcher_ks", "pitcher_props", "top10_batter", "top10_pitcher", "overflow"):
         for r in graded.get(key, []):
             res = r.get("result")
             if res not in ("WIN", "LOSS"):
@@ -1398,7 +1439,7 @@ def _detail_graded(graded: dict) -> list:
     fields an earnings sheet needs: player, team, category, side, pick, odds,
     line, result. No-odds picks are excluded — they don't count in the record."""
     out = []
-    for key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "batter_walks", "hrr", "pitcher_ks", "pitcher_props", "top10_batter", "top10_pitcher", "overflow"):
+    for key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "hr", "batter_walks", "hrr", "pitcher_ks", "pitcher_props", "top10_batter", "top10_pitcher", "overflow"):
         for r in graded.get(key, []):
             res = r.get("result")
             if res not in ("WIN", "LOSS"):
@@ -1545,7 +1586,7 @@ _BET_LOG_PATH = os.path.join(_CACHE_DIR, "_bet_log.json")
 _BETS_CAT = "__bets__"
 _BETS_DATE = "2000-01-01"
 _BET_LOCK = _trk_threading.Lock()
-_BET_STAT_KEYS = ("hits", "runs", "total_bases", "rbi", "walks_bat", "hrr", "strikeOuts", "hits_allowed", "outs", "earnedRuns", "walks")
+_BET_STAT_KEYS = ("hits", "runs", "total_bases", "rbi", "homeRuns", "walks_bat", "hrr", "strikeOuts", "hits_allowed", "outs", "earnedRuns", "walks")
 _BET_PITCH_STATS = ("strikeOuts", "hits_allowed", "outs", "earnedRuns", "walks")
 
 def _load_bets() -> dict:
@@ -2364,7 +2405,7 @@ _HTML = """
           5:['O','O','O','O','O','O','O','U','U','U'],
           6:['O','O','O','O','O','U','U','O','O','O']
         };
-        var _DOW_IDX={hits:0,hits_over:0,hits_under:0,tb:1,tb_under:1,tb_over:1,hrr:2,runs:3,rbi:4,k:5,outs:6,hits_allowed:7,er:8,walks:9};
+        var _DOW_IDX={hits:0,hits_over:0,hits_under:0,tb:1,tb_under:1,tb_over:1,hrr:2,hr:2,runs:3,rbi:4,k:5,outs:6,hits_allowed:7,er:8,walks:9};
         var _DOW_BAT=[0,1,2,3,4,9];
         var _DOW_PIT=[5,7,6,8,9];
         var _DOW_NAMES=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
@@ -2608,6 +2649,8 @@ _HTML = """
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="RUN_U" checked onchange="_catChanged()"> Runs Under 0.5</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="RBI_O" checked onchange="_catChanged()"> RBI Over 0.5</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="RBI_U" checked onchange="_catChanged()"> RBI Under 0.5</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="HR_O" checked onchange="_catChanged()"> HR Over 0.5</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="HR_U" checked onchange="_catChanged()"> HR Under 0.5</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="HRR_O" checked onchange="_catChanged()"> H+R+RBI Over 1.5</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="HRR_U" checked onchange="_catChanged()"> H+R+RBI Under 1.5</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="BWALK_O" checked onchange="_catChanged()"> Batter Walks Over</label>
@@ -2693,6 +2736,16 @@ _HTML = """
           <div class="section-hdr" style="color:#ff8a65">💥 Top 10 Under 0.5 RBI</div>
           <div id="rbi-under-body" class="mlb-picks-grid"></div>
           <div id="rbi-under-more"></div>
+        </div>
+        <div class="card p-6 hidden" id="hr-over-card" style="border-color:rgba(244,63,94,.25)">
+          <div class="section-hdr" style="color:#f43f5e">💣 Top 10 Over 0.5 HR</div>
+          <div id="hr-over-body" class="mlb-picks-grid"></div>
+          <div id="hr-over-more"></div>
+        </div>
+        <div class="card p-6 hidden" id="hr-under-card" style="border-color:rgba(255,138,101,.25)">
+          <div class="section-hdr" style="color:#ff8a65">💣 Top 10 Under 0.5 HR</div>
+          <div id="hr-under-body" class="mlb-picks-grid"></div>
+          <div id="hr-under-more"></div>
         </div>
         <div class="card p-6 hidden" id="runs-over-card" style="border-color:rgba(96,165,250,.25)">
           <div class="section-hdr" style="color:#60a5fa">🏃 Top 10 Over 0.5 Run</div>
@@ -2954,7 +3007,7 @@ function _filterStarted(result){
   if(!result) return result;
   var r=Object.assign({},result);
   function f(a){return (a||[]).filter(function(p){return !_started(p);});}
-  r.top9=f(r.top9); r.also_ran=f(r.also_ran); r.under_picks=f(r.under_picks); r.runs_picks=f(r.runs_picks); r.tb_picks=f(r.tb_picks); r.tb_over_picks=f(r.tb_over_picks||[]); r.hrr_picks=f(r.hrr_picks||[]); r.rbi_picks=f(r.rbi_picks||[]); r.walks_picks=f(r.walks_picks||[]);
+  r.top9=f(r.top9); r.also_ran=f(r.also_ran); r.under_picks=f(r.under_picks); r.runs_picks=f(r.runs_picks); r.tb_picks=f(r.tb_picks); r.tb_over_picks=f(r.tb_over_picks||[]); r.hrr_picks=f(r.hrr_picks||[]); r.rbi_picks=f(r.rbi_picks||[]); r.hr_picks=f(r.hr_picks||[]); r.walks_picks=f(r.walks_picks||[]);
   if(r.pitcher_k){
     r.pitcher_k=Object.assign({},r.pitcher_k);
     r.pitcher_k.picks=f(r.pitcher_k.picks);
@@ -3004,7 +3057,7 @@ function showResults(result) {
   // "+EV Only": filter EVERY category to ev>0 (render copy only; _lastResult stays full).
   const view = window.EV_ONLY ? _evFilterView(_vBase) : _vBase;
   const { top9, stats, pitcher_k } = view;
-  ['top10-plays-card','under-picks-card','tb-picks-card','tb-over-picks-card','hrr-over-card','hrr-under-card','rbi-over-card','rbi-under-card','runs-over-card','runs-under-card','bwalk-over-card','bwalk-under-card','pitch-day-card','pitcher-all-card','k-over-card','k-under-card','prop-ha-over-card','prop-ha-under-card','prop-outs-over-card','prop-outs-under-card','prop-er-over-card','prop-er-under-card','prop-bb-over-card','prop-bb-under-card'].forEach(hide);
+  ['top10-plays-card','under-picks-card','tb-picks-card','tb-over-picks-card','hrr-over-card','hrr-under-card','rbi-over-card','rbi-under-card','hr-over-card','hr-under-card','runs-over-card','runs-under-card','bwalk-over-card','bwalk-under-card','pitch-day-card','pitcher-all-card','k-over-card','k-under-card','prop-ha-over-card','prop-ha-under-card','prop-outs-over-card','prop-outs-under-card','prop-er-over-card','prop-er-under-card','prop-bb-over-card','prop-bb-under-card'].forEach(hide);
 
   document.getElementById('stats-row').innerHTML = [
       statCard('⭐','Top 10 Hitters',_buildTop10(view).length,'top10-plays-card'),
@@ -3014,6 +3067,7 @@ function showResults(result) {
       statCard('⬇️','TB Under',(view.tb_picks||[]).length,'tb-picks-card'),
       statCard('🔥','HRR',(view.hrr_picks||[]).length,'hrr-over-card'),
       statCard('💥','RBI',(view.rbi_picks||[]).length,'rbi-over-card'),
+      statCard('💣','HR',(view.hr_picks||[]).length,'hr-over-card'),
       statCard('🏃','Runs',(view.runs_picks||[]).length,'runs-over-card'),
       statCard('🚶','Walks',(view.walks_picks||[]).length,'bwalk-over-card'),
       statCard('🎯','Pitching Day',_buildPitchDay(view).length,'pitch-day-card'),
@@ -3081,6 +3135,13 @@ function showResults(result) {
     const rbiUnder = rbiPicks.filter(function(p){ return p.pick==='UNDER'; });
     _fillCard('rbi-over-card','rbi-over-body','rbi-over-more',rbiOver,function(p,r){return _rbiCard(p,r,'rbo');},'RBI Over','#f59e0b');
     _fillCard('rbi-under-card','rbi-under-body','rbi-under-more',rbiUnder,function(p,r){return _rbiCard(p,r,'rbu');},'RBI Under','#ff8a65');
+
+  window.__HR_REG__={};
+    const hrPicks = view.hr_picks || [];
+    const hrOver = hrPicks.filter(function(p){ return p.pick==='OVER'; });
+    const hrUnder = hrPicks.filter(function(p){ return p.pick==='UNDER'; });
+    _fillCard('hr-over-card','hr-over-body','hr-over-more',hrOver,function(p,r){return _hrCard(p,r,'hro');},'HR Over','#f43f5e');
+    _fillCard('hr-under-card','hr-under-body','hr-under-more',hrUnder,function(p,r){return _hrCard(p,r,'hru');},'HR Under','#ff8a65');
 
   window.__RUNS_REG__={};
     const runsPicks = view.runs_picks || [];
@@ -3575,6 +3636,7 @@ function _playerForm(key){
   if(p._prop){ _ppForm(p); }
   else if(p.recent_k_log!==undefined || p.avg_k!==undefined){ _pkForm(p); }
   else if(p.recent_tb_log!==undefined){ _tbForm(p); }
+  else if(p.recent_hr_log!==undefined && p.recent_hit_log===undefined && p.recent_runs_log===undefined){ _hrForm(p); }
   else if(p.recent_rbi_log!==undefined && p.recent_hit_log===undefined && p.recent_runs_log===undefined){ _rbiForm(p); }
   else if(p.recent_runs_log!==undefined && p.recent_hit_log===undefined){ _runsForm(p); }
   else if(p.recent_walks_log!==undefined){ _walksForm(p); }
@@ -3619,6 +3681,12 @@ function downloadPicksCSV(){
     var od=isOver?p.over_odds:p.under_odds;
     rows.push(['RBI Pick', i+1, p.name||'', p.team||'', '', p.side||'', p.opp||'', '',
       (isOver?'Over':'Under')+' '+(p.line!=null?p.line:0.5)+' RBI', (p.line!=null?p.line:0.5), _csvOdds(od), '', (p.rate_disp||'')+(p.basis?(' '+p.basis):'')]);
+  });
+  (r.hr_picks||[]).forEach(function(p,i){
+    var isOver=p.pick==='OVER';
+    var od=isOver?p.over_odds:p.under_odds;
+    rows.push(['HR Pick', i+1, p.name||'', p.team||'', '', p.side||'', p.opp||'', '',
+      (isOver?'Over':'Under')+' '+(p.line!=null?p.line:0.5)+' HR', (p.line!=null?p.line:0.5), _csvOdds(od), '', (p.score!=null?p.score+'% blended':'')]);
   });
   (r.runs_picks||[]).forEach(function(p,i){
     var isOver=p.pick==='OVER';
@@ -3710,6 +3778,11 @@ function _mlbPool(){
     var isOver=p.pick==='OVER';
     var od=isOver?p.over_odds:p.under_odds;
     cands.push({type:'RBI',dir:p.pick,player:(p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'RBI',line:(p.line!=null?p.line:0.5),odds:(od!=null?od:''),conf:clampConf(80,i),reason:'💥 '+p.pick+' '+(p.line!=null?p.line:0.5)+' RBI · '+(p.rate_disp||'')+' vs '+(p.opp||''),src:p});
+  });
+  (r.hr_picks||[]).forEach(function(p,i){
+    var isOver=p.pick==='OVER';
+    var od=isOver?p.over_odds:p.under_odds;
+    cands.push({type:'HR',dir:p.pick,player:(p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'HR',line:(p.line!=null?p.line:0.5),odds:(od!=null?od:''),conf:clampConf(78,i),reason:'💣 '+p.pick+' '+(p.line!=null?p.line:0.5)+' HR · '+(p.score!=null?p.score+'%':'')+' blended vs '+(p.opp||''),src:p});
   });
   (r.runs_picks||[]).forEach(function(p,i){
     var isOver=p.pick==='OVER';
@@ -3818,9 +3891,9 @@ function _paintParlay(){
   var am = priced? _decToAm(dec) : null;
   var payout = priced? (100*dec) : null;
   var dirColor=function(d){return d==='OVER'?'#63cab7':d==='UNDER'?'#ff8a65':'#9ca3af';};
-  var tagBg={HIT:'rgba(245,158,11,.16)',UNDER:'rgba(255,138,101,.16)',K:'rgba(99,202,183,.16)',RUN:'rgba(96,165,250,.16)',RBI:'rgba(251,191,36,.16)',HRR:'rgba(251,146,60,.16)',TB:'rgba(167,139,250,.16)',TBO:'rgba(74,222,128,.16)',BWALK:'rgba(52,211,153,.16)',pitcher_hits_allowed:'rgba(248,113,113,.16)',pitcher_outs:'rgba(167,139,250,.16)',pitcher_earned_runs:'rgba(251,146,60,.16)',pitcher_walks:'rgba(52,211,153,.16)'};
-  var tagFg={HIT:'#f59e0b',UNDER:'#ff8a65',K:'#63cab7',RUN:'#60a5fa',RBI:'#fbbf24',HRR:'#fb923c',TB:'#a78bfa',TBO:'#4ade80',BWALK:'#34d399',pitcher_hits_allowed:'#f87171',pitcher_outs:'#a78bfa',pitcher_earned_runs:'#fb923c',pitcher_walks:'#34d399'};
-  var tagLbl={HIT:'HIT',UNDER:'U1.5',K:'K',RUN:'RUNS',RBI:'RBI',HRR:'HRR',TB:'U1.5 TB',TBO:'O1.5 TB',BWALK:'BB (BAT)',pitcher_hits_allowed:'H ALLOW',pitcher_outs:'OUTS',pitcher_earned_runs:'ER',pitcher_walks:'BB (PIT)'};
+  var tagBg={HIT:'rgba(245,158,11,.16)',UNDER:'rgba(255,138,101,.16)',K:'rgba(99,202,183,.16)',RUN:'rgba(96,165,250,.16)',RBI:'rgba(251,191,36,.16)',HR:'rgba(244,63,94,.16)',HRR:'rgba(251,146,60,.16)',TB:'rgba(167,139,250,.16)',TBO:'rgba(74,222,128,.16)',BWALK:'rgba(52,211,153,.16)',pitcher_hits_allowed:'rgba(248,113,113,.16)',pitcher_outs:'rgba(167,139,250,.16)',pitcher_earned_runs:'rgba(251,146,60,.16)',pitcher_walks:'rgba(52,211,153,.16)'};
+  var tagFg={HIT:'#f59e0b',UNDER:'#ff8a65',K:'#63cab7',RUN:'#60a5fa',RBI:'#fbbf24',HR:'#f43f5e',HRR:'#fb923c',TB:'#a78bfa',TBO:'#4ade80',BWALK:'#34d399',pitcher_hits_allowed:'#f87171',pitcher_outs:'#a78bfa',pitcher_earned_runs:'#fb923c',pitcher_walks:'#34d399'};
+  var tagLbl={HIT:'HIT',UNDER:'U1.5',K:'K',RUN:'RUNS',RBI:'RBI',HR:'HR',HRR:'HRR',TB:'U1.5 TB',TBO:'O1.5 TB',BWALK:'BB (BAT)',pitcher_hits_allowed:'H ALLOW',pitcher_outs:'OUTS',pitcher_earned_runs:'ER',pitcher_walks:'BB (PIT)'};
   var rows=legs.map(function(l,idx){var fo=_fmtOdds(l.odds);return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #1a1a1a">'
     +'<div style="min-width:0">'
     +'<div style="font-weight:800;color:#fff;font-size:.85rem">'+(idx+1)+'. '+_nameSpan(l.src,l.player)+' <span style="color:#777;font-size:.7rem">'+(l.team?l.team+' ':'')+'vs '+l.opp+'</span> <span style="background:'+(tagBg[l.type]||'#222')+';color:'+(tagFg[l.type]||'#aaa')+';padding:1px 6px;border-radius:4px;font-size:.6rem;font-weight:800">'+(tagLbl[l.type]||l.type)+'</span></div>'
@@ -3883,7 +3956,7 @@ window.PARLAY_OVERS = false;
 window.PARLAY_MINUS = false;
 window.PARLAY_PLUS = false;
 // Parlay category checkboxes — which pick categories feed the parlay pool (all on by default).
-window.PARLAY_CATS = {HIT_O:true,HIT_U:true,TB_O:true,TB_U:true,RUN_O:true,RUN_U:true,RBI_O:true,RBI_U:true,HRR_O:true,HRR_U:true,BWALK_O:true,BWALK_U:true,K_O:true,K_U:true,PHA_O:true,PHA_U:true,POUT_O:true,POUT_U:true,PER_O:true,PER_U:true,PWK_O:true,PWK_U:true};
+window.PARLAY_CATS = {HIT_O:true,HIT_U:true,TB_O:true,TB_U:true,RUN_O:true,RUN_U:true,RBI_O:true,RBI_U:true,HR_O:true,HR_U:true,HRR_O:true,HRR_U:true,BWALK_O:true,BWALK_U:true,K_O:true,K_U:true,PHA_O:true,PHA_U:true,POUT_O:true,POUT_U:true,PER_O:true,PER_U:true,PWK_O:true,PWK_U:true};
 // Parlay game filter — which games feed the parlay pool. Empty = all games allowed; a
 // game is excluded only when explicitly set false. Keyed by the same gameKey() label as
 // the "By Game" card. Repopulated each run from the day's slate (_buildGamesMenu).
@@ -3948,6 +4021,7 @@ function _legCat(c){
   if(c.type==='TBO') return 'TB_O';
   if(c.type==='RUN') return 'RUN_'+dir;
   if(c.type==='RBI') return 'RBI_'+dir;
+  if(c.type==='HR') return 'HR_'+dir;
   if(c.type==='HRR') return 'HRR_'+dir;
   if(c.type==='BWALK') return 'BWALK_'+dir;
   if(c.type==='K') return 'K_'+dir;
@@ -4057,6 +4131,7 @@ function _evFilterView(v){
     tb_over_picks:(v.tb_over_picks||[]).filter(_evPos),
     hrr_picks:(v.hrr_picks||[]).filter(_evPos),
     rbi_picks:(v.rbi_picks||[]).filter(_evPos),
+    hr_picks:(v.hr_picks||[]).filter(_evPos),
     walks_picks:(v.walks_picks||[]).filter(_evPos),
     runs_picks:(v.runs_picks||[]).filter(_evPos),
     pitcher_k: pk?Object.assign({},pk,{
@@ -4894,6 +4969,111 @@ function _rbiForm(key){
   ov.style.display='flex';
 }
 
+function _hrCard(p, rank, pfx) {
+  pfx = pfx || 'hr';
+  const abbr = _mlbTeamAbbr(p.team);
+  const teamLogo = abbr ? `https://a.espncdn.com/i/teamlogos/mlb/500/${abbr}.png` : '';
+  const isOver = p.pick==='OVER';
+  const rnkColors = rank===1?['#f43f5e','#000']:rank===2?['#fb7185','#000']:rank===3?['#be123c','#fff']:['#1e1e1e','#f43f5e'];
+  const sideCls = p.side==='HOME'?'badge-home':'badge-away';
+  const pickClr = isOver?'#63cab7':'#ff8a65';
+  const od = isOver?p.over_odds:p.under_odds;
+  const odDisp = od!=null?(od>0?'+':'')+od:'—';
+  const scoreClr = p.score>=35?'#63cab7':p.score>=20?'#fbbf24':'#ff8a65';
+  const log = p.recent_hr_log||[];
+  const recCnt = log.filter(g=>g.hr>=1).length;
+  const adminStats = `<div class="admin-only" style="display:none;font-size:.72rem;color:#64748b;margin-top:4px;line-height:1.7">
+    <span>Blended <strong style="color:#f43f5e">${p.score!=null?p.score+'%':'—'}</strong></span> &nbsp;
+    <span>Recent <strong style="color:#94a3b8">${p.recent_disp||'—'}</strong></span> &nbsp;
+    <span>vs Opp <strong style="color:#94a3b8">${p.team_disp||'—'}</strong></span> &nbsp;
+    <span>vs Pit <strong style="color:#94a3b8">${p.pit_disp||'—'}</strong></span>
+  </div>`;
+  window.__HR_REG__=window.__HR_REG__||{}; window.__HR_REG__[pfx+rank]=p;
+  return `<div class="mlb-pick-card" onclick="_hrForm('${pfx}${rank}')" title="Click for recent form" style="cursor:pointer">
+    <div class="mlb-card-header" style="background:linear-gradient(135deg,#1a0007 0%,#0d0004 100%)">
+      <div style="display:flex;align-items:center;gap:8px">
+        <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
+        ${_mlbHead(p.batter_id)}
+        <span style="font-size:.72rem;letter-spacing:.12em;color:#f43f5e;font-weight:800">MLB · HR</span>
+        ${_seriesTag(p,(p.pick==='OVER'?'O':'U'),false,2)}
+      </div>
+      ${teamLogo?`<img src="${teamLogo}" alt="${p.team}" style="height:34px;width:34px;object-fit:contain" onerror="this.style.display='none'"/>`:''}
+    </div>
+    <div class="mlb-card-name">${p.name}</div>
+    <div class="mlb-card-body">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <span style="font-size:.82rem;color:#94a3b8">vs <strong style="color:#fff">${p.opp||'—'}</strong></span>
+        <span class="badge ${sideCls}">${p.side}</span>
+      </div>
+      ${_envChip(p)}
+      ${_umpChip(p)}
+      ${_bpChip(p)}
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
+        <span style="font-size:.78rem;color:#94a3b8">HR Likelihood</span>
+        <span style="font-family:monospace;font-weight:700;color:${scoreClr}">${p.score!=null?p.score+'%':'—'} <span style="color:#64748b;font-size:.68rem">blend</span></span>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
+        <span style="font-size:.72rem;color:#64748b">Recent HR</span>
+        <span style="font-size:.78rem;color:#cbd5e1">${log.length?recCnt+'/'+log.length:(p.recent_disp||'—')}</span>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
+        <span style="font-size:.8rem;color:${pickClr};font-weight:900">${p.pick} ${p.line!=null?p.line:0.5} HR</span>
+        <span style="font-family:monospace;color:#f43f5e;font-weight:700;font-size:.95rem">${odDisp}${_bookTag(p)}</span>
+      </div>
+      ${_evBadge(p)}
+      ${adminStats}
+    </div>
+  ${_betBtn(p,'HR',p.pick,'homeRuns','HR',(p.line!=null?p.line:0.5),(p.pick==='OVER'?p.over_odds:p.under_odds))}
+  </div>`;
+}
+
+function _hrForm(key){
+  var p=(key&&typeof key==='object')?key:(window.__HR_REG__||{})[key]; if(!p) return;
+  var ov=document.getElementById('hr-modal');
+  if(!ov){
+    ov=document.createElement('div');
+    ov.id='hr-modal';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; };
+    document.body.appendChild(ov);
+  }
+  var log=p.recent_hr_log||[];
+  var isOver=(p.pick==='OVER');
+  var goal=isOver?'Over 0.5 HR (go deep)':'Under 0.5 HR (no homer)';
+  var rows=log.length?log.map(function(g){
+    var hit=g.hr>=1;
+    var good=isOver?hit:!hit;
+    var clr=good?'#63cab7':'#ff8a65';
+    var oppTxt=g.opp?((g.ha==='H'?'vs ':'@ ')+g.opp):'';
+    return `<tr>
+      <td style="padding:6px 10px;color:#94a3b8;font-family:monospace">${g.d||'—'}</td>
+      <td style="padding:6px 10px;color:#cbd5e1;font-size:.8rem">${oppTxt}</td>
+      <td style="padding:6px 10px;text-align:right;font-family:monospace;font-size:.8rem;color:#93c5fd">${g.h} H</td>
+      <td style="padding:6px 10px;text-align:right;font-family:monospace;font-weight:800;color:${clr}">${g.hr} HR</td>
+    </tr>`;
+  }).join(''):'<tr><td colspan="4" style="padding:14px;color:#64748b;text-align:center">No recent games on record</td></tr>';
+  var name=p.full_name||p.name||'';
+  var pickClr=isOver?'#63cab7':'#ff8a65';
+  ov.innerHTML=`<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:440px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid #1e293b">
+      <div>
+        <div style="font-weight:800;font-size:1.05rem;color:#fff">${name}</div>
+        <div style="color:#94a3b8;font-size:.78rem">${p.side||''} vs ${p.opp||''} · ${goal}</div>
+      </div>
+      <button onclick="document.getElementById('hr-modal').style.display='none'" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem">✕</button>
+    </div>
+    <div style="padding:14px 18px">
+      <div style="font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase;margin-bottom:8px">Blended HR ${p.score!=null?p.score+'%':''} · Recent ${p.recent_disp||''} · vs Opp ${p.team_disp||''} · Last ${log.length||0} Games</div>
+      <table style="width:100%;border-collapse:collapse;font-size:.85rem"><tbody>${rows}</tbody></table>
+      ${(function(){var pit=p.pitcher&&p.pitcher!=='TBD'?p.pitcher:'';if(!pit)return '';return '<div style="margin-top:10px;padding:8px 12px;background:#1a0c12;border-radius:8px;border:1px solid #3a1e2a"><div style="font-size:.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px">vs Today&#39;s Pitcher</div><div style="font-size:.82rem;color:#fda4af;line-height:1.8">HR vs '+pit+': <strong style="color:#fecdd3">'+(p.pit_disp||'N/A')+'</strong></div></div>';})()}
+      ${_ssBlock(p)}
+      ${_matrixWriteup(p,(isOver?'O':'U'),2,false,'HRs',goal)}
+      <div style="margin-top:12px;border-top:1px solid #1e293b;padding-top:10px;color:${pickClr};font-weight:800;font-size:.85rem">Pick: ${goal}</div>
+    </div>
+  </div>`;
+  ov.style.display='flex';
+}
+
 function _walksCard(p, rank, pfx) {
   pfx = pfx || 'bw';
   const abbr = _mlbTeamAbbr(p.team);
@@ -5172,6 +5352,7 @@ function _t10Odds(p, kind) {
     case 'TB OVER': return p.tb_over_odds;
     case 'HRR':     return p.pick==='UNDER'?p.hrr_under_odds:p.hrr_over_odds;
     case 'RBI':     return p.pick==='OVER'?p.over:p.under;
+    case 'HR':      return p.pick==='OVER'?p.over_odds:p.under_odds;
     case 'RUNS':    return p.pick==='OVER'?p.over_odds:p.under_odds;
     case 'BWALK':   return p.pick==='OVER'?p.over_odds:p.under_odds;
     case 'UNDER':   return p.pick==='OVER'?p.over_odds:p.under_odds;
@@ -5180,6 +5361,7 @@ function _t10Odds(p, kind) {
 }
 function _t10RateDisp(p, kind) {
   if(kind==='HITTER'){ var s4=p.s4||{}; return s4.games>0?s4.hits_games+'/'+s4.games:(p.s4_display||'—'); }
+  if(kind==='HR'){ return p.score!=null?p.score+'%':'—'; }
   return p.rate_disp||'—';
 }
 function _t10Label(kind, p) {
@@ -5188,6 +5370,7 @@ function _t10Label(kind, p) {
     case 'TB OVER': return 'OVER 1.5 Total Bases';
     case 'HRR':     return (p.pick==='UNDER'?'UNDER':'OVER')+' 1.5 H+R+RBI';
     case 'RBI':     return (p.pick||'OVER')+' 0.5 RBI';
+    case 'HR':      return (p.pick||'OVER')+' 0.5 HR';
     case 'RUNS':    return (p.pick||'OVER')+' 0.5 Runs';
     case 'BWALK':   return (p.pick||'OVER')+' 0.5 Walks';
     case 'UNDER':   return (p.pick||'UNDER')+' 1.5 Hits';
@@ -5200,6 +5383,7 @@ function _t10KindColor(kind) {
     case 'TB OVER': return '#4ade80';
     case 'HRR':     return '#fb923c';
     case 'RBI':     return '#fbbf24';
+    case 'HR':      return '#f43f5e';
     case 'RUNS':    return '#60a5fa';
     case 'BWALK':   return '#34d399';
     case 'UNDER':   return '#ff8a65';
@@ -5207,7 +5391,7 @@ function _t10KindColor(kind) {
   }
 }
 function _t10KindBadge(kind) {
-  var abbrs={'HITTER':'HIT','TB OVER':'TB\u2191','HRR':'HRR','RBI':'RBI','RUNS':'RUN','BWALK':'BB','UNDER':'U-HIT'};
+  var abbrs={'HITTER':'HIT','TB OVER':'TB\u2191','HRR':'HRR','RBI':'RBI','HR':'HR','RUNS':'RUN','BWALK':'BB','UNDER':'U-HIT'};
   return abbrs[kind]||kind;
 }
 // Pitching plays-of-the-day list (Ks + props), EV-sorted, RED lights dropped so
@@ -5250,6 +5434,7 @@ function _buildTop10(view) {
   _add(view.tb_over_picks, 'TB OVER');
   _add(view.hrr_picks,     'HRR');
   _add(view.rbi_picks,     'RBI');
+  _add(view.hr_picks,      'HR');
   _add(view.runs_picks,    'RUNS');
   _add(view.walks_picks,   'BWALK');
   plays.sort(function(a,b){ return b._t10ev - a._t10ev; });
@@ -5264,6 +5449,7 @@ function _top10BetBtn(p, kind) {
     case 'TB OVER': return _betBtn(p,'Top 10 Batter','OVER','total_bases','Total Bases',1.5,p.tb_over_odds);
     case 'HRR':     { var odh=p.pick==='UNDER'?p.hrr_under_odds:p.hrr_over_odds; return _betBtn(p,'Top 10 Batter',(p.pick==='UNDER'?'UNDER':'OVER'),'hrr','H+R+RBI',1.5,odh); }
     case 'RBI':     { var od=p.pick==='OVER'?p.over:p.under; return _betBtn(p,'Top 10 Batter',(p.pick||'OVER'),'rbi','RBI',(p.line||0.5),od); }
+    case 'HR':      { var odhr=p.pick==='OVER'?p.over_odds:p.under_odds; return _betBtn(p,'Top 10 Batter',(p.pick||'OVER'),'homeRuns','HR',(p.line||0.5),odhr); }
     case 'RUNS':    { var od2=p.pick==='OVER'?p.over_odds:p.under_odds; return _betBtn(p,'Top 10 Batter',(p.pick||'OVER'),'runs','Runs',(p.line||0.5),od2); }
     case 'BWALK':   { var odw=p.pick==='OVER'?p.over_odds:p.under_odds; return _betBtn(p,'Top 10 Batter',(p.pick||'OVER'),'walks_bat','Walks',(p.line||0.5),odw); }
     case 'UNDER':   { var od3=p.pick==='OVER'?p.over_odds:p.under_odds; return _betBtn(p,'Top 10 Batter',(p.pick||'UNDER'),'hits','Hits',1.5,od3); }
@@ -5277,6 +5463,7 @@ function _top10Form(key) {
   else if(kind==='TB OVER') { _tbOverForm(p); }
   else if(kind==='HRR') { _hrrForm(p); }
   else if(kind==='RBI') { if(typeof _rbiForm==='function') _rbiForm(p); }
+  else if(kind==='HR') { if(typeof _hrForm==='function') _hrForm(p); }
   else if(kind==='RUNS') { if(typeof _runsForm==='function') _runsForm(p); }
   else if(kind==='BWALK') { if(typeof _walksForm==='function') _walksForm(p); }
 }
@@ -5680,6 +5867,7 @@ function renderGradeResults(data) {
   pushOne((data.tb_over ||[]).slice(0,10), 'Total Bases \u2014 OVER 1.5',  C_OVER);
   pushOne((data.tb_under||[]).slice(0,10), 'Total Bases \u2014 UNDER 1.5', C_UNDER);
   pushPair(data.rbi, 'RBI 0.5');
+  pushPair(data.hr, 'HR 0.5');
   pushPair(data.batter_walks, 'Batter Walks 0.5');
   pushPair(data.hrr, 'HRR 1.5 (H+R+RBI)');
   pushPair(data.pitcher_ks, 'Pitcher Strikeouts');
@@ -5847,6 +6035,8 @@ function _trkBuildCfg(){
     'TB Over|OVER':              {lbl:'TB Over 1.5',                icon:'📈', abbr:'TB+'},
     'RBI|OVER':                  {lbl:'RBI (Over 0.5)',             icon:'💥', abbr:'RBI+'},
     'RBI|UNDER':                 {lbl:'RBI (Under 0.5)',            icon:'💥', abbr:'RBI-'},
+    'HR|OVER':                   {lbl:'HR (Over 0.5)',              icon:'💣', abbr:'HR+'},
+    'HR|UNDER':                  {lbl:'HR (Under 0.5)',             icon:'💣', abbr:'HR-'},
     'Batter Walks|OVER':         {lbl:'Batter Walks (Over 0.5)',    icon:'🚶', abbr:'BBat+'},
     'Batter Walks|UNDER':        {lbl:'Batter Walks (Under 0.5)',   icon:'🚶', abbr:'BBat-'},
     'HRR|OVER':                  {lbl:'HRR (Over 1.5 H+R+RBI)',     icon:'🔥', abbr:'HRR+'},
@@ -5861,6 +6051,8 @@ function _trkBuildCfg(){
     'TB Over (OVF)|OVER':        {lbl:'TB Over 1.5 Overflow',       icon:'📈'},
     'RBI (OVF)|OVER':            {lbl:'RBI Overflow (Over)',        icon:'💥'},
     'RBI (OVF)|UNDER':           {lbl:'RBI Overflow (Under)',       icon:'💥'},
+    'HR (OVF)|OVER':             {lbl:'HR Overflow (Over)',         icon:'💣'},
+    'HR (OVF)|UNDER':            {lbl:'HR Overflow (Under)',        icon:'💣'},
     'Batter Walks (OVF)|OVER':   {lbl:'Batter Walks Overflow (Over)',  icon:'🚶'},
     'Batter Walks (OVF)|UNDER':  {lbl:'Batter Walks Overflow (Under)', icon:'🚶'},
     'HRR (OVF)|OVER':            {lbl:'HRR Overflow (Over 1.5)',    icon:'🔥'},
@@ -5878,12 +6070,12 @@ function _trkBuildCfg(){
   };
   var CAT_ORDER=['Top 10 Batter|OVER','Top 10 Batter|UNDER','Top 10 Pitcher|OVER','Top 10 Pitcher|UNDER',
     'Hitter Hits|OVER','Hitter Hits|UNDER','Runs|OVER','Runs|UNDER',
-    'TB Under|UNDER','TB Over|OVER','RBI|OVER','RBI|UNDER','Batter Walks|OVER','Batter Walks|UNDER','HRR|OVER','HRR|UNDER',
+    'TB Under|UNDER','TB Over|OVER','RBI|OVER','RBI|UNDER','HR|OVER','HR|UNDER','Batter Walks|OVER','Batter Walks|UNDER','HRR|OVER','HRR|UNDER',
     'Pitcher Ks|OVER','Pitcher Ks|UNDER','Pitcher Hits Allowed|OVER','Pitcher Hits Allowed|UNDER',
     'Pitcher Outs|OVER','Pitcher Outs|UNDER','Pitcher Earned Runs|OVER','Pitcher Earned Runs|UNDER',
     'Pitcher Walks|OVER','Pitcher Walks|UNDER'];
   var OVF_ORDER=['Hitter Hits (More)|OVER','Hitter Hits (More)|UNDER','Runs (OVF)|OVER','Runs (OVF)|UNDER',
-    'TB Under (OVF)|UNDER','TB Over (OVF)|OVER','RBI (OVF)|OVER','RBI (OVF)|UNDER',
+    'TB Under (OVF)|UNDER','TB Over (OVF)|OVER','RBI (OVF)|OVER','RBI (OVF)|UNDER','HR (OVF)|OVER','HR (OVF)|UNDER',
     'Batter Walks (OVF)|OVER','Batter Walks (OVF)|UNDER','HRR (OVF)|OVER','HRR (OVF)|UNDER',
     'Pitcher Ks (OVF)|OVER','Pitcher Ks (OVF)|UNDER','Pitcher Hits Allowed (OVF)|OVER','Pitcher Hits Allowed (OVF)|UNDER',
     'Pitcher Outs (OVF)|OVER','Pitcher Outs (OVF)|UNDER','Pitcher Earned Runs (OVF)|OVER','Pitcher Earned Runs (OVF)|UNDER',
@@ -5918,7 +6110,7 @@ function renderTrackRecord(d){
 function _mtxCatInfo(cat){
   var M={
     'Hitter Hits':[false,0],'Runs':[false,3],'TB Under':[false,1],'TB Over':[false,1],
-    'RBI':[false,4],'Batter Walks':[false,5],'HRR':[false,2],
+    'RBI':[false,4],'HR':[false,2],'Batter Walks':[false,5],'HRR':[false,2],
     'Pitcher Ks':[true,0],'Pitcher Hits Allowed':[true,1],'Pitcher Outs':[true,2],
     'Pitcher Earned Runs':[true,3],'Pitcher Walks':[true,4]
   };
@@ -6149,7 +6341,7 @@ function _trkRenderDaily(stake){
   de.innerHTML=daily.length?'<details open style="margin-top:0"><summary style="cursor:pointer;font-weight:700;color:#a78bfa;padding:10px 0;border-bottom:1px solid #1f2937">📅 Daily \u2014 every pick by category ('+daily.length+' day'+(daily.length===1?'':'s')+')</summary><div style="margin-top:6px">'+dayBlocks+'</div></details>':'';
 }
 // ===== Track Record tabs: Daily / Weekly (last 7 days) / Monthly =====
-var _TRK_KEYS=['top10_batter','top10_pitcher','hitter_overs','hitter_unders','runs','tb_under','tb_over','rbi','batter_walks','hrr','pitcher_ks','pitcher_props'];
+var _TRK_KEYS=['top10_batter','top10_pitcher','hitter_overs','hitter_unders','runs','tb_under','tb_over','rbi','hr','batter_walks','hrr','pitcher_ks','pitcher_props'];
 function _trkTodayISO(){ var dp=document.getElementById('date-picker'); if(dp&&dp.value) return dp.value; var d=new Date(); var z=d.getTimezoneOffset()*60000; return new Date(d.getTime()-z).toISOString().slice(0,10); }
 function _isoShift(iso,days){ var d=new Date(iso+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()+days); return d.toISOString().slice(0,10); }
 function _trkRC(w,n){ if(!n) return '#64748b'; var p=w/n; return p>=0.70?'#4ade80':(p>=0.55?'#facc15':'#f87171'); }
@@ -7037,6 +7229,8 @@ function _manualBetForm(){
     {label:'Runs Under 0.5',       cat:'Runs',          sk:'runs',         sl:'Runs',          line:0.5, side:'UNDER'},
     {label:'RBI Over 0.5',         cat:'RBI',           sk:'rbi',          sl:'RBI',           line:0.5, side:'OVER'},
     {label:'RBI Under 0.5',        cat:'RBI',           sk:'rbi',          sl:'RBI',           line:0.5, side:'UNDER'},
+    {label:'HR Over 0.5',          cat:'HR',            sk:'homeRuns',     sl:'HR',            line:0.5, side:'OVER'},
+    {label:'HR Under 0.5',         cat:'HR',            sk:'homeRuns',     sl:'HR',            line:0.5, side:'UNDER'},
     {label:'HRR Over 1.5',         cat:'HRR',           sk:'hrr',          sl:'H+R+RBI',       line:1.5, side:'OVER'},
     {label:'HRR Under 1.5',        cat:'HRR',           sk:'hrr',          sl:'H+R+RBI',       line:1.5, side:'UNDER'},
     {label:'Batter Walks Over 0.5',cat:'Batter Walks',  sk:'walks_bat',    sl:'Walks',         line:0.5, side:'OVER'},
