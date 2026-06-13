@@ -905,11 +905,11 @@ def run_runs_picks(run_date: str, team_schedule: dict, emit=None) -> list:
 
 
 # ── RBI Picks (Batter RBIs, Over/Under 0.5) ────────────────────────────────
-# Full over/under category: OVER when batter drives in runs at ≥70% H/A vs opp,
+# Full over/under category: OVER when batter drives in runs at ≥60% H/A vs opp,
 # UNDER when ≤30%. Vs-opp only (min 3 games). Ranked by Wilson lower bound.
 # Odds from RBI_ODDS (batter_rbis market), zero extra Odds API calls.
 
-RBI_OVER_CUT  = 70   # >= this % → likely to drive in a run
+RBI_OVER_CUT  = 60   # >= this % → likely to drive in a run
 RBI_UNDER_CUT = 30   # <= this % → likely NOT to drive in a run
 RBI_MIN_GAMES = 3    # minimum head-to-head games vs THIS opponent to qualify
 RBI_TOP_N     = 20   # cap per side
