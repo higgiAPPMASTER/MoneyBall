@@ -25,31 +25,28 @@ _PLAYER_MAP:    dict = {}
 _PITCHER_CACHE: dict = {}
 
 # ── Best-price book selection ──────────────────────────────────────────────
-# Show the BEST price among the user's Ontario-legal sportsbooks ONLY (MY_BOOKS).
-# Non-Ontario books (Fliff, ESPN BET, offshore, etc.) are ignored entirely — no
-# US fallback. Each pick carries which book the displayed (pick-side) price came from.
-MY_BOOKS = ("bet99", "thescore", "bet365", "draftkings", "fanduel", "betmgm", "caesars", "williamhill_us", "betrivers", "ballybet")
-_BOOK_LABEL = {"bet99":"Bet99","thescore":"theScore","bet365":"Bet365","draftkings":"DK","fanduel":"FanDuel","betmgm":"BetMGM","caesars":"Caesars","williamhill_us":"Caesars","betrivers":"BetRivers","ballybet":"Bally Bet"}
+# Show the BEST price across ALL sportsbooks; big US books win on ties.
+# Priority: DraftKings / FanDuel / BetMGM / Caesars first, then mid-tier,
+# then smaller books (Fliff, ESPN BET, offshore, etc.) at the bottom.
+_PRIORITY_BOOKS = ("draftkings", "fanduel", "betmgm", "williamhill_us", "caesars",
+                   "betrivers", "ballybet", "bet365", "espnbet",
+                   "bet99", "thescore", "fliff", "mybookieag", "betonlineag", "bovada")
+_BOOK_PRIORITY = {b: i for i, b in enumerate(_PRIORITY_BOOKS)}
+_BOOK_LABEL = {"bet99":"Bet99","thescore":"theScore","bet365":"Bet365","draftkings":"DK","fanduel":"FanDuel","betmgm":"BetMGM","caesars":"Caesars","williamhill_us":"Caesars","betrivers":"BetRivers","ballybet":"Bally Bet","espnbet":"ESPN BET","fliff":"Fliff","mybookieag":"MyBookie","betonlineag":"BetOnline","bovada":"Bovada"}
 def _book_label(k):
     return _BOOK_LABEL.get(k, (k or "").replace("_"," ").title())
 def _take_odds(entry, price_field, book_field, price, book_key):
-    """Ontario books only: ignore any book outside MY_BOOKS; among them keep the best American price."""
-    if price is None or book_key not in MY_BOOKS:
-        return
-    cur = entry.get(price_field)
-    if cur is None or price > cur:
-        entry[price_field] = price
-        entry[book_field] = book_key
-def _take_odds_any(entry, price_field, book_field, price, book_key):
-    """Any book: keep the best American price regardless of book origin.
-    Used for niche markets (e.g. batter_hits 1.5 line) where Ontario books
-    don't post the prop, so US fallback is required to avoid empty odds."""
+    """All books: keep the best American price; tie-break by book priority (big books first)."""
     if price is None:
         return
     cur = entry.get(price_field)
-    if cur is None or price > cur:
+    cur_book = entry.get(book_field)
+    if cur is None or price > cur or (price == cur and _BOOK_PRIORITY.get(book_key, 999) < _BOOK_PRIORITY.get(cur_book, 999)):
         entry[price_field] = price
         entry[book_field] = book_key
+def _take_odds_any(entry, price_field, book_field, price, book_key):
+    """Alias — all books accepted (same as _take_odds)."""
+    _take_odds(entry, price_field, book_field, price, book_key)
 
 # Populated by _fetch_hits_lines: normalized player name -> Over price on the 0.5 hits line
 # (i.e. the standard "to record a hit" prop). Read by pipeline.py to enrich top9 picks.
@@ -328,7 +325,7 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
     RBI_ODDS.clear()
     HRR_ODDS.clear()
     WALKS_ODDS.clear()
-    PREFERRED = ["draftkings", "fanduel", "betmgm", "williamhill_us", "betrivers", "ballybet", "bet365", "bet99", "thescore"]
+    PREFERRED = ["draftkings", "fanduel", "betmgm", "williamhill_us", "caesars", "betrivers", "ballybet", "bet365", "espnbet", "bet99", "thescore", "fliff", "mybookieag", "betonlineag", "bovada"]
     tomorrow  = (time.strftime("%Y-%m-%d",
                   time.gmtime(time.mktime(time.strptime(run_date, "%Y-%m-%d")) + 86400)))
     try:
@@ -391,13 +388,13 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
                         if not player or pt is None or side != "Over": continue
                         nk = _norm_name(player)
                         if pt == 0.5 and price is not None:
-                            # Displayed 0.5 "to record a hit" Over price: Ontario books
-                            # only, best price; record its source in HIT_ODDS_BOOK.
-                            if _bk in MY_BOOKS:
-                                _cur = HIT_ODDS.get(nk)
-                                if _cur is None or price > _cur:
-                                    HIT_ODDS[nk] = price
-                                    HIT_ODDS_BOOK[nk] = _bk
+                            # Displayed 0.5 "to record a hit" Over price: best price
+                            # across all books; big books win on ties.
+                            _cur = HIT_ODDS.get(nk)
+                            _cur_book = HIT_ODDS_BOOK.get(nk)
+                            if _cur is None or price > _cur or (price == _cur and _BOOK_PRIORITY.get(_bk, 999) < _BOOK_PRIORITY.get(_cur_book, 999)):
+                                HIT_ODDS[nk] = price
+                                HIT_ODDS_BOOK[nk] = _bk
                             hit05.setdefault(nk, {"name": player,
                                                   "home_team": home_team,
                                                   "away_team": away_team})
