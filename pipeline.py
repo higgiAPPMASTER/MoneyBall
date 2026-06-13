@@ -2127,14 +2127,15 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     ))
 
     # HR 0.5: OVERs by blended likelihood (wilson=blended prob) × offense;
-    # UNDERs by score (blended %) ascending — lowest HR chance = best fade.
+    # UNDERs ranked biggest-hitter-first by under juice — least-juiced under
+    # (closest to even, e.g. -150 before -500) on top = strongest power threats
+    # the market fades. (Selection/juice cap lives in under_picks.run_hr_picks.)
     hr_picks_list.sort(key=lambda p: (
         0 if p.get("pick") == "OVER" else 1,
         -((p.get("wilson", 0) * _offf(p))
           + p.get("pitch_adj", 0) + p.get("lineup_adj", 0))
         if p.get("pick") == "OVER"
-        else (p.get("score", 0) * _offf(p)
-              + p.get("pitch_adj", 0) + p.get("lineup_adj", 0)),
+        else -(p.get("under_odds") if p.get("under_odds") is not None else -100000),
         -p.get("games", 0),
     ))
 
