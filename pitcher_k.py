@@ -52,19 +52,23 @@ _PK_PITCH_LOADED:  set  = set()   # years fetched for pitch-type data
 _PK_LINEUP_MAP:    dict = {}      # {norm_team: [batter_id_int]} — tonight's lineups
 
 # ── Best-price book selection ──────────────────────────────────────────────
-# Show the BEST price among the user's Ontario-legal sportsbooks ONLY (MY_BOOKS).
-# Non-Ontario books (Fliff, ESPN BET, offshore, etc.) are ignored entirely — no
-# US fallback. Each pick carries which book the displayed (pick-side) price came from.
-MY_BOOKS = ("bet99", "thescore", "bet365", "draftkings", "fanduel", "betmgm", "caesars", "williamhill_us", "betrivers", "ballybet")
-_BOOK_LABEL = {"bet99":"Bet99","thescore":"theScore","bet365":"Bet365","draftkings":"DK","fanduel":"FanDuel","betmgm":"BetMGM","caesars":"Caesars","williamhill_us":"Caesars","betrivers":"BetRivers","ballybet":"Bally Bet"}
+# Show the BEST price across ALL sportsbooks; big US books win on ties.
+# Priority: DraftKings / FanDuel / BetMGM / Caesars first, then mid-tier,
+# then smaller books (Fliff, ESPN BET, offshore, etc.) at the bottom.
+_PRIORITY_BOOKS = ("draftkings", "fanduel", "betmgm", "williamhill_us", "caesars",
+                   "betrivers", "ballybet", "bet365", "espnbet",
+                   "bet99", "thescore", "fliff", "mybookieag", "betonlineag", "bovada")
+_BOOK_PRIORITY = {b: i for i, b in enumerate(_PRIORITY_BOOKS)}
+_BOOK_LABEL = {"bet99":"Bet99","thescore":"theScore","bet365":"Bet365","draftkings":"DK","fanduel":"FanDuel","betmgm":"BetMGM","caesars":"Caesars","williamhill_us":"Caesars","betrivers":"BetRivers","ballybet":"Bally Bet","espnbet":"ESPN BET","fliff":"Fliff","mybookieag":"MyBookie","betonlineag":"BetOnline","bovada":"Bovada"}
 def _book_label(k):
     return _BOOK_LABEL.get(k, (k or "").replace("_"," ").title())
 def _take_odds(entry, price_field, book_field, price, book_key):
-    """Ontario books only: ignore any book outside MY_BOOKS; among them keep the best American price."""
-    if price is None or book_key not in MY_BOOKS:
+    """All books: keep the best American price; tie-break by book priority (big books first)."""
+    if price is None:
         return
     cur = entry.get(price_field)
-    if cur is None or price > cur:
+    cur_book = entry.get(book_field)
+    if cur is None or price > cur or (price == cur and _BOOK_PRIORITY.get(book_key, 999) < _BOOK_PRIORITY.get(cur_book, 999)):
         entry[price_field] = price
         entry[book_field] = book_key
 
@@ -210,7 +214,7 @@ def _fetch_k_lines(run_date: str, emit=None) -> list:
         log("⚠️  ODDS_API_KEY not set — Pitcher K Picks skipped")
         return []
 
-    PREFERRED = ["draftkings", "fanduel", "betmgm", "williamhill_us", "betrivers", "ballybet", "bet365", "bet99", "thescore"]
+    PREFERRED = ["draftkings", "fanduel", "betmgm", "williamhill_us", "caesars", "betrivers", "ballybet", "bet365", "espnbet", "bet99", "thescore", "fliff", "mybookieag", "betonlineag", "bovada"]
     MARKETS   = ["pitcher_strikeouts", "pitcher_strikeouts_alternate"]
     # Tomorrow's UTC date derived from run_date (matches under_picks). Used only
     # to keep tonight's late games that roll past midnight UTC — NOT to pull
@@ -251,7 +255,7 @@ def _fetch_k_lines(run_date: str, emit=None) -> list:
                 r2 = requests.get(
                     f"{ODDS_BASE}/sports/baseball_mlb/events/{ev['id']}/odds",
                     params={"apiKey": ODDS_API_KEY, "regions": "us,us2,ca",
-                            "markets": market, "bookmakers": ",".join(PREFERRED),
+                            "markets": market,
                             "oddsFormat": "american"}, timeout=15)
                 if not r2.ok: continue
                 for bm in r2.json().get("bookmakers", []):
