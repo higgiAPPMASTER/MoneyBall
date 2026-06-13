@@ -5984,7 +5984,7 @@ function _trkRenderDaily(stake){
   de.innerHTML=daily.length?'<details open style="margin-top:0"><summary style="cursor:pointer;font-weight:700;color:#a78bfa;padding:10px 0;border-bottom:1px solid #1f2937">📅 Daily \u2014 every pick by category ('+daily.length+' day'+(daily.length===1?'':'s')+')</summary><div style="margin-top:6px">'+dayBlocks+'</div></details>':'';
 }
 // ===== Track Record tabs: Daily / Weekly (last 7 days) / Monthly =====
-var _TRK_KEYS=['hitter_overs','hitter_unders','runs','tb_under','tb_over','rbi','batter_walks','hrr','pitcher_ks','pitcher_props'];
+var _TRK_KEYS=['top10_batter','top10_pitcher','hitter_overs','hitter_more','hitter_unders','runs','tb_under','tb_over','rbi','batter_walks','hrr','pitcher_ks','pitcher_props'];
 function _trkTodayISO(){ var dp=document.getElementById('date-picker'); if(dp&&dp.value) return dp.value; var d=new Date(); var z=d.getTimezoneOffset()*60000; return new Date(d.getTime()-z).toISOString().slice(0,10); }
 function _isoShift(iso,days){ var d=new Date(iso+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()+days); return d.toISOString().slice(0,10); }
 function _trkRC(w,n){ if(!n) return '#64748b'; var p=w/n; return p>=0.70?'#4ade80':(p>=0.55?'#facc15':'#f87171'); }
