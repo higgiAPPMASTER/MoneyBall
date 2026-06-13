@@ -3395,6 +3395,7 @@ function _runsForm(key){
     <div style="padding:14px 18px">
       <div style="font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase;margin-bottom:8px">Runs Rate ${p.rate_disp||''} · Last ${log.length||0} Games</div>
       <table style="width:100%;border-collapse:collapse;font-size:.85rem"><tbody>${rows}</tbody></table>
+      ${(function(){var pit=p.pitcher&&p.pitcher!=='TBD'?p.pitcher:'';if(!pit)return '';var s1=p.s1_ab>0?('Career BA vs '+pit+': <strong style="color:#f8fafc">'+p.s1_disp+'</strong>'):('Career BA vs '+pit+': <strong style="color:#64748b">N/A</strong>');return '<div style="margin-top:10px;padding:8px 12px;background:#0c1a14;border-radius:8px;border:1px solid #1e3a2f"><div style="font-size:.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px">vs Today&#39;s Pitcher</div><div style="font-size:.82rem;color:#86efac;line-height:1.8">'+s1+'</div></div>';})()}
       ${_ssBlock(p)}
       ${_matrixWriteup(p,(isOver?'O':'U'),3,false,'runs',goal)}
       <div style="margin-top:12px;border-top:1px solid #1e293b;padding-top:10px;color:${pickClr};font-weight:800;font-size:.85rem">Pick: ${goal}</div>
@@ -4734,6 +4735,7 @@ function _rbiForm(key){
     <div style="padding:14px 18px">
       <div style="font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase;margin-bottom:8px">RBI Rate ${p.rate_disp||''} · Last ${log.length||0} Games</div>
       <table style="width:100%;border-collapse:collapse;font-size:.85rem"><tbody>${rows}</tbody></table>
+      ${(function(){var pit=p.pitcher&&p.pitcher!=='TBD'?p.pitcher:'';if(!pit)return '';var s1=p.s1_ab>0?('Career BA vs '+pit+': <strong style="color:#f8fafc">'+p.s1_disp+'</strong>'):('Career BA vs '+pit+': <strong style="color:#64748b">N/A</strong>');return '<div style="margin-top:10px;padding:8px 12px;background:#0c1a14;border-radius:8px;border:1px solid #1e3a2f"><div style="font-size:.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px">vs Today&#39;s Pitcher</div><div style="font-size:.82rem;color:#86efac;line-height:1.8">'+s1+'</div></div>';})()}
       ${_ssBlock(p)}
       ${_matrixWriteup(p,(isOver?'O':'U'),4,false,'RBIs',goal)}
       <div style="margin-top:12px;border-top:1px solid #1e293b;padding-top:10px;color:${pickClr};font-weight:800;font-size:.85rem">Pick: ${goal}</div>
@@ -5270,6 +5272,7 @@ function _hrrForm(key){
       +'<th style="text-align:right;padding:4px 10px;font-size:.7rem;color:#64748b;font-weight:600;border-bottom:1px solid #1e293b">Breakdown</th>'
       +'<th style="text-align:right;padding:4px 10px;font-size:.7rem;color:#64748b;font-weight:600;border-bottom:1px solid #1e293b">HRR</th>'
     +'</tr></thead><tbody>'+rows+'</tbody></table>'
+    +(function(){var pit=p.pitcher&&p.pitcher!=='TBD'?p.pitcher:'';if(!pit)return '';var s1=p.s1_ab>0?('Career BA vs '+pit+': <strong style="color:#f8fafc">'+p.s1_disp+'</strong>'):('Career BA vs '+pit+': <strong style="color:#64748b">N/A</strong>');return '<div style="margin-top:10px;padding:8px 12px;background:#0c1a14;border-radius:8px;border:1px solid #1e3a2f"><div style="font-size:.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px">vs Today&#39;s Pitcher</div><div style="font-size:.82rem;color:#86efac;line-height:1.8">'+s1+'</div></div>';})()
     +_ssBlock(p)
     +_matrixWriteup(p,(isUnder?'U':'O'),2,false,'HRR (hits+runs+RBI)',(isUnder?'Under 1.5 H+R+RBI':'Over 1.5 H+R+RBI'))
     +'</div></div>';
@@ -5308,6 +5311,16 @@ function _tbForm(key){
     +'<div style="padding:14px 18px">'
       +'<div style="font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase;margin-bottom:8px">TB Rate '+(p.rate_disp||'')+' \u00b7 Last '+log.length+' Games</div>'
       +'<table style="width:100%;border-collapse:collapse;font-size:.85rem"><tbody>'+rows+'</tbody></table>'
+      +(function(){
+        var pit=p.pitcher&&p.pitcher!=='TBD'?p.pitcher:'';
+        if(!pit) return '';
+        var s1=p.s1_ab>0?('Career BA vs '+pit+': <strong style="color:#f8fafc">'+p.s1_disp+'</strong>')
+                        :('Career BA vs '+pit+': <strong style="color:#64748b">N/A</strong>');
+        return '<div style="margin-top:10px;padding:8px 12px;background:#0c1a14;border-radius:8px;border:1px solid #1e3a2f">'
+          +'<div style="font-size:.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px">vs Today&#39;s Pitcher</div>'
+          +'<div style="font-size:.82rem;color:#86efac;line-height:1.8">'+s1+'</div>'
+          +'</div>';
+      })()
       +_ssBlock(p)
       +_matrixWriteup(p,'U',1,false,'total bases','Under 1.5 total bases')
       +'<div style="margin-top:12px;border-top:1px solid #1e293b;padding-top:10px;color:#a78bfa;font-weight:800;font-size:.85rem">Pick: Under 1.5 Total Bases</div>'
