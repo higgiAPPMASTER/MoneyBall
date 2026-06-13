@@ -1122,7 +1122,10 @@ def run_rbi_picks(run_date: str, team_schedule: dict, emit=None) -> list:
 # <= HR_UNDER_CUT %. Odds from HR_ODDS (batter_home_runs), zero extra API calls.
 
 HR_OVER_CUT  = 20     # blended HR% >= this → OVER (likely to homer)
-HR_UNDER_CUT = 8      # blended HR% <= this → UNDER (very unlikely to homer)
+HR_UNDER_CUT = 8      # blended HR% <= this → UNDER (very unlikely to homer) [legacy, unused]
+HR_UNDER_MAX_JUICE = -500  # HR UNDER juice cap: keep unders priced -500..-100 (real
+                           # power hitters the market won't homer); drop deeper juice
+                           # (-600/-2000 scrubs nobody plays). Tunable. American odds.
 HR_TOP_N     = 20     # cap per side (top 10 on cards + 11-20 overflow)
 HR_LG_PA     = 0.035  # league HR per plate appearance (vs-pitcher prior)
 HR_LG_PG     = 0.11   # league HR per game for a rostered hitter (recent/team prior)
@@ -1301,41 +1304,57 @@ def run_hr_picks(run_date: str, team_schedule: dict, emit=None) -> list:
         blended = sum(w * v for w, v in comps) / wsum
         score = round(blended * 100)
 
-        if score >= HR_OVER_CUT:
-            pick = "OVER"
-        elif score <= HR_UNDER_CUT:
-            pick = "UNDER"
-        else:
-            return None
+        over_odds  = c.get("over")
+        under_odds = c.get("under")
+        # OVER qualifies on blended HR likelihood (likely to homer).
+        over_ok  = score >= HR_OVER_CUT
+        # UNDER is now ODDS-driven, not score-driven: only big hitters the market
+        # prices as a real HR threat (under is a minus-odds favorite no deeper than
+        # HR_UNDER_MAX_JUICE, e.g. -500..-100). Drops scrub -600/-2000 unders that
+        # nobody plays, and surfaces sluggers (Alvarez-type) whose under is the play.
+        under_ok = (under_odds is not None
+                    and HR_UNDER_MAX_JUICE <= under_odds < 0)
+        if not (over_ok or under_ok):
+            return []
 
         pit_disp = f"{pit_hr}HR/{pit_ab}AB" if pit_ab > 0 else "N/A"
-        return {"name": name, "team": player_team, "side": side, "opp": opp_name,
-                "pick": pick, "line": c.get("line", 0.5),
+        base = {"name": name, "team": player_team, "side": side, "opp": opp_name,
+                "line": c.get("line", 0.5),
                 "score": score, "blended": score, "games": recent["games"],
                 "recent_disp": recent["display"], "team_disp": team["display"],
                 "pit_disp": pit_disp, "basis": "blend",
                 "wilson": round(blended, 4),
-                "over_odds": c.get("over"), "under_odds": c.get("under"),
-                "book": _book_label(c.get("over_book") if pick == "OVER" else c.get("under_book")),
+                "over_odds": over_odds, "under_odds": under_odds,
                 "batter_id": batter_id,
                 "pitcher": pitcher_name,
                 "recent_hr_log": _recent_hr_log(batter_id)}
+        out = []
+        if over_ok:
+            d = dict(base); d["pick"] = "OVER"
+            d["book"] = _book_label(c.get("over_book"))
+            out.append(d)
+        if under_ok:
+            d = dict(base); d["pick"] = "UNDER"
+            d["book"] = _book_label(c.get("under_book"))
+            out.append(d)
+        return out
 
     picks = []
     with ThreadPoolExecutor(max_workers=8) as _ex:
         _futs = {_ex.submit(_eval, c): c for c in candidates}
         for _fut in as_completed(_futs):
             try:
-                pk = _fut.result()
+                pks = _fut.result() or []
             except Exception:
-                pk = None
-            if pk:
-                picks.append(pk)
+                pks = []
+            picks.extend(pks)
 
     overs  = [p for p in picks if p["pick"] == "OVER"]
     unders = [p for p in picks if p["pick"] == "UNDER"]
     overs.sort(key=lambda p: (-p["score"], -p["games"]))
-    unders.sort(key=lambda p: (p["score"], -p["games"]))
+    # Unders ranked biggest-hitter-first: least-juiced under (closest to even, e.g.
+    # -150 before -500) on top = the strongest power threats the market fades.
+    unders.sort(key=lambda p: (p.get("under_odds") if p.get("under_odds") is not None else -100000), reverse=True)
     overs  = overs[:HR_TOP_N]
     unders = unders[:HR_TOP_N]
     picks = overs + unders
