@@ -440,22 +440,28 @@ async def start_run(request: Request, date_str: str, force: bool = False, token:
         from pipeline import run_pipeline
         try:
             result = run_pipeline(date_str, emit=emit)
+            # Hard-lock the DISPLAY to the final pre-game run: any game already
+            # past first pitch keeps its pre-game line/side (same freeze the
+            # graded snapshot uses), so a has_tbd re-run after games start can
+            # never rewrite a live in-game line (e.g. a 4.5 K line jumping to
+            # 5.5/6.5 mid-game). Games not yet started still take fresh lines so
+            # late-named starters appear. CLV opener below stays on the true run.
+            _snap = _freeze_started_picks(date_str, result)
             task["status"] = "done"
-            task["result"] = result
+            task["result"] = _snap
             # Always persist so the read-only /api/results endpoint (parlay hub)
             # can serve the slate even when a starter is still TBD. The MLB app's
             # own load re-runs when has_tbd to pick up late-named starters.
-            _cache[date_str] = result
+            _cache[date_str] = _snap
             try: _update_track_ledger()
             except Exception as _le: print(f"[track_ledger] {_le}")
-            _snap = _freeze_started_picks(date_str, result)
             _save_disk_cache(date_str, _snap)
             _save_sb_picks(date_str, _snap)
             _save_open_snapshot(date_str, result)
             try:
                 # Bake the picks into the page HTML so the Replit hub can serve
                 # an instant, no-cold-start snapshot at moneypicksarena.com.
-                baked = {**result, "date": date_str}
+                baked = {**_snap, "date": date_str}
                 inject = (
                     '<script>window.__INITIAL_PICKS__ = '
                     + json.dumps(baked).replace('</', '<\\/')
@@ -774,9 +780,9 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
         })
 
-    # Overflow / also_ran hits (positions 11+) — tracked as "Hitter Hits (More)"
+    # Overflow / also_ran hits (positions 11-20) — tracked as "Hitter Hits (More)"
     hitter_more = []
-    for p in (picks.get("also_ran") or []):
+    for p in (picks.get("also_ran") or [])[:10]:
         st = _lookup(p.get("player_id"), p.get("full_name") or p.get("name"))
         actual = st["hits"] if st else None
         hitter_more.append({
@@ -953,9 +959,13 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
         })
 
-    # Pitcher Ks — top 10 for Track Record
+    # Pitcher Ks — top 10 PER SIDE for Track Record (Over and Under each get
+    # their own top 10 so a side with <10 picks never spills into overflow)
     pitcher_ks = []
-    for p in ((picks.get("pitcher_k") or {}).get("picks") or [])[:10]:
+    _pk_all = (picks.get("pitcher_k") or {}).get("picks") or []
+    _pk_capped = [q for q in _pk_all if q.get("pick") == "OVER"][:10] + \
+                 [q for q in _pk_all if q.get("pick") == "UNDER"][:10]
+    for p in _pk_capped:
         if not p.get("pick"):
             continue
         st  = _lookup(None, p.get("name"))
@@ -991,7 +1001,11 @@ def _grade_date(date_str: str, picks: dict) -> dict:
         stat_key, stat_label = PROP_STAT_MAP.get(mkt, (None, None))
         if not stat_key:
             continue   # skip unknown markets
-        for p in (mdata.get("picks") or [])[:10]:
+        # top 10 PER SIDE — Over and Under each get their own top 10
+        _pp_all = mdata.get("picks") or []
+        _pp_capped = [q for q in _pp_all if q.get("pick") == "OVER"][:10] + \
+                     [q for q in _pp_all if q.get("pick") == "UNDER"][:10]
+        for p in _pp_capped:
             if not p.get("pick") or p.get("line") is None:
                 continue
             st     = _lookup(None, p.get("name"))
@@ -1029,56 +1043,57 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "ev": p.get("ev"),
             "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
         })
-    for p in (picks.get("under_picks") or [])[10:30]:
+    for p in (picks.get("under_picks") or [])[10:20]:
         st = _lookup(p.get("batter_id"), p.get("name"))
         actual = st["hits"] if st else None
         pd = p.get("pick", "UNDER")
         _ovf(p, p.get("name", ""), p.get("team", ""), "Hitter Hits (More)", pd,
              f"{pd} 1.5 Hits", p.get("under_odds") if pd == "UNDER" else p.get("over_odds"),
              1.5, actual, "Hits", st)
-    for p in ([q for q in _runs_all if q.get("pick") == "OVER"][10:30] +
-              [q for q in _runs_all if q.get("pick") == "UNDER"][10:30]):
+    for p in ([q for q in _runs_all if q.get("pick") == "OVER"][10:20] +
+              [q for q in _runs_all if q.get("pick") == "UNDER"][10:20]):
         st = _lookup(p.get("batter_id"), p.get("name"))
         actual = st["runs"] if st else None
         pd = p.get("pick", "OVER")
         _ovf(p, p.get("name", ""), p.get("team", ""), "Runs (OVF)", pd,
              f"{pd} 0.5 Runs", p.get("over_odds") if pd == "OVER" else p.get("under_odds"),
              0.5, actual, "Runs", st)
-    for p in (picks.get("tb_picks") or [])[10:30]:
+    for p in (picks.get("tb_picks") or [])[10:20]:
         st = _lookup(p.get("batter_id"), p.get("name"))
         actual = st["total_bases"] if st else None
         _ovf(p, p.get("name", ""), p.get("team", ""), "TB Under (OVF)", "UNDER",
              "UNDER 1.5 Total Bases", p.get("tb_under_odds"), 1.5, actual, "Total Bases", st)
-    for p in (picks.get("tb_over_picks") or [])[10:30]:
+    for p in (picks.get("tb_over_picks") or [])[10:20]:
         st = _lookup(p.get("batter_id"), p.get("name"))
         actual = st["total_bases"] if st else None
         _ovf(p, p.get("name", ""), p.get("team", ""), "TB Over (OVF)", "OVER",
              "OVER 1.5 Total Bases", p.get("tb_over_odds"), 1.5, actual, "Total Bases", st)
-    for p in ([q for q in _rbi_all if q.get("pick") == "OVER"][10:30] +
-              [q for q in _rbi_all if q.get("pick") == "UNDER"][10:30]):
+    for p in ([q for q in _rbi_all if q.get("pick") == "OVER"][10:20] +
+              [q for q in _rbi_all if q.get("pick") == "UNDER"][10:20]):
         st = _lookup(p.get("batter_id"), p.get("name"))
         actual = st["rbi"] if st else None
         pd = p.get("pick", "OVER"); ln = p.get("line") if p.get("line") is not None else 0.5
         _ovf(p, p.get("name", ""), p.get("team", ""), "RBI (OVF)", pd,
              f"{pd} {ln} RBI", p.get("over_odds") if pd == "OVER" else p.get("under_odds"),
              ln, actual, "RBI", st)
-    for p in ([q for q in _walks_all if q.get("pick") == "OVER"][10:30] +
-              [q for q in _walks_all if q.get("pick") == "UNDER"][10:30]):
+    for p in ([q for q in _walks_all if q.get("pick") == "OVER"][10:20] +
+              [q for q in _walks_all if q.get("pick") == "UNDER"][10:20]):
         st = _lookup(p.get("batter_id"), p.get("name"))
         actual = st["walks_bat"] if st else None
         pd = p.get("pick", "OVER"); ln = p.get("line") if p.get("line") is not None else 0.5
         _ovf(p, p.get("name", ""), p.get("team", ""), "Batter Walks (OVF)", pd,
              f"{pd} {ln} Walks", p.get("over_odds") if pd == "OVER" else p.get("under_odds"),
              ln, actual, "Walks", st)
-    for p in ([q for q in _hrr_all if q.get("pick") == "OVER"][10:30] +
-              [q for q in _hrr_all if q.get("pick") == "UNDER"][10:30]):
+    for p in ([q for q in _hrr_all if q.get("pick") == "OVER"][10:20] +
+              [q for q in _hrr_all if q.get("pick") == "UNDER"][10:20]):
         st = _lookup(p.get("batter_id"), p.get("name"))
         actual = st["hrr"] if st else None
         pd = p.get("pick", "OVER")
         _ovf(p, p.get("name", ""), p.get("team", ""), "HRR (OVF)", pd,
              f"{pd} 1.5 H+R+RBI", p.get("hrr_over_odds") if pd == "OVER" else p.get("hrr_under_odds"),
              1.5, actual, "H+R+RBI", st)
-    for p in ((picks.get("pitcher_k") or {}).get("picks") or [])[10:30]:
+    for p in ([q for q in _pk_all if q.get("pick") == "OVER"][10:20] +
+              [q for q in _pk_all if q.get("pick") == "UNDER"][10:20]):
         if not p.get("pick"):
             continue
         st = _lookup(None, p.get("name"))
@@ -1094,7 +1109,9 @@ def _grade_date(date_str: str, picks: dict) -> dict:
         stat_key, stat_label = PROP_STAT_MAP.get(mkt, (None, None))
         if not stat_key:
             continue
-        for p in (mdata.get("picks") or [])[10:30]:
+        _ppo_all = mdata.get("picks") or []
+        for p in ([q for q in _ppo_all if q.get("pick") == "OVER"][10:20] +
+                  [q for q in _ppo_all if q.get("pick") == "UNDER"][10:20]):
             if not p.get("pick") or p.get("line") is None:
                 continue
             st = _lookup(None, p.get("name"))
