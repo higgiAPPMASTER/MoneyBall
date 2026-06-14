@@ -889,17 +889,33 @@ def run_runs_picks(run_date: str, team_schedule: dict, emit=None) -> list:
         # Vs-opponent ONLY (no L10 any-opp fallback) and minimum head-to-head games.
         if rate.get("basis") != "vs opp" or rate["games"] < RUNS_MIN_GAMES:
             return None
-        score = rate["score"]
-        if score >= RUNS_OVER_CUT:
+        # 3-window convergence blend: vs-opp 35%, L10 any-opp 40%, L5 any-opp 25%
+        r10 = _runs_consistency(batter_id, side, "", 10)
+        r5  = _runs_consistency(batter_id, side, "", 5)
+        comps = [(0.35, rate["score"] / 100.0)]
+        if r10["games"] > 0: comps.append((0.40, r10["score"] / 100.0))
+        if r5["games"]  > 0: comps.append((0.25, r5["score"]  / 100.0))
+        wsum = sum(w for w, _ in comps)
+        blend_score = round(sum(w * v for w, v in comps) / wsum * 100)
+        if blend_score >= RUNS_OVER_CUT:
             pick = "OVER"
-        elif score <= RUNS_UNDER_CUT:
+        elif blend_score <= RUNS_UNDER_CUT:
             pick = "UNDER"
         else:
             return None
+        l5_s = r5["score"] if r5["games"] > 0 else None
+        conv_flag = all((pick == "OVER" and v >= RUNS_OVER_CUT) or
+                        (pick == "UNDER" and v <= RUNS_UNDER_CUT)
+                        for v in [rate["score"], r10["score"] if r10["games"] > 0 else None, l5_s]
+                        if v is not None)
+        cold_flag = ((pick == "OVER"  and l5_s is not None and l5_s <= RUNS_UNDER_CUT) or
+                     (pick == "UNDER" and l5_s is not None and l5_s >= RUNS_OVER_CUT))
         return {"name": name, "team": player_team, "side": side, "opp": opp_name,
                 "pick": pick, "line": c.get("line", 0.5),
-                "rate_disp": rate["display"], "score": score,
+                "rate_disp": rate["display"], "score": blend_score,
+                "opp_score": rate["score"], "recent_l10": r10["display"], "recent_l5": r5["display"],
                 "games": rate["games"], "basis": rate.get("basis", ""),
+                "conv_flag": conv_flag, "cold_flag": cold_flag,
                 "wilson": round(_wilson_lb(rate["runs_games"], rate["games"]), 4),
                 "over_odds": c.get("over"), "under_odds": c.get("under"),
                 "book": _book_label(c.get("over_book") if pick == "OVER" else c.get("under_book")),
@@ -921,7 +937,7 @@ def run_runs_picks(run_date: str, team_schedule: dict, emit=None) -> list:
     # OVERs first (highest confidence-adjusted rate), then UNDERs (coldest first).
     picks.sort(key=lambda p: (
         0 if p["pick"] == "OVER" else 1,
-        -p["wilson"] if p["pick"] == "OVER" else p["score"],
+        -p["score"] if p["pick"] == "OVER" else p["score"],
         -p["games"],
     ))
     # Cap to the top RUNS_TOP_N on each side (overs / unders).
@@ -1070,17 +1086,33 @@ def run_rbi_picks(run_date: str, team_schedule: dict, emit=None) -> list:
         rate = _rbi_rate(batter_id, side, opp_name)
         if rate["games"] < RBI_MIN_GAMES:
             return None
-        score = rate["score"]
-        if score >= RBI_OVER_CUT:
+        # 3-window convergence blend: vs-opp 35%, L10 any-opp 40%, L5 any-opp 25%
+        r10 = _rbi_consistency(batter_id, side, "", 10)
+        r5  = _rbi_consistency(batter_id, side, "", 5)
+        comps = [(0.35, rate["score"] / 100.0)]
+        if r10["games"] > 0: comps.append((0.40, r10["score"] / 100.0))
+        if r5["games"]  > 0: comps.append((0.25, r5["score"]  / 100.0))
+        wsum = sum(w for w, _ in comps)
+        blend_score = round(sum(w * v for w, v in comps) / wsum * 100)
+        if blend_score >= RBI_OVER_CUT:
             pick = "OVER"
-        elif score <= RBI_UNDER_CUT:
+        elif blend_score <= RBI_UNDER_CUT:
             pick = "UNDER"
         else:
             return None
+        l5_s = r5["score"] if r5["games"] > 0 else None
+        conv_flag = all((pick == "OVER" and v >= RBI_OVER_CUT) or
+                        (pick == "UNDER" and v <= RBI_UNDER_CUT)
+                        for v in [rate["score"], r10["score"] if r10["games"] > 0 else None, l5_s]
+                        if v is not None)
+        cold_flag = ((pick == "OVER"  and l5_s is not None and l5_s <= RBI_UNDER_CUT) or
+                     (pick == "UNDER" and l5_s is not None and l5_s >= RBI_OVER_CUT))
         return {"name": name, "team": player_team, "side": side, "opp": opp_name,
                 "pick": pick, "line": c.get("line", 0.5),
-                "rate_disp": rate["display"], "score": score,
+                "rate_disp": rate["display"], "score": blend_score,
+                "opp_score": rate["score"], "recent_l10": r10["display"], "recent_l5": r5["display"],
                 "games": rate["games"], "basis": rate.get("basis", ""),
+                "conv_flag": conv_flag, "cold_flag": cold_flag,
                 "wilson": round(_wilson_lb(rate["rbi_games"], rate["games"]), 4),
                 "over_odds": c.get("over"), "under_odds": c.get("under"),
                 "book": _book_label(c.get("over_book") if pick == "OVER" else c.get("under_book")),
@@ -1101,7 +1133,7 @@ def run_rbi_picks(run_date: str, team_schedule: dict, emit=None) -> list:
 
     picks.sort(key=lambda p: (
         0 if p["pick"] == "OVER" else 1,
-        -p["wilson"] if p["pick"] == "OVER" else p["score"],
+        -p["score"] if p["pick"] == "OVER" else p["score"],
         -p["games"],
     ))
     overs  = [p for p in picks if p["pick"] == "OVER"][:RBI_TOP_N]
@@ -1846,17 +1878,33 @@ def run_hrr_picks(run_date: str, team_schedule: dict, emit=None) -> list:
         vs = _hrr_consistency_over(batter_id, side, opp_name, 10)
         if vs["games"] < HRR_OVER_MIN_VS:
             return None
-        score = vs["score"]
-        if score >= HRR_OVER_CUT:
+        # 3-window convergence blend: vs-opp 35%, L10 any-opp 40%, L5 any-opp 25%
+        r10 = _hrr_consistency_over(batter_id, side, "", 10)
+        r5  = _hrr_consistency_over(batter_id, side, "", 5)
+        comps = [(0.35, vs["score"] / 100.0)]
+        if r10["games"] > 0: comps.append((0.40, r10["score"] / 100.0))
+        if r5["games"]  > 0: comps.append((0.25, r5["score"]  / 100.0))
+        wsum = sum(w for w, _ in comps)
+        blend_score = round(sum(w * v for w, v in comps) / wsum * 100)
+        if blend_score >= HRR_OVER_CUT:
             pick = "OVER"
-        elif score <= HRR_UNDER_CUT:
+        elif blend_score <= HRR_UNDER_CUT:
             pick = "UNDER"
         else:
             return None
+        l5_s = r5["score"] if r5["games"] > 0 else None
+        conv_flag = all((pick == "OVER" and v >= HRR_OVER_CUT) or
+                        (pick == "UNDER" and v <= HRR_UNDER_CUT)
+                        for v in [vs["score"], r10["score"] if r10["games"] > 0 else None, l5_s]
+                        if v is not None)
+        cold_flag = ((pick == "OVER"  and l5_s is not None and l5_s <= HRR_UNDER_CUT) or
+                     (pick == "UNDER" and l5_s is not None and l5_s >= HRR_OVER_CUT))
         return {"name": name, "team": player_team, "side": side, "opp": opp_name,
                 "pick": pick, "line": 1.5,
-                "rate_disp": vs["display"], "score": score,
+                "rate_disp": vs["display"], "score": blend_score,
+                "opp_score": vs["score"], "recent_l10": r10["display"], "recent_l5": r5["display"],
                 "games": vs["games"], "basis": "vs opp",
+                "conv_flag": conv_flag, "cold_flag": cold_flag,
                 "wilson": round(_wilson_lb(vs["hrr_games"], vs["games"]), 4),
                 "hrr_over_odds": c.get("hrr_over_odds"),
                 "hrr_under_odds": c.get("hrr_under_odds"),
@@ -1878,7 +1926,7 @@ def run_hrr_picks(run_date: str, team_schedule: dict, emit=None) -> list:
 
     picks.sort(key=lambda p: (
         0 if p["pick"] == "OVER" else 1,
-        -p["wilson"] if p["pick"] == "OVER" else p["score"],
+        -p["score"] if p["pick"] == "OVER" else p["score"],
         -p["games"],
     ))
     overs  = [p for p in picks if p["pick"] == "OVER"][:HRR_OVER_TOP_N]
@@ -1938,12 +1986,27 @@ def run_tb_over_picks(run_date: str, team_schedule: dict, emit=None) -> list:
         vs = _tb_consistency_over(batter_id, side, opp_name, 10)
         if vs["games"] < TB_OVER_MIN_VS:
             return None
-        if vs["score"] < TB_OVER_CUT:
+        # 3-window convergence blend: vs-opp 35%, L10 any-opp 40%, L5 any-opp 25%
+        r10 = _tb_consistency_over(batter_id, side, "", 10)
+        r5  = _tb_consistency_over(batter_id, side, "", 5)
+        comps = [(0.35, vs["score"] / 100.0)]
+        if r10["games"] > 0: comps.append((0.40, r10["score"] / 100.0))
+        if r5["games"]  > 0: comps.append((0.25, r5["score"]  / 100.0))
+        wsum = sum(w for w, _ in comps)
+        blend_score = round(sum(w * v for w, v in comps) / wsum * 100)
+        if blend_score < TB_OVER_CUT:
             return None
+        l5_s = r5["score"] if r5["games"] > 0 else None
+        conv_flag = all(v >= TB_OVER_CUT
+                        for v in [vs["score"], r10["score"] if r10["games"] > 0 else None, l5_s]
+                        if v is not None)
+        cold_flag = (l5_s is not None and l5_s < TB_OVER_CUT - 15)
         return {"name": name, "team": player_team, "side": side, "opp": opp_name,
                 "pick": "OVER", "line": 1.5,
-                "rate_disp": vs["display"], "score": vs["score"],
+                "rate_disp": vs["display"], "score": blend_score,
+                "opp_score": vs["score"], "recent_l10": r10["display"], "recent_l5": r5["display"],
                 "games": vs["games"], "basis": "vs opp",
+                "conv_flag": conv_flag, "cold_flag": cold_flag,
                 "wilson": round(_wilson_lb(vs["tb_games"], vs["games"]), 4),
                 "tb_over_odds": c.get("tb_over_odds"),
                 "book": _book_label(c.get("tb_over_odds_book")),
@@ -1962,7 +2025,7 @@ def run_tb_over_picks(run_date: str, team_schedule: dict, emit=None) -> list:
             if pk:
                 picks.append(pk)
 
-    picks.sort(key=lambda p: (-p["wilson"], -p["games"]))
+    picks.sort(key=lambda p: (-p["score"], -p["games"]))
     picks = picks[:TB_OVER_TOP_N]
     _log(emit, f"✅ TB Over Picks: {len(picks)} qualifying")
     return picks
@@ -2017,12 +2080,27 @@ def run_tb_under_picks(run_date: str, team_schedule: dict, emit=None) -> list:
             if any_opp["games"] < TB_MIN_ANY:
                 return None
             rate = any_opp; rate["basis"] = "L10 H/A"
-        if rate["score"] < TB_UNDER_CUT:
+        # 3-window convergence blend: primary anchor 35%, L10 any-opp 40%, L5 any-opp 25%
+        r10 = _tb_consistency(batter_id, side, "", 10)
+        r5  = _tb_consistency(batter_id, side, "", 5)
+        comps = [(0.35, rate["score"] / 100.0)]
+        if r10["games"] > 0: comps.append((0.40, r10["score"] / 100.0))
+        if r5["games"]  > 0: comps.append((0.25, r5["score"]  / 100.0))
+        wsum = sum(w for w, _ in comps)
+        blend_score = round(sum(w * v for w, v in comps) / wsum * 100)
+        if blend_score < TB_UNDER_CUT:
             return None
+        l5_s = r5["score"] if r5["games"] > 0 else None
+        conv_flag = all(v >= TB_UNDER_CUT
+                        for v in [rate["score"], r10["score"] if r10["games"] > 0 else None, l5_s]
+                        if v is not None)
+        cold_flag = (l5_s is not None and l5_s < TB_UNDER_CUT - 15)
         return {"name": name, "team": player_team, "side": side, "opp": opp_name,
                 "pick": "UNDER", "line": 1.5,
-                "rate_disp": rate["display"], "score": rate["score"],
+                "rate_disp": rate["display"], "score": blend_score,
+                "opp_score": rate["score"], "recent_l10": r10["display"], "recent_l5": r5["display"],
                 "games": rate["games"], "basis": rate.get("basis", ""),
+                "conv_flag": conv_flag, "cold_flag": cold_flag,
                 "wilson": round(_wilson_lb(rate["tb_games"], rate["games"]), 4),
                 "tb_under_odds": c.get("tb_under_odds"),
                 "book": _book_label(c.get("tb_under_odds_book")),
@@ -2041,7 +2119,7 @@ def run_tb_under_picks(run_date: str, team_schedule: dict, emit=None) -> list:
             if pk:
                 picks.append(pk)
 
-    picks.sort(key=lambda p: (-p["wilson"], -p["games"]))
+    picks.sort(key=lambda p: (-p["score"], -p["games"]))
     picks = picks[:TB_TOP_N]
     _log(emit, f"✅ TB Under Picks: {len(picks)} qualifying")
     return picks
