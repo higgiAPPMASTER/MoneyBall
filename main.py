@@ -6486,7 +6486,7 @@ function _ovfPrintReport(){
 }
 function _pickVerdict(r){
   if(_trkSkipMeta(r)||_isHrCat(r.category)) return '';
-  var info=_mtxCatInfo(r.category); if(!info) return '';
+  var info=_mtxCatInfo(_ovfBaseCat(r.category)); if(!info) return '';
   var isPit=info[0], ci=info[1];
   var side=(r.side==='UNDER')?'U':'O';
   var wd=_mtxWeekday(r.date); if(wd==null) return '';
