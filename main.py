@@ -1197,12 +1197,9 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "side":pd,"stat_key":"hrr","stat_label":"H+R+RBI","line":1.5,
             "odds":p.get("hrr_over_odds") if pd=="OVER" else p.get("hrr_under_odds"),
             "ev":p.get("ev") or 0,"pid":p.get("batter_id"),"fname":p.get("name")})
-    for p in (picks.get("hr_picks") or []):
-        pd = p.get("pick","OVER"); ln = p.get("line") if p.get("line") is not None else 0.5
-        _bat_cands.append({"name":p.get("name",""),"team":p.get("team",""),
-            "side":pd,"stat_key":"homeRuns","stat_label":"HR","line":ln,
-            "odds":p.get("over_odds") if pd=="OVER" else p.get("under_odds"),
-            "ev":p.get("ev") or 0,"pid":p.get("batter_id"),"fname":p.get("name")})
+    # HR is intentionally EXCLUDED from Top 10 Batter — it has its own category +
+    # tracker, and longshot HR overs were polluting the best-plays list. This mirrors
+    # the live-card builder (_buildTop10), which never adds HR.
     _bat_cands.sort(key=lambda x: -(x.get("ev") or 0))
     _bat_seen = set()
     _bat_dedup = []
@@ -6293,7 +6290,7 @@ function _manOddsEntry(idx){
   _manOddsRerender();
 }
 function _manOddsRerender(){ var ov=document.getElementById('ovf-body'); if(ov&&ov.offsetParent!==null){ _ovfRenderActive(); return; } var tr=document.getElementById('track-body'); if(tr&&tr.offsetParent!==null){ _trkRenderActive(); return; } if(ov) _ovfRenderActive(); else if(tr) _trkRenderActive(); }
-function _oddsCell(p,idx){ var eff=_effOdds(p); if(eff!=null){ var man=_isManOdds(p); return '<span onclick="_manOddsEntry('+idx+')" title="'+(man?'Manual odds \u2014 click to edit':'Odds')+'" style="font-family:monospace;cursor:pointer;color:'+(man?'#fbbf24':'#64748b')+'">'+((eff>0?'+':'')+eff)+(man?' \u270e':'')+'</span>'; } return '<button onclick="_manOddsEntry('+idx+')" title="Enter odds from another book" style="background:#78350f;color:#fde68a;border:1px solid #b45309;border-radius:5px;padding:1px 7px;font-size:.64rem;font-weight:800;cursor:pointer;flex-shrink:0">+odds</button>'; }
+function _oddsCell(p,idx){ var eff=_effOdds(p); if(eff!=null){ var man=_isManOdds(p); var col=man?'#fbbf24':'#cbd5e1', bd=man?'#b45309':'#334155', bg=man?'#3a2406':'#0f1b2e'; return '<span onclick="_manOddsEntry('+idx+')" title="'+(man?'Manual odds \u2014 click to edit':'Click to edit odds')+'" style="font-family:monospace;cursor:pointer;color:'+col+';border:1px solid '+bd+';background:'+bg+';border-radius:5px;padding:1px 6px;flex-shrink:0">'+((eff>0?'+':'')+eff)+' \u270e</span>'; } return '<button onclick="_manOddsEntry('+idx+')" title="Enter odds from another book" style="background:#78350f;color:#fde68a;border:1px solid #b45309;border-radius:5px;padding:1px 7px;font-size:.64rem;font-weight:800;cursor:pointer;flex-shrink:0">+odds</button>'; }
 // Single source of truth for the flat bet size — blank/zero/negative/NaN all
 // fall back to the $20 default so the live total and the CSV always agree.
 function _trkStake(){
@@ -6473,6 +6470,20 @@ function _trkPrintReport(){
   var inner='<div style="max-width:920px;margin:0 auto">'+head+trackSec+ovfSec+foot+'</div>';
   _openPrintReport(inner,'MPA Performance Report');
 }
+function _ovfPrintReport(){
+  var d=window.__TRACK__; if(!d){ alert('Overflow Tracker is still loading \u2014 try again in a moment.'); return; }
+  function overallTile(o,stake){ var on=o.w+o.l, orisk=o.counted*stake, oroi=orisk?o.net/orisk*100:0, oclr=o.net>=0?'#4ade80':'#f87171', owclr=_trkRC(o.w,on); return '<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;background:#0c1829;border:1px solid #1e293b;border-radius:12px;padding:13px 18px;margin-bottom:14px"><div style="font-weight:900;font-size:1.02rem"><span style="color:'+owclr+'">'+o.w+'/'+on+'</span> <span style="color:#94a3b8;font-size:.84rem">('+(on?(o.w/on*100).toFixed(1):'0.0')+'%)</span></div><div style="font-size:.9rem">Net <span style="color:'+oclr+';font-weight:900">'+(o.net>=0?'+$':'\u2212$')+Math.abs(o.net).toFixed(0)+'</span> <span style="color:#64748b">\u00b7 ROI '+(oroi>=0?'+':'\u2212')+Math.abs(oroi).toFixed(1)+'% on $'+orisk.toFixed(0)+'</span></div></div>'; }
+  function secHead(t,sub,clr){ return '<div style="font-size:1.08rem;font-weight:900;color:'+clr+';margin:22px 0 10px;border-bottom:1px solid #1e293b;padding-bottom:6px">'+t+' <span style="color:#64748b;font-weight:700;font-size:.74rem">'+sub+'</span></div>'; }
+  var oStake=_ovfStake();
+  var oPool=(d.detail||[]).filter(function(r){ return _isOvfCat(r.category)&&!_isHrCat(r.category); });
+  var oCt=_trkCatTable(oPool,oStake,'No graded overflow picks yet.');
+  var now=new Date();
+  var head='<div style="border-bottom:2px solid #1e293b;padding-bottom:14px;margin-bottom:6px"><div style="font-size:1.5rem;font-weight:900;color:#fff">Money Picks Arena <span style="color:#fbbf24">Overflow Report</span></div><div style="color:#94a3b8;font-size:.82rem;margin-top:4px">Generated '+now.toLocaleString()+' \u00b7 MLB \u00b7 ranks 11\u201330 \u00b7 flat $'+oStake+' on every pick</div></div>';
+  var ovfSec=secHead('Overflow Tracker','ranks 11\u201330','#fcd34d')+overallTile(oCt.overall,oStake)+_ovfMatrixScorecard(d)+'<div style="font-weight:800;color:#fde68a;font-size:.95rem;margin:4px 0 10px">Overflow Category Performance \u2014 ranked by ROI</div>'+oCt.html;
+  var foot='<div style="margin-top:20px;color:#64748b;font-size:.72rem;line-height:1.55">Net P/L and ROI use the flat bet above on each graded overflow pick at the recorded odds. \u201cCategory\u201d totals exclude undecided / unpriced picks.</div>';
+  var inner='<div style="max-width:920px;margin:0 auto">'+head+ovfSec+foot+'</div>';
+  _openPrintReport(inner,'MPA Overflow Report');
+}
 function _pickVerdict(r){
   if(_trkSkipMeta(r)||_isHrCat(r.category)) return '';
   var info=_mtxCatInfo(r.category); if(!info) return '';
@@ -6509,7 +6520,7 @@ function _oddsBucketIdx(o){
   return -1;
 }
 function _oddsBE(o){ return o<0?(Math.abs(o)/(Math.abs(o)+100)*100):(100/(o+100)*100); }
-function _oddsTable(arr,stake,heading,clr,sub){
+function _oddsTable(arr,stake,heading,clr,sub,group,interactive){
   var tw=0,tl=0,tnet=0,tc=0,i;
   for(i=0;i<arr.length;i++){ tw+=arr[i].w; tl+=arr[i].l; tnet+=arr[i].net; tc+=arr[i].counted; }
   var tn=tw+tl; if(!tn) return '';
@@ -6521,23 +6532,29 @@ function _oddsTable(arr,stake,heading,clr,sub){
     +'<span style="font-family:monospace;font-size:.78rem;color:'+_trkRC(tw,tn)+';font-weight:800">'+tw+'/'+tn+' ('+(tw/tn*100).toFixed(0)+'%)</span>'
     +'<span style="font-family:monospace;font-size:.78rem;font-weight:800;color:'+(tnet>=0?'#4ade80':'#f87171')+';min-width:104px;text-align:right">'+(tnet>=0?'+$':'\u2212$')+Math.abs(tnet).toFixed(0)+' \u00b7 '+(troi>=0?'+':'\u2212')+Math.abs(troi).toFixed(0)+'%</span>'
     +'</div>';
-  var colhdr='<div style="display:flex;gap:8px;padding:2px 4px 5px;font-size:.58rem;color:#64748b;font-weight:800;letter-spacing:.04em"><span style="flex:1">ODDS RANGE</span><span style="width:56px;text-align:right">W-L</span><span style="width:48px;text-align:right">HIT%</span><span style="width:48px;text-align:right">NEED</span><span style="width:72px;text-align:right">NET</span><span style="width:48px;text-align:right">ROI</span></div>';
+  var chev=interactive?'<span style="width:16px"></span>':'';
+  var colhdr='<div style="display:flex;gap:8px;padding:2px 4px 5px;font-size:.58rem;color:#64748b;font-weight:800;letter-spacing:.04em"><span style="flex:1">ODDS RANGE</span><span style="width:56px;text-align:right">W-L</span><span style="width:48px;text-align:right">HIT%</span><span style="width:48px;text-align:right">NEED</span><span style="width:72px;text-align:right">NET</span><span style="width:48px;text-align:right">ROI</span>'+chev+'</div>';
   var rows='';
   for(i=0;i<arr.length;i++){ var b=arr[i]; var n=b.w+b.l; if(!n) continue;
     var hp=b.w/n*100; var avgbe=b.beN?b.beSum/b.beN:0; var hc=hp>=avgbe?'#4ade80':'#f87171';
     var roi=b.counted?(b.net/(b.counted*stake)*100):0;
-    rows+='<div style="display:flex;gap:8px;align-items:center;padding:5px 4px;border-bottom:1px solid #111c2e;font-size:.77rem">'
+    var rstyle='display:flex;gap:8px;align-items:center;padding:5px 4px;border-bottom:1px solid #111c2e;font-size:.77rem'+(interactive?';cursor:pointer':'');
+    var rattr=interactive?(' onclick="_oddsRowDetail(&#39;'+group+'&#39;,'+i+')" onmouseover="this.style.background=&#39;#0f1d33&#39;" onmouseout="this.style.background=&#39;&#39;" title="Tap to see every pick behind this row"'):'';
+    var arrow=interactive?'<span style="width:16px;text-align:right;color:#64748b;font-weight:900">\u203a</span>':'';
+    rows+='<div'+rattr+' style="'+rstyle+'">'
       +'<span style="flex:1;color:#cbd5e1;font-family:monospace">'+_ODDS_BUCKETS[i].lab+'</span>'
       +'<span style="width:56px;text-align:right;font-family:monospace;color:#e2e8f0">'+b.w+'-'+b.l+'</span>'
       +'<span style="width:48px;text-align:right;font-family:monospace;font-weight:800;color:'+hc+'">'+hp.toFixed(0)+'%</span>'
       +'<span style="width:48px;text-align:right;font-family:monospace;color:#94a3b8">'+avgbe.toFixed(0)+'%</span>'
       +'<span style="width:72px;text-align:right;font-family:monospace;font-weight:700;color:'+(b.net>=0?'#4ade80':'#f87171')+'">'+(b.net>=0?'+$':'\u2212$')+Math.abs(b.net).toFixed(0)+'</span>'
       +'<span style="width:48px;text-align:right;font-family:monospace;color:'+(roi>=0?'#4ade80':'#f87171')+'">'+(roi>=0?'+':'\u2212')+Math.abs(roi).toFixed(0)+'%</span>'
+      +arrow
       +'</div>';
   }
   return '<div style="margin-bottom:6px">'+hdr+colhdr+rows+'</div>';
 }
-function _oddsReport(pool,stake){
+function _oddsReport(pool,stake,interactive){
+  if(interactive===undefined) interactive=true;
   function mk(){ var a=[]; for(var i=0;i<_ODDS_BUCKETS.length;i++) a.push({w:0,l:0,net:0,counted:0,beSum:0,beN:0}); return a; }
   var G={all:mk(),g:mk(),a:mk(),r:mk()}; var any=false;
   (pool||[]).forEach(function(r){
@@ -6550,15 +6567,16 @@ function _oddsReport(pool,stake){
     add(G.all[bi]); any=true;
     var v=_pickVerdict(r); if(v==='g')add(G.g[bi]); else if(v==='a')add(G.a[bi]); else if(v==='r')add(G.r[bi]);
   });
+  if(interactive) window.__ODDS_DRILL__={pool:pool,stake:stake,label:(window.__ODDS_CTX__&&window.__ODDS_CTX__.label)||''};
   if(!any) return '<div style="background:#0a1424;border:1px solid #1e293b;border-radius:12px;padding:16px 18px;color:#94a3b8;font-size:.82rem">No graded picks with posted odds in this range yet \u2014 fills in as games go Final.</div>';
-  var legend='<div style="color:#64748b;font-size:.72rem;line-height:1.5;margin-bottom:2px">HIT% = how often that price won \u00b7 NEED = break-even win% the price requires (the vig). <span style="color:#4ade80;font-weight:700">Green HIT%</span> cleared the line (made money); <span style="color:#f87171;font-weight:700">red</span> fell short.</div>';
+  var legend='<div style="color:#64748b;font-size:.72rem;line-height:1.5;margin-bottom:2px">HIT% = how often that price won \u00b7 NEED = break-even win% the price requires (the vig). <span style="color:#4ade80;font-weight:700">Green HIT%</span> cleared the line (made money); <span style="color:#f87171;font-weight:700">red</span> fell short.'+(interactive?' <span style="color:#38bdf8;font-weight:700">Tap any row</span> to see the exact picks behind it.':'')+'</div>';
   return '<div style="background:#0a1424;border:1px solid #1e293b;border-radius:12px;padding:14px 18px;margin-bottom:14px">'
     +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><span style="font-size:1rem">🎯</span><span style="font-weight:800;color:#e2e8f0;font-size:.95rem">Hit Rate by Odds Range</span><span style="color:#64748b;font-size:.7rem">which prices actually cash</span></div>'
     +legend
-    +_oddsTable(G.all,stake,'All graded picks','#38bdf8','every priced pick in range')
-    +_oddsTable(G.g,stake,'Green verdict','#22c55e','both signals backed the pick')
-    +_oddsTable(G.a,stake,'Amber verdict','#f59e0b','split signal \u2014 lean light')
-    +_oddsTable(G.r,stake,'Red verdict','#ef4444','chart said fade \u2014 low win% = good fade')
+    +_oddsTable(G.all,stake,'All graded picks','#38bdf8','every priced pick in range','all',interactive)
+    +_oddsTable(G.g,stake,'Green verdict','#22c55e','both signals backed the pick','g',interactive)
+    +_oddsTable(G.a,stake,'Amber verdict','#f59e0b','split signal \u2014 lean light','a',interactive)
+    +_oddsTable(G.r,stake,'Red verdict','#ef4444','chart said fade \u2014 low win% = good fade','r',interactive)
     +'<div style="margin-top:14px;color:#64748b;font-size:.7rem;line-height:1.5">Green / amber / red need the series-position stamp (G1/G2/G3) and a day-of-week lean, so they cover fewer picks than \u201cAll graded.\u201d Picks logged before those were stored appear under All only.</div>'
     +'</div>';
 }
@@ -6566,8 +6584,59 @@ function _oddsPrintCurrent(){
   var c=window.__ODDS_CTX__; if(!c){ alert('Open an Odds report first.'); return; }
   var now=new Date();
   var head='<div style="border-bottom:2px solid #1e293b;padding-bottom:14px;margin-bottom:8px"><div style="font-size:1.5rem;font-weight:900;color:#fff">Money Picks Arena <span style="color:#fbbf24">Odds Hit-Rate Report</span></div><div style="color:#94a3b8;font-size:.82rem;margin-top:4px">'+c.label+' \u00b7 Generated '+now.toLocaleString()+' \u00b7 MLB \u00b7 flat $'+c.stake+' per pick</div></div>';
-  var inner='<div style="max-width:840px;margin:0 auto">'+head+_oddsReport(c.pool,c.stake)+'</div>';
+  var inner='<div style="max-width:840px;margin:0 auto">'+head+_oddsReport(c.pool,c.stake,false)+'</div>';
   _openPrintReport(inner,'MPA Odds Hit-Rate Report');
+}
+function _oddsCloseModal(){ var m=document.getElementById('_oddsModal'); if(m&&m.parentNode) m.parentNode.removeChild(m); }
+function _oddsRowDetail(group,bi){
+  var c=window.__ODDS_DRILL__||window.__ODDS_CTX__; if(!c||!c.pool) return;
+  var stake=c.stake||20; var bk=_ODDS_BUCKETS[bi]; if(!bk) return;
+  var CAT_CFG=window.__TRK_CFG__||{};
+  var picks=[];
+  (c.pool||[]).forEach(function(r){
+    if(_trkSkipMeta(r)) return;
+    if(r.result!=='WIN'&&r.result!=='LOSS') return;
+    var o=_effOdds(r); if(o==null||!isFinite(o)) return;
+    if(_oddsBucketIdx(o)!==bi) return;
+    if(group!=='all'&&_pickVerdict(r)!==group) return;
+    picks.push({r:r,o:o});
+  });
+  picks.sort(function(a,b){ var da=(a.r.date||''),db=(b.r.date||''); if(da!==db) return da<db?1:-1; return ((a.r.name||'')<(b.r.name||''))?-1:1; });
+  var w=0,l=0,net=0,counted=0,beSum=0;
+  picks.forEach(function(p){ var win=p.r.result==='WIN'; if(win)w++; else l++; var pl=_amProfit(p.o,stake,win); if(pl!==null){ net+=pl; counted++; } beSum+=_oddsBE(p.o); });
+  var n=w+l, hit=n?w/n*100:0, need=n?beSum/n:0, roi=counted?net/(counted*stake)*100:0, edge=hit-need;
+  var gmap={all:['All graded picks','#38bdf8'],g:['Green verdict','#22c55e'],a:['Amber verdict','#f59e0b'],r:['Red verdict','#ef4444']};
+  var gm=gmap[group]||gmap.all;
+  var body='';
+  picks.forEach(function(p){ var r=p.r; var win=r.result==='WIN'; var pl=_amProfit(p.o,stake,win); var cfg=CAT_CFG[(r.category||'')+'|'+(r.side||'OVER')]; var clbl=(cfg&&cfg.lbl)||r.category||''; var od=(p.o>0?'+':'')+p.o; var wd=_weekdayName(r.date); var sd=(r.side==='UNDER')?'U':'O';
+    body+='<div style="display:flex;gap:10px;align-items:center;padding:8px 4px;border-bottom:1px solid #15233b;font-size:.8rem">'
+      +'<span style="width:104px;flex:none;color:#94a3b8;font-family:monospace;font-size:.7rem">'+(r.date||'')+(wd?(' \u00b7 '+wd.slice(0,3)):'')+'</span>'
+      +'<span style="flex:1;min-width:110px"><span style="color:#fff;font-weight:700">'+(r.name||'\u2014')+'</span> <span style="color:#64748b;font-size:.68rem">'+clbl+' '+sd+'</span><div style="color:#94a3b8;font-size:.7rem">'+(r.pick||'')+(r.actual!=null&&r.actual!==''?(' \u00b7 got '+r.actual):'')+'</div></span>'
+      +'<span style="width:52px;flex:none;text-align:right;font-family:monospace;color:#cbd5e1">'+od+'</span>'
+      +'<span style="width:46px;flex:none;text-align:center;font-weight:800;font-size:.72rem;color:'+(win?'#4ade80':'#f87171')+'">'+(win?'WIN':'LOSS')+'</span>'
+      +'<span style="width:58px;flex:none;text-align:right;font-family:monospace;font-weight:700;color:'+((pl||0)>=0?'#4ade80':'#f87171')+'">'+(pl==null?'\u2014':((pl>=0?'+$':'\u2212$')+Math.abs(pl).toFixed(0)))+'</span>'
+      +'</div>';
+  });
+  if(!picks.length) body='<div style="padding:18px;color:#94a3b8;font-size:.84rem">No graded picks in this price range.</div>';
+  var edgeTxt=(edge>=0?('\u2705 Beating break-even by +'+edge.toFixed(0)+' pts'):('\u26a0\ufe0f Trailing break-even by \u2212'+Math.abs(edge).toFixed(0)+' pts'));
+  var summary=n?('<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;background:#0c1829;border:1px solid #1e293b;border-radius:10px;padding:10px 14px;margin-bottom:10px;font-size:.82rem">'
+    +'<span style="font-weight:900;color:'+_trkRC(w,n)+'">'+w+'/'+n+' <span style="color:#94a3b8;font-weight:600;font-size:.74rem">('+hit.toFixed(0)+'% hit \u00b7 need '+need.toFixed(0)+'%)</span></span>'
+    +'<span style="color:'+(edge>=0?'#4ade80':'#f87171')+';font-weight:800;font-size:.74rem">'+edgeTxt+'</span>'
+    +'<span style="margin-left:auto;font-weight:900;color:'+(net>=0?'#4ade80':'#f87171')+'">'+(net>=0?'+$':'\u2212$')+Math.abs(net).toFixed(0)+' <span style="color:#64748b;font-weight:600;font-size:.74rem">\u00b7 ROI '+(roi>=0?'+':'\u2212')+Math.abs(roi).toFixed(0)+'% on $'+(counted*stake).toFixed(0)+'</span></span>'
+    +'</div>'):'';
+  var colh=n?('<div style="display:flex;gap:10px;padding:0 4px 6px;font-size:.56rem;color:#64748b;font-weight:800;letter-spacing:.04em"><span style="width:104px;flex:none">DATE</span><span style="flex:1;min-width:110px">PLAYER \u00b7 PICK</span><span style="width:52px;flex:none;text-align:right">ODDS</span><span style="width:46px;flex:none;text-align:center">RESULT</span><span style="width:58px;flex:none;text-align:right">P/L</span></div>'):'';
+  var card='<div onclick="event.stopPropagation()" style="background:#0a1424;border:1px solid #243450;border-radius:14px;max-width:680px;width:94%;max-height:84vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.6)">'
+    +'<div style="display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid #1e293b">'
+      +'<span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:'+gm[1]+';flex:none"></span>'
+      +'<div style="flex:1"><div style="font-weight:900;color:#fff;font-size:1.02rem">'+bk.lab+'</div><div style="color:#64748b;font-size:.72rem">'+gm[0]+(c.label?(' \u00b7 '+c.label):'')+'</div></div>'
+      +'<button onclick="_oddsCloseModal()" style="background:#334155;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:.82rem;font-weight:800;cursor:pointer">Close</button>'
+    +'</div>'
+    +'<div style="padding:14px 16px;overflow-y:auto">'+summary+colh+body+'</div>'
+  +'</div>';
+  _oddsCloseModal();
+  var m=document.createElement('div'); m.id='_oddsModal'; m.onclick=_oddsCloseModal;
+  m.setAttribute('style','position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px');
+  m.innerHTML=card; document.body.appendChild(m);
 }
 function _trkRenderDailyTab(be,stake){
   var date=window.__TRK_DAILY_DATE__||_trkTodayISO();
@@ -6695,12 +6764,19 @@ function _ovfRenderDailyTab(be,stake){
   var g=cache[date];
   var CAT_CFG=window.__TRK_CFG__||{}, CAT_ORDER=window.__OVF_ORDER__||[];
   var view=window.__OVF_DVIEW__||'cat';
-  var datesel='<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:12px"><label style="font-size:.82rem;color:#94a3b8">Day <input type="date" value="'+date+'" max="'+_trkTodayISO()+'" onchange="_ovfLoadDaily(this.value)" style="margin-left:6px;background:#020617;border:1px solid #334155;color:#fff;border-radius:6px;padding:6px 8px;font-size:.82rem"></label><span style="display:flex;gap:6px;margin-left:auto">'+_ovfDViewBtn('cat','By Category')+_ovfDViewBtn('full','Full List')+'</span></div>';
+  var datesel='<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:12px"><label style="font-size:.82rem;color:#94a3b8">Day <input type="date" value="'+date+'" max="'+_trkTodayISO()+'" onchange="_ovfLoadDaily(this.value)" style="margin-left:6px;background:#020617;border:1px solid #334155;color:#fff;border-radius:6px;padding:6px 8px;font-size:.82rem"></label><span style="font-weight:800;color:#93c5fd;font-size:.95rem">'+_weekdayName(date)+'</span><span style="display:flex;gap:6px;margin-left:auto">'+_ovfDViewBtn('cat','By Category')+_ovfDViewBtn('full','Full List')+_ovfDViewBtn('odds','Odds')+'</span></div>';
   if(g===undefined){ be.innerHTML=datesel+'<p style="color:#94a3b8;padding:12px">Loading\u2026</p>'; _ovfLoadDaily(date); return; }
   if(g==='LOADING'){ be.innerHTML=datesel+'<p style="color:#94a3b8;padding:12px">Loading\u2026</p>'; return; }
   if(g&&g.__error__){ be.innerHTML=datesel+'<p style="color:#94a3b8;padding:12px">'+(g.__error__)+'</p>'; return; }
   var rows=_ovfFlatten(g);
   if(!rows.length){ be.innerHTML=datesel+'<p style="color:#94a3b8;padding:12px">No overflow picks recorded for '+date+'.</p>'; return; }
+  if(view==='odds'){
+    var opool=rows.map(function(r){ var c={}; for(var ck in r) c[ck]=r[ck]; c.date=date; return c; });
+    window.__ODDS_CTX__={pool:opool,label:'Overflow \u00b7 '+_weekdayName(date)+' '+date,stake:stake};
+    var opdf='<div style="display:flex;margin-bottom:12px"><button onclick="_oddsPrintCurrent()" style="margin-left:auto;background:#7c3aed;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:.78rem;font-weight:700;cursor:pointer">📄 PDF this report</button></div>';
+    be.innerHTML=datesel+opdf+_oddsReport(opool,stake);
+    return;
+  }
   if(view==='cat'){
     var cpool=rows.map(function(r){ var c={}; for(var ck in r) c[ck]=r[ck]; c.date=date; return c; });
     var ct=_trkCatTable(cpool,stake,'No decided overflow picks for this day yet \u2014 fills in as games go Final.');
@@ -6746,11 +6822,22 @@ function _ovfRenderRangeTab(be,stake,which){
   else { var m=window.__OVF_MONTH__||_trkTodayISO().slice(0,7); from=m+'-01'; to=m+'-31'; var mn=['January','February','March','April','May','June','July','August','September','October','November','December']; label=mn[parseInt(m.slice(5,7),10)-1]+' '+m.slice(0,4); var canNext=(m<_trkTodayISO().slice(0,7)); nav='<span style="display:flex;gap:6px;align-items:center;margin-left:10px"><button onclick="_ovfMonthShift(-1)" style="background:#1e293b;color:#fff;border:none;border-radius:6px;padding:4px 11px;cursor:pointer;font-weight:800">\u25c0</button><button onclick="_ovfMonthShift(1)"'+(canNext?'':' disabled')+' style="background:'+(canNext?'#1e293b':'#0f172a')+';color:'+(canNext?'#fff':'#475569')+';border:none;border-radius:6px;padding:4px 11px;cursor:'+(canNext?'pointer':'default')+';font-weight:800">\u25b6</button></span>'; }
   var _miss=_trkRangeMissing(from,to);
   if(_miss.length){ be.innerHTML='<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;background:#2a1c08;border:1px solid #5b3d12;border-radius:12px;padding:12px 16px;margin-bottom:12px"><div style="font-weight:800;color:#fcd34d;display:flex;align-items:center">'+label+nav+'</div><div style="margin-left:auto;color:#94a3b8;font-size:.84rem">Grading '+_miss.length+' day'+(_miss.length>1?'s':'')+'\u2026</div></div>'; _trkFetchDays(_miss).then(function(){ if((window.__OVF_TAB__||'daily')===which) _ovfRenderActive(); }); return; }
+  var rview=(window.__OVF_DVIEW__==='odds')?'odds':'cat';
+  var rtoggle='<span style="display:flex;gap:6px;margin-left:auto">'+_ovfDViewBtn('cat','By Category')+_ovfDViewBtn('odds','Odds')+'</span>';
+  var rbar='<div style="display:flex;margin-bottom:10px">'+rtoggle+'</div>';
+  if(rview==='odds'){
+    var rpool=_ovfRangePool(from,to);
+    window.__ODDS_CTX__={pool:rpool,label:'Overflow \u00b7 '+label,stake:stake};
+    var rhead='<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;background:#2a1c08;border:1px solid #5b3d12;border-radius:12px;padding:12px 16px;margin-bottom:12px"><div style="font-weight:800;color:#fcd34d;display:flex;align-items:center">'+label+nav+'</div>'+rtoggle+'</div>';
+    var rpdf='<div style="display:flex;margin-bottom:12px"><button onclick="_oddsPrintCurrent()" style="margin-left:auto;background:#7c3aed;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:.78rem;font-weight:700;cursor:pointer">📄 PDF this report</button></div>';
+    be.innerHTML=rhead+rpdf+_oddsReport(rpool,stake);
+    return;
+  }
   var ct=_trkCatTable(_ovfRangePool(from,to),stake,'No graded overflow picks in this range yet \u2014 fills in as slates go Final.');
   var o=ct.overall, on=o.w+o.l, orisk=o.counted*stake, oroi=orisk?o.net/orisk*100:0, oclr=o.net>=0?'#4ade80':'#f87171', owclr=_trkRC(o.w,on);
   var summary='<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;background:#2a1c08;border:1px solid #5b3d12;border-radius:12px;padding:12px 16px;margin-bottom:12px"><div style="font-weight:800;color:#fcd34d;display:flex;align-items:center">'+label+nav+'</div><div style="margin-left:auto;text-align:right"><div style="font-weight:800;font-size:.92rem"><span style="color:'+owclr+'">'+o.w+'/'+on+'</span> <span style="color:#94a3b8;font-size:.8rem">('+(on?(o.w/on*100).toFixed(1):'0.0')+'%)</span></div><div style="font-size:.82rem">Net <span style="color:'+oclr+';font-weight:900">'+(o.net>=0?'+$':'\u2212$')+Math.abs(o.net).toFixed(0)+'</span> <span style="color:#64748b">\u00b7 ROI '+(oroi>=0?'+':'\u2212')+Math.abs(oroi).toFixed(1)+'% on $'+orisk.toFixed(0)+'</span></div></div></div>';
   var csvBtn='<div style="display:flex;margin-top:10px"><button onclick="downloadOvfRangeCSV(&#39;'+which+'&#39;)" style="margin-left:auto;background:#16a34a;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:.78rem;font-weight:700;cursor:pointer">\u2b07 CSV</button></div>';
-  be.innerHTML=summary+ct.html+csvBtn;
+  be.innerHTML=rbar+summary+ct.html+csvBtn;
 }
 function _ovfMatrixScorecard(d){
   var det=((d&&d.detail)||[]).filter(function(r){ return _isOvfCat(r.category)&&!_isHrCat(r.category); }); var stake=_ovfStake();
@@ -6847,7 +6934,7 @@ function _ovfMatrixScorecard(d){
     +'<div style="height:1px;background:#5b3d12;margin:14px 0"></div>'
     +s2+'</div>';
 }
-function downloadOvfDailyCSV(){ var date=window.__OVF_DAILY_DATE__||_trkTodayISO(); var g=(window.__TRK_GRADE_CACHE__||{})[date]; var rows=_ovfFlatten(g); if(!rows.length){ alert('No overflow picks to export for '+date+'.'); return; } var stake=_ovfStake(); var CAT_CFG=window.__TRK_CFG__||{}; var out=[['Date','Category','Side','Player','Pick','Odds','Actual','Result','Bet','Profit/Loss']]; var net=0,counted=0; rows.forEach(function(r){ r.__date__=date; var eo=_effOdds(r); var dec=(r.result==='WIN'||r.result==='LOSS'); var pl=dec?_amProfit(eo,stake,r.result==='WIN'):null; var plStr=''; if(pl!==null){ plStr=pl.toFixed(2); net+=pl; counted++; } var cfg=CAT_CFG[(r.category||'')+'|'+(r.side||'OVER')]; out.push([date,(cfg&&cfg.lbl)||r.category||'',r.side||'',r.name||'',r.pick||'',(eo!=null?((eo>0?'+':'')+eo):''),(r.actual!=null?r.actual:''),r.result||'pending',stake,plStr]); }); out.push([]); out.push(['','','','','','','','TOTALS ('+counted+' graded)',(counted*stake),net.toFixed(2)]); _trkDownloadCSV(out,'mlb-overflow-'+date+'-flat'+stake+'.csv'); }
+function downloadOvfDailyCSV(){ var date=window.__OVF_DAILY_DATE__||_trkTodayISO(); var g=(window.__TRK_GRADE_CACHE__||{})[date]; var rows=_ovfFlatten(g); if(!rows.length){ alert('No overflow picks to export for '+date+'.'); return; } var stake=_ovfStake(); var CAT_CFG=window.__TRK_CFG__||{}; var out=[['Date','Weekday','Category','Side','Player','Pick','Odds','Actual','Result','Bet','Profit/Loss']]; var net=0,counted=0; rows.forEach(function(r){ r.__date__=date; var eo=_effOdds(r); var dec=(r.result==='WIN'||r.result==='LOSS'); var pl=dec?_amProfit(eo,stake,r.result==='WIN'):null; var plStr=''; if(pl!==null){ plStr=pl.toFixed(2); net+=pl; counted++; } var cfg=CAT_CFG[(r.category||'')+'|'+(r.side||'OVER')]; out.push([date,_weekdayName(date),(cfg&&cfg.lbl)||r.category||'',r.side||'',r.name||'',r.pick||'',(eo!=null?((eo>0?'+':'')+eo):''),(r.actual!=null?r.actual:''),r.result||'pending',stake,plStr]); }); out.push([]); out.push(['','','','','','','','','TOTALS ('+counted+' graded)',(counted*stake),net.toFixed(2)]); _trkDownloadCSV(out,'mlb-overflow-'+date+'-flat'+stake+'.csv'); }
 function downloadOvfRangeCSV(which){ var stake=_ovfStake(), from,to,tag; if(which==='weekly'){ to=window.__TRK_TODAY__||_trkTodayISO(); from=_isoShift(to,-6); tag='last7-'+from+'_'+to; } else { var m=window.__OVF_MONTH__||_trkTodayISO().slice(0,7); from=m+'-01'; to=m+'-31'; tag='month-'+m; } var ag=_trkAgg(_ovfRangePool(from,to),stake); var CAT_CFG=window.__TRK_CFG__||{}; var arr=Object.keys(ag.cats).map(function(k){ var c=ag.cats[k]; c.roi=c.counted?c.net/(c.counted*stake)*100:null; return [k,c]; }); arr.sort(function(a,b){ var ra=a[1].counted?a[1].roi:-1e9, rb=b[1].counted?b[1].roi:-1e9; return rb-ra; }); if(!arr.length){ alert('No graded overflow picks in this range yet.'); return; } var out=[['Range','Category','Side','Wins','Losses','Plays','Win%','Bet','Net P/L','ROI%']]; arr.forEach(function(x){ var k=x[0], c=x[1], n=c.w+c.l; if(!n) return; var parts=k.split('|'); out.push([from+'_'+to,(CAT_CFG[k]&&CAT_CFG[k].lbl)||parts[0],parts[1],c.w,c.l,n,(c.w/n*100).toFixed(1),stake,(c.counted?c.net.toFixed(2):''),(c.counted?c.roi.toFixed(1):'')]); }); var o=ag.overall, on=o.w+o.l; out.push([]); out.push([from+'_'+to,'OVERALL','',o.w,o.l,on,(on?(o.w/on*100).toFixed(1):'0.0'),stake,o.net.toFixed(2),(o.counted?(o.net/(o.counted*stake)*100).toFixed(1):'')]); _trkDownloadCSV(out,'mlb-overflow-'+tag+'-flat'+stake+'.csv'); }
 async function openOverflow(){
   var btn=document.getElementById('ovf-btn');
@@ -6887,6 +6974,7 @@ function renderOverflow(d){
     +'<span style="font-weight:800;color:#fcd34d;font-size:1rem">💰 Bet amount $</span>'
     +'<input id="ovfBet" type="number" min="1" step="1" value="'+bet+'" oninput="_ovfBetInput()" style="width:104px;background:#020617;border:1px solid #334155;color:#fff;border-radius:8px;padding:8px 12px;font-size:1.05rem;font-weight:800;text-align:center">'
     +'<span style="color:#94a3b8;font-size:.8rem">flat on every overflow pick</span>'
+    +'<button onclick="_ovfPrintReport()" style="margin-left:auto;background:#dc2626;color:#fff;border:none;border-radius:8px;padding:9px 16px;font-size:.84rem;font-weight:800;cursor:pointer">📄 PDF Report</button>'
     +'</div>';
   var tabs='<div style="display:flex;gap:8px;margin-bottom:4px">'+_ovfTabBtn('daily','Daily')+_ovfTabBtn('weekly','Weekly')+_ovfTabBtn('monthly','Monthly')+'</div>';
   var sc=_ovfMatrixScorecard(d);
@@ -6943,14 +7031,14 @@ function _hrtRenderDailyTab(be,stake){
     var gclr=_trkRC(gw,gn);
     body+='<div style="margin:12px 0 4px;font-weight:800;font-size:.83rem;color:#cbd5e1">'+(cfg.icon||'')+' '+cfg.lbl+' <span style="color:'+gclr+';font-family:monospace;font-weight:900">'+gw+'/'+gn+'</span></div>';
     picks.forEach(function(p){
-      var logIdx=window.__TRK_LOG_ROWS__.length; window.__TRK_LOG_ROWS__.push(p);
+      var logIdx=window.__TRK_LOG_ROWS__.length; window.__TRK_LOG_ROWS__.push(p); p.__date__=date;
       var rr=p.result;
       var mk=rr==='WIN'?'<span style="color:#4ade80">\u2713</span>':(rr==='LOSS'?'<span style="color:#f87171">\u2717</span>':'<span style="color:#64748b">\u00b7</span>');
       if(rr==='WIN')win++; else if(rr==='LOSS')loss++; else pend++;
       var act=(p.actual!=null)?('<span style="color:#cbd5e1">\u2192 '+p.actual+(p.stat?(' '+p.stat):'')+'</span>'):'';
-      var odd=(p.odds!=null&&p.odds!=='')?('<span style="color:#64748b;font-family:monospace">'+((Number(p.odds)>0?'+':'')+p.odds)+'</span>'):'';
+      var odd=_oddsCell(p,logIdx);
       var plHtml,roiHtml='';
-      if(rr==='WIN'||rr==='LOSS'){ var pl=_amProfit(p.odds,stake,rr==='WIN'); if(pl===null){ plHtml='<span style="color:#475569;font-family:monospace">\u2014</span>'; } else { net+=pl; counted++; var c=pl>=0?'#4ade80':'#f87171', rp=pl/stake*100; plHtml='<span style="font-family:monospace;font-weight:800;color:'+c+'">'+(pl>=0?'+$':'\u2212$')+Math.abs(pl).toFixed(0)+'</span>'; roiHtml='<span style="font-family:monospace;font-weight:700;color:'+c+'">'+(rp>=0?'+':'\u2212')+Math.abs(rp).toFixed(0)+'%</span>'; } }
+      if(rr==='WIN'||rr==='LOSS'){ var pl=_amProfit(_effOdds(p),stake,rr==='WIN'); if(pl===null){ plHtml='<span style="color:#475569;font-family:monospace">\u2014</span>'; } else { net+=pl; counted++; var c=pl>=0?'#4ade80':'#f87171', rp=pl/stake*100; plHtml='<span style="font-family:monospace;font-weight:800;color:'+c+'">'+(pl>=0?'+$':'\u2212$')+Math.abs(pl).toFixed(0)+'</span>'; roiHtml='<span style="font-family:monospace;font-weight:700;color:'+c+'">'+(rp>=0?'+':'\u2212')+Math.abs(rp).toFixed(0)+'%</span>'; } }
       else { plHtml='<span style="color:#64748b;font-size:.72rem">pending</span>'; }
       var logBtn='<button onclick="_trkLogBet('+logIdx+')" title="Log as bet" style="background:#1e3a8a;color:#bfdbfe;border:1px solid #1d4ed8;border-radius:5px;padding:1px 7px;font-size:.66rem;font-weight:800;cursor:pointer;flex-shrink:0">+Log</button>';
       body+='<div style="display:flex;gap:8px;align-items:center;padding:2px 0 2px 6px;font-size:.79rem">'+mk+'<span style="color:#e2e8f0;min-width:130px">'+(p.name||'')+'</span><span style="color:#94a3b8;min-width:120px">'+(p.pick||'')+'</span>'+act+odd+'<span style="margin-left:auto;display:flex;gap:8px;align-items:center"><span style="min-width:52px;text-align:right">'+plHtml+'</span><span style="min-width:44px;text-align:right">'+roiHtml+'</span>'+logBtn+'</span></div>';
