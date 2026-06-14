@@ -6588,6 +6588,7 @@ function _oddsPrintCurrent(){
   _openPrintReport(inner,'MPA Odds Hit-Rate Report');
 }
 function _oddsCloseModal(){ var m=document.getElementById('_oddsModal'); if(m&&m.parentNode) m.parentNode.removeChild(m); }
+function _oddsCatToggle(id){ var e=document.getElementById(id); if(!e) return; var open=e.style.display!=='none'; e.style.display=open?'none':''; var ar=document.getElementById(id+'_ar'); if(ar) ar.innerHTML=open?'\u25b8':'\u25be'; }
 function _oddsRowDetail(group,bi){
   var c=window.__ODDS_DRILL__||window.__ODDS_CTX__; if(!c||!c.pool) return;
   var stake=c.stake||20; var bk=_ODDS_BUCKETS[bi]; if(!bk) return;
@@ -6607,57 +6608,71 @@ function _oddsRowDetail(group,bi){
   var n=w+l, hit=n?w/n*100:0, need=n?beSum/n:0, roi=counted?net/(counted*stake)*100:0, edge=hit-need;
   var gmap={all:['All graded picks','#38bdf8'],g:['Green verdict','#22c55e'],a:['Amber verdict','#f59e0b'],r:['Red verdict','#ef4444']};
   var gm=gmap[group]||gmap.all;
-  var body='';
-  picks.forEach(function(p){ var r=p.r; var win=r.result==='WIN'; var pl=_amProfit(p.o,stake,win); var cfg=CAT_CFG[(r.category||'')+'|'+(r.side||'OVER')]; var clbl=(cfg&&cfg.lbl)||r.category||''; var od=(p.o>0?'+':'')+p.o; var wd=_weekdayName(r.date); var sd=(r.side==='UNDER')?'U':'O';
-    body+='<div style="display:flex;gap:10px;align-items:center;padding:8px 4px;border-bottom:1px solid #15233b;font-size:.8rem">'
-      +'<span style="width:104px;flex:none;color:#94a3b8;font-family:monospace;font-size:.7rem">'+(r.date||'')+(wd?(' \u00b7 '+wd.slice(0,3)):'')+'</span>'
-      +'<span style="flex:1;min-width:110px"><span style="color:#fff;font-weight:700">'+(r.name||'\u2014')+'</span> <span style="color:#64748b;font-size:.68rem">'+clbl+' '+sd+'</span><div style="color:#94a3b8;font-size:.7rem">'+(r.pick||'')+(r.actual!=null&&r.actual!==''?(' \u00b7 got '+r.actual):'')+'</div></span>'
-      +'<span style="width:52px;flex:none;text-align:right;font-family:monospace;color:#cbd5e1">'+od+'</span>'
-      +'<span style="width:46px;flex:none;text-align:center;font-weight:800;font-size:.72rem;color:'+(win?'#4ade80':'#f87171')+'">'+(win?'WIN':'LOSS')+'</span>'
-      +'<span style="width:58px;flex:none;text-align:right;font-family:monospace;font-weight:700;color:'+((pl||0)>=0?'#4ade80':'#f87171')+'">'+(pl==null?'\u2014':((pl>=0?'+$':'\u2212$')+Math.abs(pl).toFixed(0)))+'</span>'
-      +'</div>';
-  });
-  if(!picks.length) body='<div style="padding:18px;color:#94a3b8;font-size:.84rem">No graded picks in this price range.</div>';
   var edgeTxt=(edge>=0?('\u2705 Beating break-even by +'+edge.toFixed(0)+' pts'):('\u26a0\ufe0f Trailing break-even by \u2212'+Math.abs(edge).toFixed(0)+' pts'));
   var summary=n?('<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;background:#0c1829;border:1px solid #1e293b;border-radius:10px;padding:10px 14px;margin-bottom:10px;font-size:.82rem">'
     +'<span style="font-weight:900;color:'+_trkRC(w,n)+'">'+w+'/'+n+' <span style="color:#94a3b8;font-weight:600;font-size:.74rem">('+hit.toFixed(0)+'% hit \u00b7 need '+need.toFixed(0)+'%)</span></span>'
     +'<span style="color:'+(edge>=0?'#4ade80':'#f87171')+';font-weight:800;font-size:.74rem">'+edgeTxt+'</span>'
     +'<span style="margin-left:auto;font-weight:900;color:'+(net>=0?'#4ade80':'#f87171')+'">'+(net>=0?'+$':'\u2212$')+Math.abs(net).toFixed(0)+' <span style="color:#64748b;font-weight:600;font-size:.74rem">\u00b7 ROI '+(roi>=0?'+':'\u2212')+Math.abs(roi).toFixed(0)+'% on $'+(counted*stake).toFixed(0)+'</span></span>'
     +'</div>'):'';
-  var colh=n?('<div style="display:flex;gap:10px;padding:0 4px 6px;font-size:.56rem;color:#64748b;font-weight:800;letter-spacing:.04em"><span style="width:104px;flex:none">DATE</span><span style="flex:1;min-width:110px">PLAYER \u00b7 PICK</span><span style="width:52px;flex:none;text-align:right">ODDS</span><span style="width:46px;flex:none;text-align:center">RESULT</span><span style="width:58px;flex:none;text-align:right">P/L</span></div>'):'';
-  // per-category rollup within this price bucket + verdict (which plays cash at this price)
+  // one play row (rendered inside an expanded category)
+  function _plRow(p){ var r=p.r; var win=r.result==='WIN'; var pl=_amProfit(p.o,stake,win); var od=(p.o>0?'+':'')+p.o; var wd=_weekdayName(r.date);
+    return '<div style="display:flex;gap:10px;align-items:center;padding:6px 4px 6px 14px;border-bottom:1px solid #15233b;font-size:.76rem">'
+      +'<span style="width:104px;flex:none;color:#94a3b8;font-family:monospace;font-size:.68rem">'+(r.date||'')+(wd?(' \u00b7 '+wd.slice(0,3)):'')+'</span>'
+      +'<span style="flex:1;min-width:100px"><span style="color:#fff;font-weight:700">'+(r.name||'\u2014')+'</span><div style="color:#94a3b8;font-size:.68rem">'+(r.pick||'')+(r.actual!=null&&r.actual!==''?(' \u00b7 got '+r.actual):'')+'</div></span>'
+      +'<span style="width:52px;flex:none;text-align:right;font-family:monospace;color:#cbd5e1">'+od+'</span>'
+      +'<span style="width:46px;flex:none;text-align:center;font-weight:800;font-size:.7rem;color:'+(win?'#4ade80':'#f87171')+'">'+(win?'WIN':'LOSS')+'</span>'
+      +'<span style="width:58px;flex:none;text-align:right;font-family:monospace;font-weight:700;color:'+((pl||0)>=0?'#4ade80':'#f87171')+'">'+(pl==null?'\u2014':((pl>=0?'+$':'\u2212$')+Math.abs(pl).toFixed(0)))+'</span>'
+      +'</div>';
+  }
+  // BY DAY OF WEEK (top) \u2014 line up against the matrix
+  var _DOW=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+  var _byDay={}; picks.forEach(function(p){ var wd=_weekdayName(p.r.date)||''; (_byDay[wd]=_byDay[wd]||[]).push(p); });
+  var dayRows='';
+  _DOW.forEach(function(dn){ var arr=_byDay[dn]||[]; var cell='';
+    if(arr.length){ var dm={},dord=[];
+      arr.forEach(function(p){ var r=p.r; var key=(r.category||'')+'|'+(r.side||'OVER'); var g=dm[key]; if(!g){ g=dm[key]={w:0,l:0,net:0,lbl:((CAT_CFG[key]&&CAT_CFG[key].lbl)||r.category||'\u2014'),sd:(r.side==='UNDER')?'U':'O'}; dord.push(key); } var win=r.result==='WIN'; if(win)g.w++; else g.l++; var pl=_amProfit(p.o,stake,win); if(pl!==null)g.net+=pl; });
+      dord.forEach(function(k){ var g=dm[k]; if(cell)cell+='<span style="color:#334155"> \u00b7 </span>'; cell+='<span style="color:#cbd5e1">'+g.lbl+' '+g.sd+'</span> <span style="font-family:monospace;color:'+(g.w>=g.l?'#4ade80':'#f87171')+'">'+g.w+'-'+g.l+'</span> <span style="font-family:monospace;color:'+(g.net>=0?'#4ade80':'#f87171')+'">'+(g.net>=0?'+$':'\u2212$')+Math.abs(g.net).toFixed(0)+'</span>'; });
+    } else { cell='<span style="color:#475569">\u2014</span>'; }
+    dayRows+='<div style="display:flex;gap:10px;padding:5px 4px;border-bottom:1px solid #15233b;font-size:.74rem"><span style="width:42px;flex:none;color:#93c5fd;font-weight:800">'+dn.slice(0,3).toUpperCase()+'</span><span style="flex:1;line-height:1.6">'+cell+'</span></div>';
+  });
+  var dayBreak=n?('<div style="background:#0c1829;border:1px solid #1e293b;border-radius:10px;padding:8px 12px 4px;margin-bottom:10px">'
+    +'<div style="font-size:.62rem;color:#64748b;font-weight:800;letter-spacing:.04em;margin-bottom:4px">BY DAY OF WEEK \u00b7 line up against your matrix</div>'+dayRows+'</div>'):'';
+  // BY CATEGORY \u2014 tap a row to expand its plays
   var _cm={},_cord=[];
   picks.forEach(function(p){ var r=p.r; var key=(r.category||'')+'|'+(r.side||'OVER'); var g=_cm[key];
-    if(!g){ g=_cm[key]={w:0,l:0,net:0,counted:0,beSum:0,lbl:((CAT_CFG[key]&&CAT_CFG[key].lbl)||r.category||'\u2014'),sd:(r.side==='UNDER')?'U':'O'}; _cord.push(key); }
-    var cw=r.result==='WIN'; if(cw)g.w++; else g.l++; var cpl=_amProfit(p.o,stake,cw); if(cpl!==null){ g.net+=cpl; g.counted++; } g.beSum+=_oddsBE(p.o);
+    if(!g){ g=_cm[key]={w:0,l:0,net:0,counted:0,beSum:0,picks:[],lbl:((CAT_CFG[key]&&CAT_CFG[key].lbl)||r.category||'\u2014'),sd:(r.side==='UNDER')?'U':'O'}; _cord.push(key); }
+    var cw=r.result==='WIN'; if(cw)g.w++; else g.l++; var cpl=_amProfit(p.o,stake,cw); if(cpl!==null){ g.net+=cpl; g.counted++; } g.beSum+=_oddsBE(p.o); g.picks.push(p);
   });
   var _crows=_cord.map(function(k){ var g=_cm[k]; var gn=g.w+g.l; g.hit=gn?g.w/gn*100:0; g.need=gn?g.beSum/gn:0; g.roi=g.counted?g.net/(g.counted*stake)*100:0; return g; });
   _crows.sort(function(a,b){ return b.roi-a.roi; });
   var catBreak='';
   if(_crows.length){
     var crows='';
-    _crows.forEach(function(g){ var hc=g.hit>=g.need?'#4ade80':'#f87171';
-      crows+='<div style="display:flex;gap:10px;align-items:center;padding:6px 4px;border-bottom:1px solid #15233b;font-size:.78rem">'
+    _crows.forEach(function(g,gi){ var hc=g.hit>=g.need?'#4ade80':'#f87171'; var pid='_ocat_'+gi; var plays='';
+      g.picks.forEach(function(p){ plays+=_plRow(p); });
+      crows+='<div onclick="_oddsCatToggle(&#39;'+pid+'&#39;)" onmouseover="this.style.background=&#39;#0f1d33&#39;" onmouseout="this.style.background=&#39;&#39;" style="display:flex;gap:10px;align-items:center;padding:7px 4px;border-bottom:1px solid #15233b;font-size:.78rem;cursor:pointer">'
         +'<span style="flex:1;min-width:120px;color:#e2e8f0;font-weight:700">'+g.lbl+' <span style="color:#64748b;font-weight:600;font-size:.68rem">'+g.sd+'</span></span>'
         +'<span style="width:50px;flex:none;text-align:right;font-family:monospace;color:#cbd5e1">'+g.w+'-'+g.l+'</span>'
         +'<span style="width:84px;flex:none;text-align:right;font-family:monospace;color:'+hc+'">'+g.hit.toFixed(0)+'% <span style="color:#64748b">/ '+g.need.toFixed(0)+'%</span></span>'
         +'<span style="width:58px;flex:none;text-align:right;font-family:monospace;font-weight:700;color:'+(g.net>=0?'#4ade80':'#f87171')+'">'+(g.net>=0?'+$':'\u2212$')+Math.abs(g.net).toFixed(0)+'</span>'
         +'<span style="width:50px;flex:none;text-align:right;font-family:monospace;font-weight:700;color:'+(g.roi>=0?'#4ade80':'#f87171')+'">'+(g.roi>=0?'+':'\u2212')+Math.abs(g.roi).toFixed(0)+'%</span>'
-        +'</div>';
+        +'<span id="'+pid+'_ar" style="width:14px;flex:none;text-align:right;color:#64748b;font-weight:900">\u25b8</span>'
+        +'</div>'
+        +'<div id="'+pid+'" style="display:none;background:#08111f">'+plays+'</div>';
     });
     catBreak='<div style="background:#0c1829;border:1px solid #1e293b;border-radius:10px;padding:8px 12px 4px;margin-bottom:10px">'
-      +'<div style="font-size:.62rem;color:#64748b;font-weight:800;letter-spacing:.04em;margin-bottom:4px">BY CATEGORY \u00b7 best ROI first \u2014 which plays cash at this price</div>'
-      +'<div style="display:flex;gap:10px;padding:0 4px 4px;font-size:.54rem;color:#64748b;font-weight:800;letter-spacing:.04em"><span style="flex:1;min-width:120px">CATEGORY</span><span style="width:50px;flex:none;text-align:right">W-L</span><span style="width:84px;flex:none;text-align:right">HIT / NEED</span><span style="width:58px;flex:none;text-align:right">NET</span><span style="width:50px;flex:none;text-align:right">ROI</span></div>'
+      +'<div style="font-size:.62rem;color:#64748b;font-weight:800;letter-spacing:.04em;margin-bottom:4px">BY CATEGORY \u00b7 best ROI first \u2014 tap a row to see its plays</div>'
+      +'<div style="display:flex;gap:10px;padding:0 4px 4px;font-size:.54rem;color:#64748b;font-weight:800;letter-spacing:.04em"><span style="flex:1;min-width:120px">CATEGORY</span><span style="width:50px;flex:none;text-align:right">W-L</span><span style="width:84px;flex:none;text-align:right">HIT / NEED</span><span style="width:58px;flex:none;text-align:right">NET</span><span style="width:50px;flex:none;text-align:right">ROI</span><span style="width:14px;flex:none"></span></div>'
       +crows+'</div>';
   }
-  var listLbl=n?'<div style="font-size:.62rem;color:#64748b;font-weight:800;letter-spacing:.04em;margin:2px 0 4px">EVERY PICK</div>':'';
+  var noData=picks.length?'':'<div style="padding:18px;color:#94a3b8;font-size:.84rem">No graded picks in this price range.</div>';
   var card='<div onclick="event.stopPropagation()" style="background:#0a1424;border:1px solid #243450;border-radius:14px;max-width:680px;width:94%;max-height:84vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.6)">'
     +'<div style="display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid #1e293b">'
       +'<span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:'+gm[1]+';flex:none"></span>'
       +'<div style="flex:1"><div style="font-weight:900;color:#fff;font-size:1.02rem">'+bk.lab+'</div><div style="color:#64748b;font-size:.72rem">'+gm[0]+(c.label?(' \u00b7 '+c.label):'')+'</div></div>'
       +'<button onclick="_oddsCloseModal()" style="background:#334155;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:.82rem;font-weight:800;cursor:pointer">Close</button>'
     +'</div>'
-    +'<div style="padding:14px 16px;overflow-y:auto">'+summary+catBreak+listLbl+colh+body+'</div>'
+    +'<div style="padding:14px 16px;overflow-y:auto">'+summary+dayBreak+catBreak+noData+'</div>'
   +'</div>';
   _oddsCloseModal();
   var m=document.createElement('div'); m.id='_oddsModal'; m.onclick=_oddsCloseModal;
