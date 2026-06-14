@@ -2386,7 +2386,7 @@ _HTML = """
       <h1 style="font-family:'Playfair Display',serif;font-size:2.6rem;font-weight:900;color:#fff;margin-bottom:6px">MLB <span style="color:#f59e0b">MoneyBall</span></h1>
       <p style="font-size:.85rem;color:#6b7280;letter-spacing:.15em;text-transform:uppercase">MLB Daily Picks</p>
     </div>
-    <div id="betting-context-card" class="card" style="max-width:960px;margin:0 auto 18px;padding:0;overflow:hidden">
+    <div id="betting-context-card" class="card" style="display:none;max-width:960px;margin:0 auto 18px;padding:0;overflow:hidden">
       <div onclick="_bcToggle()" style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;cursor:pointer;user-select:none;background:linear-gradient(135deg,rgba(245,158,11,.06),transparent)">
         <div>
           <span style="font-weight:800;color:#fbbf24;font-size:.85rem">&#9918; MLB Prop Strategy &#8212; Day &amp; Trend Master Sheet</span>
@@ -4499,6 +4499,7 @@ function _seriesBadge(p,isPit){
   return '<span title="'+tip+'" style="font-size:.62rem;font-weight:900;padding:2px 6px;border-radius:4px;background:'+bg+';color:'+clr+';letter-spacing:.06em">'+lbl+rk+'</span>';
 }
 function _slotDot(p, side, isPit, catIdx){
+  return '';
   var ri=_rotInfo(p,isPit); if(!ri) return '';
   var who=isPit?'This starter':'The opposing starter';
   if(ri.tier===2){
@@ -4541,6 +4542,7 @@ function _seriesTag(p, side, isPit, catIdx){
 // window.__MPA_SLOTS__, compares to the pick side, and renders a green
 // "agrees" / red "fade" / amber "lean light" block with reasoning.
 function _matrixWriteup(p, side, catIdx, isPit, marketWord, pickLabel){
+  return '';
   var ri=_rotInfo(p,isPit); if(!ri) return '';
   var who=isPit?'This pitcher':'The opposing starter';
   var pl='<b style="color:#fff">'+pickLabel+'</b>';
@@ -6216,14 +6218,12 @@ function _matrixScorecard(d){
   var n1=tot(dayAgree)+tot(dayFade);
   var diff=pct(dayAgree)-pct(dayFade);
   var vClr,vTxt;
-  if(n1<10){ vClr='#94a3b8'; vTxt='Only '+n1+' graded picks so far \u2014 too few to judge. Keep logging slates.'; }
-  else if(diff>=5){ vClr='#4ade80'; vTxt='Chart-backed picks are winning '+diff.toFixed(0)+' points more than fades \u2014 the day-of-week chart is adding real signal.'; }
-  else if(diff<=-5){ vClr='#f87171'; vTxt='Chart-backed picks are LOSING to fades by '+Math.abs(diff).toFixed(0)+' points \u2014 the day-of-week chart is not predictive right now.'; }
-  else { vClr='#fbbf24'; vTxt='Chart-backed and faded picks are about even ('+diff.toFixed(0)+' pts) \u2014 no clear edge yet.'; }
+  if(n1<10){ vClr='#94a3b8'; vTxt='Only '+n1+' graded picks so far \u2014 still gathering. Keep logging slates.'; }
+  else { vClr='#94a3b8'; vTxt='Experimental day-of-week lean, shown for tracking only \u2014 not a betting recommendation while we gather results.'; }
   var s1='<div style="margin-bottom:6px;color:#93c5fd;font-size:.72rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase">1 \u00b7 Day-of-Week Signal \u2014 All History</div>'
     +colHdr
-    +statRow('Chart agrees with pick (play)',dayAgree,'#22c55e')
-    +statRow('Chart disagrees (fade)',dayFade,'#ef4444')
+    +statRow('Day lean matches this pick',dayAgree,'#22c55e')
+    +statRow('Day lean opposite this pick',dayFade,'#ef4444')
     +'<div style="margin-top:8px;font-size:.74rem;line-height:1.5;color:'+vClr+'">'+vTxt+'</div>';
   // per-market breakdown (day signal)
   var mkRows='';
@@ -6246,17 +6246,17 @@ function _matrixScorecard(d){
   } else {
     s2='<div style="margin-bottom:6px;color:#a78bfa;font-size:.72rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase">2 \u00b7 Combined Verdict \u2014 Series + Day</div>'
       +colHdr
-      +statRow('Green \u2014 both signals back the pick',vGreen,'#22c55e')
-      +statRow('Red \u2014 chart says fade',vRed,'#ef4444')
-      +statRow('Amber \u2014 split signal (lean light)',vAmber,'#f59e0b')
-      +'<div style="margin-top:8px;font-size:.7rem;color:#64748b;line-height:1.5">Green should beat Red. Red picks are bets the chart told you to fade \u2014 a LOW red win% means the fade was right.</div>'
+      +statRow('Green \u2014 day + series both leaned this side',vGreen,'#22c55e')
+      +statRow('Red \u2014 day + series leaned the other way',vRed,'#ef4444')
+      +statRow('Amber \u2014 day + series split',vAmber,'#f59e0b')
+      +'<div style="margin-top:8px;font-size:.7rem;color:#64748b;line-height:1.5">Experimental day-of-week + series lean, shown for tracking only \u2014 not a betting recommendation while we gather results.</div>'
       +_mtxVerdictRows(perVerdict,stake);
   }
   return '<div style="background:#0a1424;border:1px solid #1e293b;border-radius:12px;padding:14px 18px;margin-bottom:14px">'
     +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">'
     +'<span style="font-size:1rem">🧮</span>'
-    +'<span style="font-weight:800;color:#e2e8f0;font-size:.95rem">Matrix Scorecard</span>'
-    +'<span style="color:#64748b;font-size:.7rem">is the strategy chart actually winning?</span></div>'
+    +'<span style="font-weight:800;color:#e2e8f0;font-size:.95rem">Lean Tracker (experimental)</span>'
+    +'<span style="color:#64748b;font-size:.7rem">how each lean group has done so far</span></div>'
     +s1+s1mk
     +'<div style="height:1px;background:#1e293b;margin:14px 0"></div>'
     +s2+'</div>';
@@ -6473,24 +6473,23 @@ function _catVerdictPopup(idx){
   var gp=pct(G), rp=pct(D), gn=tot(G), rn=tot(D);
   var noteClr,noteTxt;
   if(!tot(G)&&!tot(A)&&!tot(D)){ noteClr='#94a3b8'; noteTxt='No green / amber / red picks in this range yet. The verdict needs the series-position stamp (G1/G2/G3) plus the day-of-week signal \u2014 it fills in as new slates are graded.'+(unrated?(' '+unrated+' graded pick'+(unrated>1?'s':'')+' here had no signal stamp.'):''); }
-  else if(gn>=5&&rn>=5){ var dd=gp-rp; if(dd>=5){ noteClr='#4ade80'; noteTxt='Green is beating Red by '+dd.toFixed(0)+' points \u2014 the signal is working in this market.'; } else if(dd<=-5){ noteClr='#f87171'; noteTxt='\u26a0 Green is LOSING to Red by '+Math.abs(dd).toFixed(0)+' points \u2014 the signal has a problem in this market.'; } else { noteClr='#fbbf24'; noteTxt='Green and Red are about even ('+dd.toFixed(0)+' pts) \u2014 no clear edge in this market yet.'; } }
-  else { noteClr='#94a3b8'; noteTxt='Small sample so far (green '+gn+', red '+rn+') \u2014 banks as more slates go Final.'; }
+  else { noteClr='#94a3b8'; noteTxt='Experimental day-of-week + series lean, shown for tracking only \u2014 not a betting recommendation while we gather results.'; }
   var ov=document.getElementById('catv-modal');
   if(!ov){ ov=document.createElement('div'); ov.id='catv-modal'; ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px'; ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; }; document.body.appendChild(ov); }
   var allN=tot(All), allRoi=roi(All), allClr=allRoi>=0?'#4ade80':'#f87171';
   var hdrSub=(cfg.lbl||key)+' \u00b7 '+allN+' graded \u00b7 '+(allN?(All.w/allN*100).toFixed(0):'0')+'% \u00b7 ROI <span style="color:'+allClr+';font-weight:800">'+(allRoi>=0?'+':'\u2212')+Math.abs(allRoi).toFixed(0)+'%</span>';
   ov.innerHTML='<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:460px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">'
     +'<div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid #1e293b">'
-      +'<div><div style="font-weight:800;font-size:1.05rem;color:#fff">'+(cfg.icon||'')+' Verdict breakdown</div><div style="color:#94a3b8;font-size:.76rem;margin-top:3px">'+hdrSub+'</div></div>'
+      +'<div><div style="font-weight:800;font-size:1.05rem;color:#fff">'+(cfg.icon||'')+' Day + series lean</div><div style="color:#94a3b8;font-size:.76rem;margin-top:3px">'+hdrSub+'</div></div>'
       +'<button onclick="document.getElementById(&#39;catv-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem">\u2715</button>'
     +'</div>'
     +'<div style="padding:14px 18px">'
       +'<div style="display:flex;align-items:center;gap:10px;padding:2px 2px 6px"><span style="width:11px;flex:none"></span><span style="flex:1"></span><span style="color:#64748b;font-size:.6rem;font-weight:800;letter-spacing:.05em;min-width:84px;text-align:right">W\u2212L / WIN%</span><span style="color:#64748b;font-size:.6rem;font-weight:800;letter-spacing:.05em;min-width:60px;text-align:right">ROI</span></div>'
-      +statRow('Green','Both signals back the pick',G,'#22c55e')
-      +statRow('Amber','Split signal \u2014 lean light',A,'#f59e0b')
-      +statRow('Red','Chart says fade this pick',D,'#ef4444')
+      +statRow('Green','Day + series both leaned this side',G,'#22c55e')
+      +statRow('Amber','Day + series split',A,'#f59e0b')
+      +statRow('Red','Day + series leaned the other way',D,'#ef4444')
       +'<div style="margin-top:12px;font-size:.78rem;line-height:1.5;color:'+noteClr+'">'+noteTxt+'</div>'
-      +'<div style="margin-top:10px;border-top:1px solid #1e293b;padding-top:8px;color:#64748b;font-size:.68rem;line-height:1.5">Green should beat Red. Red picks are the ones the chart told you to fade \u2014 a LOW red win% means fading was right.'+(unrated?(' '+unrated+' pick'+(unrated>1?'s':'')+' had no signal stamp and are not shown above.'):'')+'</div>'
+      +'<div style="margin-top:10px;border-top:1px solid #1e293b;padding-top:8px;color:#64748b;font-size:.68rem;line-height:1.5">Shown for tracking only while we gather results to rebuild this from real outcomes.'+(unrated?(' '+unrated+' pick'+(unrated>1?'s':'')+' had no signal stamp and are not shown above.'):'')+'</div>'
     +'</div>'
   +'</div>';
   ov.style.display='flex';
@@ -6635,9 +6634,9 @@ function _oddsReport(pool,stake,interactive){
     +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><span style="font-size:1rem">🎯</span><span style="font-weight:800;color:#e2e8f0;font-size:.95rem">Hit Rate by Odds Range</span><span style="color:#64748b;font-size:.7rem">which prices actually cash</span></div>'
     +legend
     +_oddsTable(G.all,stake,'All graded picks','#38bdf8','every priced pick in range','all',interactive,tok)
-    +_oddsTable(G.g,stake,'Green verdict','#22c55e','both signals backed the pick','g',interactive,tok)
-    +_oddsTable(G.a,stake,'Amber verdict','#f59e0b','split signal \u2014 lean light','a',interactive,tok)
-    +_oddsTable(G.r,stake,'Red verdict','#ef4444','chart said fade \u2014 low win% = good fade','r',interactive,tok)
+    +_oddsTable(G.g,stake,'Green lean','#22c55e','day + series both leaned this side','g',interactive,tok)
+    +_oddsTable(G.a,stake,'Amber lean','#f59e0b','day + series split','a',interactive,tok)
+    +_oddsTable(G.r,stake,'Red lean','#ef4444','day + series leaned the other way','r',interactive,tok)
     +'<div style="margin-top:14px;color:#64748b;font-size:.7rem;line-height:1.5">Green / amber / red need the series-position stamp (G1/G2/G3) and a day-of-week lean, so they cover fewer picks than \u201cAll graded.\u201d Picks logged before those were stored appear under All only.</div>'
     +'</div>';
 }
@@ -7019,14 +7018,12 @@ function _ovfMatrixScorecard(d){
   var n1=tot(dayAgree)+tot(dayFade);
   var diff=pct(dayAgree)-pct(dayFade);
   var vClr,vTxt;
-  if(n1<10){ vClr='#94a3b8'; vTxt='Only '+n1+' graded overflow picks so far \u2014 too few to judge. Banks as more slates go Final.'; }
-  else if(diff>=5){ vClr='#4ade80'; vTxt='Overflow picks the chart backs are winning '+diff.toFixed(0)+' points more than fades \u2014 the day-of-week chart adds signal here too.'; }
-  else if(diff<=-5){ vClr='#f87171'; vTxt='Chart-backed overflow picks are LOSING to fades by '+Math.abs(diff).toFixed(0)+' points \u2014 the chart is not predictive on overflow right now.'; }
-  else { vClr='#fbbf24'; vTxt='Chart-backed and faded overflow picks are about even ('+diff.toFixed(0)+' pts) \u2014 no clear edge yet.'; }
+  if(n1<10){ vClr='#94a3b8'; vTxt='Only '+n1+' graded overflow picks so far \u2014 still gathering. Banks as more slates go Final.'; }
+  else { vClr='#94a3b8'; vTxt='Experimental day-of-week lean, shown for tracking only \u2014 not a betting recommendation while we gather results.'; }
   var s1='<div style="margin-bottom:6px;color:#fbbf24;font-size:.72rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase">1 \u00b7 Day-of-Week Signal \u2014 Overflow History</div>'
     +colHdr
-    +statRow('Chart agrees with pick (play)',dayAgree,'#22c55e')
-    +statRow('Chart disagrees (fade)',dayFade,'#ef4444')
+    +statRow('Day lean matches this pick',dayAgree,'#22c55e')
+    +statRow('Day lean opposite this pick',dayFade,'#ef4444')
     +'<div style="margin-top:8px;font-size:.74rem;line-height:1.5;color:'+vClr+'">'+vTxt+'</div>';
   var mkRows='';
   Object.keys(perMkt).sort(function(a,b){ return pct(perMkt[b].a)-pct(perMkt[a].a); }).forEach(function(cat){
@@ -7047,17 +7044,17 @@ function _ovfMatrixScorecard(d){
   } else {
     s2='<div style="margin-bottom:6px;color:#a78bfa;font-size:.72rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase">2 \u00b7 Combined Verdict \u2014 Series + Day</div>'
       +colHdr
-      +statRow('Green \u2014 both signals back the pick',vGreen,'#22c55e')
-      +statRow('Red \u2014 chart says fade',vRed,'#ef4444')
-      +statRow('Amber \u2014 split signal (lean light)',vAmber,'#f59e0b')
-      +'<div style="margin-top:8px;font-size:.7rem;color:#64748b;line-height:1.5">Green should beat Red. Red picks are bets the chart told you to fade \u2014 a LOW red win% means the fade was right.</div>'
+      +statRow('Green \u2014 day + series both leaned this side',vGreen,'#22c55e')
+      +statRow('Red \u2014 day + series leaned the other way',vRed,'#ef4444')
+      +statRow('Amber \u2014 day + series split',vAmber,'#f59e0b')
+      +'<div style="margin-top:8px;font-size:.7rem;color:#64748b;line-height:1.5">Experimental day-of-week + series lean, shown for tracking only \u2014 not a betting recommendation while we gather results.</div>'
       +_mtxVerdictRows(perVerdict,stake);
   }
   return '<div style="background:#1a1206;border:1px solid #5b3d12;border-radius:12px;padding:14px 18px;margin-bottom:14px">'
     +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">'
     +'<span style="font-size:1rem">🧮</span>'
-    +'<span style="font-weight:800;color:#fde68a;font-size:.95rem">Overflow Matrix Scorecard</span>'
-    +'<span style="color:#64748b;font-size:.7rem">is the chart winning on the overflow plays?</span></div>'
+    +'<span style="font-weight:800;color:#fde68a;font-size:.95rem">Overflow Lean Tracker (experimental)</span>'
+    +'<span style="color:#64748b;font-size:.7rem">how each lean group has done so far</span></div>'
     +s1+s1mk
     +'<div style="height:1px;background:#5b3d12;margin:14px 0"></div>'
     +s2+'</div>';
