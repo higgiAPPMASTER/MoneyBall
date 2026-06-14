@@ -1409,6 +1409,13 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
             if _teams_match(_nh, pitcher_team) or _teams_match(_na, pitcher_team):
                 _ump_data = _UMP_K_CACHE.get(_uname)
                 break
+        # K consistency: variance of recent K output across last N starts
+        _k_mean = sum(recent_k_list) / len(recent_k_list) if recent_k_list else 0
+        _k_std  = (sum((k - _k_mean) ** 2 for k in recent_k_list) / len(recent_k_list)) ** 0.5 \
+                  if recent_k_list and len(recent_k_list) >= 2 else None
+        _k_consistency = ("consistent" if _k_std is not None and _k_std < 1.5 else
+                          "volatile"   if _k_std is not None and _k_std < 3.0 else
+                          "boom_bust"  if _k_std is not None else None)
         return ({"name": name, "team": pitcher_team, "opp": opp, "side": side,
                  "line": line, "over_odds": pl.get("over_odds"),
                  "under_odds": pl.get("under_odds"),
@@ -1428,6 +1435,7 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                  "sugg_line": sugg_line, "sugg_odds": sugg_odds,
                  "recent_avg_k": recent_avg_k, "recent_k_list": recent_k_list,
                  "recent_starts": recent_starts, "recent_k_log": rf["recent_k_log"],
+                 "k_consistency": _k_consistency, "k_std": round(_k_std, 2) if _k_std is not None else None,
                  "blended_avg_k": blended_avg, "blend_src": blend_src,
                  "proj_k": proj_k, "proj_factors": proj_factors,
                  "pit_hand": pit_hand, "days_rest": d_rest,
