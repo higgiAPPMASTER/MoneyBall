@@ -4857,6 +4857,7 @@ function _runsCard(p, rank, pfx) {
         <span style="font-size:.78rem;color:#94a3b8">Runs Rate vr Opp</span>
         <span style="font-family:monospace;font-weight:700;color:${scoreClr}">${p.rate_disp||'—'} <span style="color:#64748b;font-size:.68rem">${p.basis||''}</span></span>
       </div>
+      ${p.conv_flag?'<div style="font-size:.67rem;color:#4ade80;font-weight:600;margin-top:2px">&#10003; Converged &middot; L10 '+(p.recent_l10||'N/A')+' L5 '+(p.recent_l5||'N/A')+'</div>':(p.cold_flag?'<div style="font-size:.67rem;color:#fb923c;font-weight:600;margin-top:2px">&#9888; Recent diverges &middot; L5 '+(p.recent_l5||'N/A')+'</div>':((p.recent_l10||p.recent_l5)?'<div style="font-size:.67rem;color:#64748b;margin-top:2px">L10 '+(p.recent_l10||'N/A')+' &middot; L5 '+(p.recent_l5||'N/A')+'</div>':''))}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
         <span style="font-size:.72rem;color:#64748b">Recent</span>
         <span style="font-size:.78rem;color:#cbd5e1">${log.length?recCnt+'/'+log.length:'—'}</span>
@@ -4914,6 +4915,7 @@ function _rbiCard(p, rank, pfx) {
         <span style="font-size:.78rem;color:#94a3b8">RBI Rate vr Opp</span>
         <span style="font-family:monospace;font-weight:700;color:${scoreClr}">${p.rate_disp||'—'} <span style="color:#64748b;font-size:.68rem">${p.basis||''}</span></span>
       </div>
+      ${p.conv_flag?'<div style="font-size:.67rem;color:#4ade80;font-weight:600;margin-top:2px">&#10003; Converged &middot; L10 '+(p.recent_l10||'N/A')+' L5 '+(p.recent_l5||'N/A')+'</div>':(p.cold_flag?'<div style="font-size:.67rem;color:#fb923c;font-weight:600;margin-top:2px">&#9888; Recent diverges &middot; L5 '+(p.recent_l5||'N/A')+'</div>':((p.recent_l10||p.recent_l5)?'<div style="font-size:.67rem;color:#64748b;margin-top:2px">L10 '+(p.recent_l10||'N/A')+' &middot; L5 '+(p.recent_l5||'N/A')+'</div>':''))}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
         <span style="font-size:.72rem;color:#64748b">Recent</span>
         <span style="font-size:.78rem;color:#cbd5e1">${log.length?recCnt+'/'+log.length:'—'}</span>
@@ -5222,6 +5224,7 @@ function _tbCard(p, rank) {
         <span style="font-size:.78rem;color:#94a3b8">TB Under Rate <span style="color:#64748b;font-size:.68rem">${p.basis||''}</span></span>
         <span style="font-family:monospace;font-weight:700;color:${scoreClr}">${p.rate_disp||'—'}</span>
       </div>
+      ${p.conv_flag?'<div style="font-size:.67rem;color:#4ade80;font-weight:600;margin-top:2px">&#10003; Converged &middot; L10 '+(p.recent_l10||'N/A')+' L5 '+(p.recent_l5||'N/A')+'</div>':(p.cold_flag?'<div style="font-size:.67rem;color:#fb923c;font-weight:600;margin-top:2px">&#9888; Recent diverges &middot; L5 '+(p.recent_l5||'N/A')+'</div>':((p.recent_l10||p.recent_l5)?'<div style="font-size:.67rem;color:#64748b;margin-top:2px">L10 '+(p.recent_l10||'N/A')+' &middot; L5 '+(p.recent_l5||'N/A')+'</div>':''))}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
         <span style="font-size:.72rem;color:#64748b">Recent</span>
         <span style="font-size:.78rem;color:#cbd5e1">${log.length?underCnt+'/'+log.length+' under':'—'}</span>
@@ -5274,6 +5277,7 @@ function _tbOverCard(p, rank) {
         <span style="font-size:.78rem;color:#94a3b8">TB Over Rate <span style="color:#64748b;font-size:.68rem">vs opp</span></span>
         <span style="font-family:monospace;font-weight:700;color:${scoreClr}">${p.rate_disp||'—'}</span>
       </div>
+      ${p.conv_flag?'<div style="font-size:.67rem;color:#4ade80;font-weight:600;margin-top:2px">&#10003; Converged &middot; L10 '+(p.recent_l10||'N/A')+' L5 '+(p.recent_l5||'N/A')+'</div>':(p.cold_flag?'<div style="font-size:.67rem;color:#fb923c;font-weight:600;margin-top:2px">&#9888; Recent diverges &middot; L5 '+(p.recent_l5||'N/A')+'</div>':((p.recent_l10||p.recent_l5)?'<div style="font-size:.67rem;color:#64748b;margin-top:2px">L10 '+(p.recent_l10||'N/A')+' &middot; L5 '+(p.recent_l5||'N/A')+'</div>':''))}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
         <span style="font-size:.72rem;color:#64748b">Recent</span>
         <span style="font-size:.78rem;color:#cbd5e1">${log.length?overCnt+'/'+log.length+' over':'—'}</span>
@@ -5562,6 +5566,7 @@ function _hrrCard(p, rank, pfx) {
         <span style="font-size:.78rem;color:#94a3b8">HRR Rate <span style="color:#64748b;font-size:.68rem">vs opp</span></span>
         <span style="font-family:monospace;font-weight:700;color:${scoreClr}">${p.rate_disp||'—'}</span>
       </div>
+      ${p.conv_flag?'<div style="font-size:.67rem;color:#4ade80;font-weight:600;margin-top:2px">&#10003; Converged &middot; L10 '+(p.recent_l10||'N/A')+' L5 '+(p.recent_l5||'N/A')+'</div>':(p.cold_flag?'<div style="font-size:.67rem;color:#fb923c;font-weight:600;margin-top:2px">&#9888; Recent diverges &middot; L5 '+(p.recent_l5||'N/A')+'</div>':((p.recent_l10||p.recent_l5)?'<div style="font-size:.67rem;color:#64748b;margin-top:2px">L10 '+(p.recent_l10||'N/A')+' &middot; L5 '+(p.recent_l5||'N/A')+'</div>':''))}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
         <span style="font-size:.72rem;color:#64748b">Recent</span>
         <span style="font-size:.78rem;color:#cbd5e1">${recDisp}</span>
@@ -5723,6 +5728,7 @@ function _pitcherCard(p, rank, keyPfx) {
       </div>
       ${hasProj?`<div style="margin-top:2px;font-size:.62rem;color:#475569">${factTxt}</div>`:''}
       <div style="margin-top:5px;font-size:.68rem;color:#94a3b8;line-height:1.6">K <strong style="color:#cbd5e1">${p.avg_k!=null?p.avg_k:'—'}</strong> · H <strong style="color:#cbd5e1">${p.avg_hits!=null?p.avg_hits:'—'}</strong> · ER <strong style="color:#cbd5e1">${p.avg_er!=null?p.avg_er:'—'}</strong> · Outs <strong style="color:#cbd5e1">${p.avg_outs!=null?p.avg_outs:'—'}</strong> · BB <strong style="color:#cbd5e1">${p.avg_bb!=null?p.avg_bb:'—'}</strong> · IP <strong style="color:#cbd5e1">${p.avg_ip!=null?p.avg_ip:'—'}</strong> · ERA <strong style="color:#cbd5e1">${p.era||'—'}</strong> <span style="color:#64748b">vr opp</span></div>
+      ${p.k_consistency==='consistent'?'<div style="font-size:.66rem;color:#4ade80;margin-top:3px">&#10003; K Consistent (std '+(p.k_std||0)+')</div>':p.k_consistency==='volatile'?'<div style="font-size:.66rem;color:#fbbf24;margin-top:3px">&#126; K Volatile (std '+(p.k_std||0)+')</div>':p.k_consistency==='boom_bust'?'<div style="font-size:.66rem;color:#fb923c;margin-top:3px">&#9888; Boom/Bust K (std '+(p.k_std||0)+')</div>':''}
       <div style="margin-top:5px;display:flex;align-items:center;justify-content:flex-end"><span style="font-size:.66rem;color:#63cab7">all 5 markets →</span></div>
       ${_stuffBadge(p)}
       ${_veloBadge(p)}
@@ -6381,9 +6387,9 @@ function _trkCatTable(pool,stake,emptyMsg){
   var ag=_trkAgg(pool,stake);
   var arr=Object.keys(ag.cats).map(function(k){ var c=ag.cats[k]; c.roi=c.counted?c.net/(c.counted*stake)*100:null; return [k,c]; });
   arr.sort(function(a,b){ var ra=a[1].counted?a[1].roi:-1e9, rb=b[1].counted?b[1].roi:-1e9; return rb-ra; });
-  var head='<div style="display:flex;align-items:center;padding:7px 12px;background:#0c1829;border-bottom:1px solid #1e293b"><span style="flex:1;min-width:140px;font-size:.66rem;color:#64748b;font-weight:700;text-transform:uppercase">Category</span><span style="width:64px;text-align:right;font-size:.66rem;color:#64748b;font-weight:700;text-transform:uppercase">Record</span><span style="width:90px;text-align:center;font-size:.66rem;color:#64748b;font-weight:700;text-transform:uppercase">Hit Rate</span><span style="width:80px;text-align:right;font-size:.66rem;color:#64748b;font-weight:700;text-transform:uppercase">Net P/L</span><span style="width:72px;text-align:right;font-size:.66rem;color:#64748b;font-weight:700;text-transform:uppercase">ROI</span></div>';
+  var head='<div style="display:flex;align-items:center;padding:7px 12px;background:#0c1829;border-bottom:1px solid #1e293b"><span style="flex:1;min-width:140px;font-size:.66rem;color:#64748b;font-weight:700;text-transform:uppercase">Category</span><span style="width:64px;text-align:right;font-size:.66rem;color:#64748b;font-weight:700;text-transform:uppercase">Record</span><span style="width:120px;text-align:center;font-size:.66rem;color:#64748b;font-weight:700;text-transform:uppercase">Hit Rate</span><span style="width:80px;text-align:right;font-size:.66rem;color:#64748b;font-weight:700;text-transform:uppercase">Net P/L</span><span style="width:72px;text-align:right;font-size:.66rem;color:#64748b;font-weight:700;text-transform:uppercase">ROI</span></div>';
   var body='';
-  arr.forEach(function(x){ var k=x[0], c=x[1], n=c.w+c.l; if(!n) return; var cfg=CAT_CFG[k]||{lbl:k.split('|').join(' '),icon:'📊'}; var clr=_trkRC(c.w,n), pct=Math.round(c.w/n*100); var hasRoi=c.counted>0, netClr=c.net>=0?'#4ade80':'#f87171'; body+='<div style="display:flex;align-items:center;padding:9px 12px;border-bottom:1px solid #131c2e"><span style="flex:1;min-width:140px;color:#e2e8f0;font-weight:600;font-size:.85rem">'+(cfg.icon||'')+' '+cfg.lbl+'</span><span style="width:64px;text-align:right;font-family:monospace;font-weight:800;color:'+clr+'">'+c.w+'/'+n+'</span><span style="width:90px;text-align:center">'+_trkBar(pct,clr)+'</span><span style="width:80px;text-align:right;font-family:monospace;font-weight:800;color:'+(hasRoi?netClr:'#475569')+'">'+(hasRoi?((c.net>=0?'+$':'\u2212$')+Math.abs(c.net).toFixed(0)):'\u2014')+'</span><span style="width:72px;text-align:right;font-family:monospace;font-weight:700;color:'+(hasRoi?(c.roi>=0?'#4ade80':'#f87171'):'#475569')+'">'+(hasRoi?((c.roi>=0?'+':'\u2212')+Math.abs(c.roi).toFixed(1)+'%'):'\u2014')+'</span></div>'; });
+  arr.forEach(function(x){ var k=x[0], c=x[1], n=c.w+c.l; if(!n) return; var cfg=CAT_CFG[k]||{lbl:k.split('|').join(' '),icon:'📊'}; var clr=_trkRC(c.w,n), pct=Math.round(c.w/n*100); var hasRoi=c.counted>0, netClr=c.net>=0?'#4ade80':'#f87171'; body+='<div style="display:flex;align-items:center;padding:9px 12px;border-bottom:1px solid #131c2e"><span style="flex:1;min-width:140px;color:#e2e8f0;font-weight:600;font-size:.85rem">'+(cfg.icon||'')+' '+cfg.lbl+'</span><span style="width:64px;text-align:right;font-family:monospace;font-weight:800;color:'+clr+'">'+c.w+'/'+n+'</span><span style="width:120px;display:inline-flex;align-items:center;gap:5px">'+_trkBar(pct,clr)+'<span style="font-size:.72rem;font-family:monospace;font-weight:700;color:'+clr+'">'+pct+'%</span></span><span style="width:80px;text-align:right;font-family:monospace;font-weight:800;color:'+(hasRoi?netClr:'#475569')+'">'+(hasRoi?((c.net>=0?'+$':'\u2212$')+Math.abs(c.net).toFixed(0)):'\u2014')+'</span><span style="width:72px;text-align:right;font-family:monospace;font-weight:700;color:'+(hasRoi?(c.roi>=0?'#4ade80':'#f87171'):'#475569')+'">'+(hasRoi?((c.roi>=0?'+':'\u2212')+Math.abs(c.roi).toFixed(1)+'%'):'\u2014')+'</span></div>'; });
   if(!body) body='<div style="color:#64748b;padding:16px;font-size:.83rem">'+(emptyMsg||'No graded picks in this range yet \u2014 fills in as slates go Final.')+'</div>';
   return {html:'<div style="border:1px solid #1e293b;border-radius:12px;overflow:hidden">'+head+body+'</div>', overall:ag.overall};
 }
