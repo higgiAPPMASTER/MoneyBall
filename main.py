@@ -6444,6 +6444,7 @@ function _trkCatTable(pool,stake,emptyMsg){
 function _openPrintReport(inner,title){
   var w=window.open('','_blank');
   if(!w){ alert('Please allow pop-ups for this site, then tap PDF Report again to save the file.'); return; }
+  inner=inner.split('<details').join('<details open');
   var css='*{-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important;box-sizing:border-box}'
     +'body{margin:0;background:#020617;color:#e2e8f0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;padding:22px;font-size:14px}'
     +'@media print{body{padding:0 4px}.noprint{display:none !important}}'
