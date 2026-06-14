@@ -6425,16 +6425,75 @@ function _trkDViewBtn(id,label){ var active=(window.__TRK_DVIEW__||'cat')===id; 
 function _trkDView(v){ window.__TRK_BET__=_trkStake(); window.__TRK_DVIEW__=v; _trkRenderActive(); }
 // Shared category-summary table (ranked best->worst) — used by the Daily "By Category"
 // view AND the Weekly/Monthly range tabs so all three render identically.
-function _trkCatTable(pool,stake,emptyMsg){
+function _trkCatTable(pool,stake,emptyMsg,clickable){
   var CAT_CFG=window.__TRK_CFG__||{};
   var ag=_trkAgg(pool,stake);
   var arr=Object.keys(ag.cats).map(function(k){ var c=ag.cats[k]; c.roi=c.counted?c.net/(c.counted*stake)*100:null; return [k,c]; });
   arr.sort(function(a,b){ var ra=a[1].counted?a[1].roi:-1e9, rb=b[1].counted?b[1].roi:-1e9; return rb-ra; });
   var head='<div style="display:flex;align-items:center;padding:7px 12px;background:#0c1829;border-bottom:1px solid #1e293b"><span style="flex:1;min-width:140px;font-size:.66rem;color:#64748b;font-weight:700;text-transform:uppercase">Category</span><span style="width:64px;text-align:right;font-size:.66rem;color:#64748b;font-weight:700;text-transform:uppercase">Record</span><span style="width:120px;text-align:center;font-size:.66rem;color:#64748b;font-weight:700;text-transform:uppercase">Hit Rate</span><span style="width:80px;text-align:right;font-size:.66rem;color:#64748b;font-weight:700;text-transform:uppercase">Net P/L</span><span style="width:72px;text-align:right;font-size:.66rem;color:#64748b;font-weight:700;text-transform:uppercase">ROI</span></div>';
+  if(clickable){ window.__CATV_REG__={pool:pool,stake:stake,keys:[]}; }
   var body='';
-  arr.forEach(function(x){ var k=x[0], c=x[1], n=c.w+c.l; if(!n) return; var cfg=CAT_CFG[k]||{lbl:k.split('|').join(' '),icon:'📊'}; var clr=_trkRC(c.w,n), pct=Math.round(c.w/n*100); var hasRoi=c.counted>0, netClr=c.net>=0?'#4ade80':'#f87171'; body+='<div style="display:flex;align-items:center;padding:9px 12px;border-bottom:1px solid #131c2e"><span style="flex:1;min-width:140px;color:#e2e8f0;font-weight:600;font-size:.85rem">'+(cfg.icon||'')+' '+cfg.lbl+'</span><span style="width:64px;text-align:right;font-family:monospace;font-weight:800;color:'+clr+'">'+c.w+'/'+n+'</span><span style="width:120px;display:inline-flex;align-items:center;gap:5px">'+_trkBar(pct,clr)+'<span style="font-size:.72rem;font-family:monospace;font-weight:700;color:'+clr+'">'+pct+'%</span></span><span style="width:80px;text-align:right;font-family:monospace;font-weight:800;color:'+(hasRoi?netClr:'#475569')+'">'+(hasRoi?((c.net>=0?'+$':'\u2212$')+Math.abs(c.net).toFixed(0)):'\u2014')+'</span><span style="width:72px;text-align:right;font-family:monospace;font-weight:700;color:'+(hasRoi?(c.roi>=0?'#4ade80':'#f87171'):'#475569')+'">'+(hasRoi?((c.roi>=0?'+':'\u2212')+Math.abs(c.roi).toFixed(1)+'%'):'\u2014')+'</span></div>'; });
+  arr.forEach(function(x){ var k=x[0], c=x[1], n=c.w+c.l; if(!n) return; var cfg=CAT_CFG[k]||{lbl:k.split('|').join(' '),icon:'📊'}; var clr=_trkRC(c.w,n), pct=Math.round(c.w/n*100); var hasRoi=c.counted>0, netClr=c.net>=0?'#4ade80':'#f87171'; var _ca='',_cur='',_hint=''; if(clickable){ var vi=window.__CATV_REG__.keys.length; window.__CATV_REG__.keys.push(k); _ca=' onclick="_catVerdictPopup('+vi+')" title="Tap for green / amber / red breakdown"'; _cur='cursor:pointer;'; _hint=' <span style="color:#475569;font-size:.72rem">\u203a</span>'; } body+='<div'+_ca+' style="display:flex;align-items:center;padding:9px 12px;border-bottom:1px solid #131c2e;'+_cur+'"><span style="flex:1;min-width:140px;color:#e2e8f0;font-weight:600;font-size:.85rem">'+(cfg.icon||'')+' '+cfg.lbl+_hint+'</span><span style="width:64px;text-align:right;font-family:monospace;font-weight:800;color:'+clr+'">'+c.w+'/'+n+'</span><span style="width:120px;display:inline-flex;align-items:center;gap:5px">'+_trkBar(pct,clr)+'<span style="font-size:.72rem;font-family:monospace;font-weight:700;color:'+clr+'">'+pct+'%</span></span><span style="width:80px;text-align:right;font-family:monospace;font-weight:800;color:'+(hasRoi?netClr:'#475569')+'">'+(hasRoi?((c.net>=0?'+$':'\u2212$')+Math.abs(c.net).toFixed(0)):'\u2014')+'</span><span style="width:72px;text-align:right;font-family:monospace;font-weight:700;color:'+(hasRoi?(c.roi>=0?'#4ade80':'#f87171'):'#475569')+'">'+(hasRoi?((c.roi>=0?'+':'\u2212')+Math.abs(c.roi).toFixed(1)+'%'):'\u2014')+'</span></div>'; });
   if(!body) body='<div style="color:#64748b;padding:16px;font-size:.83rem">'+(emptyMsg||'No graded picks in this range yet \u2014 fills in as slates go Final.')+'</div>';
   return {html:'<div style="border:1px solid #1e293b;border-radius:12px;overflow:hidden">'+head+body+'</div>', overall:ag.overall};
+}
+// ===== Category verdict popup — tap a category row (Weekly/Monthly, Track Record
+// or Overflow) to see THAT market's green / amber / red record + ROI over the
+// visible range, so you can tell when a "green" market is actually losing. =====
+function _catVerdictPopup(idx){
+  var R=window.__CATV_REG__; if(!R||!R.keys) return;
+  var key=R.keys[idx]; if(key==null) return;
+  var pool=R.pool||[], stake=R.stake||20;
+  var CAT_CFG=window.__TRK_CFG__||{};
+  var cfg=CAT_CFG[key]||{lbl:key.split('|').join(' '),icon:''};
+  function B(){ return {w:0,l:0,net:0,counted:0}; }
+  function add(b,win,od){ if(win)b.w++; else b.l++; var pl=_amProfit(od,stake,win); if(pl!==null){ b.net+=pl; b.counted++; } }
+  function tot(b){ return b.w+b.l; }
+  function pct(b){ var n=tot(b); return n?(b.w/n*100):0; }
+  function roi(b){ return b.counted?(b.net/(b.counted*stake)*100):0; }
+  var G=B(),A=B(),D=B(),All=B(),unrated=0;
+  pool.forEach(function(r){
+    if(((r.category||'?')+'|'+(r.side||'OVER'))!==key) return;
+    if(r.result!=='WIN'&&r.result!=='LOSS') return;
+    var win=r.result==='WIN', od=_effOdds(r);
+    add(All,win,od);
+    var v=_pickVerdict(r);
+    if(v==='g') add(G,win,od); else if(v==='a') add(A,win,od); else if(v==='r') add(D,win,od); else unrated++;
+  });
+  function statRow(label,desc,b,clr){
+    var n=tot(b); var rv=roi(b); var rc=rv>=0?'#4ade80':'#f87171';
+    var recCol=n?('<span style="font-family:monospace;color:#e2e8f0;font-weight:800">'+b.w+'\u2212'+b.l+'</span> <span style="font-family:monospace;color:#fff;font-weight:800">'+pct(b).toFixed(0)+'%</span>'):'<span style="color:#475569;font-family:monospace">\u2014</span>';
+    var roiCol=b.counted?('<span style="font-family:monospace;font-weight:800;color:'+rc+'">'+(rv>=0?'+':'\u2212')+Math.abs(rv).toFixed(0)+'%</span>'):'<span style="color:#475569;font-family:monospace">\u2014</span>';
+    return '<div style="display:flex;align-items:center;gap:10px;padding:10px 2px;border-bottom:1px solid #16233a">'
+      +'<span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:'+clr+';flex:none"></span>'
+      +'<span style="flex:1"><div style="color:#e2e8f0;font-size:.85rem;font-weight:800">'+label+'</div><div style="color:#64748b;font-size:.7rem">'+desc+'</div></span>'
+      +'<span style="text-align:right;min-width:84px">'+recCol+'</span>'
+      +'<span style="text-align:right;min-width:60px">'+roiCol+'</span></div>';
+  }
+  var gp=pct(G), rp=pct(D), gn=tot(G), rn=tot(D);
+  var noteClr,noteTxt;
+  if(!tot(G)&&!tot(A)&&!tot(D)){ noteClr='#94a3b8'; noteTxt='No green / amber / red picks in this range yet. The verdict needs the series-position stamp (G1/G2/G3) plus the day-of-week signal \u2014 it fills in as new slates are graded.'+(unrated?(' '+unrated+' graded pick'+(unrated>1?'s':'')+' here had no signal stamp.'):''); }
+  else if(gn>=5&&rn>=5){ var dd=gp-rp; if(dd>=5){ noteClr='#4ade80'; noteTxt='Green is beating Red by '+dd.toFixed(0)+' points \u2014 the signal is working in this market.'; } else if(dd<=-5){ noteClr='#f87171'; noteTxt='\u26a0 Green is LOSING to Red by '+Math.abs(dd).toFixed(0)+' points \u2014 the signal has a problem in this market.'; } else { noteClr='#fbbf24'; noteTxt='Green and Red are about even ('+dd.toFixed(0)+' pts) \u2014 no clear edge in this market yet.'; } }
+  else { noteClr='#94a3b8'; noteTxt='Small sample so far (green '+gn+', red '+rn+') \u2014 banks as more slates go Final.'; }
+  var ov=document.getElementById('catv-modal');
+  if(!ov){ ov=document.createElement('div'); ov.id='catv-modal'; ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px'; ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; }; document.body.appendChild(ov); }
+  var allN=tot(All), allRoi=roi(All), allClr=allRoi>=0?'#4ade80':'#f87171';
+  var hdrSub=(cfg.lbl||key)+' \u00b7 '+allN+' graded \u00b7 '+(allN?(All.w/allN*100).toFixed(0):'0')+'% \u00b7 ROI <span style="color:'+allClr+';font-weight:800">'+(allRoi>=0?'+':'\u2212')+Math.abs(allRoi).toFixed(0)+'%</span>';
+  ov.innerHTML='<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:460px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid #1e293b">'
+      +'<div><div style="font-weight:800;font-size:1.05rem;color:#fff">'+(cfg.icon||'')+' Verdict breakdown</div><div style="color:#94a3b8;font-size:.76rem;margin-top:3px">'+hdrSub+'</div></div>'
+      +'<button onclick="document.getElementById(&#39;catv-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem">\u2715</button>'
+    +'</div>'
+    +'<div style="padding:14px 18px">'
+      +'<div style="display:flex;align-items:center;gap:10px;padding:2px 2px 6px"><span style="width:11px;flex:none"></span><span style="flex:1"></span><span style="color:#64748b;font-size:.6rem;font-weight:800;letter-spacing:.05em;min-width:84px;text-align:right">W\u2212L / WIN%</span><span style="color:#64748b;font-size:.6rem;font-weight:800;letter-spacing:.05em;min-width:60px;text-align:right">ROI</span></div>'
+      +statRow('Green','Both signals back the pick',G,'#22c55e')
+      +statRow('Amber','Split signal \u2014 lean light',A,'#f59e0b')
+      +statRow('Red','Chart says fade this pick',D,'#ef4444')
+      +'<div style="margin-top:12px;font-size:.78rem;line-height:1.5;color:'+noteClr+'">'+noteTxt+'</div>'
+      +'<div style="margin-top:10px;border-top:1px solid #1e293b;padding-top:8px;color:#64748b;font-size:.68rem;line-height:1.5">Green should beat Red. Red picks are the ones the chart told you to fade \u2014 a LOW red win% means fading was right.'+(unrated?(' '+unrated+' pick'+(unrated>1?'s':'')+' had no signal stamp and are not shown above.'):'')+'</div>'
+    +'</div>'
+  +'</div>';
+  ov.style.display='flex';
 }
 // ===== Printable PDF report — opens a clean, self-contained window with the
 // green/amber/red scorecard + per-category table and fires the print dialog so
@@ -6783,7 +6842,7 @@ function _trkRenderRangeTab(be,stake,which){
     be.innerHTML=rhead+rpdf+_oddsReport(rpool,stake);
     return;
   }
-  var ct=_trkCatTable(_trkRangePool(from,to),stake);
+  var ct=_trkCatTable(_trkRangePool(from,to),stake,null,true);
   var o=ct.overall, on=o.w+o.l, orisk=o.counted*stake, oroi=orisk?o.net/orisk*100:0, oclr=o.net>=0?'#4ade80':'#f87171', owclr=_trkRC(o.w,on);
   var summary='<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;background:#0a1f14;border:1px solid #16432c;border-radius:12px;padding:12px 16px;margin-bottom:12px"><div style="font-weight:800;color:#6ee7b7;display:flex;align-items:center">'+label+nav+'</div><div style="margin-left:auto;text-align:right"><div style="font-weight:800;font-size:.92rem"><span style="color:'+owclr+'">'+o.w+'/'+on+'</span> <span style="color:#94a3b8;font-size:.8rem">('+(on?(o.w/on*100).toFixed(1):'0.0')+'%)</span></div><div style="font-size:.82rem">Net <span style="color:'+oclr+';font-weight:900">'+(o.net>=0?'+$':'\u2212$')+Math.abs(o.net).toFixed(0)+'</span> <span style="color:#64748b">\u00b7 ROI '+(oroi>=0?'+':'\u2212')+Math.abs(oroi).toFixed(1)+'% on $'+orisk.toFixed(0)+'</span></div></div></div>';
   var csvBtn='<div style="display:flex;margin-top:10px"><button onclick="downloadTrkRangeCSV(&#39;'+which+'&#39;)" style="margin-left:auto;background:#16a34a;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:.78rem;font-weight:700;cursor:pointer">\u2b07 CSV</button></div>';
@@ -6902,7 +6961,7 @@ function _ovfRenderRangeTab(be,stake,which){
     be.innerHTML=rhead+rpdf+_oddsReport(rpool,stake);
     return;
   }
-  var ct=_trkCatTable(_ovfRangePool(from,to),stake,'No graded overflow picks in this range yet \u2014 fills in as slates go Final.');
+  var ct=_trkCatTable(_ovfRangePool(from,to),stake,'No graded overflow picks in this range yet \u2014 fills in as slates go Final.',true);
   var o=ct.overall, on=o.w+o.l, orisk=o.counted*stake, oroi=orisk?o.net/orisk*100:0, oclr=o.net>=0?'#4ade80':'#f87171', owclr=_trkRC(o.w,on);
   var summary='<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;background:#2a1c08;border:1px solid #5b3d12;border-radius:12px;padding:12px 16px;margin-bottom:12px"><div style="font-weight:800;color:#fcd34d;display:flex;align-items:center">'+label+nav+'</div><div style="margin-left:auto;text-align:right"><div style="font-weight:800;font-size:.92rem"><span style="color:'+owclr+'">'+o.w+'/'+on+'</span> <span style="color:#94a3b8;font-size:.8rem">('+(on?(o.w/on*100).toFixed(1):'0.0')+'%)</span></div><div style="font-size:.82rem">Net <span style="color:'+oclr+';font-weight:900">'+(o.net>=0?'+$':'\u2212$')+Math.abs(o.net).toFixed(0)+'</span> <span style="color:#64748b">\u00b7 ROI '+(oroi>=0?'+':'\u2212')+Math.abs(oroi).toFixed(1)+'% on $'+orisk.toFixed(0)+'</span></div></div></div>';
   var csvBtn='<div style="display:flex;margin-top:10px"><button onclick="downloadOvfRangeCSV(&#39;'+which+'&#39;)" style="margin-left:auto;background:#16a34a;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:.78rem;font-weight:700;cursor:pointer">\u2b07 CSV</button></div>';
