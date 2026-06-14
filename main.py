@@ -6625,13 +6625,39 @@ function _oddsRowDetail(group,bi){
     +'<span style="margin-left:auto;font-weight:900;color:'+(net>=0?'#4ade80':'#f87171')+'">'+(net>=0?'+$':'\u2212$')+Math.abs(net).toFixed(0)+' <span style="color:#64748b;font-weight:600;font-size:.74rem">\u00b7 ROI '+(roi>=0?'+':'\u2212')+Math.abs(roi).toFixed(0)+'% on $'+(counted*stake).toFixed(0)+'</span></span>'
     +'</div>'):'';
   var colh=n?('<div style="display:flex;gap:10px;padding:0 4px 6px;font-size:.56rem;color:#64748b;font-weight:800;letter-spacing:.04em"><span style="width:104px;flex:none">DATE</span><span style="flex:1;min-width:110px">PLAYER \u00b7 PICK</span><span style="width:52px;flex:none;text-align:right">ODDS</span><span style="width:46px;flex:none;text-align:center">RESULT</span><span style="width:58px;flex:none;text-align:right">P/L</span></div>'):'';
+  // per-category rollup within this price bucket + verdict (which plays cash at this price)
+  var _cm={},_cord=[];
+  picks.forEach(function(p){ var r=p.r; var key=(r.category||'')+'|'+(r.side||'OVER'); var g=_cm[key];
+    if(!g){ g=_cm[key]={w:0,l:0,net:0,counted:0,beSum:0,lbl:((CAT_CFG[key]&&CAT_CFG[key].lbl)||r.category||'\u2014'),sd:(r.side==='UNDER')?'U':'O'}; _cord.push(key); }
+    var cw=r.result==='WIN'; if(cw)g.w++; else g.l++; var cpl=_amProfit(p.o,stake,cw); if(cpl!==null){ g.net+=cpl; g.counted++; } g.beSum+=_oddsBE(p.o);
+  });
+  var _crows=_cord.map(function(k){ var g=_cm[k]; var gn=g.w+g.l; g.hit=gn?g.w/gn*100:0; g.need=gn?g.beSum/gn:0; g.roi=g.counted?g.net/(g.counted*stake)*100:0; return g; });
+  _crows.sort(function(a,b){ return b.roi-a.roi; });
+  var catBreak='';
+  if(_crows.length){
+    var crows='';
+    _crows.forEach(function(g){ var hc=g.hit>=g.need?'#4ade80':'#f87171';
+      crows+='<div style="display:flex;gap:10px;align-items:center;padding:6px 4px;border-bottom:1px solid #15233b;font-size:.78rem">'
+        +'<span style="flex:1;min-width:120px;color:#e2e8f0;font-weight:700">'+g.lbl+' <span style="color:#64748b;font-weight:600;font-size:.68rem">'+g.sd+'</span></span>'
+        +'<span style="width:50px;flex:none;text-align:right;font-family:monospace;color:#cbd5e1">'+g.w+'-'+g.l+'</span>'
+        +'<span style="width:84px;flex:none;text-align:right;font-family:monospace;color:'+hc+'">'+g.hit.toFixed(0)+'% <span style="color:#64748b">/ '+g.need.toFixed(0)+'%</span></span>'
+        +'<span style="width:58px;flex:none;text-align:right;font-family:monospace;font-weight:700;color:'+(g.net>=0?'#4ade80':'#f87171')+'">'+(g.net>=0?'+$':'\u2212$')+Math.abs(g.net).toFixed(0)+'</span>'
+        +'<span style="width:50px;flex:none;text-align:right;font-family:monospace;font-weight:700;color:'+(g.roi>=0?'#4ade80':'#f87171')+'">'+(g.roi>=0?'+':'\u2212')+Math.abs(g.roi).toFixed(0)+'%</span>'
+        +'</div>';
+    });
+    catBreak='<div style="background:#0c1829;border:1px solid #1e293b;border-radius:10px;padding:8px 12px 4px;margin-bottom:10px">'
+      +'<div style="font-size:.62rem;color:#64748b;font-weight:800;letter-spacing:.04em;margin-bottom:4px">BY CATEGORY \u00b7 best ROI first \u2014 which plays cash at this price</div>'
+      +'<div style="display:flex;gap:10px;padding:0 4px 4px;font-size:.54rem;color:#64748b;font-weight:800;letter-spacing:.04em"><span style="flex:1;min-width:120px">CATEGORY</span><span style="width:50px;flex:none;text-align:right">W-L</span><span style="width:84px;flex:none;text-align:right">HIT / NEED</span><span style="width:58px;flex:none;text-align:right">NET</span><span style="width:50px;flex:none;text-align:right">ROI</span></div>'
+      +crows+'</div>';
+  }
+  var listLbl=n?'<div style="font-size:.62rem;color:#64748b;font-weight:800;letter-spacing:.04em;margin:2px 0 4px">EVERY PICK</div>':'';
   var card='<div onclick="event.stopPropagation()" style="background:#0a1424;border:1px solid #243450;border-radius:14px;max-width:680px;width:94%;max-height:84vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.6)">'
     +'<div style="display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid #1e293b">'
       +'<span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:'+gm[1]+';flex:none"></span>'
       +'<div style="flex:1"><div style="font-weight:900;color:#fff;font-size:1.02rem">'+bk.lab+'</div><div style="color:#64748b;font-size:.72rem">'+gm[0]+(c.label?(' \u00b7 '+c.label):'')+'</div></div>'
       +'<button onclick="_oddsCloseModal()" style="background:#334155;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:.82rem;font-weight:800;cursor:pointer">Close</button>'
     +'</div>'
-    +'<div style="padding:14px 16px;overflow-y:auto">'+summary+colh+body+'</div>'
+    +'<div style="padding:14px 16px;overflow-y:auto">'+summary+catBreak+listLbl+colh+body+'</div>'
   +'</div>';
   _oddsCloseModal();
   var m=document.createElement('div'); m.id='_oddsModal'; m.onclick=_oddsCloseModal;
