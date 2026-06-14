@@ -6108,6 +6108,7 @@ function renderTrackRecord(d){
     +'<span style="font-weight:800;color:#6ee7b7;font-size:1rem">💰 Bet amount $</span>'
     +'<input id="trkBet" type="number" min="1" step="1" value="'+bet+'" oninput="_trkBetInput()" style="width:104px;background:#020617;border:1px solid #334155;color:#fff;border-radius:8px;padding:8px 12px;font-size:1.05rem;font-weight:800;text-align:center">'
     +'<span style="color:#94a3b8;font-size:.8rem">flat on every pick \u2014 drives every $ below</span>'
+    +'<button onclick="_trkPrintReport()" style="margin-left:auto;background:#dc2626;color:#fff;border:none;border-radius:8px;padding:9px 16px;font-size:.84rem;font-weight:800;cursor:pointer">📄 PDF Report</button>'
     +'</div>';
   var tabs='<div style="display:flex;gap:8px;margin-bottom:4px">'+_trkTabBtn('daily','Daily')+_trkTabBtn('weekly','Weekly')+_trkTabBtn('monthly','Monthly')+'</div>';
   var sc=_matrixScorecard(d);
@@ -6436,6 +6437,39 @@ function _trkCatTable(pool,stake,emptyMsg){
   arr.forEach(function(x){ var k=x[0], c=x[1], n=c.w+c.l; if(!n) return; var cfg=CAT_CFG[k]||{lbl:k.split('|').join(' '),icon:'📊'}; var clr=_trkRC(c.w,n), pct=Math.round(c.w/n*100); var hasRoi=c.counted>0, netClr=c.net>=0?'#4ade80':'#f87171'; body+='<div style="display:flex;align-items:center;padding:9px 12px;border-bottom:1px solid #131c2e"><span style="flex:1;min-width:140px;color:#e2e8f0;font-weight:600;font-size:.85rem">'+(cfg.icon||'')+' '+cfg.lbl+'</span><span style="width:64px;text-align:right;font-family:monospace;font-weight:800;color:'+clr+'">'+c.w+'/'+n+'</span><span style="width:120px;display:inline-flex;align-items:center;gap:5px">'+_trkBar(pct,clr)+'<span style="font-size:.72rem;font-family:monospace;font-weight:700;color:'+clr+'">'+pct+'%</span></span><span style="width:80px;text-align:right;font-family:monospace;font-weight:800;color:'+(hasRoi?netClr:'#475569')+'">'+(hasRoi?((c.net>=0?'+$':'\u2212$')+Math.abs(c.net).toFixed(0)):'\u2014')+'</span><span style="width:72px;text-align:right;font-family:monospace;font-weight:700;color:'+(hasRoi?(c.roi>=0?'#4ade80':'#f87171'):'#475569')+'">'+(hasRoi?((c.roi>=0?'+':'\u2212')+Math.abs(c.roi).toFixed(1)+'%'):'\u2014')+'</span></div>'; });
   if(!body) body='<div style="color:#64748b;padding:16px;font-size:.83rem">'+(emptyMsg||'No graded picks in this range yet \u2014 fills in as slates go Final.')+'</div>';
   return {html:'<div style="border:1px solid #1e293b;border-radius:12px;overflow:hidden">'+head+body+'</div>', overall:ag.overall};
+}
+// ===== Printable PDF report — opens a clean, self-contained window with the
+// green/amber/red scorecard + per-category table and fires the print dialog so
+// the user can &quot;Save as PDF&quot;. No libraries; pure client-side print-to-PDF. =====
+function _openPrintReport(inner,title){
+  var w=window.open('','_blank');
+  if(!w){ alert('Please allow pop-ups for this site, then tap PDF Report again to save the file.'); return; }
+  var css='*{-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important;box-sizing:border-box}'
+    +'body{margin:0;background:#020617;color:#e2e8f0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;padding:22px;font-size:14px}'
+    +'@media print{body{padding:0 4px}.noprint{display:none !important}}'
+    +'details{margin:0}summary{list-style:none}button{font-family:inherit}';
+  var doc='<!DOCTYPE html><html><head><meta charset="utf-8"><title>'+title+'</title><style>'+css+'</style></head><body>'
+    +'<div class="noprint" style="display:flex;gap:10px;margin-bottom:16px;max-width:920px;margin-left:auto;margin-right:auto"><button onclick="window.print()" style="background:#dc2626;color:#fff;border:none;border-radius:8px;padding:10px 18px;font-size:.92rem;font-weight:800;cursor:pointer">\u2b07 Save as PDF</button><button onclick="window.close()" style="background:#334155;color:#fff;border:none;border-radius:8px;padding:10px 18px;font-size:.92rem;font-weight:800;cursor:pointer">Close</button></div>'
+    +inner+'</body></html>';
+  w.document.open(); w.document.write(doc); w.document.close(); w.focus();
+  setTimeout(function(){ try{ w.print(); }catch(e){} }, 600);
+}
+function _trkPrintReport(){
+  var d=window.__TRACK__; if(!d){ alert('Track Record is still loading \u2014 try again in a moment.'); return; }
+  function overallTile(o,stake){ var on=o.w+o.l, orisk=o.counted*stake, oroi=orisk?o.net/orisk*100:0, oclr=o.net>=0?'#4ade80':'#f87171', owclr=_trkRC(o.w,on); return '<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;background:#0c1829;border:1px solid #1e293b;border-radius:12px;padding:13px 18px;margin-bottom:14px"><div style="font-weight:900;font-size:1.02rem"><span style="color:'+owclr+'">'+o.w+'/'+on+'</span> <span style="color:#94a3b8;font-size:.84rem">('+(on?(o.w/on*100).toFixed(1):'0.0')+'%)</span></div><div style="font-size:.9rem">Net <span style="color:'+oclr+';font-weight:900">'+(o.net>=0?'+$':'\u2212$')+Math.abs(o.net).toFixed(0)+'</span> <span style="color:#64748b">\u00b7 ROI '+(oroi>=0?'+':'\u2212')+Math.abs(oroi).toFixed(1)+'% on $'+orisk.toFixed(0)+'</span></div></div>'; }
+  function secHead(t,sub,clr){ return '<div style="font-size:1.08rem;font-weight:900;color:'+clr+';margin:22px 0 10px;border-bottom:1px solid #1e293b;padding-bottom:6px">'+t+' <span style="color:#64748b;font-weight:700;font-size:.74rem">'+sub+'</span></div>'; }
+  var tStake=_trkStake();
+  var tPool=(d.detail||[]).filter(function(r){ return !_isOvfCat(r.category)&&!_isHrCat(r.category); });
+  var tCt=_trkCatTable(tPool,tStake,'No graded picks yet.');
+  var now=new Date();
+  var head='<div style="border-bottom:2px solid #1e293b;padding-bottom:14px;margin-bottom:6px"><div style="font-size:1.5rem;font-weight:900;color:#fff">Money Picks Arena <span style="color:#fbbf24">Performance Report</span></div><div style="color:#94a3b8;font-size:.82rem;margin-top:4px">Generated '+now.toLocaleString()+' \u00b7 MLB \u00b7 flat $'+tStake+' on every pick</div></div>';
+  var trackSec=secHead('Track Record','top plays per category','#6ee7b7')+overallTile(tCt.overall,tStake)+_matrixScorecard(d)+'<div style="font-weight:800;color:#e2e8f0;font-size:.95rem;margin:4px 0 10px">Category Performance \u2014 ranked by ROI</div>'+tCt.html;
+  var ovfSec='';
+  var oPool=(d.detail||[]).filter(function(r){ return _isOvfCat(r.category)&&!_isHrCat(r.category); });
+  if(oPool.length){ var oStake=_ovfStake(); var oCt=_trkCatTable(oPool,oStake,'No graded overflow picks yet.'); ovfSec=secHead('Overflow Tracker','ranks 11\u201330','#fcd34d')+overallTile(oCt.overall,oStake)+_ovfMatrixScorecard(d)+'<div style="font-weight:800;color:#fde68a;font-size:.95rem;margin:4px 0 10px">Overflow Category Performance \u2014 ranked by ROI</div>'+oCt.html; }
+  var foot='<div style="margin-top:20px;color:#64748b;font-size:.72rem;line-height:1.55">Green / amber / red verdict needs the series-position stamp (G1/G2/G3); days logged before it was stored show the day-of-week signal only and fill in going forward. Net P/L and ROI use the flat bet above on each graded pick at the recorded odds. \u201cCategory\u201d totals exclude undecided / unpriced picks.</div>';
+  var inner='<div style="max-width:920px;margin:0 auto">'+head+trackSec+ovfSec+foot+'</div>';
+  _openPrintReport(inner,'MPA Performance Report');
 }
 function _trkRenderDailyTab(be,stake){
   var date=window.__TRK_DAILY_DATE__||_trkTodayISO();
