@@ -5445,7 +5445,6 @@ function _buildTop10(view) {
   _add(view.tb_over_picks, 'TB OVER');
   _add(view.hrr_picks,     'HRR');
   _add(view.rbi_picks,     'RBI');
-  _add(view.hr_picks,      'HR');
   _add(view.runs_picks,    'RUNS');
   _add(view.walks_picks,   'BWALK');
   plays.sort(function(a,b){ return b._t10ev - a._t10ev; });
