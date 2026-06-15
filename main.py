@@ -1978,6 +1978,24 @@ async def delete_bet(bet_id: str, request: Request, token: str = "", admin: str 
     return {"ok": True}
 
 
+@app.post("/api/bets/clear")
+async def clear_bets(request: Request, token: str = "", admin: str = ""):
+    """Wipe ALL logged bets for the current user and start fresh. Only the
+    caller's own account bucket is cleared; other users' logs are untouched.
+    Does NOT touch the global Track Record / Overflow / HR ledgers."""
+    tok = token or request.headers.get("Authorization", "").replace("Bearer ", "").strip()
+    if not _bet_admin_ok(tok, admin):
+        raise HTTPException(status_code=403, detail="Admin only")
+    with _BET_LOCK:
+        data = _load_bets()
+        key = _bet_user_key(tok, admin)
+        removed = len(data.get(key, []))
+        if removed:
+            data[key] = []
+            _save_bets(data)
+    return {"ok": True, "removed": removed}
+
+
 @app.get("/api/grade/{date_str}")
 async def grade_picks(date_str: str, request: Request, token: str = "", admin: str = ""):
     """Fetch actual MLB box scores and grade all picks for the given date."""
@@ -8284,6 +8302,20 @@ async function _deleteBet(id){
     openMyBets(false);
   }catch(e){ alert(e.message||'Delete failed'); }
 }
+async function _wipeMyBets(){
+  var d=window.__MYBETS__;
+  var n=(d&&d.bets)?d.bets.length:0;
+  if(!n){ alert('No bets to wipe — your record is already empty.'); return; }
+  if(!confirm('Permanently delete ALL '+n+' of your logged bets and start fresh? This cannot be undone.')) return;
+  if(!confirm('Last chance — this wipes your entire My Bets record. Continue?')) return;
+  try{
+    var res=await fetch('/api/bets/clear'+_betAuthQS(),{method:'POST'});
+    if(!res.ok){ throw new Error(await res.text()); }
+    var j=await res.json();
+    openMyBets(false);
+    alert('Wiped '+(j.removed||n)+' bet'+((j.removed||n)===1?'':'s')+'. Fresh start.');
+  }catch(e){ alert(e.message||'Wipe failed'); }
+}
 function downloadMyBetsCSV(){
   var d=window.__MYBETS__; if(!d){ alert('Open My Bets first.'); return; }
   var rows=[['Date','Player','Category','Pick','Odds','Stake','Result','Actual','Profit']];
@@ -8342,6 +8374,7 @@ function downloadMyBetsCSV(){
       <button id="mybets-results-btn" onclick="getMyBetsResults()" style="background:#22c55e;color:#0f172a;border:none;border-radius:10px;padding:10px 22px;font-size:.88rem;font-weight:800;cursor:pointer">🔄 Get Results</button>
       <span style="font-size:.78rem;color:#64748b">Fetches box scores and grades all pending bets</span>
       <span id="mybets-spinner-wrap"></span>
+      <button onclick="_wipeMyBets()" title="Permanently delete ALL your logged bets and start fresh — does not touch the Track Record" style="background:#7f1d1d;color:#fff;border:1px solid #b91c1c;border-radius:10px;padding:10px 18px;font-size:.84rem;font-weight:800;cursor:pointer;margin-left:auto">🗑 Wipe Record</button>
     </div>
   </div>
 </div>
