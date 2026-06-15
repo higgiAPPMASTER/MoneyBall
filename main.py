@@ -1155,19 +1155,14 @@ def _grade_date(date_str: str, picks: dict) -> dict:
                  f"{pd} {ln} {stat_label}", p.get("over_odds") if pd == "OVER" else p.get("under_odds"),
                  ln, actual, stat_label, st)
 
-    # Top 10 Batter — combine all batter categories, rank by EV, take top 10
+    # Top 10 Batter — combine batter categories (NO Under-1.5-Hits, mirroring the live
+    # _buildTop10 card builder), rank by EV, take top 10
     _bat_cands = []
     for p in (picks.get("top9") or []):
         _bat_cands.append({"name": p.get("full_name") or p.get("name",""), "team": p.get("team",""),
             "side":"OVER","stat_key":"hits","stat_label":"Hits","line":0.5,
             "odds":p.get("hit_odds"),"ev":p.get("ev") or 0,
             "pid":p.get("player_id"),"fname":p.get("full_name") or p.get("name")})
-    for p in (picks.get("under_picks") or []):
-        pd = p.get("pick","UNDER")
-        _bat_cands.append({"name":p.get("name",""),"team":p.get("team",""),
-            "side":pd,"stat_key":"hits","stat_label":"Hits","line":1.5,
-            "odds":p.get("under_odds") if pd=="UNDER" else p.get("over_odds"),
-            "ev":p.get("ev") or 0,"pid":p.get("batter_id"),"fname":p.get("name")})
     for p in (picks.get("tb_over_picks") or []):
         _bat_cands.append({"name":p.get("name",""),"team":p.get("team",""),
             "side":"OVER","stat_key":"total_bases","stat_label":"Total Bases","line":1.5,
@@ -1223,7 +1218,8 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
         })
 
-    # Top 10 Pitcher — combine Ks + all pitcher props, rank by blended gap, take top 10
+    # Top 10 Pitcher — combine Ks + all pitcher props, rank by EV (mirrors the live
+    # _buildPitchDay card builder), take top 10
     _pit_cands = []
     for p in ((picks.get("pitcher_k") or {}).get("picks") or []):
         if not p.get("pick"): continue
@@ -1234,7 +1230,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
         gap = abs(bl - ln) if (bl is not None) else 0
         _pit_cands.append({"name":p.get("name",""),"team":p.get("team",""),
             "side":pd,"stat_key":"strikeOuts","stat_label":"Ks","line":ln,
-            "odds":p.get("over_odds") if pd=="OVER" else p.get("under_odds"),"gap":gap})
+            "odds":p.get("over_odds") if pd=="OVER" else p.get("under_odds"),"gap":gap,"ev":p.get("ev") or 0})
     for mkt, mdata in (picks.get("pitcher_props") or {}).items():
         sk, sl = PROP_STAT_MAP.get(mkt, (None, None))
         if not sk: continue
@@ -1244,8 +1240,8 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             gap = abs(bl - ln) if (bl is not None) else 0
             _pit_cands.append({"name":p.get("name",""),"team":p.get("team",""),
                 "side":pd,"stat_key":sk,"stat_label":sl,"line":ln,
-                "odds":p.get("over_odds") if pd=="OVER" else p.get("under_odds"),"gap":gap})
-    _pit_cands.sort(key=lambda x: -x.get("gap", 0))
+                "odds":p.get("over_odds") if pd=="OVER" else p.get("under_odds"),"gap":gap,"ev":p.get("ev") or 0})
+    _pit_cands.sort(key=lambda x: -(x.get("ev") or 0))
     _pit_seen = set()
     _pit_dedup = []
     for _pc in _pit_cands:
@@ -5501,6 +5497,8 @@ function _buildPitchDay(view){
     });
   });
   dayList.sort(function(a,b){return b.ev-a.ev;});
+  var _pdSeen={};
+  dayList=dayList.filter(function(x){ var k=((x.p.name||x.p.full_name||'')+'').trim().toLowerCase(); if(!k) return true; if(_pdSeen[k]) return false; _pdSeen[k]=true; return true; });
   dayList=dayList.filter(function(x){
     var p=x.p;
     if(x.kind==='K'){ var sK=(p.sugg_line!=null||p.pick==='OVER')?'O':'U'; return !_t10DotIsRed(p,sK,true,0); }
@@ -6108,10 +6106,10 @@ function _ovfFlatten(g){ var out=[]; if(!g||g==='LOADING'||g.__error__) return o
 // reused table/CSV helpers resolve their labels; ordering lives in __OVF_ORDER__.
 function _trkBuildCfg(){
   var CAT_CFG={
-    'Top 10 Batter|OVER':        {lbl:'Top 10 Batter (Over)',       icon:'⭐', abbr:'T10B+'},
-    'Top 10 Batter|UNDER':       {lbl:'Top 10 Batter (Under)',      icon:'⭐', abbr:'T10B-'},
-    'Top 10 Pitcher|OVER':       {lbl:'Top 10 Pitcher (Over)',      icon:'🎯', abbr:'T10P+'},
-    'Top 10 Pitcher|UNDER':      {lbl:'Top 10 Pitcher (Under)',     icon:'🎯', abbr:'T10P-'},
+    'Top 10 Batter|OVER':        {lbl:'Top 10 Hitter Plays (Over)',  icon:'⭐', abbr:'T10B+'},
+    'Top 10 Batter|UNDER':       {lbl:'Top 10 Hitter Plays (Under)', icon:'⭐', abbr:'T10B-'},
+    'Top 10 Pitcher|OVER':       {lbl:'Top 10 Pitcher Props (Over)', icon:'🎯', abbr:'T10P+'},
+    'Top 10 Pitcher|UNDER':      {lbl:'Top 10 Pitcher Props (Under)',icon:'🎯', abbr:'T10P-'},
     'Hitter Hits|OVER':          {lbl:'Top Picks (Over 0.5 Hits)', icon:'🎯', abbr:'Hits'},
     'Hitter Hits|UNDER':         {lbl:'Under 1.5 Hits',            icon:'📉', abbr:'Unders'},
     'Runs|OVER':                 {lbl:'Runs (Over 0.5)',            icon:'🏃', abbr:'Runs+'},
@@ -6498,7 +6496,7 @@ function _trkRangeMissing(from,to){ var d=window.__TRACK__||{}; var have={}; (d.
 // Grade a list of dates into the cache, concurrency-limited so a wide range can't
 // fire dozens of simultaneous box-score lookups (avoids ESPN/MLB-API 429s).
 async function _trkFetchDays(dates){ var cache=window.__TRK_GRADE_CACHE__=window.__TRK_GRADE_CACHE__||{}; var tok=localStorage.getItem('__mpa_token')||localStorage.getItem('hub_token')||''; var adm=new URLSearchParams(location.search).get('admin')||''; dates.forEach(function(dt){ if(cache[dt]===undefined) cache[dt]='LOADING'; }); var i=0, LIMIT=4; async function _worker(){ while(i<dates.length){ var dt=dates[i++]; try{ var res=await fetch('/api/grade/'+dt+'?token='+encodeURIComponent(tok)+(adm?('&admin='+encodeURIComponent(adm)):'')); if(!res.ok){ var t=await res.text(); cache[dt]={__error__:(t||'No picks for this date')}; } else { cache[dt]=await res.json(); } }catch(e){ cache[dt]={__error__:String((e&&e.message)||e)}; } } } var ws=[]; for(var w=0;w<Math.min(LIMIT,dates.length);w++) ws.push(_worker()); await Promise.all(ws); }
-function _trkAgg(pool,stake){ var cats={}, overall={w:0,l:0,net:0,counted:0,skipped:0}; pool.forEach(function(r){ if(_trkSkipMeta(r)) return; if(r.result!=='WIN'&&r.result!=='LOSS') return; var k=(r.category||'?')+'|'+(r.side||'OVER'); var c=cats[k]=cats[k]||{w:0,l:0,net:0,counted:0,skipped:0}; var win=r.result==='WIN'; if(win){c.w++;overall.w++;} else {c.l++;overall.l++;} var pl=_amProfit(_effOdds(r),stake,win); if(pl===null){c.skipped++;overall.skipped++;} else {c.net+=pl;c.counted++;overall.net+=pl;overall.counted++;} }); return {cats:cats,overall:overall}; }
+function _trkAgg(pool,stake){ var cats={}, overall={w:0,l:0,net:0,counted:0,skipped:0}; pool.forEach(function(r){ if(r.result!=='WIN'&&r.result!=='LOSS') return; var meta=_trkSkipMeta(r); var k=(r.category||'?')+'|'+(r.side||'OVER'); var c=cats[k]=cats[k]||{w:0,l:0,net:0,counted:0,skipped:0}; var win=r.result==='WIN'; if(win){c.w++; if(!meta)overall.w++;} else {c.l++; if(!meta)overall.l++;} var pl=_amProfit(_effOdds(r),stake,win); if(pl===null){c.skipped++; if(!meta)overall.skipped++;} else {c.net+=pl;c.counted++; if(!meta){overall.net+=pl;overall.counted++;}} }); return {cats:cats,overall:overall}; }
 async function _trkLoadDaily(date){ window.__TRK_DAILY_DATE__=date; window.__TRK_GRADE_CACHE__=window.__TRK_GRADE_CACHE__||{}; var cur=window.__TRK_GRADE_CACHE__[date]; if(cur&&cur!=='LOADING'){ _trkRenderActive(); return; } var tok=localStorage.getItem('__mpa_token')||localStorage.getItem('hub_token')||''; var adm=new URLSearchParams(location.search).get('admin')||''; window.__TRK_GRADE_CACHE__[date]='LOADING'; _trkRenderActive(); try{ var res=await fetch('/api/grade/'+date+'?token='+encodeURIComponent(tok)+(adm?('&admin='+encodeURIComponent(adm)):'')); if(!res.ok){ var t=await res.text(); window.__TRK_GRADE_CACHE__[date]={__error__:(t||'No picks for this date')}; } else { window.__TRK_GRADE_CACHE__[date]=await res.json(); } }catch(e){ window.__TRK_GRADE_CACHE__[date]={__error__:String((e&&e.message)||e)}; } _trkRenderActive(); }
 function _trkMonthShift(n){ window.__TRK_BET__=_trkStake(); var m=window.__TRK_MONTH__||_trkTodayISO().slice(0,7); var y=parseInt(m.slice(0,4),10), mo=parseInt(m.slice(5,7),10)-1+n; while(mo<0){mo+=12;y--;} while(mo>11){mo-=12;y++;} var nm=y+'-'+((mo+1)<10?'0':'')+(mo+1); var cur=_trkTodayISO().slice(0,7); if(nm>cur) nm=cur; window.__TRK_MONTH__=nm; _trkRenderActive(); }
 // Daily sub-view toggle: "By Category" (summary table) vs "Full List" (every pick + odds).
@@ -6846,13 +6844,18 @@ function _oddsRowDetail(token,group,bi){
   m.setAttribute('style','position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px');
   m.innerHTML=card; document.body.appendChild(m);
 }
+// ===== Manual "Get Results" — drop the cached grade for the day on screen and
+// re-pull box scores so every pending pick settles on demand (no page reload). =====
+function _trkGetResults(){ var d=window.__TRK_DAILY_DATE__||_trkTodayISO(); if(window.__TRK_GRADE_CACHE__) delete window.__TRK_GRADE_CACHE__[d]; _trkLoadDaily(d); }
+function _ovfGetResults(){ var d=window.__OVF_DAILY_DATE__||_trkTodayISO(); if(window.__TRK_GRADE_CACHE__) delete window.__TRK_GRADE_CACHE__[d]; _ovfLoadDaily(d); }
+function _hrtGetResults(){ var d=window.__HRT_DAILY_DATE__||_trkTodayISO(); if(window.__TRK_GRADE_CACHE__) delete window.__TRK_GRADE_CACHE__[d]; _hrtLoadDaily(d); }
 function _trkRenderDailyTab(be,stake){
   var date=window.__TRK_DAILY_DATE__||_trkTodayISO();
   var cache=window.__TRK_GRADE_CACHE__=window.__TRK_GRADE_CACHE__||{};
   var g=cache[date];
   var CAT_CFG=window.__TRK_CFG__||{}, CAT_ORDER=window.__TRK_ORDER__||[];
   var view=window.__TRK_DVIEW__||'cat';
-  var datesel='<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:12px"><label style="font-size:.82rem;color:#94a3b8">Day <input type="date" value="'+date+'" max="'+_trkTodayISO()+'" onchange="_trkLoadDaily(this.value)" style="margin-left:6px;background:#020617;border:1px solid #334155;color:#fff;border-radius:6px;padding:6px 8px;font-size:.82rem"></label><span style="font-weight:800;color:#93c5fd;font-size:.95rem">'+_weekdayName(date)+'</span><span style="display:flex;gap:6px;margin-left:auto">'+_trkDViewBtn('cat','By Category')+_trkDViewBtn('full','Full List')+_trkDViewBtn('odds','Odds')+'</span></div>';
+  var datesel='<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:12px"><label style="font-size:.82rem;color:#94a3b8">Day <input type="date" value="'+date+'" max="'+_trkTodayISO()+'" onchange="_trkLoadDaily(this.value)" style="margin-left:6px;background:#020617;border:1px solid #334155;color:#fff;border-radius:6px;padding:6px 8px;font-size:.82rem"></label><span style="font-weight:800;color:#93c5fd;font-size:.95rem">'+_weekdayName(date)+'</span><span style="display:flex;gap:6px;margin-left:auto"><button onclick="_trkGetResults()" title="Re-pull box scores and settle pending picks" style="background:#0e7490;color:#fff;border:none;border-radius:6px;padding:5px 11px;font-size:.78rem;font-weight:700;cursor:pointer">\u21bb Get Results</button>'+_trkDViewBtn('cat','By Category')+_trkDViewBtn('full','Full List')+_trkDViewBtn('odds','Odds')+'</span></div>';
   if(g===undefined){ be.innerHTML=datesel+'<p style="color:#94a3b8;padding:12px">Loading\u2026</p>'; _trkLoadDaily(date); return; }
   if(g==='LOADING'){ be.innerHTML=datesel+'<p style="color:#94a3b8;padding:12px">Loading\u2026</p>'; return; }
   if(g&&g.__error__){ be.innerHTML=datesel+'<p style="color:#94a3b8;padding:12px">'+(g.__error__)+'</p>'; return; }
@@ -6869,7 +6872,7 @@ function _trkRenderDailyTab(be,stake){
     var cpool=rows.map(function(r){ var c={}; for(var ck in r) c[ck]=r[ck]; c.date=date; return c; });
     var ct=_trkCatTable(cpool,stake,'No decided picks for this day yet \u2014 fills in as games go Final.');
     var co=ct.overall, con=co.w+co.l, crisk=co.counted*stake, croi=crisk?co.net/crisk*100:0, cclr=co.net>=0?'#4ade80':'#f87171', cwclr=_trkRC(co.w,con);
-    var cpend=rows.filter(function(r){ return r.result!=='WIN'&&r.result!=='LOSS'; }).length;
+    var cpend=rows.filter(function(r){ return !_trkSkipMeta(r)&&r.result!=='WIN'&&r.result!=='LOSS'; }).length;
     var csum='<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;background:#0c1829;border:1px solid #1e293b;border-radius:12px;padding:12px 16px;margin-bottom:12px"><div style="font-weight:800"><span style="color:'+cwclr+'">'+co.w+'/'+con+'</span> <span style="color:#94a3b8;font-size:.8rem">('+(con?(co.w/con*100).toFixed(1):'0.0')+'%)</span>'+(cpend?' <span style="color:#94a3b8;font-size:.8rem">'+cpend+' pending</span>':'')+'</div><div style="font-size:.86rem">Net <span style="color:'+cclr+';font-weight:900">'+(co.net>=0?'+$':'\u2212$')+Math.abs(co.net).toFixed(0)+'</span> <span style="color:#64748b">\u00b7 ROI '+(croi>=0?'+':'\u2212')+Math.abs(croi).toFixed(1)+'% on $'+crisk.toFixed(0)+'</span></div><div style="margin-left:auto;display:flex;gap:8px"><button onclick="downloadTrkDailyCatCSV()" style="background:#16a34a;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:.78rem;font-weight:700;cursor:pointer">\u2b07 Category CSV</button><button onclick="downloadTrkDailyCSV()" style="background:#0e7490;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:.78rem;font-weight:700;cursor:pointer">\u2b07 Full List</button></div></div>';
     be.innerHTML=datesel+csum+ct.html;
     return;
@@ -6888,13 +6891,14 @@ function _trkRenderDailyTab(be,stake){
     body+='<div style="margin:12px 0 4px;font-weight:800;font-size:.83rem;color:#cbd5e1">'+(cfg.icon||'')+' '+cfg.lbl+' <span style="color:'+gclr+';font-family:monospace;font-weight:900">'+gw+'/'+gn+'</span></div>';
     picks.forEach(function(p){
       var logIdx=window.__TRK_LOG_ROWS__.length; window.__TRK_LOG_ROWS__.push(p); p.__date__=date;
+      var _meta=_trkSkipMeta(p);
       var rr=p.result;
       var mk=rr==='WIN'?'<span style="color:#4ade80">\u2713</span>':(rr==='LOSS'?'<span style="color:#f87171">\u2717</span>':'<span style="color:#64748b">\u00b7</span>');
-      if(rr==='WIN')win++; else if(rr==='LOSS')loss++; else pend++;
+      if(!_meta){ if(rr==='WIN')win++; else if(rr==='LOSS')loss++; else pend++; }
       var act=(p.actual!=null)?('<span style="color:#cbd5e1">\u2192 '+p.actual+(p.stat?(' '+p.stat):'')+'</span>'):'';
       var odd=_oddsCell(p,logIdx);
       var plHtml,roiHtml='';
-      if(rr==='WIN'||rr==='LOSS'){ var pl=_amProfit(_effOdds(p),stake,rr==='WIN'); if(pl===null){ plHtml='<span style="color:#475569;font-family:monospace">\u2014</span>'; } else { net+=pl; counted++; var c=pl>=0?'#4ade80':'#f87171', rp=pl/stake*100; plHtml='<span style="font-family:monospace;font-weight:800;color:'+c+'">'+(pl>=0?'+$':'\u2212$')+Math.abs(pl).toFixed(0)+'</span>'; roiHtml='<span style="font-family:monospace;font-weight:700;color:'+c+'">'+(rp>=0?'+':'\u2212')+Math.abs(rp).toFixed(0)+'%</span>'; } }
+      if(rr==='WIN'||rr==='LOSS'){ var pl=_amProfit(_effOdds(p),stake,rr==='WIN'); if(pl===null){ plHtml='<span style="color:#475569;font-family:monospace">\u2014</span>'; } else { if(!_meta){ net+=pl; counted++; } var c=pl>=0?'#4ade80':'#f87171', rp=pl/stake*100; plHtml='<span style="font-family:monospace;font-weight:800;color:'+c+'">'+(pl>=0?'+$':'\u2212$')+Math.abs(pl).toFixed(0)+'</span>'; roiHtml='<span style="font-family:monospace;font-weight:700;color:'+c+'">'+(rp>=0?'+':'\u2212')+Math.abs(rp).toFixed(0)+'%</span>'; } }
       else { plHtml='<span style="color:#64748b;font-size:.72rem">pending</span>'; }
       var logBtn='<button onclick="_trkLogBet('+logIdx+')" title="Log as bet" style="background:#1e3a8a;color:#bfdbfe;border:1px solid #1d4ed8;border-radius:5px;padding:1px 7px;font-size:.66rem;font-weight:800;cursor:pointer;flex-shrink:0">+Log</button>';
       body+='<div style="display:flex;gap:8px;align-items:center;padding:2px 0 2px 6px;font-size:.79rem">'+mk+'<span style="color:#e2e8f0;min-width:130px">'+(p.name||'')+'</span><span style="color:#94a3b8;min-width:120px">'+(p.pick||'')+'</span>'+act+'<span style="margin-left:auto;display:flex;gap:8px;align-items:center"><span style="min-width:52px;text-align:right">'+plHtml+'</span><span style="min-width:44px;text-align:right">'+roiHtml+'</span>'+odd+logBtn+'</span></div>';
@@ -6972,7 +6976,7 @@ function _ovfRenderDailyTab(be,stake){
   var g=cache[date];
   var CAT_CFG=window.__TRK_CFG__||{}, CAT_ORDER=window.__OVF_ORDER__||[];
   var view=window.__OVF_DVIEW__||'cat';
-  var datesel='<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:12px"><label style="font-size:.82rem;color:#94a3b8">Day <input type="date" value="'+date+'" max="'+_trkTodayISO()+'" onchange="_ovfLoadDaily(this.value)" style="margin-left:6px;background:#020617;border:1px solid #334155;color:#fff;border-radius:6px;padding:6px 8px;font-size:.82rem"></label><span style="font-weight:800;color:#93c5fd;font-size:.95rem">'+_weekdayName(date)+'</span><span style="display:flex;gap:6px;margin-left:auto">'+_ovfDViewBtn('cat','By Category')+_ovfDViewBtn('full','Full List')+_ovfDViewBtn('odds','Odds')+'</span></div>';
+  var datesel='<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:12px"><label style="font-size:.82rem;color:#94a3b8">Day <input type="date" value="'+date+'" max="'+_trkTodayISO()+'" onchange="_ovfLoadDaily(this.value)" style="margin-left:6px;background:#020617;border:1px solid #334155;color:#fff;border-radius:6px;padding:6px 8px;font-size:.82rem"></label><span style="font-weight:800;color:#93c5fd;font-size:.95rem">'+_weekdayName(date)+'</span><span style="display:flex;gap:6px;margin-left:auto"><button onclick="_ovfGetResults()" title="Re-pull box scores and settle pending picks" style="background:#0e7490;color:#fff;border:none;border-radius:6px;padding:5px 11px;font-size:.78rem;font-weight:700;cursor:pointer">\u21bb Get Results</button>'+_ovfDViewBtn('cat','By Category')+_ovfDViewBtn('full','Full List')+_ovfDViewBtn('odds','Odds')+'</span></div>';
   if(g===undefined){ be.innerHTML=datesel+'<p style="color:#94a3b8;padding:12px">Loading\u2026</p>'; _ovfLoadDaily(date); return; }
   if(g==='LOADING'){ be.innerHTML=datesel+'<p style="color:#94a3b8;padding:12px">Loading\u2026</p>'; return; }
   if(g&&g.__error__){ be.innerHTML=datesel+'<p style="color:#94a3b8;padding:12px">'+(g.__error__)+'</p>'; return; }
@@ -6989,7 +6993,7 @@ function _ovfRenderDailyTab(be,stake){
     var cpool=rows.map(function(r){ var c={}; for(var ck in r) c[ck]=r[ck]; c.date=date; return c; });
     var ct=_trkCatTable(cpool,stake,'No decided overflow picks for this day yet \u2014 fills in as games go Final.');
     var co=ct.overall, con=co.w+co.l, crisk=co.counted*stake, croi=crisk?co.net/crisk*100:0, cclr=co.net>=0?'#4ade80':'#f87171', cwclr=_trkRC(co.w,con);
-    var cpend=rows.filter(function(r){ return r.result!=='WIN'&&r.result!=='LOSS'; }).length;
+    var cpend=rows.filter(function(r){ return !_trkSkipMeta(r)&&r.result!=='WIN'&&r.result!=='LOSS'; }).length;
     var csum='<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;background:#0c1829;border:1px solid #1e293b;border-radius:12px;padding:12px 16px;margin-bottom:12px"><div style="font-weight:800"><span style="color:'+cwclr+'">'+co.w+'/'+con+'</span> <span style="color:#94a3b8;font-size:.8rem">('+(con?(co.w/con*100).toFixed(1):'0.0')+'%)</span>'+(cpend?' <span style="color:#94a3b8;font-size:.8rem">'+cpend+' pending</span>':'')+'</div><div style="font-size:.86rem">Net <span style="color:'+cclr+';font-weight:900">'+(co.net>=0?'+$':'\u2212$')+Math.abs(co.net).toFixed(0)+'</span> <span style="color:#64748b">\u00b7 ROI '+(croi>=0?'+':'\u2212')+Math.abs(croi).toFixed(1)+'% on $'+crisk.toFixed(0)+'</span></div><button onclick="downloadOvfDailyCSV()" style="margin-left:auto;background:#16a34a;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:.78rem;font-weight:700;cursor:pointer">\u2b07 CSV</button></div>';
     be.innerHTML=datesel+csum+ct.html;
     return;
@@ -7008,13 +7012,14 @@ function _ovfRenderDailyTab(be,stake){
     body+='<div style="margin:12px 0 4px;font-weight:800;font-size:.83rem;color:#cbd5e1">'+(cfg.icon||'')+' '+cfg.lbl+' <span style="color:'+gclr+';font-family:monospace;font-weight:900">'+gw+'/'+gn+'</span></div>';
     picks.forEach(function(p){
       var logIdx=window.__TRK_LOG_ROWS__.length; window.__TRK_LOG_ROWS__.push(p); p.__date__=date;
+      var _meta=_trkSkipMeta(p);
       var rr=p.result;
       var mk=rr==='WIN'?'<span style="color:#4ade80">\u2713</span>':(rr==='LOSS'?'<span style="color:#f87171">\u2717</span>':'<span style="color:#64748b">\u00b7</span>');
-      if(rr==='WIN')win++; else if(rr==='LOSS')loss++; else pend++;
+      if(!_meta){ if(rr==='WIN')win++; else if(rr==='LOSS')loss++; else pend++; }
       var act=(p.actual!=null)?('<span style="color:#cbd5e1">\u2192 '+p.actual+(p.stat?(' '+p.stat):'')+'</span>'):'';
       var odd=_oddsCell(p,logIdx);
       var plHtml,roiHtml='';
-      if(rr==='WIN'||rr==='LOSS'){ var pl=_amProfit(_effOdds(p),stake,rr==='WIN'); if(pl===null){ plHtml='<span style="color:#475569;font-family:monospace">\u2014</span>'; } else { net+=pl; counted++; var c=pl>=0?'#4ade80':'#f87171', rp=pl/stake*100; plHtml='<span style="font-family:monospace;font-weight:800;color:'+c+'">'+(pl>=0?'+$':'\u2212$')+Math.abs(pl).toFixed(0)+'</span>'; roiHtml='<span style="font-family:monospace;font-weight:700;color:'+c+'">'+(rp>=0?'+':'\u2212')+Math.abs(rp).toFixed(0)+'%</span>'; } }
+      if(rr==='WIN'||rr==='LOSS'){ var pl=_amProfit(_effOdds(p),stake,rr==='WIN'); if(pl===null){ plHtml='<span style="color:#475569;font-family:monospace">\u2014</span>'; } else { if(!_meta){ net+=pl; counted++; } var c=pl>=0?'#4ade80':'#f87171', rp=pl/stake*100; plHtml='<span style="font-family:monospace;font-weight:800;color:'+c+'">'+(pl>=0?'+$':'\u2212$')+Math.abs(pl).toFixed(0)+'</span>'; roiHtml='<span style="font-family:monospace;font-weight:700;color:'+c+'">'+(rp>=0?'+':'\u2212')+Math.abs(rp).toFixed(0)+'%</span>'; } }
       else { plHtml='<span style="color:#64748b;font-size:.72rem">pending</span>'; }
       var logBtn='<button onclick="_trkLogBet('+logIdx+')" title="Log as bet" style="background:#1e3a8a;color:#bfdbfe;border:1px solid #1d4ed8;border-radius:5px;padding:1px 7px;font-size:.66rem;font-weight:800;cursor:pointer;flex-shrink:0">+Log</button>';
       body+='<div style="display:flex;gap:8px;align-items:center;padding:2px 0 2px 6px;font-size:.79rem">'+mk+'<span style="color:#e2e8f0;min-width:130px">'+(p.name||'')+'</span><span style="color:#94a3b8;min-width:120px">'+(p.pick||'')+'</span>'+act+'<span style="margin-left:auto;display:flex;gap:8px;align-items:center"><span style="min-width:52px;text-align:right">'+plHtml+'</span><span style="min-width:44px;text-align:right">'+roiHtml+'</span>'+odd+logBtn+'</span></div>';
@@ -7209,7 +7214,7 @@ function _hrtRenderDailyTab(be,stake){
   var g=cache[date];
   var CAT_CFG=window.__TRK_CFG__||{};
   var view=window.__HRT_DVIEW__||'cat';
-  var datesel='<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:12px"><label style="font-size:.82rem;color:#94a3b8">Day <input type="date" value="'+date+'" max="'+_trkTodayISO()+'" onchange="_hrtLoadDaily(this.value)" style="margin-left:6px;background:#020617;border:1px solid #334155;color:#fff;border-radius:6px;padding:6px 8px;font-size:.82rem"></label><span style="display:flex;gap:6px;margin-left:auto">'+_hrtDViewBtn('cat','By Category')+_hrtDViewBtn('full','Full List')+'</span></div>';
+  var datesel='<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:12px"><label style="font-size:.82rem;color:#94a3b8">Day <input type="date" value="'+date+'" max="'+_trkTodayISO()+'" onchange="_hrtLoadDaily(this.value)" style="margin-left:6px;background:#020617;border:1px solid #334155;color:#fff;border-radius:6px;padding:6px 8px;font-size:.82rem"></label><span style="display:flex;gap:6px;margin-left:auto"><button onclick="_hrtGetResults()" title="Re-pull box scores and settle pending picks" style="background:#0e7490;color:#fff;border:none;border-radius:6px;padding:5px 11px;font-size:.78rem;font-weight:700;cursor:pointer">\u21bb Get Results</button>'+_hrtDViewBtn('cat','By Category')+_hrtDViewBtn('full','Full List')+'</span></div>';
   if(g===undefined){ be.innerHTML=datesel+'<p style="color:#94a3b8;padding:12px">Loading\u2026</p>'; _hrtLoadDaily(date); return; }
   if(g==='LOADING'){ be.innerHTML=datesel+'<p style="color:#94a3b8;padding:12px">Loading\u2026</p>'; return; }
   if(g&&g.__error__){ be.innerHTML=datesel+'<p style="color:#94a3b8;padding:12px">'+(g.__error__)+'</p>'; return; }
@@ -7219,7 +7224,7 @@ function _hrtRenderDailyTab(be,stake){
     var cpool=rows.map(function(r){ var c={}; for(var ck in r) c[ck]=r[ck]; c.date=date; return c; });
     var ct=_trkCatTable(cpool,stake,'No decided HR picks for this day yet \u2014 fills in as games go Final.');
     var co=ct.overall, con=co.w+co.l, crisk=co.counted*stake, croi=crisk?co.net/crisk*100:0, cclr=co.net>=0?'#4ade80':'#f87171', cwclr=_trkRC(co.w,con);
-    var cpend=rows.filter(function(r){ return r.result!=='WIN'&&r.result!=='LOSS'; }).length;
+    var cpend=rows.filter(function(r){ return !_trkSkipMeta(r)&&r.result!=='WIN'&&r.result!=='LOSS'; }).length;
     var csum='<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;background:#0c1829;border:1px solid #1e293b;border-radius:12px;padding:12px 16px;margin-bottom:12px"><div style="font-weight:800"><span style="color:'+cwclr+'">'+co.w+'/'+con+'</span> <span style="color:#94a3b8;font-size:.8rem">('+(con?(co.w/con*100).toFixed(1):'0.0')+'%)</span>'+(cpend?' <span style="color:#94a3b8;font-size:.8rem">'+cpend+' pending</span>':'')+'</div><div style="font-size:.86rem">Net <span style="color:'+cclr+';font-weight:900">'+(co.net>=0?'+$':'\u2212$')+Math.abs(co.net).toFixed(0)+'</span> <span style="color:#64748b">\u00b7 ROI '+(croi>=0?'+':'\u2212')+Math.abs(croi).toFixed(1)+'% on $'+crisk.toFixed(0)+'</span></div><button onclick="downloadHrtDailyCSV()" style="margin-left:auto;background:#16a34a;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:.78rem;font-weight:700;cursor:pointer">\u2b07 CSV</button></div>';
     be.innerHTML=datesel+csum+ct.html;
     return;
@@ -7238,13 +7243,14 @@ function _hrtRenderDailyTab(be,stake){
     body+='<div style="margin:12px 0 4px;font-weight:800;font-size:.83rem;color:#cbd5e1">'+(cfg.icon||'')+' '+cfg.lbl+' <span style="color:'+gclr+';font-family:monospace;font-weight:900">'+gw+'/'+gn+'</span></div>';
     picks.forEach(function(p){
       var logIdx=window.__TRK_LOG_ROWS__.length; window.__TRK_LOG_ROWS__.push(p); p.__date__=date;
+      var _meta=_trkSkipMeta(p);
       var rr=p.result;
       var mk=rr==='WIN'?'<span style="color:#4ade80">\u2713</span>':(rr==='LOSS'?'<span style="color:#f87171">\u2717</span>':'<span style="color:#64748b">\u00b7</span>');
-      if(rr==='WIN')win++; else if(rr==='LOSS')loss++; else pend++;
+      if(!_meta){ if(rr==='WIN')win++; else if(rr==='LOSS')loss++; else pend++; }
       var act=(p.actual!=null)?('<span style="color:#cbd5e1">\u2192 '+p.actual+(p.stat?(' '+p.stat):'')+'</span>'):'';
       var odd=_oddsCell(p,logIdx);
       var plHtml,roiHtml='';
-      if(rr==='WIN'||rr==='LOSS'){ var pl=_amProfit(_effOdds(p),stake,rr==='WIN'); if(pl===null){ plHtml='<span style="color:#475569;font-family:monospace">\u2014</span>'; } else { net+=pl; counted++; var c=pl>=0?'#4ade80':'#f87171', rp=pl/stake*100; plHtml='<span style="font-family:monospace;font-weight:800;color:'+c+'">'+(pl>=0?'+$':'\u2212$')+Math.abs(pl).toFixed(0)+'</span>'; roiHtml='<span style="font-family:monospace;font-weight:700;color:'+c+'">'+(rp>=0?'+':'\u2212')+Math.abs(rp).toFixed(0)+'%</span>'; } }
+      if(rr==='WIN'||rr==='LOSS'){ var pl=_amProfit(_effOdds(p),stake,rr==='WIN'); if(pl===null){ plHtml='<span style="color:#475569;font-family:monospace">\u2014</span>'; } else { if(!_meta){ net+=pl; counted++; } var c=pl>=0?'#4ade80':'#f87171', rp=pl/stake*100; plHtml='<span style="font-family:monospace;font-weight:800;color:'+c+'">'+(pl>=0?'+$':'\u2212$')+Math.abs(pl).toFixed(0)+'</span>'; roiHtml='<span style="font-family:monospace;font-weight:700;color:'+c+'">'+(rp>=0?'+':'\u2212')+Math.abs(rp).toFixed(0)+'%</span>'; } }
       else { plHtml='<span style="color:#64748b;font-size:.72rem">pending</span>'; }
       var logBtn='<button onclick="_trkLogBet('+logIdx+')" title="Log as bet" style="background:#1e3a8a;color:#bfdbfe;border:1px solid #1d4ed8;border-radius:5px;padding:1px 7px;font-size:.66rem;font-weight:800;cursor:pointer;flex-shrink:0">+Log</button>';
       body+='<div style="display:flex;gap:8px;align-items:center;padding:2px 0 2px 6px;font-size:.79rem">'+mk+'<span style="color:#e2e8f0;min-width:130px">'+(p.name||'')+'</span><span style="color:#94a3b8;min-width:120px">'+(p.pick||'')+'</span>'+act+'<span style="margin-left:auto;display:flex;gap:8px;align-items:center"><span style="min-width:52px;text-align:right">'+plHtml+'</span><span style="min-width:44px;text-align:right">'+roiHtml+'</span>'+odd+logBtn+'</span></div>';
