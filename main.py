@@ -3242,6 +3242,7 @@ function showResults(result) {
 
   renderPitcherProps(view);
   renderByGame(view);
+  _syncParlayCats(); _paintCatBtn();  // keep the Categories button count matching the live checkboxes
   _buildGamesMenu();  // refresh the parlay "Games" filter list from today's full slate
   show('results-card');
 }
@@ -3961,6 +3962,7 @@ function _renderParlay(randomize){
   var n=parseInt(sel?sel.value:'3',10)||3;
   var out=document.getElementById('parlayResult'); if(!out) return;
   if(!window._lastResult){ out.innerHTML='<div style="color:#888;padding:10px">Run picks first, then build a parlay.</div>'; return; }
+  _syncParlayCats();  // re-read the live checkboxes so the build uses exactly what is checked
   var _anyCat=false; for(var _ck in window.PARLAY_CATS){ if(window.PARLAY_CATS[_ck]){ _anyCat=true; break; } }
   if(!_anyCat){ out.innerHTML='<div style="color:#f87171;padding:10px">Pick at least one category from the Categories menu.</div>'; return; }
   var cands=_mlbPool();
@@ -4027,6 +4029,7 @@ function _paintParlay(){
 // since the just-placed leg is then on the ticket. No regenerate, no other leg lost.
 function _replaceParlayLeg(idx){
   var legs=window._parlayLegs; if(!legs||!legs[idx]) return;
+  _syncParlayCats();  // swap must respect exactly what is checked, too
   var cur=legs[idx];
   var curKey=cur.player+'|'+cur.type+'|'+cur.stat;
   var used={}; legs.forEach(function(l,i){ if(i!==idx) used[l.player+'|'+l.type+'|'+l.stat]=1; });
@@ -4139,9 +4142,19 @@ function _legCat(c){
 function _catCount(){ var n=0,t=0; for(var k in window.PARLAY_CATS){ t++; if(window.PARLAY_CATS[k]) n++; } return n+'/'+t; }
 function _paintCatBtn(){ var b=document.getElementById('parlay-cats-btn'); if(b) b.innerHTML='&#9776; Categories ('+_catCount()+') &#9662;'; }
 function toggleCatMenu(e){ if(e){ e.stopPropagation(); } var m=document.getElementById('parlay-cats-menu'); if(m) m.style.display=(m.style.display==='block')?'none':'block'; }
-function _catChanged(){
+// SINGLE SOURCE OF TRUTH for parlay categories: copy the LIVE checkbox states into
+// window.PARLAY_CATS. Browsers restore checkbox checked-state across reloads / back-
+// forward navigation independently of our JS, which left PARLAY_CATS (all-true on load)
+// out of sync with the boxes the user actually sees — so unchecked categories still fed
+// the parlay. Re-reading the DOM right before every build guarantees the parlay uses
+// exactly what is checked, 100%.
+function _syncParlayCats(){
   var cbs=document.querySelectorAll('.parlay-cat-cb');
+  if(!cbs.length) return;
   for(var i=0;i<cbs.length;i++){ window.PARLAY_CATS[cbs[i].value]=cbs[i].checked; }
+}
+function _catChanged(){
+  _syncParlayCats();
   _paintCatBtn();
   if((document.getElementById('parlayResult').innerHTML||'').trim()) buildParlay();
 }
