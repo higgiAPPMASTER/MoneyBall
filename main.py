@@ -2386,7 +2386,7 @@ _HTML = """
       <h1 style="font-family:'Playfair Display',serif;font-size:2.6rem;font-weight:900;color:#fff;margin-bottom:6px">MLB <span style="color:#f59e0b">MoneyBall</span></h1>
       <p style="font-size:.85rem;color:#6b7280;letter-spacing:.15em;text-transform:uppercase">MLB Daily Picks</p>
     </div>
-    <div id="betting-context-card" class="card" style="display:none;max-width:960px;margin:0 auto 18px;padding:0;overflow:hidden">
+    <div id="betting-context-card" class="card" style="max-width:960px;margin:0 auto 18px;padding:0;overflow:hidden">
       <div onclick="_bcToggle()" style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;cursor:pointer;user-select:none;background:linear-gradient(135deg,rgba(245,158,11,.06),transparent)">
         <div>
           <span style="font-weight:800;color:#fbbf24;font-size:.85rem">&#9918; MLB Prop Strategy &#8212; Day &amp; Trend Master Sheet</span>
@@ -2407,6 +2407,19 @@ _HTML = """
           3:['O','O','O','O','O','O','U','O','O','O'],
           4:['U','U','U','U','U','U','U','U','O','U'],
           5:['O','O','O','O','O','O','O','U','U','U'],
+          6:['O','O','O','O','O','U','U','O','O','O']
+        };
+        // DISPLAY-ONLY corrected matrix shown in the top strategy bar. The live
+        // _DOW_SIG above is left UNCHANGED on purpose so picks keep being run,
+        // graded and collected exactly as before. Nothing reads _DOW_DISP except
+        // the two display renderers below (day-of-week table + today lean banner).
+        var _DOW_DISP={
+          0:['U','U','U','U','U','O','O','U','U','O'],
+          1:['U','U','U','U','U','O','O','U','U','U'],
+          2:['O','O','O','O','O','U','U','O','O','O'],
+          3:['O','O','O','O','O','U','U','O','O','O'],
+          4:['U','U','U','U','U','O','O','U','U','U'],
+          5:['O','O','O','O','O','U','U','O','O','U'],
           6:['O','O','O','O','O','U','U','O','O','O']
         };
         var _DOW_IDX={hits:0,hits_over:0,hits_under:0,tb:1,tb_under:1,tb_over:1,hrr:2,hr:2,runs:3,rbi:4,k:5,outs:6,hits_allowed:7,er:8,walks:9};
@@ -2449,7 +2462,7 @@ _HTML = """
           cols.forEach(function(c){h+='<th style="text-align:center;padding:7px 6px;color:#94a3b8;font-size:.6rem;letter-spacing:.03em;font-weight:700">'+c[0]+'</th>';});
           h+='</tr></thead><tbody>';
           [1,2,3,4,5,6,0].forEach(function(d){
-            var sig=_DOW_SIG[d]||[];
+            var sig=_DOW_DISP[d]||[];
             h+='<tr data-dow="'+d+'" style="border-bottom:1px solid #1e1e1e"><td title="'+_DOW_WHY[d]+'" style="padding:8px 8px;color:#cbd5e1;font-weight:700;white-space:nowrap;cursor:help">'+_DOW_NAMES[d]+'</td>';
             cols.forEach(function(c){var v=sig[c[1]];var clr=v==='O'?'#4ade80':'#ff8a65';h+='<td style="text-align:center;padding:8px 6px"><b style="color:'+clr+'">'+(v==='O'?'OVER':'UNDER')+'</b></td>';});
             h+='</tr>';
@@ -2458,7 +2471,7 @@ _HTML = """
         }
         function _renderLeanBanner(){
           var day=_slateDay();
-          var sig=_DOW_SIG[day]||[];
+          var sig=_DOW_DISP[day]||[];
           var oc=function(v){return v==='O'?'<b style="color:#4ade80">OVER</b>':'<b style="color:#ff8a65">UNDER</b>';};
           var el=document.getElementById('bc-today-lean'), tx=document.getElementById('bc-lean-text');
           if(el&&tx){
@@ -2558,7 +2571,7 @@ _HTML = """
                 <td style="padding:8px 8px;color:#fbbf24;font-weight:700;white-space:nowrap;vertical-align:top">Game 2<br><span style="font-size:.66rem;color:#64748b;font-weight:400">Mid-Series</span></td>
                 <td style="padding:8px 8px;color:#a7f3d0;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> The No. 2 or 3 starter does not have the same swing-and-miss stuff as the ace. Fewer strikeouts — lean Under on Ks.</td>
                 <td style="padding:8px 8px;color:#bfdbfe;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Softer velocity gets squared up more easily. Hitters make better contact in Game 2 — lean Over on hits allowed.</td>
-                <td style="padding:8px 8px;color:#cbd5e1;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Mid-rotation starters focus on going deep rather than blowing hitters away. Solid out totals in Game 2.</td>
+                <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#ff8a65">U</b> No. 2-3 starters get squared up and pulled earlier than the ace. Shorter outings mean fewer outs recorded — lean Under in Game 2.</td>
                 <td style="padding:8px 8px;color:#fca5a5;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Patient lineups sit on softer pitches and punish mistakes. Earned runs climb in the middle of a series.</td>
                 <td style="padding:8px 8px;color:#fde68a;line-height:1.6;vertical-align:top"><b style="color:#4ade80">O</b> Less precise command than the ace. Hitters work deeper counts and draw more walks in Game 2.</td>
               </tr>
