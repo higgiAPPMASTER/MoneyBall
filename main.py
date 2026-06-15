@@ -8300,18 +8300,25 @@ function _betOddsDisp(o){ return o!=null?((o>0?'+':'')+o):'—'; }
 function _resColor(r){ return r==='WIN'?'#4ade80':(r==='LOSS'?'#f87171':(r==='PUSH'?'#facc15':(r==='VOID'?'#38bdf8':'#94a3b8'))); }
 function _statBox(lbl,val,clr){ return '<div style="background:#111;border-radius:10px;padding:10px 14px;min-width:92px"><div style="font-size:.64rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">'+lbl+'</div><div style="font-size:1.12rem;font-weight:800;color:'+(clr||'#e2e8f0')+'">'+val+'</div></div>'; }
 function renderMyBets(d){
-  var s=d.summary||{}; var bets=d.bets||[];
-  var _bdates={}; bets.forEach(function(b){ if(b.date) _bdates[b.date]=1; });
+  var bets=d.bets||[];
+  var singles=bets.filter(function(b){ return b.bet_type!=='parlay'; });
+  var parlays=bets.filter(function(b){ return b.bet_type==='parlay'; });
+  var tab=(window.__MYBETS_TAB__==='parlays')?'parlays':'singles'; window.__MYBETS_TAB__=tab;
+  var activeAll=(tab==='parlays')?parlays:singles;
+  var s=_mbSumm(activeAll);
+  var _bdates={}; activeAll.forEach(function(b){ if(b.date) _bdates[b.date]=1; });
   var _dlist=Object.keys(_bdates).sort();
   var _maxd=_dlist.length?_dlist[_dlist.length-1]:_trkTodayISO();
   var selDate=window.__MYBETS_DATE__;
   if(!selDate||!_bdates[selDate]) selDate=_maxd;
   window.__MYBETS_DATE__=selDate;
-  var shownBets=bets.filter(function(b){ return b.date===selDate; });
+  var shownBets=activeAll.filter(function(b){ return b.date===selDate; });
   var roiTxt=s.roi!=null?((s.roi>0?'+':'')+s.roi+'%'):'—';
   var roiClr=s.roi==null?'#94a3b8':(s.roi>0?'#4ade80':(s.roi<0?'#f87171':'#facc15'));
   var netClr=(s.profit||0)>0?'#4ade80':((s.profit||0)<0?'#f87171':'#cbd5e1');
   var recTxt=(s.wins||0)+'-'+(s.losses||0)+(s.push?('-'+s.push+'P'):'');
+  var tabBtn=function(id,lab,cnt){ var on=(tab===id); return '<button onclick="_myBetsTab(&#39;'+id+'&#39;)" style="padding:7px 16px;border-radius:9px;border:1px solid '+(on?'#818cf8':'#334155')+';background:'+(on?'rgba(129,140,248,.14)':'transparent')+';color:'+(on?'#c7d2fe':'#94a3b8')+';font-weight:800;font-size:.8rem;cursor:pointer">'+lab+' <span style="font-size:.7rem;color:'+(on?'#a5b4fc':'#64748b')+'">('+cnt+')</span></button>'; };
+  var tabBar='<div style="display:flex;gap:8px;margin-bottom:16px">'+tabBtn('singles','Singles',singles.length)+tabBtn('parlays','Parlays',parlays.length)+'</div>';
   var head='<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:18px">'
     +_statBox('Record',recTxt,'#e2e8f0')
     +_statBox('Pending',(s.pending||0),'#94a3b8')
@@ -8322,17 +8329,20 @@ function renderMyBets(d){
     +_statBox('ROI',roiTxt,roiClr)
     +'<div style="margin-left:auto"><button onclick="downloadMyBetsCSV()" style="background:#4338ca;color:#fff;border:none;border-radius:8px;padding:8px 12px;font-size:.78rem;font-weight:700;cursor:pointer">⬇ CSV</button></div>'
     +'</div>';
-  var bc=(s.by_category||[]).map(function(c){
-    var croi=c.roi!=null?((c.roi>0?'+':'')+c.roi+'%'):'—';
-    var cclr=c.roi==null?'#94a3b8':(c.roi>0?'#4ade80':(c.roi<0?'#f87171':'#facc15'));
-    return '<tr><td style="font-weight:600">'+(c.label||c.category)+'</td>'
-      +'<td style="font-family:monospace">'+c.wins+'-'+c.losses+(c.push?('-'+c.push+'P'):'')+'</td>'
-      +'<td style="font-family:monospace;color:#94a3b8">'+(c.pending||0)+'</td>'
-      +'<td style="font-family:monospace">'+_money(c.staked)+'</td>'
-      +'<td style="font-family:monospace;color:'+((c.profit||0)>=0?'#4ade80':'#f87171')+'">'+_money(c.profit)+'</td>'
-      +'<td style="font-family:monospace;font-weight:700;color:'+cclr+'">'+croi+'</td></tr>';
-  }).join('');
-  var bcHtml=bc?'<div style="overflow-x:auto;margin-bottom:18px"><table class="grade-table"><thead><tr><th>Category</th><th>W-L</th><th>Pend</th><th>Staked</th><th>Net</th><th>ROI</th></tr></thead><tbody>'+bc+'</tbody></table></div>':'';
+  var bcHtml='';
+  if(tab==='singles'){
+    var bc=(((d.summary&&d.summary.by_category)||[]).filter(function(c){ return (c.category||'')!=='Parlay'; })).map(function(c){
+      var croi=c.roi!=null?((c.roi>0?'+':'')+c.roi+'%'):'—';
+      var cclr=c.roi==null?'#94a3b8':(c.roi>0?'#4ade80':(c.roi<0?'#f87171':'#facc15'));
+      return '<tr><td style="font-weight:600">'+(c.label||c.category)+'</td>'
+        +'<td style="font-family:monospace">'+c.wins+'-'+c.losses+(c.push?('-'+c.push+'P'):'')+'</td>'
+        +'<td style="font-family:monospace;color:#94a3b8">'+(c.pending||0)+'</td>'
+        +'<td style="font-family:monospace">'+_money(c.staked)+'</td>'
+        +'<td style="font-family:monospace;color:'+((c.profit||0)>=0?'#4ade80':'#f87171')+'">'+_money(c.profit)+'</td>'
+        +'<td style="font-family:monospace;font-weight:700;color:'+cclr+'">'+croi+'</td></tr>';
+    }).join('');
+    bcHtml=bc?'<div style="overflow-x:auto;margin-bottom:18px"><table class="grade-table"><thead><tr><th>Category</th><th>W-L</th><th>Pend</th><th>Staked</th><th>Net</th><th>ROI</th></tr></thead><tbody>'+bc+'</tbody></table></div>':'';
+  }
   var rows=shownBets.map(function(b){
     var res=b.result||'pending';
     var delBtn='<button onclick="_deleteBet(&#39;'+b.id+'&#39;)" title="Remove" style="background:none;border:none;color:#64748b;cursor:pointer;font-size:1rem">\u2716</button>';
@@ -8378,11 +8388,23 @@ function renderMyBets(d){
       +'</tr>';
   }).join('');
   var dateBar='<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px"><label style="font-size:.85rem;color:#94a3b8;font-weight:700">Show day <input type="date" value="'+selDate+'" max="'+_maxd+'" onchange="_myBetsDate(this.value)" style="margin-left:8px;background:#020617;border:1px solid #334155;color:#fff;border-radius:7px;padding:7px 10px;font-size:.85rem"></label><span style="color:#64748b;font-size:.78rem">'+shownBets.length+' bet'+(shownBets.length===1?'':'s')+' on this day</span></div>';
-  var tbl='<div style="overflow-x:auto"><table class="grade-table"><thead><tr><th>Date</th><th>Player</th><th>Pick</th><th>Odds</th><th>Stake</th><th>Result</th><th>Profit</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>';
-  var rowsHtml=!bets.length?'<p style="color:#94a3b8;padding:16px">No bets logged yet. Click <strong style="color:#c7d2fe">＋ Track Bet</strong> on any pick card to start.</p>':(!shownBets.length?'<p style="color:#94a3b8;padding:16px">No bets on '+selDate+'. Pick another day above.</p>':tbl);
-  document.getElementById('mybets-body').innerHTML=head+bcHtml+(bets.length?dateBar:'')+rowsHtml;
+  var tbl='<div style="overflow-x:auto"><table class="grade-table"><thead><tr><th>Date</th><th>'+(tab==='parlays'?'Parlay':'Player')+'</th><th>Pick</th><th>Odds</th><th>Stake</th><th>Result</th><th>Profit</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  var emptyMsg=(tab==='parlays')?'No parlays logged yet. Build one in the parlay cart, then log it.':'No single bets logged yet. Click <strong style="color:#c7d2fe">＋ Track Bet</strong> on any pick card to start.';
+  var rowsHtml=!activeAll.length?'<p style="color:#94a3b8;padding:16px">'+emptyMsg+'</p>':(!shownBets.length?'<p style="color:#94a3b8;padding:16px">No '+(tab==='parlays'?'parlays':'bets')+' on '+selDate+'. Pick another day above.</p>':tbl);
+  document.getElementById('mybets-body').innerHTML=tabBar+head+bcHtml+(activeAll.length?dateBar:'')+rowsHtml;
 }
 function _myBetsDate(v){ window.__MYBETS_DATE__=v; renderMyBets(window.__MYBETS__); }
+function _myBetsTab(t){ window.__MYBETS_TAB__=(t==='parlays')?'parlays':'singles'; window.__MYBETS_DATE__=null; renderMyBets(window.__MYBETS__); }
+function _mbSumm(list){
+  var w=0,l=0,pu=0,pend=0,vo=0,staked=0,profit=0;
+  (list||[]).forEach(function(b){
+    var res=b.result||'pending'; var stake=parseFloat(b.stake||0)||0;
+    if(res==='WIN') w++; else if(res==='LOSS') l++; else if(res==='PUSH') pu++; else if(res==='VOID') vo++; else pend++;
+    if(res==='WIN'||res==='LOSS'||res==='PUSH'){ staked+=stake; profit+=(parseFloat(b.profit||0)||0); }
+  });
+  var roi=staked>0?(profit/staked*100):null;
+  return {wins:w,losses:l,push:pu,pending:pend,void:vo,staked:Math.round(staked*100)/100,profit:Math.round(profit*100)/100,returned:Math.round((staked+profit)*100)/100,roi:(roi==null?null:Math.round(roi*10)/10)};
+}
 async function _deleteBet(id){
   if(!confirm('Remove this bet from your log?')) return;
   try{
@@ -8572,7 +8594,8 @@ function downloadDowCSV(){
 function downloadMyBetsCSV(){
   var d=window.__MYBETS__; if(!d){ alert('Open My Bets first.'); return; }
   var rows=[['Date','Player','Category','Pick','Odds','Stake','Result','Actual','Profit']];
-  (d.bets||[]).forEach(function(b){
+  var _tab=window.__MYBETS_TAB__==='parlays'?'parlays':'singles';
+  (d.bets||[]).filter(function(b){ return _tab==='parlays'?(b.bet_type==='parlay'):(b.bet_type!=='parlay'); }).forEach(function(b){
     if(b.bet_type==='parlay'){
       rows.push([b.date||'',(b.legs||[]).length+'-Leg Parlay','Parlay','Combined',
         b.odds!=null?b.odds:'',b.stake!=null?b.stake:'',b.result||'','',b.profit!=null?b.profit:'']);
@@ -8588,7 +8611,7 @@ function downloadMyBetsCSV(){
   var csv=rows.map(function(row){return row.map(_csvCell).join(',');}).join(String.fromCharCode(13)+String.fromCharCode(10));
   var blob=new Blob([String.fromCharCode(65279)+csv],{type:'text/csv;charset=utf-8;'});
   var url=URL.createObjectURL(blob);
-  var a=document.createElement('a'); a.href=url; a.download='mlb-my-bets.csv';
+  var a=document.createElement('a'); a.href=url; a.download='mlb-my-'+_tab+'.csv';
   document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
 }
 </script>
