@@ -2396,6 +2396,7 @@ _HTML = """
       <button class="admin-only" id="mybets-btn" onclick="openMyBets()" title="Your personal logged bets — click Get Results to grade against box scores" style="background:#4338ca;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">💰 My Bets</button>
       <button class="admin-only" id="ovf-btn" onclick="openOverflow()" title="Every pick beyond each category's top 10 — graded and banked in its own permanent record" style="background:#b45309;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">⭐ Overflow</button>
       <button class="admin-only" id="hrtrk-btn" onclick="openHRTracker()" title="Home Run Over/Under picks — their own permanent record, kept out of the main Track Record and Overflow" style="background:#be123c;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">💣 HR Tracker</button>
+      <button class="admin-only" id="dow-btn" onclick="openDowReport()" title="Which weekdays actually produce winners, and whether the matrix lean matches reality" style="background:#0e7490;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">📅 By Day</button>
       <button class="admin-only" onclick="_manualParlayForm()" title="Manually log a parlay — add legs one by one then save" style="background:#7e22ce;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">📋 Log Parlay</button>
     </div>
   </nav>
@@ -3550,6 +3551,53 @@ function _ppForm(key){
   ov.style.display='flex';
 }
 
+// ── Opposing-pitcher matchup block (the OPPOSITE of a hitter prop) ──────
+// For a hitter prop popup, look up the starter the batter faces (p.pitcher)
+// in the per-name pitcher-prop index and show that pitcher&#39;s last 5 games
+// of the matching ALLOWED stat (batter walks -> pitcher walks allowed, batter
+// hits -> pitcher hits allowed). Data already lives on the page (recent_log).
+function _oppPitObj(pitName, market){
+  var idx=window.__PP_BY_NAME__||{};
+  var nm=String(pitName||'').toLowerCase().trim();
+  if(!nm) return null;
+  var rec=idx[nm];
+  if(!rec){
+    var last=nm.split(/ +/).pop();
+    for(var k in idx){ if(k.split(/ +/).pop()===last){ rec=idx[k]; break; } }
+  }
+  if(!rec) return null;
+  var e=rec[market];
+  return (e&&e.obj)?e.obj:null;
+}
+function _oppPitBlock(p, market, statLabel, unit){
+  var pit=(p.pitcher&&p.pitcher!=='TBD')?p.pitcher:'';
+  if(!pit) return '';
+  var head='<div style="margin-top:12px;padding:10px 12px;background:#0c1622;border-radius:8px;border:1px solid #1e2f3a">'
+    +'<div style="font-size:.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Facing &middot; <span style="color:#cbd5e1">'+_esc(pit)+'</span></div>';
+  var o=_oppPitObj(pit, market);
+  if(!o) return head+'<div style="font-size:.78rem;color:#64748b">No '+statLabel+' line posted for this starter</div></div>';
+  var line=o.line;
+  var log=(o.recent_log||[]).slice(0,5);
+  var rows=log.length?log.map(function(g){
+    var v=g.v;
+    var clr=(line!=null&&v!=null)?(v>line?'#63cab7':'#ff8a65'):'#e2e8f0';
+    var oppTxt=g.opp?('vs '+g.opp):'';
+    return '<tr>'
+      +'<td style="padding:4px 8px;color:#94a3b8;font-family:monospace;font-size:.74rem">'+(g.d||'\u2014')+'</td>'
+      +'<td style="padding:4px 8px;color:#cbd5e1;font-size:.74rem">'+oppTxt+'</td>'
+      +'<td style="padding:4px 8px;text-align:right;font-family:monospace;font-weight:800;color:'+clr+'">'+(v!=null?(v+' '+unit):'\u2014')+'</td>'
+    +'</tr>';
+  }).join(''):'<tr><td colspan="3" style="padding:8px;color:#64748b;text-align:center;font-size:.74rem">No recent starts on record</td></tr>';
+  var meta=[];
+  if(line!=null) meta.push('Line '+line+' '+unit);
+  if(o.blended!=null) meta.push(o.blended+' '+unit+' avg');
+  if(o.pick) meta.push('<span style="color:'+(o.pick==='OVER'?'#63cab7':'#ff8a65')+';font-weight:800">'+o.pick+'</span>');
+  return head
+    +'<div style="font-size:.72rem;color:#94a3b8;margin-bottom:6px">'+statLabel+' &middot; last '+log.length+(meta.length?(' &middot; '+meta.join(' &middot; ')):'')+'</div>'
+    +'<table style="width:100%;border-collapse:collapse"><tbody>'+rows+'</tbody></table>'
+    +'</div>';
+}
+
 // ── Hitter recent-form popup (last 5 games) — mirrors _pkForm ───────────
 // Works for both "to record a hit" cards (over 0.5) and Under 1.5 picks.
 // Detect under picks via under_score; color each game green/red vs the goal.
@@ -3592,6 +3640,7 @@ function _hitForm(key){
     <div style="padding:14px 18px">
       <div style="font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase;margin-bottom:8px">Last ${log.length||0} Games</div>
       <table style="width:100%;border-collapse:collapse;font-size:.85rem"><tbody>${rows}</tbody></table>
+      ${_oppPitBlock(p,'pitcher_hits_allowed','Hits Allowed',  'H')}
       ${ssHtml}
       ${wu}
       <div style="margin-top:12px;border-top:1px solid #1e293b;padding-top:10px;color:${pickClr};font-weight:800;font-size:.85rem">Pick: ${goal}</div>
@@ -5208,6 +5257,7 @@ function _walksForm(key){
     <div style="padding:14px 18px">
       <div style="font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase;margin-bottom:8px">Walk Rate ${p.rate_disp||''} · Last ${log.length||0} Games</div>
       <table style="width:100%;border-collapse:collapse;font-size:.85rem"><tbody>${rows}</tbody></table>
+      ${_oppPitBlock(p,'pitcher_walks','Walks Allowed','BB')}
       ${_ssBlock(p)}
       ${_matrixWriteup(p,(isOver?'O':'U'),5,false,'walks',goal)}
       <div style="margin-top:12px;border-top:1px solid #1e293b;padding-top:10px;color:${pickClr};font-weight:800;font-size:.85rem">Pick: ${goal}</div>
@@ -6462,18 +6512,18 @@ function _trkCatTable(pool,stake,emptyMsg,clickable){
   var arr=Object.keys(ag.cats).map(function(k){ var c=ag.cats[k]; c.roi=c.counted?c.net/(c.counted*stake)*100:null; return [k,c]; });
   arr.sort(function(a,b){ var ra=a[1].counted?a[1].roi:-1e9, rb=b[1].counted?b[1].roi:-1e9; return rb-ra; });
   var head='<div style="display:flex;align-items:center;padding:7px 12px;background:#0c1829;border-bottom:1px solid #1e293b"><span style="flex:1;min-width:140px;font-size:.66rem;color:#64748b;font-weight:700;text-transform:uppercase">Category</span><span style="width:64px;text-align:right;font-size:.66rem;color:#64748b;font-weight:700;text-transform:uppercase">Record</span><span style="width:120px;text-align:center;font-size:.66rem;color:#64748b;font-weight:700;text-transform:uppercase">Hit Rate</span><span style="width:80px;text-align:right;font-size:.66rem;color:#64748b;font-weight:700;text-transform:uppercase">Net P/L</span><span style="width:72px;text-align:right;font-size:.66rem;color:#64748b;font-weight:700;text-transform:uppercase">ROI</span></div>';
-  if(clickable){ window.__CATV_REG__={pool:pool,stake:stake,keys:[]}; }
+  if(clickable){ window.__CATV_MAP__=window.__CATV_MAP__||{}; if(window.__CATV_SEQ__==null) window.__CATV_SEQ__=0; }
   var body='';
-  arr.forEach(function(x){ var k=x[0], c=x[1], n=c.w+c.l; if(!n) return; var cfg=CAT_CFG[k]||{lbl:k.split('|').join(' '),icon:'📊'}; var clr=_trkRC(c.w,n), pct=Math.round(c.w/n*100); var hasRoi=c.counted>0, netClr=c.net>=0?'#4ade80':'#f87171'; var _ca='',_cur='',_hint=''; if(clickable){ var vi=window.__CATV_REG__.keys.length; window.__CATV_REG__.keys.push(k); _ca=' onclick="_catVerdictPopup('+vi+')" title="Tap for green / amber / red breakdown"'; _cur='cursor:pointer;'; _hint=' <span style="color:#475569;font-size:.72rem">\u203a</span>'; } body+='<div'+_ca+' style="display:flex;align-items:center;padding:9px 12px;border-bottom:1px solid #131c2e;'+_cur+'"><span style="flex:1;min-width:140px;color:#e2e8f0;font-weight:600;font-size:.85rem">'+(cfg.icon||'')+' '+cfg.lbl+_hint+'</span><span style="width:64px;text-align:right;font-family:monospace;font-weight:800;color:'+clr+'">'+c.w+'/'+n+'</span><span style="width:120px;display:inline-flex;align-items:center;gap:5px">'+_trkBar(pct,clr)+'<span style="font-size:.72rem;font-family:monospace;font-weight:700;color:'+clr+'">'+pct+'%</span></span><span style="width:80px;text-align:right;font-family:monospace;font-weight:800;color:'+(hasRoi?netClr:'#475569')+'">'+(hasRoi?((c.net>=0?'+$':'\u2212$')+Math.abs(c.net).toFixed(0)):'\u2014')+'</span><span style="width:72px;text-align:right;font-family:monospace;font-weight:700;color:'+(hasRoi?(c.roi>=0?'#4ade80':'#f87171'):'#475569')+'">'+(hasRoi?((c.roi>=0?'+':'\u2212')+Math.abs(c.roi).toFixed(1)+'%'):'\u2014')+'</span></div>'; });
+  arr.forEach(function(x){ var k=x[0], c=x[1], n=c.w+c.l; if(!n) return; var cfg=CAT_CFG[k]||{lbl:k.split('|').join(' '),icon:'📊'}; var clr=_trkRC(c.w,n), pct=Math.round(c.w/n*100); var hasRoi=c.counted>0, netClr=c.net>=0?'#4ade80':'#f87171'; var _ca='',_cur='',_hint=''; if(clickable){ var _tok='cv'+(window.__CATV_SEQ__++); window.__CATV_MAP__[_tok]={key:k,pool:pool,stake:stake}; _ca=' onclick="_catVerdictPopup(&#39;'+_tok+'&#39;)" title="Tap for green / amber / red breakdown"'; _cur='cursor:pointer;'; _hint=' <span style="color:#475569;font-size:.72rem">\u203a</span>'; } body+='<div'+_ca+' style="display:flex;align-items:center;padding:9px 12px;border-bottom:1px solid #131c2e;'+_cur+'"><span style="flex:1;min-width:140px;color:#e2e8f0;font-weight:600;font-size:.85rem">'+(cfg.icon||'')+' '+cfg.lbl+_hint+'</span><span style="width:64px;text-align:right;font-family:monospace;font-weight:800;color:'+clr+'">'+c.w+'/'+n+'</span><span style="width:120px;display:inline-flex;align-items:center;gap:5px">'+_trkBar(pct,clr)+'<span style="font-size:.72rem;font-family:monospace;font-weight:700;color:'+clr+'">'+pct+'%</span></span><span style="width:80px;text-align:right;font-family:monospace;font-weight:800;color:'+(hasRoi?netClr:'#475569')+'">'+(hasRoi?((c.net>=0?'+$':'\u2212$')+Math.abs(c.net).toFixed(0)):'\u2014')+'</span><span style="width:72px;text-align:right;font-family:monospace;font-weight:700;color:'+(hasRoi?(c.roi>=0?'#4ade80':'#f87171'):'#475569')+'">'+(hasRoi?((c.roi>=0?'+':'\u2212')+Math.abs(c.roi).toFixed(1)+'%'):'\u2014')+'</span></div>'; });
   if(!body) body='<div style="color:#64748b;padding:16px;font-size:.83rem">'+(emptyMsg||'No graded picks in this range yet \u2014 fills in as slates go Final.')+'</div>';
   return {html:'<div style="border:1px solid #1e293b;border-radius:12px;overflow:hidden">'+head+body+'</div>', overall:ag.overall};
 }
 // ===== Category verdict popup — tap a category row (Weekly/Monthly, Track Record
 // or Overflow) to see THAT market's green / amber / red record + ROI over the
 // visible range, so you can tell when a "green" market is actually losing. =====
-function _catVerdictPopup(idx){
-  var R=window.__CATV_REG__; if(!R||!R.keys) return;
-  var key=R.keys[idx]; if(key==null) return;
+function _catVerdictPopup(tok){
+  var R=(window.__CATV_MAP__||{})[tok]; if(!R) return;
+  var key=R.key; if(key==null) return;
   var pool=R.pool||[], stake=R.stake||20;
   var CAT_CFG=window.__TRK_CFG__||{};
   var cfg=CAT_CFG[key]||{lbl:key.split('|').join(' '),icon:''};
@@ -8316,6 +8366,138 @@ async function _wipeMyBets(){
     alert('Wiped '+(j.removed||n)+' bet'+((j.removed||n)===1?'':'s')+'. Fresh start.');
   }catch(e){ alert(e.message||'Wipe failed'); }
 }
+// ── Day-of-Week Report: does the matrix lean actually win? ──────────────
+// Pure client-side analytics over /api/track-record detail (every graded pick
+// carries date + category + side + result + odds). Buckets by weekday, scores
+// each pick against the matrix lean (displayed _DOW_DISP or original _DOW_SIG),
+// and ranks the best categories per day. Reads banked data only \u2014 no new
+// backend, no effect on picks, cards, or the Track Record.
+var _DOW_CATIDX={'Hitter Hits':0,'TB Over':1,'TB Under':1,'HRR':2,'HR':2,'Runs':3,'RBI':4,'Batter Walks':9,'Pitcher Ks':5,'Pitcher Outs':6,'Pitcher Hits Allowed':7,'Pitcher Earned Runs':8,'Pitcher Walks':9};
+var _DOW_CATLBL={'Hitter Hits':'Hits','TB Over':'TB Over','TB Under':'TB Under','HRR':'H+R+RBI','HR':'Home Runs','Runs':'Runs','RBI':'RBI','Batter Walks':'Batter BB','Pitcher Ks':'Pitcher K','Pitcher Outs':'Outs','Pitcher Hits Allowed':'Hits Allowed','Pitcher Earned Runs':'Earned Runs','Pitcher Walks':'Pitcher BB'};
+function _dowCatLabel(c){ return _DOW_CATLBL[c]||c; }
+function _dowProfit(odds,win){ if(!win) return -1; var o=parseFloat(odds); if(isNaN(o)) return 0; return o>0? o/100 : 100/Math.abs(o); }
+function _dowMatrix(){ var useSig=(window.__DOW_MX__==='sig'); var m=useSig?(typeof _DOW_SIG!=='undefined'?_DOW_SIG:null):(typeof _DOW_DISP!=='undefined'?_DOW_DISP:null); return m||{}; }
+function _dowUColor(u){ return u>0.0001?'#4ade80':(u<-0.0001?'#f87171':'#94a3b8'); }
+function _dowUFmt(u){ return (u>=0?'+':'')+u.toFixed(1)+'u'; }
+function _dowCompute(detail){
+  var days={},dayMx={},agree={w:0,l:0},against={w:0,l:0},mx=_dowMatrix();
+  for(var i=0;i<7;i++){ days[i]={w:0,l:0,u:0,cats:{}}; dayMx[i]={aw:0,al:0,gw:0,gl:0}; }
+  (detail||[]).forEach(function(r){
+    var res=r.result; if(res!=='WIN'&&res!=='LOSS') return;
+    var cat=r.category||''; var idx=_DOW_CATIDX[cat]; if(idx===undefined) return;
+    if(r.odds===null||r.odds===''||r.odds===undefined) return;
+    var ds=r.date; if(!ds) return;
+    var dow=new Date(ds+'T12:00:00').getDay(); if(isNaN(dow)) return;
+    var win=(res==='WIN'), prof=_dowProfit(r.odds,win), D=days[dow];
+    if(win) D.w++; else D.l++; D.u+=prof;
+    var C=D.cats[cat]||(D.cats[cat]={w:0,l:0,u:0}); if(win) C.w++; else C.l++; C.u+=prof;
+    var lean=(mx[dow]||[])[idx];
+    if(lean==='O'||lean==='U'){
+      var side=(r.side||'OVER').toUpperCase();
+      var followed=(side==='OVER'&&lean==='O')||(side==='UNDER'&&lean==='U');
+      if(followed){ if(win){agree.w++;dayMx[dow].aw++;}else{agree.l++;dayMx[dow].al++;} }
+      else{ if(win){against.w++;dayMx[dow].gw++;}else{against.l++;dayMx[dow].gl++;} }
+    }
+  });
+  return {days:days,dayMx:dayMx,agree:agree,against:against};
+}
+function renderDowReport(tr){
+  var c=_dowCompute((tr&&tr.detail)||[]), order=[1,2,3,4,5,6,0], today=new Date().getDay();
+  var totN=0; order.forEach(function(d){ totN+=c.days[d].w+c.days[d].l; });
+  if(!totN){ document.getElementById('dow-body').innerHTML='<p style="color:#94a3b8;padding:16px">No graded picks banked yet. Records start accruing once days are graded after deploy.</p>'; return; }
+  var best=null,worst=null;
+  order.forEach(function(d){ var D=c.days[d],n=D.w+D.l; if(n<5) return; var p=D.w/n*100;
+    if(best===null||p>best.p) best={d:d,p:p,u:D.u}; if(worst===null||p<worst.p) worst={d:d,p:p}; });
+  var head;
+  if(best){ head='<div style="background:rgba(34,211,238,.07);border:1px solid rgba(34,211,238,.25);border-radius:10px;padding:12px 14px;margin-bottom:16px;font-size:.82rem;color:#e2e8f0;line-height:1.7">'
+    +'Best day so far: <b style="color:#4ade80">'+_DOW_NAMES[best.d]+'</b> at '+best.p.toFixed(0)+'% ('+_dowUFmt(best.u)+').'
+    +(worst&&worst.d!==best.d?' Worst: <b style="color:#f87171">'+_DOW_NAMES[worst.d]+'</b> at '+worst.p.toFixed(0)+'%.':'')+'</div>'; }
+  else { head='<div style="color:#94a3b8;font-size:.78rem;margin-bottom:14px">Building sample \u2014 days with at least 5 graded picks get flagged best / worst.</div>'; }
+  var aRows=order.map(function(d){
+    var D=c.days[d],n=D.w+D.l,bc='&mdash;',bcp=-1;
+    Object.keys(D.cats).forEach(function(k){ var C=D.cats[k],nn=C.w+C.l; if(nn<4) return; var p=C.w/nn*100; if(p>bcp){ bcp=p; bc=_dowCatLabel(k)+' '+C.w+'-'+C.l+' ('+p.toFixed(0)+'%)'; } });
+    var mark=(best&&d===best.d)?' &#129351;':((worst&&worst.d!==(best&&best.d)&&d===worst.d)?' &#128078;':'');
+    var bg=(d===today)?'background:rgba(245,158,11,.07)':'';
+    return '<tr style="border-bottom:1px solid #1e1e1e;'+bg+'">'
+      +'<td style="padding:8px 8px;color:#cbd5e1;font-weight:700;white-space:nowrap">'+_DOW_NAMES[d]+mark+'</td>'
+      +'<td style="text-align:center;color:#94a3b8">'+n+'</td>'
+      +'<td style="text-align:center;color:#e2e8f0">'+D.w+'-'+D.l+'</td>'
+      +'<td style="text-align:center;font-weight:800;color:'+_twColor(D.w,D.l)+'">'+_twPct(D.w,D.l)+'</td>'
+      +'<td style="text-align:center;font-weight:700;color:'+_dowUColor(D.u)+'">'+_dowUFmt(D.u)+'</td>'
+      +'<td style="padding:8px 8px;color:#94a3b8;font-size:.74rem">'+bc+'</td></tr>';
+  }).join('');
+  var secA='<div style="font-weight:800;color:#22d3ee;font-size:.82rem;margin:4px 0 8px">Record by day of week</div>'
+    +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:.78rem;min-width:540px"><thead><tr style="border-bottom:2px solid #1e293b">'
+    +'<th style="text-align:left;padding:7px 8px;color:#94a3b8;font-size:.64rem;letter-spacing:.05em">DAY</th>'
+    +'<th style="padding:7px 6px;color:#94a3b8;font-size:.64rem">PICKS</th><th style="padding:7px 6px;color:#94a3b8;font-size:.64rem">W-L</th>'
+    +'<th style="padding:7px 6px;color:#94a3b8;font-size:.64rem">WIN%</th><th style="padding:7px 6px;color:#94a3b8;font-size:.64rem">NET (1u)</th>'
+    +'<th style="text-align:left;padding:7px 8px;color:#94a3b8;font-size:.64rem">BEST CATEGORY</th></tr></thead><tbody>'+aRows+'</tbody></table></div>';
+  var ag=c.agree,ga=c.against, agN=ag.w+ag.l, gaN=ga.w+ga.l;
+  var agP=agN?ag.w/agN*100:0, gaP=gaN?ga.w/gaN*100:0, edge=agP-gaP;
+  var which=(window.__DOW_MX__==='sig')?'sig':'disp';
+  var tabBtn=function(id,lab){ var on=(which===id); return '<button onclick="_dowSetMatrix(&#39;'+id+'&#39;)" style="padding:5px 14px;border-radius:8px;border:1px solid '+(on?'#22d3ee':'#334155')+';background:'+(on?'rgba(34,211,238,.12)':'transparent')+';color:'+(on?'#22d3ee':'#64748b')+';font-weight:800;font-size:.72rem;cursor:pointer">'+lab+'</button>'; };
+  var verdict;
+  if(agN<20||gaN<20){ verdict='<span style="color:#94a3b8">Not enough graded picks yet \u2014 keep banking days before trusting this.</span>'; }
+  else if(edge>=3){ verdict='<span style="color:#4ade80;font-weight:800">Matrix shows an edge (+'+edge.toFixed(1)+' pts when you follow it)</span>'; }
+  else if(edge<=-3){ verdict='<span style="color:#f87171;font-weight:800">Matrix is backwards ('+edge.toFixed(1)+' pts) \u2014 fading it would have done better</span>'; }
+  else { verdict='<span style="color:#facc15;font-weight:800">No real edge ('+(edge>=0?'+':'')+edge.toFixed(1)+' pts) \u2014 looks like noise</span>'; }
+  var mxRows=order.map(function(d){
+    var M=c.dayMx[d],aN=M.aw+M.al,gN=M.gw+M.gl; if(!aN&&!gN) return '';
+    var aP=aN?M.aw/aN*100:0,gP=gN?M.gw/gN*100:0,e=(aN&&gN)?aP-gP:null;
+    return '<tr style="border-bottom:1px solid #1e1e1e"><td style="padding:7px 8px;color:#cbd5e1;font-weight:700">'+_DOW_NAMES[d]+'</td>'
+      +'<td style="text-align:center;color:'+(aN?_twColor(M.aw,M.al):'#64748b')+'">'+(aN?M.aw+'-'+M.al+' ('+aP.toFixed(0)+'%)':'&mdash;')+'</td>'
+      +'<td style="text-align:center;color:'+(gN?_twColor(M.gw,M.gl):'#64748b')+'">'+(gN?M.gw+'-'+M.gl+' ('+gP.toFixed(0)+'%)':'&mdash;')+'</td>'
+      +'<td style="text-align:center;font-weight:700;color:'+(e===null?'#64748b':(e>=3?'#4ade80':(e<=-3?'#f87171':'#facc15')))+'">'+(e===null?'&mdash;':((e>=0?'+':'')+e.toFixed(0)))+'</td></tr>';
+  }).join('');
+  var secB='<div style="margin-top:22px;font-weight:800;color:#22d3ee;font-size:.82rem;margin-bottom:8px">Matrix reality check</div>'
+    +'<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap"><span style="font-size:.72rem;color:#64748b">Compare against:</span>'+tabBtn('disp','Displayed matrix')+tabBtn('sig','Original matrix')+'</div>'
+    +'<div style="background:#0b1220;border:1px solid #1e293b;border-radius:10px;padding:12px 14px;margin-bottom:12px;font-size:.8rem;line-height:1.8">'
+    +'Followed the matrix: <b style="color:#e2e8f0">'+ag.w+'-'+ag.l+'</b> ('+(agN?agP.toFixed(0):'0')+'%) \u00b7 Went against it: <b style="color:#e2e8f0">'+ga.w+'-'+ga.l+'</b> ('+(gaN?gaP.toFixed(0):'0')+'%)<br>'+verdict+'</div>'
+    +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:.76rem;min-width:480px"><thead><tr style="border-bottom:2px solid #1e293b">'
+    +'<th style="text-align:left;padding:7px 8px;color:#94a3b8;font-size:.64rem">DAY</th><th style="padding:7px 6px;color:#94a3b8;font-size:.64rem">FOLLOWED</th>'
+    +'<th style="padding:7px 6px;color:#94a3b8;font-size:.64rem">AGAINST</th><th style="padding:7px 6px;color:#94a3b8;font-size:.64rem">EDGE (pts)</th></tr></thead><tbody>'+(mxRows||'<tr><td colspan="4" style="padding:12px;color:#64748b">No matrix-eligible picks graded yet.</td></tr>')+'</tbody></table></div>';
+  var secC='<div style="margin-top:22px;font-weight:800;color:#22d3ee;font-size:.82rem;margin-bottom:8px">Best bets by day (min 4 graded)</div>';
+  secC+=order.map(function(d){
+    var D=c.days[d],arr=[];
+    Object.keys(D.cats).forEach(function(k){ var C=D.cats[k],nn=C.w+C.l; if(nn<4) return; arr.push({k:k,w:C.w,l:C.l,p:C.w/nn*100}); });
+    arr.sort(function(a,b){ return b.p-a.p; });
+    if(!arr.length) return '<div style="padding:6px 8px;border-bottom:1px solid #141414;font-size:.78rem"><b style="color:#cbd5e1">'+_DOW_NAMES[d]+'</b> <span style="color:#64748b">\u2014 not enough graded picks yet</span></div>';
+    var top=arr.slice(0,3).map(function(x){ return '<span style="color:'+_twColor(x.w,x.l)+'">'+_dowCatLabel(x.k)+' '+x.w+'-'+x.l+' ('+x.p.toFixed(0)+'%)</span>'; }).join('  \u00b7  ');
+    return '<div style="padding:6px 8px;border-bottom:1px solid #141414;font-size:.78rem"><b style="color:#a5f3fc">'+_DOW_NAMES[d]+'</b> &mdash; '+top+'</div>';
+  }).join('');
+  document.getElementById('dow-body').innerHTML=head+secA+secB+secC;
+}
+function _dowSetMatrix(which){ window.__DOW_MX__=which; if(window.__DOWTR__) renderDowReport(window.__DOWTR__); }
+async function openDowReport(){
+  var btn=document.getElementById('dow-btn'); var lbl=btn.textContent; btn.disabled=true; btn.textContent='Loading...';
+  show('dow-card'); document.getElementById('dow-card').scrollIntoView({behavior:'smooth',block:'start'});
+  document.getElementById('dow-spinner').classList.remove('hidden'); document.getElementById('dow-body').innerHTML='';
+  try{
+    var res=await fetch('/api/track-record'+_betAuthQS());
+    if(!res.ok){ throw new Error(await res.text()); }
+    window.__DOWTR__=await res.json();
+    if(!window.__DOW_MX__) window.__DOW_MX__='disp';
+    renderDowReport(window.__DOWTR__);
+  }catch(e){
+    document.getElementById('dow-body').innerHTML='<p style="color:#f87171;padding:16px">'+(e.message||'Error loading day-of-week report')+'</p>';
+  }finally{
+    btn.disabled=false; btn.textContent=lbl; document.getElementById('dow-spinner').classList.add('hidden');
+  }
+}
+function downloadDowCSV(){
+  var tr=window.__DOWTR__; if(!tr){ alert('Open the Day-of-Week report first.'); return; }
+  var c=_dowCompute(tr.detail||[]), order=[1,2,3,4,5,6,0];
+  var rows=[['Day','Category','Picks','Wins','Losses','Win%','NetUnits1u']];
+  order.forEach(function(d){
+    var D=c.days[d];
+    Object.keys(D.cats).forEach(function(k){ var C=D.cats[k],n=C.w+C.l; rows.push([_DOW_NAMES[d],_dowCatLabel(k),n,C.w,C.l,(n?(C.w/n*100).toFixed(1):'0'),C.u.toFixed(2)]); });
+    var dn=D.w+D.l; rows.push([_DOW_NAMES[d],'ALL',dn,D.w,D.l,(dn?(D.w/dn*100).toFixed(1):'0'),D.u.toFixed(2)]);
+  });
+  var csv=rows.map(function(row){ return row.map(_csvCell).join(','); }).join(String.fromCharCode(13)+String.fromCharCode(10));
+  var blob=new Blob([String.fromCharCode(65279)+csv],{type:'text/csv;charset=utf-8;'});
+  var url=URL.createObjectURL(blob); var a=document.createElement('a'); a.href=url; a.download='mlb-day-of-week.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+}
 function downloadMyBetsCSV(){
   var d=window.__MYBETS__; if(!d){ alert('Open My Bets first.'); return; }
   var rows=[['Date','Player','Category','Pick','Odds','Stake','Result','Actual','Profit']];
@@ -8363,6 +8545,18 @@ function downloadMyBetsCSV(){
     <div id="hrtrk-spinner" class="hidden" style="color:#94a3b8;font-size:.9rem;margin-bottom:12px;display:flex;align-items:center;gap:8px"><span class="spinner"></span> Grading HR history&hellip;</div>
     <div id="hrtrk-head"></div>
     <div id="hrtrk-body"></div>
+  </div>
+</div>
+<div id="dow-card" class="hidden space-y-6" style="max-width:960px;margin:0 auto 24px;padding:0 16px">
+  <div class="card p-6">
+    <div class="section-hdr" style="color:#22d3ee;margin-bottom:8px">📅 Day-of-Week Report</div>
+    <div style="font-size:.78rem;color:#94a3b8;margin:0 0 14px">How every graded pick has performed by day of the week &mdash; and whether following the matrix lean would have helped. Reads banked results only; does not change any picks. Builds from deploy forward.</div>
+    <div id="dow-spinner" class="hidden" style="color:#94a3b8;font-size:.9rem;margin-bottom:12px;display:flex;align-items:center;gap:8px"><span class="spinner"></span> Crunching day-of-week history&hellip;</div>
+    <div id="dow-body"></div>
+    <div style="margin-top:18px;padding-top:14px;border-top:1px solid #1e293b;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <button onclick="downloadDowCSV()" style="background:#0e7490;color:#fff;border:none;border-radius:10px;padding:9px 20px;font-size:.84rem;font-weight:800;cursor:pointer">&#11015; Download CSV</button>
+      <span style="font-size:.74rem;color:#64748b">Per-day, per-category record &amp; net units (flat 1u)</span>
+    </div>
   </div>
 </div>
 <div id="mybets-card" class="hidden space-y-6" style="max-width:960px;margin:0 auto 24px;padding:0 16px">
