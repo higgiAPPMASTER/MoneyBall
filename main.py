@@ -8496,13 +8496,15 @@ function renderDowReport(tr){
     +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:.76rem;min-width:480px"><thead><tr style="border-bottom:2px solid #1e293b">'
     +'<th style="text-align:left;padding:7px 8px;color:#94a3b8;font-size:.64rem">DAY</th><th style="padding:7px 6px;color:#94a3b8;font-size:.64rem">FOLLOWED</th>'
     +'<th style="padding:7px 6px;color:#94a3b8;font-size:.64rem">AGAINST</th><th style="padding:7px 6px;color:#94a3b8;font-size:.64rem">EDGE (pts)</th></tr></thead><tbody>'+(mxRows||'<tr><td colspan="4" style="padding:12px;color:#64748b">No matrix-eligible picks graded yet.</td></tr>')+'</tbody></table></div>';
-  var secC='<div style="margin-top:22px;font-weight:800;color:#22d3ee;font-size:.82rem;margin-bottom:8px">Best bets by day (min 4 graded)</div>';
+  var secC='<div style="margin-top:22px;font-weight:800;color:#22d3ee;font-size:.82rem;margin-bottom:8px">Best bets by day (70%+, min 4 graded)</div>';
   secC+=order.map(function(d){
     var D=c.days[d],arr=[];
     Object.keys(D.cats).forEach(function(k){ var C=D.cats[k],nn=C.w+C.l; if(nn<4) return; arr.push({k:k,w:C.w,l:C.l,p:C.w/nn*100}); });
     arr.sort(function(a,b){ return b.p-a.p; });
     if(!arr.length) return '<div style="padding:6px 8px;border-bottom:1px solid #141414;font-size:.78rem"><b style="color:#cbd5e1">'+_DOW_NAMES[d]+'</b> <span style="color:#64748b">\u2014 not enough graded picks yet</span></div>';
-    var top=arr.slice(0,3).map(function(x){ return '<span style="color:'+_twColor(x.w,x.l)+'">'+_dowCatLabel(x.k)+' '+x.w+'-'+x.l+' ('+x.p.toFixed(0)+'%)</span>'; }).join('  \u00b7  ');
+    var hit=arr.filter(function(x){ return x.p>=70; });
+    if(!hit.length) return '<div style="padding:6px 8px;border-bottom:1px solid #141414;font-size:.78rem"><b style="color:#cbd5e1">'+_DOW_NAMES[d]+'</b> <span style="color:#64748b">\u2014 no category at 70%+ yet</span></div>';
+    var top=hit.map(function(x){ return '<span style="color:'+_twColor(x.w,x.l)+'">'+_dowCatLabel(x.k)+' '+x.w+'-'+x.l+' ('+x.p.toFixed(0)+'%)</span>'; }).join('  \u00b7  ');
     return '<div style="padding:6px 8px;border-bottom:1px solid #141414;font-size:.78rem"><b style="color:#a5f3fc">'+_DOW_NAMES[d]+'</b> &mdash; '+top+'</div>';
   }).join('');
   document.getElementById('dow-body').innerHTML=head+secA+secB+secC;
