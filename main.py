@@ -755,11 +755,18 @@ def _grade_date(date_str: str, picks: dict) -> dict:
         return None
 
     def _grade(pick_dir, line, actual, final):
-        if actual is None or not final:
-            return "pending"
-        if pick_dir == "OVER":
-            return "WIN" if actual > float(line) else "LOSS"
-        return "WIN" if actual < float(line) else "LOSS"
+        # VOID = no action: game is Final (or whole slate Final & cleanly fetched)
+        # but the player never recorded a stat -> DNP / scratched / didn't bat.
+        # Refunded: excluded from W/L and ROI, never stuck "pending" forever.
+        if final:
+            if actual is None:
+                return "VOID"
+            if pick_dir == "OVER":
+                return "WIN" if actual > float(line) else "LOSS"
+            return "WIN" if actual < float(line) else "LOSS"
+        if actual is None and all_final:
+            return "VOID"
+        return "pending"
 
     # Hitter OVERs — top 10 (top9 list)
     hitter_overs = []
@@ -1651,18 +1658,28 @@ def _am_to_dec(odds) -> float:
         return 0.0
     return round(1 + o / 100, 6) if o > 0 else round(1 + 100 / abs(o), 6)
 
-def _settle_bet_cached(bet: dict, name_stats: dict) -> bool:
-    """Grade a pending bet using pre-fetched name_stats (no extra API call)."""
-    if bet.get("result") in ("WIN", "LOSS", "PUSH"):
+def _settle_bet_cached(bet: dict, name_stats: dict, all_final: bool = False) -> bool:
+    """Grade a pending bet using pre-fetched name_stats (no extra API call).
+    A player who never appears on a fully-Final, cleanly-fetched slate is VOID
+    (no action: refunded, excluded from W/L and ROI) — never stuck pending."""
+    if bet.get("result") in ("WIN", "LOSS", "PUSH", "VOID"):
         return False
     st = name_stats.get((bet.get("name") or "").lower())
     if not st or not st.get("final"):
+        if (not st) and all_final:
+            bet["result"] = "VOID"; bet["actual"] = None
+            bet["profit"] = 0.0; bet["settled_at"] = date.today().isoformat()
+            return True
         return False
     stat_key = bet.get("stat_key")
     actual = st.get(stat_key)
     if actual is None:
         if stat_key in _BET_PITCH_STATS:
-            return False  # pitcher didn't pitch → leave pending
+            if all_final:
+                bet["result"] = "VOID"; bet["actual"] = None
+                bet["profit"] = 0.0; bet["settled_at"] = date.today().isoformat()
+                return True
+            return False  # pitcher didn't pitch yet → leave pending
         actual = 0        # batter appeared but no hits/runs
     try:
         line = float(bet.get("line"))
@@ -1695,21 +1712,23 @@ def _settle_bet(bet: dict) -> bool:
     except Exception as e:
         print(f"[bet_log] settle lookup failed {bdate}: {e}")
         return False
-    return _settle_bet_cached(bet, ns)
+    return _settle_bet_cached(bet, ns, _af)
 
-def _settle_parlay_cached(parlay: dict, ns_cache: dict) -> bool:
-    """Grade a parlay using pre-fetched ns_cache. WIN=all legs win, LOSS=any leg loses."""
-    if parlay.get("result") in ("WIN", "LOSS", "PUSH"):
+def _settle_parlay_cached(parlay: dict, ns_cache: dict, af_cache: dict = None) -> bool:
+    """Grade a parlay using pre-fetched ns_cache. WIN=all legs win, LOSS=any leg
+    loses. A VOID leg (player DNP) is no-action: it can't keep the parlay pending,
+    and a parlay with no loser but a voided leg refunds (PUSH)."""
+    if parlay.get("result") in ("WIN", "LOSS", "PUSH", "VOID"):
         return False
     legs = parlay.get("legs") or []
     for lg in legs:
-        if lg.get("result") in ("WIN", "LOSS", "PUSH"):
+        if lg.get("result") in ("WIN", "LOSS", "PUSH", "VOID"):
             continue
         bdate = lg.get("date")
         if bdate and bdate in ns_cache:
-            _settle_bet_cached(lg, ns_cache[bdate])
+            _settle_bet_cached(lg, ns_cache[bdate], (af_cache or {}).get(bdate, False))
     results = [lg.get("result") for lg in legs]
-    if not results or any(r not in ("WIN", "LOSS", "PUSH") for r in results):
+    if not results or any(r not in ("WIN", "LOSS", "PUSH", "VOID") for r in results):
         if any(r == "LOSS" for r in results):
             pass  # fall through to LOSS
         else:
@@ -1726,7 +1745,7 @@ def _settle_parlay_cached(parlay: dict, ns_cache: dict) -> bool:
         parlay["profit"] = round(stake * (dec - 1), 2) if dec else None
         parlay["settled_at"] = date.today().isoformat()
         return True
-    if all(r in ("WIN", "PUSH") for r in results):
+    if all(r in ("WIN", "PUSH", "VOID") for r in results):
         parlay["result"] = "PUSH"
         parlay["profit"] = 0.0
         parlay["settled_at"] = date.today().isoformat()
@@ -1741,13 +1760,15 @@ def _settle_parlay(parlay: dict) -> bool:
     if not dates_needed:
         return False
     ns_cache: dict = {}
+    af_cache: dict = {}
     for d in dates_needed:
         try:
-            _, ns, _, _ = _mlb_box_lookup(d)
+            _, ns, _, _af = _mlb_box_lookup(d)
             ns_cache[d] = ns
+            af_cache[d] = _af
         except Exception:
             pass
-    return _settle_parlay_cached(parlay, ns_cache)
+    return _settle_parlay_cached(parlay, ns_cache, af_cache)
 
 def _settle_bets_batch(bets: list) -> bool:
     """Settle all pending bets (single + parlay) with ONE box-score API call per
@@ -1766,28 +1787,30 @@ def _settle_bets_batch(bets: list) -> bool:
     if not dates_needed:
         return False
     ns_cache: dict = {}
+    af_cache: dict = {}
     for d in sorted(dates_needed):
         try:
             _ps, ns, _any, _af = _mlb_box_lookup(d)
             ns_cache[d] = ns
+            af_cache[d] = _af
         except Exception as e:
             print(f"[bet_log] batch settle lookup failed {d}: {e}")
     changed = False
     for b in bets:
         if b.get("bet_type") == "parlay":
-            if _settle_parlay_cached(b, ns_cache):
+            if _settle_parlay_cached(b, ns_cache, af_cache):
                 changed = True
         else:
             bdate = b.get("date")
             if bdate and bdate in ns_cache:
-                if _settle_bet_cached(b, ns_cache[bdate]):
+                if _settle_bet_cached(b, ns_cache[bdate], af_cache.get(bdate, False)):
                     changed = True
     return changed
 
 def _summarize_bets(bets: list) -> dict:
     cats: dict = {}
     tot_staked = tot_profit = 0.0
-    w = l = pu = pend = 0
+    w = l = pu = pend = vo = 0
     for b in bets:
         res = b.get("result", "pending")
         try:
@@ -1795,7 +1818,7 @@ def _summarize_bets(bets: list) -> dict:
         except Exception:
             stake = 0.0
         c = cats.setdefault((b.get("category", "?"), (b.get("side") or "OVER").strip().upper()),
-                            {"wins": 0, "losses": 0, "push": 0, "pending": 0,
+                            {"wins": 0, "losses": 0, "push": 0, "pending": 0, "void": 0,
                              "staked": 0.0, "profit": 0.0})
         if res == "WIN":
             w += 1; c["wins"] += 1
@@ -1803,6 +1826,8 @@ def _summarize_bets(bets: list) -> dict:
             l += 1; c["losses"] += 1
         elif res == "PUSH":
             pu += 1; c["push"] += 1
+        elif res == "VOID":
+            vo += 1; c["void"] += 1
         else:
             pend += 1; c["pending"] += 1
         if res in ("WIN", "LOSS", "PUSH"):
@@ -1825,12 +1850,12 @@ def _summarize_bets(bets: list) -> dict:
             "category": cat, "side": side,
             "label": cat + (" Over" if side == "OVER" else " Under"),
             "wins": c["wins"], "losses": c["losses"],
-            "push": c["push"], "pending": c["pending"],
+            "push": c["push"], "pending": c["pending"], "void": c["void"],
             "staked": round(st, 2), "profit": round(pr, 2),
             "roi": round(pr / st * 100, 1) if st > 0 else None,
         })
     return {
-        "wins": w, "losses": l, "push": pu, "pending": pend,
+        "wins": w, "losses": l, "push": pu, "pending": pend, "void": vo,
         "staked": round(tot_staked, 2), "profit": round(tot_profit, 2),
         "returned": round(tot_staked + tot_profit, 2),
         "roi": round(roi, 1) if roi is not None else None,
@@ -2393,7 +2418,6 @@ _HTML = """
       <button class="admin-only" id="ovf-btn" onclick="openOverflow()" title="Every pick beyond each category's top 10 — graded and banked in its own permanent record" style="background:#b45309;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">⭐ Overflow</button>
       <button class="admin-only" id="hrtrk-btn" onclick="openHRTracker()" title="Home Run Over/Under picks — their own permanent record, kept out of the main Track Record and Overflow" style="background:#be123c;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">💣 HR Tracker</button>
       <button class="admin-only" id="dow-btn" onclick="openDowReport()" title="Which weekdays actually produce winners, and whether the matrix lean matches reality" style="background:#0e7490;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">📅 By Day</button>
-      <button class="admin-only" onclick="_manualParlayForm()" title="Manually log a parlay — add legs one by one then save" style="background:#7e22ce;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">📋 Log Parlay</button>
     </div>
   </nav>
   <main class="flex-1 px-4 py-6 max-w-7xl mx-auto w-full space-y-6">
@@ -5906,6 +5930,7 @@ function _gradeOddsDisp(odds) {
 function _gradeResultBadge(result) {
   if (result === 'WIN')  return '<span style="color:#4ade80;font-weight:700">WIN</span>';
   if (result === 'LOSS') return '<span style="color:#f87171;font-weight:700">LOSS</span>';
+  if (result === 'VOID') return '<span style="color:#38bdf8;font-weight:700" title="Player did not play \u2014 no action, refunded">VOID</span>';
   return '<span style="color:#94a3b8">Pending</span>';
 }
 
@@ -5977,12 +6002,14 @@ function renderGradeResults(data) {
   sections.forEach(function(s){ allRows = allRows.concat(s.rows); });
   var wins    = allRows.filter(function(r) { return r.result === 'WIN'; }).length;
   var losses  = allRows.filter(function(r) { return r.result === 'LOSS'; }).length;
-  var pending = allRows.filter(function(r) { return r.result !== 'WIN' && r.result !== 'LOSS'; }).length;
+  var voids   = allRows.filter(function(r) { return r.result === 'VOID'; }).length;
+  var pending = allRows.filter(function(r) { return r.result !== 'WIN' && r.result !== 'LOSS' && r.result !== 'VOID'; }).length;
   document.getElementById('grade-summary').innerHTML =
     '<div style="background:#111;border-radius:10px;padding:14px 18px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:12px;align-items:center">' +
     '<div><span style="color:#4ade80;font-weight:700;font-size:1.1rem">' + wins + 'W</span> ' +
     '<span style="color:#f87171;font-weight:700;font-size:1.1rem">' + losses + 'L</span>' +
-    (pending > 0 ? ' <span style="color:#94a3b8;font-size:.85rem;margin-left:4px">' + pending + ' pending</span>' : '') + '</div>' +
+    (pending > 0 ? ' <span style="color:#94a3b8;font-size:.85rem;margin-left:4px">' + pending + ' pending</span>' : '') +
+    (voids > 0 ? ' <span style="color:#38bdf8;font-size:.85rem;margin-left:4px">' + voids + ' void</span>' : '') + '</div>' +
     '<div style="margin-left:auto;display:flex;gap:10px;align-items:center">' +
       '<button onclick="downloadGradeCSV()" style="background:#7c3aed;color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:.78rem;font-weight:600;cursor:pointer;white-space:nowrap">\u2b07 Results CSV</button>' +
     '</div>' +
@@ -6877,7 +6904,7 @@ function _trkRenderDailyTab(be,stake){
     var cpool=rows.map(function(r){ var c={}; for(var ck in r) c[ck]=r[ck]; c.date=date; return c; });
     var ct=_trkCatTable(cpool,stake,'No decided picks for this day yet \u2014 fills in as games go Final.');
     var co=ct.overall, con=co.w+co.l, crisk=co.counted*stake, croi=crisk?co.net/crisk*100:0, cclr=co.net>=0?'#4ade80':'#f87171', cwclr=_trkRC(co.w,con);
-    var cpend=rows.filter(function(r){ return !_trkSkipMeta(r)&&r.result!=='WIN'&&r.result!=='LOSS'; }).length;
+    var cpend=rows.filter(function(r){ return !_trkSkipMeta(r)&&r.result!=='WIN'&&r.result!=='LOSS'&&r.result!=='VOID'; }).length;
     var csum='<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;background:#0c1829;border:1px solid #1e293b;border-radius:12px;padding:12px 16px;margin-bottom:12px"><div style="font-weight:800"><span style="color:'+cwclr+'">'+co.w+'/'+con+'</span> <span style="color:#94a3b8;font-size:.8rem">('+(con?(co.w/con*100).toFixed(1):'0.0')+'%)</span>'+(cpend?' <span style="color:#94a3b8;font-size:.8rem">'+cpend+' pending</span>':'')+'</div><div style="font-size:.86rem">Net <span style="color:'+cclr+';font-weight:900">'+(co.net>=0?'+$':'\u2212$')+Math.abs(co.net).toFixed(0)+'</span> <span style="color:#64748b">\u00b7 ROI '+(croi>=0?'+':'\u2212')+Math.abs(croi).toFixed(1)+'% on $'+crisk.toFixed(0)+'</span></div><div style="margin-left:auto;display:flex;gap:8px"><button onclick="downloadTrkDailyCatCSV()" style="background:#16a34a;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:.78rem;font-weight:700;cursor:pointer">\u2b07 Category CSV</button><button onclick="downloadTrkDailyCSV()" style="background:#0e7490;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:.78rem;font-weight:700;cursor:pointer">\u2b07 Full List</button></div></div>';
     be.innerHTML=datesel+csum+ct.html;
     return;
@@ -6898,13 +6925,13 @@ function _trkRenderDailyTab(be,stake){
       var logIdx=window.__TRK_LOG_ROWS__.length; window.__TRK_LOG_ROWS__.push(p); p.__date__=date;
       var _meta=_trkSkipMeta(p);
       var rr=p.result;
-      var mk=rr==='WIN'?'<span style="color:#4ade80">\u2713</span>':(rr==='LOSS'?'<span style="color:#f87171">\u2717</span>':'<span style="color:#64748b">\u00b7</span>');
-      if(!_meta){ if(rr==='WIN')win++; else if(rr==='LOSS')loss++; else pend++; }
+      var mk=rr==='WIN'?'<span style="color:#4ade80">\u2713</span>':(rr==='LOSS'?'<span style="color:#f87171">\u2717</span>':(rr==='VOID'?'<span style="color:#38bdf8" title="Did not play \u2014 no action">\u25cb</span>':'<span style="color:#64748b">\u00b7</span>'));
+      if(!_meta){ if(rr==='WIN')win++; else if(rr==='LOSS')loss++; else if(rr!=='VOID')pend++; }
       var act=(p.actual!=null)?('<span style="color:#cbd5e1">\u2192 '+p.actual+(p.stat?(' '+p.stat):'')+'</span>'):'';
       var odd=_oddsCell(p,logIdx);
       var plHtml,roiHtml='';
       if(rr==='WIN'||rr==='LOSS'){ var pl=_amProfit(_effOdds(p),stake,rr==='WIN'); if(pl===null){ plHtml='<span style="color:#475569;font-family:monospace">\u2014</span>'; } else { if(!_meta){ net+=pl; counted++; } var c=pl>=0?'#4ade80':'#f87171', rp=pl/stake*100; plHtml='<span style="font-family:monospace;font-weight:800;color:'+c+'">'+(pl>=0?'+$':'\u2212$')+Math.abs(pl).toFixed(0)+'</span>'; roiHtml='<span style="font-family:monospace;font-weight:700;color:'+c+'">'+(rp>=0?'+':'\u2212')+Math.abs(rp).toFixed(0)+'%</span>'; } }
-      else { plHtml='<span style="color:#64748b;font-size:.72rem">pending</span>'; }
+      else { plHtml='<span style="color:'+(rr==='VOID'?'#38bdf8':'#64748b')+';font-size:.72rem">'+(rr==='VOID'?'void':'pending')+'</span>'; }
       var logBtn='<button onclick="_trkLogBet('+logIdx+')" title="Log as bet" style="background:#1e3a8a;color:#bfdbfe;border:1px solid #1d4ed8;border-radius:5px;padding:1px 7px;font-size:.66rem;font-weight:800;cursor:pointer;flex-shrink:0">+Log</button>';
       body+='<div style="display:flex;gap:8px;align-items:center;padding:2px 0 2px 6px;font-size:.79rem">'+mk+'<span style="color:#e2e8f0;min-width:130px">'+(p.name||'')+'</span><span style="color:#94a3b8;min-width:120px">'+(p.pick||'')+'</span>'+act+'<span style="margin-left:auto;display:flex;gap:8px;align-items:center"><span style="min-width:52px;text-align:right">'+plHtml+'</span><span style="min-width:44px;text-align:right">'+roiHtml+'</span>'+odd+logBtn+'</span></div>';
     });
@@ -6998,7 +7025,7 @@ function _ovfRenderDailyTab(be,stake){
     var cpool=rows.map(function(r){ var c={}; for(var ck in r) c[ck]=r[ck]; c.date=date; return c; });
     var ct=_trkCatTable(cpool,stake,'No decided overflow picks for this day yet \u2014 fills in as games go Final.');
     var co=ct.overall, con=co.w+co.l, crisk=co.counted*stake, croi=crisk?co.net/crisk*100:0, cclr=co.net>=0?'#4ade80':'#f87171', cwclr=_trkRC(co.w,con);
-    var cpend=rows.filter(function(r){ return !_trkSkipMeta(r)&&r.result!=='WIN'&&r.result!=='LOSS'; }).length;
+    var cpend=rows.filter(function(r){ return !_trkSkipMeta(r)&&r.result!=='WIN'&&r.result!=='LOSS'&&r.result!=='VOID'; }).length;
     var csum='<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;background:#0c1829;border:1px solid #1e293b;border-radius:12px;padding:12px 16px;margin-bottom:12px"><div style="font-weight:800"><span style="color:'+cwclr+'">'+co.w+'/'+con+'</span> <span style="color:#94a3b8;font-size:.8rem">('+(con?(co.w/con*100).toFixed(1):'0.0')+'%)</span>'+(cpend?' <span style="color:#94a3b8;font-size:.8rem">'+cpend+' pending</span>':'')+'</div><div style="font-size:.86rem">Net <span style="color:'+cclr+';font-weight:900">'+(co.net>=0?'+$':'\u2212$')+Math.abs(co.net).toFixed(0)+'</span> <span style="color:#64748b">\u00b7 ROI '+(croi>=0?'+':'\u2212')+Math.abs(croi).toFixed(1)+'% on $'+crisk.toFixed(0)+'</span></div><button onclick="downloadOvfDailyCSV()" style="margin-left:auto;background:#16a34a;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:.78rem;font-weight:700;cursor:pointer">\u2b07 CSV</button></div>';
     be.innerHTML=datesel+csum+ct.html;
     return;
@@ -7019,13 +7046,13 @@ function _ovfRenderDailyTab(be,stake){
       var logIdx=window.__TRK_LOG_ROWS__.length; window.__TRK_LOG_ROWS__.push(p); p.__date__=date;
       var _meta=_trkSkipMeta(p);
       var rr=p.result;
-      var mk=rr==='WIN'?'<span style="color:#4ade80">\u2713</span>':(rr==='LOSS'?'<span style="color:#f87171">\u2717</span>':'<span style="color:#64748b">\u00b7</span>');
-      if(!_meta){ if(rr==='WIN')win++; else if(rr==='LOSS')loss++; else pend++; }
+      var mk=rr==='WIN'?'<span style="color:#4ade80">\u2713</span>':(rr==='LOSS'?'<span style="color:#f87171">\u2717</span>':(rr==='VOID'?'<span style="color:#38bdf8" title="Did not play \u2014 no action">\u25cb</span>':'<span style="color:#64748b">\u00b7</span>'));
+      if(!_meta){ if(rr==='WIN')win++; else if(rr==='LOSS')loss++; else if(rr!=='VOID')pend++; }
       var act=(p.actual!=null)?('<span style="color:#cbd5e1">\u2192 '+p.actual+(p.stat?(' '+p.stat):'')+'</span>'):'';
       var odd=_oddsCell(p,logIdx);
       var plHtml,roiHtml='';
       if(rr==='WIN'||rr==='LOSS'){ var pl=_amProfit(_effOdds(p),stake,rr==='WIN'); if(pl===null){ plHtml='<span style="color:#475569;font-family:monospace">\u2014</span>'; } else { if(!_meta){ net+=pl; counted++; } var c=pl>=0?'#4ade80':'#f87171', rp=pl/stake*100; plHtml='<span style="font-family:monospace;font-weight:800;color:'+c+'">'+(pl>=0?'+$':'\u2212$')+Math.abs(pl).toFixed(0)+'</span>'; roiHtml='<span style="font-family:monospace;font-weight:700;color:'+c+'">'+(rp>=0?'+':'\u2212')+Math.abs(rp).toFixed(0)+'%</span>'; } }
-      else { plHtml='<span style="color:#64748b;font-size:.72rem">pending</span>'; }
+      else { plHtml='<span style="color:'+(rr==='VOID'?'#38bdf8':'#64748b')+';font-size:.72rem">'+(rr==='VOID'?'void':'pending')+'</span>'; }
       var logBtn='<button onclick="_trkLogBet('+logIdx+')" title="Log as bet" style="background:#1e3a8a;color:#bfdbfe;border:1px solid #1d4ed8;border-radius:5px;padding:1px 7px;font-size:.66rem;font-weight:800;cursor:pointer;flex-shrink:0">+Log</button>';
       body+='<div style="display:flex;gap:8px;align-items:center;padding:2px 0 2px 6px;font-size:.79rem">'+mk+'<span style="color:#e2e8f0;min-width:130px">'+(p.name||'')+'</span><span style="color:#94a3b8;min-width:120px">'+(p.pick||'')+'</span>'+act+'<span style="margin-left:auto;display:flex;gap:8px;align-items:center"><span style="min-width:52px;text-align:right">'+plHtml+'</span><span style="min-width:44px;text-align:right">'+roiHtml+'</span>'+odd+logBtn+'</span></div>';
     });
@@ -7229,7 +7256,7 @@ function _hrtRenderDailyTab(be,stake){
     var cpool=rows.map(function(r){ var c={}; for(var ck in r) c[ck]=r[ck]; c.date=date; return c; });
     var ct=_trkCatTable(cpool,stake,'No decided HR picks for this day yet \u2014 fills in as games go Final.');
     var co=ct.overall, con=co.w+co.l, crisk=co.counted*stake, croi=crisk?co.net/crisk*100:0, cclr=co.net>=0?'#4ade80':'#f87171', cwclr=_trkRC(co.w,con);
-    var cpend=rows.filter(function(r){ return !_trkSkipMeta(r)&&r.result!=='WIN'&&r.result!=='LOSS'; }).length;
+    var cpend=rows.filter(function(r){ return !_trkSkipMeta(r)&&r.result!=='WIN'&&r.result!=='LOSS'&&r.result!=='VOID'; }).length;
     var csum='<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;background:#0c1829;border:1px solid #1e293b;border-radius:12px;padding:12px 16px;margin-bottom:12px"><div style="font-weight:800"><span style="color:'+cwclr+'">'+co.w+'/'+con+'</span> <span style="color:#94a3b8;font-size:.8rem">('+(con?(co.w/con*100).toFixed(1):'0.0')+'%)</span>'+(cpend?' <span style="color:#94a3b8;font-size:.8rem">'+cpend+' pending</span>':'')+'</div><div style="font-size:.86rem">Net <span style="color:'+cclr+';font-weight:900">'+(co.net>=0?'+$':'\u2212$')+Math.abs(co.net).toFixed(0)+'</span> <span style="color:#64748b">\u00b7 ROI '+(croi>=0?'+':'\u2212')+Math.abs(croi).toFixed(1)+'% on $'+crisk.toFixed(0)+'</span></div><button onclick="downloadHrtDailyCSV()" style="margin-left:auto;background:#16a34a;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:.78rem;font-weight:700;cursor:pointer">\u2b07 CSV</button></div>';
     be.innerHTML=datesel+csum+ct.html;
     return;
@@ -7250,13 +7277,13 @@ function _hrtRenderDailyTab(be,stake){
       var logIdx=window.__TRK_LOG_ROWS__.length; window.__TRK_LOG_ROWS__.push(p); p.__date__=date;
       var _meta=_trkSkipMeta(p);
       var rr=p.result;
-      var mk=rr==='WIN'?'<span style="color:#4ade80">\u2713</span>':(rr==='LOSS'?'<span style="color:#f87171">\u2717</span>':'<span style="color:#64748b">\u00b7</span>');
-      if(!_meta){ if(rr==='WIN')win++; else if(rr==='LOSS')loss++; else pend++; }
+      var mk=rr==='WIN'?'<span style="color:#4ade80">\u2713</span>':(rr==='LOSS'?'<span style="color:#f87171">\u2717</span>':(rr==='VOID'?'<span style="color:#38bdf8" title="Did not play \u2014 no action">\u25cb</span>':'<span style="color:#64748b">\u00b7</span>'));
+      if(!_meta){ if(rr==='WIN')win++; else if(rr==='LOSS')loss++; else if(rr!=='VOID')pend++; }
       var act=(p.actual!=null)?('<span style="color:#cbd5e1">\u2192 '+p.actual+(p.stat?(' '+p.stat):'')+'</span>'):'';
       var odd=_oddsCell(p,logIdx);
       var plHtml,roiHtml='';
       if(rr==='WIN'||rr==='LOSS'){ var pl=_amProfit(_effOdds(p),stake,rr==='WIN'); if(pl===null){ plHtml='<span style="color:#475569;font-family:monospace">\u2014</span>'; } else { if(!_meta){ net+=pl; counted++; } var c=pl>=0?'#4ade80':'#f87171', rp=pl/stake*100; plHtml='<span style="font-family:monospace;font-weight:800;color:'+c+'">'+(pl>=0?'+$':'\u2212$')+Math.abs(pl).toFixed(0)+'</span>'; roiHtml='<span style="font-family:monospace;font-weight:700;color:'+c+'">'+(rp>=0?'+':'\u2212')+Math.abs(rp).toFixed(0)+'%</span>'; } }
-      else { plHtml='<span style="color:#64748b;font-size:.72rem">pending</span>'; }
+      else { plHtml='<span style="color:'+(rr==='VOID'?'#38bdf8':'#64748b')+';font-size:.72rem">'+(rr==='VOID'?'void':'pending')+'</span>'; }
       var logBtn='<button onclick="_trkLogBet('+logIdx+')" title="Log as bet" style="background:#1e3a8a;color:#bfdbfe;border:1px solid #1d4ed8;border-radius:5px;padding:1px 7px;font-size:.66rem;font-weight:800;cursor:pointer;flex-shrink:0">+Log</button>';
       body+='<div style="display:flex;gap:8px;align-items:center;padding:2px 0 2px 6px;font-size:.79rem">'+mk+'<span style="color:#e2e8f0;min-width:130px">'+(p.name||'')+'</span><span style="color:#94a3b8;min-width:120px">'+(p.pick||'')+'</span>'+act+'<span style="margin-left:auto;display:flex;gap:8px;align-items:center"><span style="min-width:52px;text-align:right">'+plHtml+'</span><span style="min-width:44px;text-align:right">'+roiHtml+'</span>'+odd+logBtn+'</span></div>';
     });
@@ -8270,7 +8297,7 @@ async function getMyBetsResults(){
 }
 function _money(n){ if(n==null) return '—'; var v=Number(n); return (v<0?'-$':'$')+Math.abs(v).toFixed(2); }
 function _betOddsDisp(o){ return o!=null?((o>0?'+':'')+o):'—'; }
-function _resColor(r){ return r==='WIN'?'#4ade80':(r==='LOSS'?'#f87171':(r==='PUSH'?'#facc15':'#94a3b8')); }
+function _resColor(r){ return r==='WIN'?'#4ade80':(r==='LOSS'?'#f87171':(r==='PUSH'?'#facc15':(r==='VOID'?'#38bdf8':'#94a3b8'))); }
 function _statBox(lbl,val,clr){ return '<div style="background:#111;border-radius:10px;padding:10px 14px;min-width:92px"><div style="font-size:.64rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">'+lbl+'</div><div style="font-size:1.12rem;font-weight:800;color:'+(clr||'#e2e8f0')+'">'+val+'</div></div>'; }
 function renderMyBets(d){
   var s=d.summary||{}; var bets=d.bets||[];
@@ -8288,6 +8315,7 @@ function renderMyBets(d){
   var head='<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:18px">'
     +_statBox('Record',recTxt,'#e2e8f0')
     +_statBox('Pending',(s.pending||0),'#94a3b8')
+    +(((s.void||0)>0)?_statBox('Void',(s.void||0),'#38bdf8'):'')
     +_statBox('Staked',_money(s.staked||0),'#cbd5e1')
     +_statBox('Net',_money(s.profit||0),netClr)
     +_statBox('Returned',_money(s.returned||0),'#cbd5e1')
