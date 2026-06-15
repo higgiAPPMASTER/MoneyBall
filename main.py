@@ -8385,7 +8385,7 @@ async function _wipeMyBets(){
 // backend, no effect on picks, cards, or the Track Record.
 var _DOW_CATIDX={'Hitter Hits':0,'TB Over':1,'TB Under':1,'HRR':2,'HR':2,'Runs':3,'RBI':4,'Batter Walks':9,'Pitcher Ks':5,'Pitcher Outs':6,'Pitcher Hits Allowed':7,'Pitcher Earned Runs':8,'Pitcher Walks':9};
 var _DOW_CATLBL={'Hitter Hits':'Hits','TB Over':'TB Over','TB Under':'TB Under','HRR':'H+R+RBI','HR':'Home Runs','Runs':'Runs','RBI':'RBI','Batter Walks':'Batter BB','Pitcher Ks':'Pitcher K','Pitcher Outs':'Outs','Pitcher Hits Allowed':'Hits Allowed','Pitcher Earned Runs':'Earned Runs','Pitcher Walks':'Pitcher BB'};
-function _dowCatLabel(c){ return _DOW_CATLBL[c]||c; }
+function _dowCatLabel(c){ var p=String(c).split('|'),b=p[0],sd=p[1]||'',l=_DOW_CATLBL[b]||b; if(l.indexOf('Over')>=0||l.indexOf('Under')>=0) return l; if(sd==='OVER') return l+' Over'; if(sd==='UNDER') return l+' Under'; return l; }
 function _dowProfit(odds,win){ if(!win) return -1; var o=parseFloat(odds); if(isNaN(o)) return 0; return o>0? o/100 : 100/Math.abs(o); }
 function _dowMatrix(){ var useSig=(window.__DOW_MX__==='sig'); var m=useSig?(typeof _DOW_SIG!=='undefined'?_DOW_SIG:null):(typeof _DOW_DISP!=='undefined'?_DOW_DISP:null); return m||{}; }
 function _dowUColor(u){ return u>0.0001?'#4ade80':(u<-0.0001?'#f87171':'#94a3b8'); }
@@ -8401,10 +8401,11 @@ function _dowCompute(detail){
     var dow=new Date(ds+'T12:00:00').getDay(); if(isNaN(dow)) return;
     var win=(res==='WIN'), prof=_dowProfit(r.odds,win), D=days[dow];
     if(win) D.w++; else D.l++; D.u+=prof;
-    var C=D.cats[cat]||(D.cats[cat]={w:0,l:0,u:0}); if(win) C.w++; else C.l++; C.u+=prof;
+    var side=(r.side||'OVER').toUpperCase();
+    var catKey=cat+'|'+side;
+    var C=D.cats[catKey]||(D.cats[catKey]={w:0,l:0,u:0}); if(win) C.w++; else C.l++; C.u+=prof;
     var lean=(mx[dow]||[])[idx];
     if(lean==='O'||lean==='U'){
-      var side=(r.side||'OVER').toUpperCase();
       var followed=(side==='OVER'&&lean==='O')||(side==='UNDER'&&lean==='U');
       if(followed){ if(win){agree.w++;dayMx[dow].aw++;}else{agree.l++;dayMx[dow].al++;} }
       else{ if(win){against.w++;dayMx[dow].gw++;}else{against.l++;dayMx[dow].gl++;} }
