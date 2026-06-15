@@ -4859,14 +4859,13 @@ function _underCard(p, rank) {
   const tbOdds = p.tb_under_odds!=null?(p.tb_under_odds>0?'+':'')+p.tb_under_odds:'—';
   const s5LblU = p.dn_label||(p.s5?'D/N':'');
   const s5ValU = p.s5?.display||'—';
-  const adminStats = `<div class="admin-only" style="display:none;font-size:.72rem;color:#64748b;margin-top:4px;line-height:1.7">
-    <span>S1 <strong style="color:#94a3b8">${p.s1_disp||'—'}</strong> <span style="color:#475569">(${p.s1_ab||0}AB)</span></span> &nbsp;
-    <span>S2 <strong style="color:#94a3b8">${p.s2?.display||'—'}</strong></span><br>
-    <span>S3 <strong style="color:#94a3b8">${p.s3?.display||'—'}</strong></span> &nbsp;
-    <span>L7 <strong style="color:#94a3b8">${p.l7?.display||'—'}</strong></span> &nbsp;
-    <span>Score <strong style="color:#ff8a65">${p.under_score||'—'}</strong></span> &nbsp;
-    <span>${s5LblU} BA <strong style="color:#7dd3fc">${s5ValU}</strong></span>
-  </div>`;
+  var _ubParts=[];
+  if(p.s1_disp && p.s1_ab){ _ubParts.push('Career '+p.s1_disp+(p.pitcher?(' vs '+p.pitcher):'')+' ('+p.s1_ab+' AB)'); }
+  if(p.s3 && p.s3.display){ _ubParts.push('L10 '+p.s3.display); }
+  else if(p.l7 && p.l7.display){ _ubParts.push('L7 '+p.l7.display); }
+  if(p.s2 && p.s2.display){ _ubParts.push((p.opp?('vs '+p.opp+' '):'')+p.s2.display); }
+  if(p.s5 && s5ValU!=='—'){ _ubParts.push(s5LblU+' BA '+s5ValU); }
+  const underBlurb = _ubParts.join(' &#183; ');
   window.__HIT_REG__=window.__HIT_REG__||{}; window.__HIT_REG__['u'+rank]=p;
   return `<div class="mlb-pick-card" onclick="_hitForm('u${rank}')" title="Click for recent form" style="cursor:pointer">
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#2a1414 0%,#180808 100%)">
@@ -4903,7 +4902,7 @@ function _underCard(p, rank) {
       </div>
       ${_seriesChip(p)}
       ${_evBadge(p)}
-      ${adminStats}
+      ${underBlurb ? `<div style="margin-top:5px;font-size:.72rem;color:#94a3b8;line-height:1.5;font-style:italic">${underBlurb}</div>` : ''}
     </div>
   ${_betBtn(p,'Hitter Hits',(p.pick||'UNDER'),'hits','Hits',1.5,(p.pick==='OVER'?p.over_odds:p.under_odds))}
   </div>`;
