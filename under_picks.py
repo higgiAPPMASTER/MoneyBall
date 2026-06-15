@@ -751,9 +751,10 @@ def _wilson_lb(hits: int, games: int, z: float = 1.96) -> float:
 
 
 def _runs_consistency(player_id, side: str, opp_name: str = "",
-                      max_games: int = 10) -> dict:
+                      max_games: int = 10, ignore_ha: bool = False) -> dict:
     """Last max_games career H/A games (5 seasons back) counting games with 1+ run.
-       When opp_name is set, restrict to games vs THAT opponent."""
+       When opp_name is set, restrict to games vs THAT opponent.
+       ignore_ha=True drops the H/A filter (true recent form, any side)."""
     if not player_id:
         return {"runs_games": 0, "games": 0, "display": "N/A", "score": 0}
     try:
@@ -766,7 +767,7 @@ def _runs_consistency(player_id, side: str, opp_name: str = "",
             splits = _get_game_logs(player_id, season)
             for sp in reversed(splits):
                 is_home = sp.get("isHome", False)
-                if (side.upper() == "HOME") != is_home:
+                if not ignore_ha and (side.upper() == "HOME") != is_home:
                     continue
                 if opp_name:
                     opp = sp.get("opponent", {}).get("name", "")
@@ -890,8 +891,8 @@ def run_runs_picks(run_date: str, team_schedule: dict, emit=None) -> list:
         if rate.get("basis") != "vs opp" or rate["games"] < RUNS_MIN_GAMES:
             return None
         # 3-window convergence blend: vs-opp 35%, L10 any-opp 40%, L5 any-opp 25%
-        r10 = _runs_consistency(batter_id, side, "", 10)
-        r5  = _runs_consistency(batter_id, side, "", 5)
+        r10 = _runs_consistency(batter_id, side, "", 10, ignore_ha=True)
+        r5  = _runs_consistency(batter_id, side, "", 5, ignore_ha=True)
         comps = [(0.35, rate["score"] / 100.0)]
         if r10["games"] > 0: comps.append((0.40, r10["score"] / 100.0))
         if r5["games"]  > 0: comps.append((0.25, r5["score"]  / 100.0))
@@ -962,8 +963,9 @@ RBI_TOP_N     = 20   # cap per side
 
 
 def _rbi_consistency(player_id, side: str, opp_name: str = "",
-                     max_games: int = 10) -> dict:
-    """Last max_games career H/A games counting games with 1+ RBI."""
+                     max_games: int = 10, ignore_ha: bool = False) -> dict:
+    """Last max_games career H/A games counting games with 1+ RBI.
+       ignore_ha=True drops the H/A filter (true recent form, any side)."""
     if not player_id:
         return {"rbi_games": 0, "games": 0, "display": "N/A", "score": 0}
     try:
@@ -976,7 +978,7 @@ def _rbi_consistency(player_id, side: str, opp_name: str = "",
             splits = _get_game_logs(player_id, season)
             for sp in reversed(splits):
                 is_home = sp.get("isHome", False)
-                if (side.upper() == "HOME") != is_home:
+                if not ignore_ha and (side.upper() == "HOME") != is_home:
                     continue
                 if opp_name:
                     opp = sp.get("opponent", {}).get("name", "")
@@ -1087,8 +1089,8 @@ def run_rbi_picks(run_date: str, team_schedule: dict, emit=None) -> list:
         if rate["games"] < RBI_MIN_GAMES:
             return None
         # 3-window convergence blend: vs-opp 35%, L10 any-opp 40%, L5 any-opp 25%
-        r10 = _rbi_consistency(batter_id, side, "", 10)
-        r5  = _rbi_consistency(batter_id, side, "", 5)
+        r10 = _rbi_consistency(batter_id, side, "", 10, ignore_ha=True)
+        r5  = _rbi_consistency(batter_id, side, "", 5, ignore_ha=True)
         comps = [(0.35, rate["score"] / 100.0)]
         if r10["games"] > 0: comps.append((0.40, r10["score"] / 100.0))
         if r5["games"]  > 0: comps.append((0.25, r5["score"]  / 100.0))
@@ -1618,8 +1620,9 @@ TB_TOP_N     = 20   # cap (unders only)
 
 
 def _tb_consistency(player_id, side: str, opp_name: str = "",
-                    max_games: int = 10) -> dict:
-    """Last max_games career H/A games; count games where total bases < 2."""
+                    max_games: int = 10, ignore_ha: bool = False) -> dict:
+    """Last max_games career H/A games; count games where total bases < 2.
+       ignore_ha=True drops the H/A filter (true recent form, any side)."""
     if not player_id:
         return {"tb_games": 0, "games": 0, "display": "N/A", "score": 0}
     try:
@@ -1632,7 +1635,7 @@ def _tb_consistency(player_id, side: str, opp_name: str = "",
             splits = _get_game_logs(player_id, season)
             for sp in reversed(splits):
                 is_home = sp.get("isHome", False)
-                if (side.upper() == "HOME") != is_home:
+                if not ignore_ha and (side.upper() == "HOME") != is_home:
                     continue
                 if opp_name:
                     opp = sp.get("opponent", {}).get("name", "")
@@ -1701,8 +1704,9 @@ def _recent_tb_log(player_id, n: int = 5) -> list:
 
 
 def _tb_consistency_over(player_id, side: str, opp_name: str = "",
-                         max_games: int = 10) -> dict:
-    """Last max_games career H/A games vs opp; count games where total bases >= 2 (OVER)."""
+                         max_games: int = 10, ignore_ha: bool = False) -> dict:
+    """Last max_games career H/A games vs opp; count games where total bases >= 2 (OVER).
+       ignore_ha=True drops the H/A filter (true recent form, any side)."""
     if not player_id:
         return {"tb_games": 0, "games": 0, "display": "N/A", "score": 0}
     try:
@@ -1715,7 +1719,7 @@ def _tb_consistency_over(player_id, side: str, opp_name: str = "",
             splits = _get_game_logs(player_id, season)
             for sp in reversed(splits):
                 is_home = sp.get("isHome", False)
-                if (side.upper() == "HOME") != is_home:
+                if not ignore_ha and (side.upper() == "HOME") != is_home:
                     continue
                 if opp_name:
                     opp = sp.get("opponent", {}).get("name", "")
@@ -1747,8 +1751,9 @@ def _tb_consistency_over(player_id, side: str, opp_name: str = "",
 
 
 def _hrr_consistency_over(player_id, side: str, opp_name: str = "",
-                          max_games: int = 10) -> dict:
-    """Last max_games career H/A games vs opp; count games where H+R+RBI >= 2 (OVER 1.5)."""
+                          max_games: int = 10, ignore_ha: bool = False) -> dict:
+    """Last max_games career H/A games vs opp; count games where H+R+RBI >= 2 (OVER 1.5).
+       ignore_ha=True drops the H/A filter (true recent form, any side)."""
     if not player_id:
         return {"hrr_games": 0, "games": 0, "display": "N/A", "score": 0}
     try:
@@ -1761,7 +1766,7 @@ def _hrr_consistency_over(player_id, side: str, opp_name: str = "",
             splits = _get_game_logs(player_id, season)
             for sp in reversed(splits):
                 is_home = sp.get("isHome", False)
-                if (side.upper() == "HOME") != is_home:
+                if not ignore_ha and (side.upper() == "HOME") != is_home:
                     continue
                 if opp_name:
                     opp = sp.get("opponent", {}).get("name", "")
@@ -1879,8 +1884,8 @@ def run_hrr_picks(run_date: str, team_schedule: dict, emit=None) -> list:
         if vs["games"] < HRR_OVER_MIN_VS:
             return None
         # 3-window convergence blend: vs-opp 35%, L10 any-opp 40%, L5 any-opp 25%
-        r10 = _hrr_consistency_over(batter_id, side, "", 10)
-        r5  = _hrr_consistency_over(batter_id, side, "", 5)
+        r10 = _hrr_consistency_over(batter_id, side, "", 10, ignore_ha=True)
+        r5  = _hrr_consistency_over(batter_id, side, "", 5, ignore_ha=True)
         comps = [(0.35, vs["score"] / 100.0)]
         if r10["games"] > 0: comps.append((0.40, r10["score"] / 100.0))
         if r5["games"]  > 0: comps.append((0.25, r5["score"]  / 100.0))
@@ -1987,8 +1992,8 @@ def run_tb_over_picks(run_date: str, team_schedule: dict, emit=None) -> list:
         if vs["games"] < TB_OVER_MIN_VS:
             return None
         # 3-window convergence blend: vs-opp 35%, L10 any-opp 40%, L5 any-opp 25%
-        r10 = _tb_consistency_over(batter_id, side, "", 10)
-        r5  = _tb_consistency_over(batter_id, side, "", 5)
+        r10 = _tb_consistency_over(batter_id, side, "", 10, ignore_ha=True)
+        r5  = _tb_consistency_over(batter_id, side, "", 5, ignore_ha=True)
         comps = [(0.35, vs["score"] / 100.0)]
         if r10["games"] > 0: comps.append((0.40, r10["score"] / 100.0))
         if r5["games"]  > 0: comps.append((0.25, r5["score"]  / 100.0))
@@ -2081,8 +2086,8 @@ def run_tb_under_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 return None
             rate = any_opp; rate["basis"] = "L10 H/A"
         # 3-window convergence blend: primary anchor 35%, L10 any-opp 40%, L5 any-opp 25%
-        r10 = _tb_consistency(batter_id, side, "", 10)
-        r5  = _tb_consistency(batter_id, side, "", 5)
+        r10 = _tb_consistency(batter_id, side, "", 10, ignore_ha=True)
+        r5  = _tb_consistency(batter_id, side, "", 5, ignore_ha=True)
         comps = [(0.35, rate["score"] / 100.0)]
         if r10["games"] > 0: comps.append((0.40, r10["score"] / 100.0))
         if r5["games"]  > 0: comps.append((0.25, r5["score"]  / 100.0))
