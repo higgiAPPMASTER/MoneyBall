@@ -8442,9 +8442,11 @@ function _dowCompute(detail){
   return {days:days,dayMx:dayMx,agree:agree,against:against};
 }
 function renderDowReport(tr){
-  var c=_dowCompute((tr&&tr.detail)||[]), order=[1,2,3,4,5,6,0], today=new Date().getDay();
+  var allDetail=(tr&&tr.detail)||[];
+  var sel=_dowWinSelector(allDetail);
+  var c=_dowCompute(_dowFilterDetail(allDetail)), order=[1,2,3,4,5,6,0], today=new Date().getDay();
   var totN=0; order.forEach(function(d){ totN+=c.days[d].w+c.days[d].l; });
-  if(!totN){ document.getElementById('dow-body').innerHTML='<p style="color:#94a3b8;padding:16px">No graded picks banked yet. Records start accruing once days are graded after deploy.</p>'; return; }
+  if(!totN){ document.getElementById('dow-body').innerHTML=sel+'<p style="color:#94a3b8;padding:16px">No graded picks in this window yet \u2014 try All-time or a different month.</p>'; return; }
   var best=null,worst=null;
   order.forEach(function(d){ var D=c.days[d],n=D.w+D.l; if(n<5) return; var p=D.w/n*100;
     if(best===null||p>best.p) best={d:d,p:p,u:D.u}; if(worst===null||p<worst.p) worst={d:d,p:p}; });
@@ -8507,9 +8509,35 @@ function renderDowReport(tr){
     var top=hit.map(function(x){ return '<span style="color:'+_twColor(x.w,x.l)+'">'+_dowCatLabel(x.k)+' '+x.w+'-'+x.l+' ('+x.p.toFixed(0)+'%)</span>'; }).join('  \u00b7  ');
     return '<div style="padding:6px 8px;border-bottom:1px solid #141414;font-size:.78rem"><b style="color:#a5f3fc">'+_DOW_NAMES[d]+'</b> &mdash; '+top+'</div>';
   }).join('');
-  document.getElementById('dow-body').innerHTML=head+secA+secB+secC;
+  document.getElementById('dow-body').innerHTML=sel+head+secA+secB+secC;
 }
 function _dowSetMatrix(which){ window.__DOW_MX__=which; if(window.__DOWTR__) renderDowReport(window.__DOWTR__); }
+function _dowIsMon(s){ s=String(s||''); return s.length===7 && s.charAt(4)==='-'; }
+function _dowMonLabel(k){ if(!_dowIsMon(k)) return k; var names=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; var mo=parseInt(k.slice(5,7),10); return (names[mo-1]||k.slice(5,7))+' '+k.slice(0,4); }
+function _dowWinRange(win){
+  var now=new Date();
+  if(!win||win==='all') return null;
+  if(win==='week'){ var d=new Date(now.getFullYear(),now.getMonth(),now.getDate()); var dw=d.getDay(); var diff=(dw===0?6:dw-1); var s=new Date(d); s.setDate(d.getDate()-diff); var e=new Date(s); e.setDate(s.getDate()+7); return {s:s,e:e}; }
+  if(win==='month'){ return {s:new Date(now.getFullYear(),now.getMonth(),1),e:new Date(now.getFullYear(),now.getMonth()+1,1)}; }
+  if(win==='lastmonth'){ return {s:new Date(now.getFullYear(),now.getMonth()-1,1),e:new Date(now.getFullYear(),now.getMonth(),1)}; }
+  if(_dowIsMon(win)){ var y=parseInt(win.slice(0,4),10),mo=parseInt(win.slice(5,7),10)-1; return {s:new Date(y,mo,1),e:new Date(y,mo+1,1)}; }
+  return null;
+}
+function _dowFilterDetail(detail){
+  var r=_dowWinRange(window.__DOW_WIN__||'all'); if(!r) return detail||[];
+  return (detail||[]).filter(function(row){ if(!row.date) return false; var d=new Date(String(row.date)+'T12:00:00'); if(isNaN(d.getTime())) return false; return d>=r.s && d<r.e; });
+}
+function _dowWinSelector(detail){
+  var win=window.__DOW_WIN__||'all';
+  var btn=function(id,lab){ var on=(win===id); return '<button onclick="_dowSetWin(&#39;'+id+'&#39;)" style="padding:5px 13px;border-radius:8px;border:1px solid '+(on?'#22d3ee':'#334155')+';background:'+(on?'rgba(34,211,238,.12)':'transparent')+';color:'+(on?'#22d3ee':'#94a3b8')+';font-weight:800;font-size:.72rem;cursor:pointer;white-space:nowrap">'+lab+'</button>'; };
+  var months=[],seen={};
+  (detail||[]).forEach(function(r){ if(!r.date) return; var k=String(r.date).slice(0,7); if(_dowIsMon(k)&&!seen[k]){ seen[k]=1; months.push(k); } });
+  months.sort(); months.reverse();
+  var opts='<option value="">Jump to month\u2026</option>'+months.map(function(k){ return '<option value="'+k+'"'+(win===k?' selected':'')+'>'+_dowMonLabel(k)+'</option>'; }).join('');
+  var picker=months.length?'<select onchange="if(this.value)_dowSetWin(this.value)" style="padding:6px 10px;border-radius:8px;border:1px solid '+(_dowIsMon(win)?'#22d3ee':'#334155')+';background:#0b1220;color:'+(_dowIsMon(win)?'#22d3ee':'#94a3b8')+';font-weight:700;font-size:.72rem;cursor:pointer">'+opts+'</select>':'';
+  return '<div style="display:flex;gap:7px;align-items:center;margin-bottom:14px;flex-wrap:wrap"><span style="font-size:.72rem;color:#64748b;font-weight:700">Window:</span>'+btn('all','All-time')+btn('week','This Week')+btn('month','This Month')+btn('lastmonth','Last Month')+picker+'</div>';
+}
+function _dowSetWin(win){ window.__DOW_WIN__=win; if(window.__DOWTR__) renderDowReport(window.__DOWTR__); }
 async function openDowReport(){
   var btn=document.getElementById('dow-btn'); var lbl=btn.textContent; btn.disabled=true; btn.textContent='Loading...';
   show('dow-card'); document.getElementById('dow-card').scrollIntoView({behavior:'smooth',block:'start'});
@@ -8519,6 +8547,7 @@ async function openDowReport(){
     if(!res.ok){ throw new Error(await res.text()); }
     window.__DOWTR__=await res.json();
     if(!window.__DOW_MX__) window.__DOW_MX__='disp';
+    if(!window.__DOW_WIN__) window.__DOW_WIN__='all';
     renderDowReport(window.__DOWTR__);
   }catch(e){
     document.getElementById('dow-body').innerHTML='<p style="color:#f87171;padding:16px">'+(e.message||'Error loading day-of-week report')+'</p>';
@@ -8528,7 +8557,7 @@ async function openDowReport(){
 }
 function downloadDowCSV(){
   var tr=window.__DOWTR__; if(!tr){ alert('Open the Day-of-Week report first.'); return; }
-  var c=_dowCompute(tr.detail||[]), order=[1,2,3,4,5,6,0];
+  var c=_dowCompute(_dowFilterDetail(tr.detail||[])), order=[1,2,3,4,5,6,0];
   var rows=[['Day','Category','Picks','Wins','Losses','Win%','NetUnits1u']];
   order.forEach(function(d){
     var D=c.days[d];
@@ -8537,7 +8566,7 @@ function downloadDowCSV(){
   });
   var csv=rows.map(function(row){ return row.map(_csvCell).join(','); }).join(String.fromCharCode(13)+String.fromCharCode(10));
   var blob=new Blob([String.fromCharCode(65279)+csv],{type:'text/csv;charset=utf-8;'});
-  var url=URL.createObjectURL(blob); var a=document.createElement('a'); a.href=url; a.download='mlb-day-of-week.csv';
+  var url=URL.createObjectURL(blob); var a=document.createElement('a'); a.href=url; a.download='mlb-day-of-week-'+(window.__DOW_WIN__||'all')+'.csv';
   document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
 }
 function downloadMyBetsCSV(){
