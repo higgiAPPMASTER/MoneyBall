@@ -2038,6 +2038,13 @@ async def grade_picks(date_str: str, request: Request, token: str = "", admin: s
         raise HTTPException(status_code=502, detail=f"MLB API error: {e}")
 
 
+# Fresh-start cutoff for the RUNNING record. Picks dated before this stay in the
+# ledger/Supabase (still openable via the daily date picker) but are excluded from
+# the all-time record, the By-Day report, and the by-category breakdown. Bump this
+# date whenever you want the scoreboard to start over.
+_TRACK_START = "2026-06-15"
+
+
 @app.get("/api/track-record")
 async def track_record(request: Request, token: str = "", admin: str = ""):
     """Admin-only. All-time + daily W/L record per category (Over vs Under) from the
@@ -2055,6 +2062,8 @@ async def track_record(request: Request, token: str = "", admin: str = ""):
     alltime: dict = {}   # {category: {side: [W, L]}}
     daily = []
     for ds in sorted(led.keys()):
+        if ds < _TRACK_START:
+            continue   # pre-start dates kept in the ledger but off the running record
         day_w = day_l = 0
         for cat, sides in (led[ds] or {}).items():
             if cat == "__ovf_v1__" or _is_ovf_cat(cat) or _is_hr_cat(cat):
@@ -2076,6 +2085,8 @@ async def track_record(request: Request, token: str = "", admin: str = ""):
 
     detail = []
     for ds in sorted(det.keys()):
+        if ds < _TRACK_START:
+            continue   # old detail rows stay saved, just hidden from the record
         for r in (det[ds] or []):
             row = dict(r)
             row["date"] = ds
