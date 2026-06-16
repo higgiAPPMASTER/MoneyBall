@@ -85,13 +85,14 @@ PROP_META = {
     "pitcher_walks":        ("Walks Allowed", "bb",  "BB"),
 }
 # Min projection-vs-line edge to post an O/U pick (thin coin-flips dropped).
-# Membership ALSO flags which markets get the opponent-adjusted projection;
-# "pitcher_outs" is intentionally absent — its projection is deferred (it needs a
-# volume/leash model, not the handedness-rate model used here).
+# Membership ALSO flags which markets get the opponent-adjusted projection.
+# Outs use a larger edge (~half an inning) since outs are bigger, noisier numbers
+# than hits/walks/ER, so a fraction-of-an-out "edge" would be meaningless.
 PROP_EDGE = {
     "pitcher_hits_allowed": 0.6,
     "pitcher_earned_runs":  0.5,
     "pitcher_walks":        0.4,
+    "pitcher_outs":         1.5,
 }
 # Populated by _fetch_pitcher_props each run (cleared at the start so a warm
 # process / 3×-day scheduler never serves a stale matchup):
@@ -1137,6 +1138,20 @@ def _project_prop(market, blended, rates, whiff_pct,
             xwoba_f = max(0.88, min(1.12, 1.0 + (xwoba_pct - LEAGUE_XWOBA) * 2.5))
         if implied_total is not None:
             implied_f = max(0.88, min(1.12, 1.0 + (implied_total - LEAGUE_TOTAL) * 0.03))
+    elif market == "pitcher_outs":
+        # Outs = how deep the start goes. Tougher offense (higher OPS / xwOBA) and a
+        # higher game total => pulled earlier => FEWER outs (inverse signals).
+        # Whiffs and grounders => more efficient innings => slightly MORE outs.
+        if rates.get("ops"):
+            hand_f = max(0.85, min(1.15, 1.0 - (rates["ops"] - LEAGUE_OPS) * 1.5))
+        if whiff_pct:
+            whiff_f = max(0.95, min(1.05, 1.0 + (whiff_pct - LEAGUE_WHIFF) * 0.004))
+        if gb_pct is not None:
+            gb_f = max(0.92, min(1.08, 1.0 + (gb_pct - LEAGUE_GB_PCT) * 0.004))
+        if xwoba_pct is not None:
+            xwoba_f = max(0.90, min(1.10, 1.0 - (xwoba_pct - LEAGUE_XWOBA) * 2.0))
+        if implied_total is not None:
+            implied_f = max(0.90, min(1.10, 1.0 - (implied_total - LEAGUE_TOTAL) * 0.025))
     else:
         return None, {}
     proj = round(blended * hand_f * whiff_f * gb_f * xwoba_f * implied_f, 1)
