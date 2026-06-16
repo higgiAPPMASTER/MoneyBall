@@ -1102,7 +1102,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
         _ovf(p, p.get("name", ""), p.get("team", ""), "TB Over (OVF)", "OVER",
              "OVER 1.5 Total Bases", p.get("tb_over_odds"), 1.5, actual, "Total Bases", st)
     for p in ([q for q in _rbi_all if q.get("pick") == "OVER"][10:20] +
-              [q for q in _rbi_all if q.get("pick") == "UNDER"][10:20]):
+              [q for q in _rbi_all if q.get("pick") == "UNDER"][10:30]):
         st = _lookup(p.get("batter_id"), p.get("name"))
         actual = st["rbi"] if st else None
         pd = p.get("pick", "OVER"); ln = p.get("line") if p.get("line") is not None else 0.5
