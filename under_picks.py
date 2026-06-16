@@ -234,7 +234,19 @@ def _get_probable_pitchers(run_date: str) -> dict:
     return result
 
 
+_S1_VSP_CACHE: dict = {}
+
 def _get_s1_vs_pitcher(batter_id, pitcher_id) -> dict:
+    """Cached wrapper — the same (batter, pitcher) head-to-head is scored across
+    many categories AND re-read for the popup display, so memoize the fetch."""
+    _ck = (batter_id, pitcher_id)
+    if _ck in _S1_VSP_CACHE:
+        return _S1_VSP_CACHE[_ck]
+    _res = _get_s1_vs_pitcher_uncached(batter_id, pitcher_id)
+    _S1_VSP_CACHE[_ck] = _res
+    return _res
+
+def _get_s1_vs_pitcher_uncached(batter_id, pitcher_id) -> dict:
     if not batter_id or not pitcher_id:
         return {"ba": None, "display": "N/A", "ab": 0}
     try:
