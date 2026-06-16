@@ -3657,13 +3657,34 @@ function _oppPitObj(pitName, market){
   var e=rec[market];
   return (e&&e.obj)?e.obj:null;
 }
+// Batter's career head-to-head record vs the starter he faces today. Shows in
+// EVERY hitter popup (prepended inside _oppPitBlock). vs_pit = {display,ab,hr};
+// "No prior at-bats" when they've never met. Distinct from _oppPitBlock, which
+// shows that starter's OWN prop line.
+function _vsPitBlock(p){
+  var vp=p&&p.vs_pit; if(!vp) return '';
+  var pit=(p.pitcher&&p.pitcher!=='TBD')?p.pitcher:'';
+  if(!pit) return '';
+  var ab=vp.ab||0, inner;
+  if(ab>0){
+    var hr=vp.hr||0;
+    inner='<span style="font-family:monospace;font-weight:800;color:#e2e8f0">'+_esc(vp.display||'')+'</span>'
+      +(hr>0?('<span style="color:#fbbf24;font-weight:800;margin-left:8px">'+hr+' HR</span>'):'');
+  } else {
+    inner='<span style="font-size:.78rem;color:#64748b">No prior at-bats vs this starter</span>';
+  }
+  return '<div style="margin-top:12px;padding:10px 12px;background:#0c1622;border-radius:8px;border:1px solid #1e2f3a">'
+    +'<div style="font-size:.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Career vs &middot; <span style="color:#cbd5e1">'+_esc(pit)+'</span></div>'
+    +'<div style="font-size:.9rem">'+inner+'</div></div>';
+}
 function _oppPitBlock(p, market, statLabel, unit){
   var pit=(p.pitcher&&p.pitcher!=='TBD')?p.pitcher:'';
   if(!pit) return '';
+  var vsb=_vsPitBlock(p);
   var head='<div style="margin-top:12px;padding:10px 12px;background:#0c1622;border-radius:8px;border:1px solid #1e2f3a">'
     +'<div style="font-size:.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Facing &middot; <span style="color:#cbd5e1">'+_esc(pit)+'</span></div>';
   var o=_oppPitObj(pit, market);
-  if(!o) return head+'<div style="font-size:.78rem;color:#64748b">No '+statLabel+' line posted for this starter</div></div>';
+  if(!o) return vsb+head+'<div style="font-size:.78rem;color:#64748b">No '+statLabel+' line posted for this starter</div></div>';
   var line=o.line;
   var log=(o.recent_log||[]).slice(0,5);
   var rows=log.length?log.map(function(g){
@@ -3680,7 +3701,7 @@ function _oppPitBlock(p, market, statLabel, unit){
   if(line!=null) meta.push('Line '+line+' '+unit);
   if(o.blended!=null) meta.push(o.blended+' '+unit+' avg');
   if(o.pick) meta.push('<span style="color:'+(o.pick==='OVER'?'#63cab7':'#ff8a65')+';font-weight:800">'+o.pick+'</span>');
-  return head
+  return vsb+head
     +'<div style="font-size:.72rem;color:#94a3b8;margin-bottom:6px">'+statLabel+' &middot; last '+log.length+(meta.length?(' &middot; '+meta.join(' &middot; ')):'')+'</div>'
     +'<table style="width:100%;border-collapse:collapse"><tbody>'+rows+'</tbody></table>'
     +'</div>';
@@ -4732,8 +4753,15 @@ function _t10DotIsRed(p, side, isPit, catIdx){
   if(!arr||catIdx==null||arr[catIdx]==null) return false;
   return arr[catIdx]!==side;                     // chart leans opposite the pick = red
 }
+function _gameNoChip(p){
+  var g=p&&p.series_game; if(!g) return '';
+  var of=p.series_of||0;
+  var lbl='G'+g+(of?('/'+of):'');
+  var tip='Game '+g+(of?(' of '+of):'')+' of this series';
+  return '<span title="'+tip+'" style="font-size:.58rem;font-weight:800;padding:1px 5px;border-radius:4px;background:rgba(148,163,184,.16);color:#cbd5e1;letter-spacing:.04em;margin-right:4px">'+lbl+'</span>';
+}
 function _seriesTag(p, side, isPit, catIdx){
-  return _seriesBadge(p,isPit)+_slotDot(p, side, isPit, catIdx);
+  return _gameNoChip(p)+_seriesBadge(p,isPit)+_slotDot(p, side, isPit, catIdx);
 }
 // Plain-English depth-chart writeup for a detail popup. Maps the starter&#39;s
 // rotation rank (SP1-2 ace / SP3-4 mid / SP5+ back-end) to the market lean in
