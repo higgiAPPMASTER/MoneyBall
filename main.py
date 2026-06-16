@@ -2441,17 +2441,17 @@ _HTML = """
     .parlay-cat-row{display:flex;align-items:center;gap:6px;padding:3px 2px;cursor:pointer;font-size:.73rem;color:#ddd;user-select:none}
     .parlay-cat-row input{cursor:pointer;width:13px;height:13px;flex-shrink:0;accent-color:#f59e0b}
     .parlay-cat-section{font-size:.58rem;font-weight:800;letter-spacing:.09em;color:#555;padding:5px 2px 2px;text-transform:uppercase}
-    .env-chip{display:inline-block;margin:6px 0 2px;padding:3px 7px;border:1px solid #333;border-radius:6px;font-size:.64rem;font-weight:700;letter-spacing:.01em;line-height:1.35;background:#0d0d0d}
+    .env-chip{display:inline-block;margin:3px 0 0;padding:2px 7px;border:1px solid #333;border-radius:6px;font-size:.6rem;font-weight:700;letter-spacing:.01em;line-height:1.25;background:#0d0d0d}
     .more-btn{width:100%;margin-top:14px;padding:11px 16px;background:#0f172a;border:1px solid #334155;border-radius:12px;font-size:.82rem;font-weight:700;cursor:pointer;letter-spacing:.06em;text-align:center;transition:background .15s,border-color .15s}
     .more-btn:hover{background:#1e293b;border-color:#475569}
     .mlb-pick-card{border-radius:14px;overflow:hidden;background:linear-gradient(180deg,#161616 0%,#0f0f0f 100%);border:1px solid #262626;display:flex;flex-direction:column}
     .mlb-pick-card:hover{border-color:rgba(245,158,11,.35)}
-    .mlb-card-header{padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:8px;border-bottom:2px solid #f59e0b}
+    .mlb-card-header{padding:6px 11px;display:flex;align-items:center;justify-content:space-between;gap:8px;border-bottom:2px solid #f59e0b}
     .mlb-card-header>div:first-child{min-width:0;flex:1 1 auto;flex-wrap:wrap;row-gap:5px}
     .mlb-card-header>img{flex:0 0 auto}
     .mlb-card-photo{position:relative;height:140px;overflow:hidden;background:radial-gradient(ellipse at center top,rgba(245,158,11,.15),transparent 70%),linear-gradient(180deg,#1a2a1a 0%,#0a1a0a 100%)}
-    .mlb-card-name{background:#f59e0b;color:#000;text-align:center;padding:8px 10px;font-weight:900;font-size:1rem;letter-spacing:.01em}
-    .mlb-card-body{padding:10px 12px 12px;flex:1;display:flex;flex-direction:column;gap:6px}
+    .mlb-card-name{background:#f59e0b;color:#000;text-align:center;padding:4px 10px;font-weight:900;font-size:.9rem;letter-spacing:.01em}
+    .mlb-card-body{padding:7px 11px 9px;flex:1;display:flex;flex-direction:column;gap:3px}
   </style>
 </head>
 <body class="min-h-screen">
@@ -4828,7 +4828,7 @@ function _platoonChip(p) {
 // ump (kFactor>1) lifts OVER picks and lowers UNDER picks; tight zone inverse.
 function _mlbHead(id) {
   if (!id) return '';
-  return `<img src="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/${id}/headshot/67/current" alt="" style="width:38px;height:38px;border-radius:50%;object-fit:cover;object-position:center 18%;border:1px solid rgba(255,255,255,.12);flex-shrink:0" onerror="this.style.display='none'">`;
+  return `<img src="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/${id}/headshot/67/current" alt="" style="width:24px;height:24px;border-radius:50%;object-fit:cover;object-position:center 18%;border:1px solid rgba(255,255,255,.12);flex-shrink:0" onerror="this.style.display='none'">`;
 }
 function _teamMatchJS(a, b) {
   if (!a||!b) return false;
@@ -4860,7 +4860,7 @@ function _evBadge(p){
   var ip=null;
   if(p.impl_prob!=null) ip=(p.impl_prob*100).toFixed(0)+'%';
   else if(prob!=null&&p.edge!=null) ip=((prob-p.edge)*100).toFixed(0)+'%';
-  return '<div title="Our model win probability for this pick vs the book&#39;s implied probability from the price. Positive edge means the book is underpricing it." style="margin-top:6px;display:flex;align-items:center;justify-content:space-between;gap:6px;background:'+bg+';border:1px solid '+bd+';border-radius:8px;padding:4px 8px">'
+  return '<div title="Our model win probability for this pick vs the book&#39;s implied probability from the price. Positive edge means the book is underpricing it." style="margin-top:6px;display:flex;align-items:center;justify-content:space-between;gap:6px;background:'+bg+';border:1px solid '+bd+';border-radius:8px;padding:3px 8px">'
     +'<span style="font-size:.62rem;font-weight:800;letter-spacing:.03em;color:'+fg+'">'+lbl+'</span>'
     +(mp?'<span style="font-size:.62rem;color:#cbd5e1;font-family:monospace">'+mp+(ip?(' vs '+ip):'')+'</span>':'')
     +'</div>';
@@ -4929,7 +4929,7 @@ function _mlbCard(p, rank, dim) {
   return `<div class="mlb-pick-card" onclick="_hitForm('h${rank}')" title="Click for recent form" style="cursor:pointer;${dim?'opacity:0.85':''}">
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#1a2a1a 0%,#0a1a0a 100%)">
       <div style="display:flex;align-items:center;gap:8px">
-        <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
+        <div style="width:24px;height:24px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
         ${_mlbHead(p.player_id)}
         <span style="font-size:.72rem;letter-spacing:.12em;color:#f59e0b;font-weight:800">MLB · ${p.pos||''}</span>
         ${_seriesTag(p,'O',false,0)}
@@ -4984,7 +4984,7 @@ function _underCard(p, rank) {
   return `<div class="mlb-pick-card" onclick="_hitForm('u${rank}')" title="Click for recent form" style="cursor:pointer">
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#2a1414 0%,#180808 100%)">
       <div style="display:flex;align-items:center;gap:8px">
-        <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
+        <div style="width:24px;height:24px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
         ${_mlbHead(p.batter_id)}
         <span style="font-size:.72rem;letter-spacing:.12em;color:#ff8a65;font-weight:800">MLB · UNDER</span>
         ${_seriesTag(p,'U',false,0)}
@@ -5063,7 +5063,7 @@ function _runsCard(p, rank, pfx) {
   return `<div class="mlb-pick-card" onclick="_runsForm('${pfx}${rank}')" title="Click for recent form" style="cursor:pointer">
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#0e1f33 0%,#08111d 100%)">
       <div style="display:flex;align-items:center;gap:8px">
-        <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
+        <div style="width:24px;height:24px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
         ${_mlbHead(p.batter_id)}
         <span style="font-size:.72rem;letter-spacing:.12em;color:#60a5fa;font-weight:800">MLB · RUN</span>
         ${_seriesTag(p,(p.pick==='OVER'?'O':'U'),false,3)}
@@ -5122,7 +5122,7 @@ function _rbiCard(p, rank, pfx) {
   return `<div class="mlb-pick-card" onclick="_rbiForm('${pfx}${rank}')" title="Click for recent form" style="cursor:pointer">
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#1a1200 0%,#0d0900 100%)">
       <div style="display:flex;align-items:center;gap:8px">
-        <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
+        <div style="width:24px;height:24px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
         ${_mlbHead(p.batter_id)}
         <span style="font-size:.72rem;letter-spacing:.12em;color:#f59e0b;font-weight:800">MLB · RBI</span>
         ${_seriesTag(p,(p.pick==='OVER'?'O':'U'),false,4)}
@@ -5230,7 +5230,7 @@ function _hrCard(p, rank, pfx) {
   return `<div class="mlb-pick-card" onclick="_hrForm('${pfx}${rank}')" title="Click for recent form" style="cursor:pointer">
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#1a0007 0%,#0d0004 100%)">
       <div style="display:flex;align-items:center;gap:8px">
-        <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
+        <div style="width:24px;height:24px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
         ${_mlbHead(p.batter_id)}
         <span style="font-size:.72rem;letter-spacing:.12em;color:#f43f5e;font-weight:800">MLB · HR</span>
         ${_seriesTag(p,(p.pick==='OVER'?'O':'U'),false,2)}
@@ -5335,7 +5335,7 @@ function _walksCard(p, rank, pfx) {
   return `<div class="mlb-pick-card" onclick="_walksForm('${pfx}${rank}')" title="Click for recent form" style="cursor:pointer">
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#022c22 0%,#01140f 100%)">
       <div style="display:flex;align-items:center;gap:8px">
-        <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
+        <div style="width:24px;height:24px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
         ${_mlbHead(p.batter_id)}
         <span style="font-size:.72rem;letter-spacing:.12em;color:#34d399;font-weight:800">MLB · BB</span>
         ${_seriesTag(p,(p.pick==='OVER'?'O':'U'),false,5)}
@@ -5435,7 +5435,7 @@ function _tbCard(p, rank) {
   return `<div class="mlb-pick-card" onclick="_tbForm('tb${rank}')" title="Click for recent form" style="cursor:pointer">
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#1a1030 0%,#0e0820 100%)">
       <div style="display:flex;align-items:center;gap:8px">
-        <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
+        <div style="width:24px;height:24px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
         ${_mlbHead(p.batter_id)}
         <span style="font-size:.72rem;letter-spacing:.12em;color:#a78bfa;font-weight:800">MLB · TB</span>
         ${_seriesTag(p,'U',false,1)}
@@ -5488,7 +5488,7 @@ function _tbOverCard(p, rank) {
   return `<div class="mlb-pick-card" onclick="_tbOverForm('tbo${rank}')" title="Click for recent form" style="cursor:pointer">
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#052e16 0%,#0a1a0a 100%)">
       <div style="display:flex;align-items:center;gap:8px">
-        <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
+        <div style="width:24px;height:24px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
         ${_mlbHead(p.batter_id)}
         <span style="font-size:.72rem;letter-spacing:.12em;color:#4ade80;font-weight:800">MLB · TBO</span>
         ${_seriesTag(p,'O',false,1)}
@@ -5728,7 +5728,7 @@ function _top10Card(p, rank) {
   return '<div class="mlb-pick-card" onclick="_top10Form(\\''+key+'\\')" title="Click for recent form" style="cursor:pointer">'
     +'<div class="mlb-card-header" style="background:linear-gradient(135deg,#2d2600 0%,#0f0e00 100%)">'
       +'<div style="display:flex;align-items:center;gap:8px">'
-        +'<div style="width:30px;height:30px;border-radius:50%;background:'+rnkColors[0]+';color:'+rnkColors[1]+';display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">'+rank+'</div>'
+        +'<div style="width:24px;height:24px;border-radius:50%;background:'+rnkColors[0]+';color:'+rnkColors[1]+';display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">'+rank+'</div>'
         +(p.batter_id?_mlbHead(p.batter_id):'')
         +'<span style="font-size:.66rem;letter-spacing:.1em;background:'+kc+';color:#000;padding:2px 6px;border-radius:4px;font-weight:900">'+_t10KindBadge(kind)+'</span>'
         +_seriesTag(p,'O',false,0)
@@ -5779,7 +5779,7 @@ function _hrrCard(p, rank, pfx) {
   return `<div class="mlb-pick-card" onclick="_hrrForm('${pfx}${rank}')" title="Click for recent form" style="cursor:pointer">
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#431407 0%,#1a0a00 100%)">
       <div style="display:flex;align-items:center;gap:8px">
-        <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
+        <div style="width:24px;height:24px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
         ${_mlbHead(p.batter_id)}
         <span style="font-size:.72rem;letter-spacing:.12em;color:#fb923c;font-weight:800">MLB · HRR</span>
         ${_seriesTag(p,(isOver?'O':'U'),false,2)}
@@ -5937,7 +5937,7 @@ function _pitcherCard(p, rank, keyPfx) {
   return `<div class="mlb-pick-card" onclick="_pkForm('${keyPfx}${rank}')" title="Click for all 5 markets" style="cursor:pointer">
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#0f2420 0%,#08160f 100%)">
       <div style="display:flex;align-items:center;gap:8px">
-        <div style="width:30px;height:30px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
+        <div style="width:24px;height:24px;border-radius:50%;background:${rnkColors[0]};color:${rnkColors[1]};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem">${rank}</div>
         ${_mlbHead(p.pid)}
         <span style="font-size:.72rem;letter-spacing:.12em;color:#63cab7;font-weight:800">MLB · P</span>
         ${_seriesTag(p,((p.sugg_line!=null||p.pick==='OVER')?'O':'U'),true,0)}
@@ -7906,8 +7906,8 @@ function _betBtn(p,cat,side,statKey,statLabel,line,odds){
     category:cat,side:side,stat_key:statKey,stat_label:statLabel,line:line,
     odds:(odds!=null?odds:null),date:((window._lastResult&&window._lastResult.date)||'')};
   return `<div style="display:flex;flex-direction:row;align-items:stretch;border-top:1px solid #1e293b;flex-shrink:0;width:100%;box-sizing:border-box">
-    <button onclick="event.stopPropagation();_betForm('${k}')" style="width:50%;box-sizing:border-box;background:#1a1740;color:#a5b4fc;border:none;border-right:1px solid #1e293b;padding:6px 0;font-size:.75rem;font-weight:800;cursor:pointer;white-space:nowrap;text-align:center">Track Bet</button>
-    <button onclick="event.stopPropagation();_addToCart('${k}')" style="width:50%;box-sizing:border-box;background:#0d2318;color:#6ee7b7;border:none;padding:6px 0;font-size:.75rem;font-weight:800;cursor:pointer;white-space:nowrap;text-align:center">+ Parlay</button>
+    <button onclick="event.stopPropagation();_betForm('${k}')" style="width:50%;box-sizing:border-box;background:#1a1740;color:#a5b4fc;border:none;border-right:1px solid #1e293b;padding:5px 0;font-size:.72rem;font-weight:800;cursor:pointer;white-space:nowrap;text-align:center">Track Bet</button>
+    <button onclick="event.stopPropagation();_addToCart('${k}')" style="width:50%;box-sizing:border-box;background:#0d2318;color:#6ee7b7;border:none;padding:5px 0;font-size:.72rem;font-weight:800;cursor:pointer;white-space:nowrap;text-align:center">+ Parlay</button>
   </div>`;
 }
 window._cartLegs=window._cartLegs||[];
