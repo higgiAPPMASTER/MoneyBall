@@ -839,9 +839,10 @@ def _recent_runs_log(player_id, n: int = 5) -> list:
 
 
 # Pick qualifies as OVER when the runs-scored rate is high, UNDER when low.
-RUNS_OVER_CUT  = 70   # >= this % → likely to score a run (vs opp)
+RUNS_OVER_CUT  = 60   # >= this % → likely to score a run (vs opp)
 RUNS_UNDER_CUT = 30   # <= this % → likely NOT to score (vs opp)
-RUNS_MIN_GAMES = 3    # minimum head-to-head games vs THIS opponent to qualify
+RUNS_MIN_VS    = 2    # vs-opp games to use the head-to-head anchor
+RUNS_MIN_ANY   = 5    # else fall back to L10 H/A any-opp with >= this many games
 RUNS_TOP_N     = 20   # cap per side (top N overs / top N unders)
 
 
@@ -886,10 +887,15 @@ def run_runs_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 pitcher_id   = pinfo.get("id")
                 break
         s1_pit = _get_s1_vs_pitcher(batter_id, pitcher_id)
-        rate = _runs_rate(batter_id, side, opp_name)
-        # Vs-opponent ONLY (no L10 any-opp fallback) and minimum head-to-head games.
-        if rate.get("basis") != "vs opp" or rate["games"] < RUNS_MIN_GAMES:
-            return None
+        # vs-opp preferred (>=RUNS_MIN_VS games); else L10 H/A any-opp (>=RUNS_MIN_ANY).
+        _vsop = _runs_consistency(batter_id, side, opp_name, 10)
+        if _vsop["games"] >= RUNS_MIN_VS:
+            rate = _vsop; rate["basis"] = "vs opp"
+        else:
+            rate = _runs_consistency(batter_id, side, "", 10)
+            if rate["games"] < RUNS_MIN_ANY:
+                return None
+            rate["basis"] = "L10 H/A"
         # 3-window convergence blend: vs-opp 35%, L10 any-opp 40%, L5 any-opp 25%
         r10 = _runs_consistency(batter_id, side, "", 10, ignore_ha=True)
         r5  = _runs_consistency(batter_id, side, "", 5, ignore_ha=True)
@@ -898,10 +904,16 @@ def run_runs_picks(run_date: str, team_schedule: dict, emit=None) -> list:
         if r5["games"]  > 0: comps.append((0.25, r5["score"]  / 100.0))
         wsum = sum(w for w, _ in comps)
         blend_score = round(sum(w * v for w, v in comps) / wsum * 100)
-        if blend_score >= RUNS_OVER_CUT:
+        # OVERS only: hot hand (recent power + active hit streak) nudges a hitter
+        # over the over-cut. Unders use the plain blend (bonus is always >= 0).
+        hot = _hitter_hot_hand(batter_id)
+        over_score = min(blend_score + hot["bonus"], 100)
+        if over_score >= RUNS_OVER_CUT:
             pick = "OVER"
+            final_score = over_score
         elif blend_score <= RUNS_UNDER_CUT:
             pick = "UNDER"
+            final_score = blend_score
         else:
             return None
         l5_s = r5["score"] if r5["games"] > 0 else None
@@ -913,11 +925,13 @@ def run_runs_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                      (pick == "UNDER" and l5_s is not None and l5_s >= RUNS_OVER_CUT))
         return {"name": name, "team": player_team, "side": side, "opp": opp_name,
                 "pick": pick, "line": c.get("line", 0.5),
-                "rate_disp": rate["display"], "score": blend_score,
+                "rate_disp": rate["display"], "score": final_score, "base_score": blend_score,
                 "opp_score": rate["score"], "recent_l10": r10["display"], "recent_l5": r5["display"],
                 "games": rate["games"], "basis": rate.get("basis", ""),
                 "conv_flag": conv_flag, "cold_flag": cold_flag,
                 "wilson": round(_wilson_lb(rate["runs_games"], rate["games"]), 4),
+                "hot_bonus": hot["bonus"] if pick == "OVER" else 0,
+                "hot_disp": hot["disp"] if pick == "OVER" else "",
                 "over_odds": c.get("over"), "under_odds": c.get("under"),
                 "book": _book_label(c.get("over_book") if pick == "OVER" else c.get("under_book")),
                 "batter_id": batter_id,
@@ -958,7 +972,8 @@ def run_runs_picks(run_date: str, team_schedule: dict, emit=None) -> list:
 
 RBI_OVER_CUT  = 60   # >= this % → likely to drive in a run
 RBI_UNDER_CUT = 30   # <= this % → likely NOT to drive in a run
-RBI_MIN_GAMES = 3    # minimum head-to-head games vs THIS opponent to qualify
+RBI_MIN_VS  = 2    # vs-opp games to use the head-to-head anchor
+RBI_MIN_ANY = 5    # else fall back to L10 H/A any-opp with >= this many games
 RBI_TOP_N       = 20   # cap per side (OVER)
 RBI_UNDER_TOP_N = 30   # UNDER cap: top 10 + 20 overflow (Unders only)
 
@@ -1045,10 +1060,10 @@ def _recent_rbi_log(player_id, n: int = 5) -> list:
         return []
 
 
-# RBI OVER hot-hand bonus (Overs ONLY): recent power (HRs) + an active hit streak
-# nudge a hot hitter over the RBI_OVER_CUT they'd otherwise just miss. RBI tends to
-# travel with HRs and hitting streaks. All from game logs already pulled — zero
-# extra API calls. Unders ignore this entirely (bonus is always >= 0).
+# Hitter hot-hand bonus (OVER side only): recent power (HRs) + an active hit streak
+# nudge a hot hitter over the over-cut they'd otherwise just miss. RBI / Runs / HRR /
+# TB-Over all travel with HRs and hitting streaks. From game logs already pulled —
+# zero extra API calls. Unders ignore this entirely (bonus is always >= 0).
 RBI_HOT_WINDOW     = 10   # recent games to scan (any opp)
 RBI_HOT_HR_PTS     = 4    # bonus points per HR in the window (power)
 RBI_HOT_HR_MAX     = 8    # cap on the power bonus
@@ -1057,8 +1072,8 @@ RBI_HOT_STREAK_LO  = 3    # active hit streak >= this -> partial streak bonus
 RBI_HOT_STREAK_PTS = 5    # full streak bonus (partial = 3)
 
 
-def _rbi_hot_hand(player_id, n: int = RBI_HOT_WINDOW) -> dict:
-    """Recent power/contact signal for RBI OVERS only. Last n games (any opp).
+def _hitter_hot_hand(player_id, n: int = RBI_HOT_WINDOW) -> dict:
+    """Recent power/contact signal for hitter OVER picks only. Last n games (any opp).
        Returns recent HR total, active hit-streak length, the point bonus, and a
        short reason string. Bonus is always >= 0 (only ever helps an over)."""
     blank = {"hr": 0, "streak": 0, "bonus": 0, "disp": ""}
@@ -1150,9 +1165,15 @@ def run_rbi_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 pitcher_id   = pinfo.get("id")
                 break
         s1_pit = _get_s1_vs_pitcher(batter_id, pitcher_id)
-        rate = _rbi_rate(batter_id, side, opp_name)
-        if rate["games"] < RBI_MIN_GAMES:
-            return None
+        # vs-opp preferred (>=RBI_MIN_VS games); else L10 H/A any-opp (>=RBI_MIN_ANY).
+        _vsop = _rbi_consistency(batter_id, side, opp_name, 10)
+        if _vsop["games"] >= RBI_MIN_VS:
+            rate = _vsop; rate["basis"] = "vs opp"
+        else:
+            rate = _rbi_consistency(batter_id, side, "", 10)
+            if rate["games"] < RBI_MIN_ANY:
+                return None
+            rate["basis"] = "L10 H/A"
         # 3-window convergence blend: vs-opp 35%, L10 any-opp 40%, L5 any-opp 25%
         r10 = _rbi_consistency(batter_id, side, "", 10, ignore_ha=True)
         r5  = _rbi_consistency(batter_id, side, "", 5, ignore_ha=True)
@@ -1164,7 +1185,7 @@ def run_rbi_picks(run_date: str, team_schedule: dict, emit=None) -> list:
         # RBI OVERS only: a hot hand (recent power + active hit streak) nudges a
         # hitter over the over-cut they'd otherwise just miss. Unders use the
         # plain blend (bonus is >= 0, so it never pulls anyone toward an under).
-        hot = _rbi_hot_hand(batter_id)
+        hot = _hitter_hot_hand(batter_id)
         over_score = min(blend_score + hot["bonus"], 100)
         if over_score >= RBI_OVER_CUT:
             pick = "OVER"
@@ -1909,7 +1930,8 @@ def _recent_hrr_log(player_id, n: int = 5) -> list:
 
 HRR_OVER_CUT    = 60   # >= this % → likely to get H+R+RBI >= 2 (vs opp H/A)
 HRR_UNDER_CUT   = 30   # <= this % → likely to stay under 1.5 H+R+RBI (vs opp H/A)
-HRR_OVER_MIN_VS = 3    # minimum head-to-head H/A games vs opponent (no fallback)
+HRR_MIN_VS  = 2    # vs-opp H/A games to use the head-to-head anchor
+HRR_MIN_ANY = 5    # else fall back to L10 H/A any-opp with >= this many games
 HRR_OVER_TOP_N  = 20   # cap per side
 
 
@@ -1954,9 +1976,15 @@ def run_hrr_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 pitcher_id   = pinfo.get("id")
                 break
         s1_pit = _get_s1_vs_pitcher(batter_id, pitcher_id)
-        vs = _hrr_consistency_over(batter_id, side, opp_name, 10)
-        if vs["games"] < HRR_OVER_MIN_VS:
-            return None
+        # vs-opp preferred (>=HRR_MIN_VS games); else L10 H/A any-opp (>=HRR_MIN_ANY).
+        _vsop = _hrr_consistency_over(batter_id, side, opp_name, 10)
+        if _vsop["games"] >= HRR_MIN_VS:
+            vs = _vsop; vs["basis"] = "vs opp"
+        else:
+            vs = _hrr_consistency_over(batter_id, side, "", 10)
+            if vs["games"] < HRR_MIN_ANY:
+                return None
+            vs["basis"] = "L10 H/A"
         # 3-window convergence blend: vs-opp 35%, L10 any-opp 40%, L5 any-opp 25%
         r10 = _hrr_consistency_over(batter_id, side, "", 10, ignore_ha=True)
         r5  = _hrr_consistency_over(batter_id, side, "", 5, ignore_ha=True)
@@ -1965,10 +1993,16 @@ def run_hrr_picks(run_date: str, team_schedule: dict, emit=None) -> list:
         if r5["games"]  > 0: comps.append((0.25, r5["score"]  / 100.0))
         wsum = sum(w for w, _ in comps)
         blend_score = round(sum(w * v for w, v in comps) / wsum * 100)
-        if blend_score >= HRR_OVER_CUT:
+        # OVERS only: hot hand (recent power + active hit streak) nudges a hitter
+        # over the over-cut. Unders use the plain blend (bonus is always >= 0).
+        hot = _hitter_hot_hand(batter_id)
+        over_score = min(blend_score + hot["bonus"], 100)
+        if over_score >= HRR_OVER_CUT:
             pick = "OVER"
+            final_score = over_score
         elif blend_score <= HRR_UNDER_CUT:
             pick = "UNDER"
+            final_score = blend_score
         else:
             return None
         l5_s = r5["score"] if r5["games"] > 0 else None
@@ -1980,11 +2014,13 @@ def run_hrr_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                      (pick == "UNDER" and l5_s is not None and l5_s >= HRR_OVER_CUT))
         return {"name": name, "team": player_team, "side": side, "opp": opp_name,
                 "pick": pick, "line": 1.5,
-                "rate_disp": vs["display"], "score": blend_score,
+                "rate_disp": vs["display"], "score": final_score, "base_score": blend_score,
                 "opp_score": vs["score"], "recent_l10": r10["display"], "recent_l5": r5["display"],
-                "games": vs["games"], "basis": "vs opp",
+                "games": vs["games"], "basis": vs.get("basis", ""),
                 "conv_flag": conv_flag, "cold_flag": cold_flag,
                 "wilson": round(_wilson_lb(vs["hrr_games"], vs["games"]), 4),
+                "hot_bonus": hot["bonus"] if pick == "OVER" else 0,
+                "hot_disp": hot["disp"] if pick == "OVER" else "",
                 "hrr_over_odds": c.get("hrr_over_odds"),
                 "hrr_under_odds": c.get("hrr_under_odds"),
                 "book": _book_label(c.get("hrr_over_odds_book") if pick == "OVER" else c.get("hrr_under_odds_book")),
@@ -2017,7 +2053,8 @@ def run_hrr_picks(run_date: str, team_schedule: dict, emit=None) -> list:
 
 
 TB_OVER_CUT    = 60   # >= this % → likely to get 1.5+ total bases (vs opp H/A)
-TB_OVER_MIN_VS = 3    # minimum head-to-head H/A games vs opponent (no fallback)
+TB_OVER_MIN_VS  = 2    # vs-opp H/A games to use the head-to-head anchor
+TB_OVER_MIN_ANY = 5    # else fall back to L10 H/A any-opp with >= this many games
 TB_OVER_TOP_N  = 20   # cap (overs only)
 
 
@@ -2062,9 +2099,15 @@ def run_tb_over_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 pitcher_id   = pinfo.get("id")
                 break
         s1_pit = _get_s1_vs_pitcher(batter_id, pitcher_id)
-        vs = _tb_consistency_over(batter_id, side, opp_name, 10)
-        if vs["games"] < TB_OVER_MIN_VS:
-            return None
+        # vs-opp preferred (>=TB_OVER_MIN_VS games); else L10 H/A any-opp (>=TB_OVER_MIN_ANY).
+        _vsop = _tb_consistency_over(batter_id, side, opp_name, 10)
+        if _vsop["games"] >= TB_OVER_MIN_VS:
+            vs = _vsop; vs["basis"] = "vs opp"
+        else:
+            vs = _tb_consistency_over(batter_id, side, "", 10)
+            if vs["games"] < TB_OVER_MIN_ANY:
+                return None
+            vs["basis"] = "L10 H/A"
         # 3-window convergence blend: vs-opp 35%, L10 any-opp 40%, L5 any-opp 25%
         r10 = _tb_consistency_over(batter_id, side, "", 10, ignore_ha=True)
         r5  = _tb_consistency_over(batter_id, side, "", 5, ignore_ha=True)
@@ -2073,8 +2116,13 @@ def run_tb_over_picks(run_date: str, team_schedule: dict, emit=None) -> list:
         if r5["games"]  > 0: comps.append((0.25, r5["score"]  / 100.0))
         wsum = sum(w for w, _ in comps)
         blend_score = round(sum(w * v for w, v in comps) / wsum * 100)
-        if blend_score < TB_OVER_CUT:
+        # OVERS only: hot hand (recent power + active hit streak) nudges a hitter
+        # over the over-cut they'd otherwise just miss.
+        hot = _hitter_hot_hand(batter_id)
+        over_score = min(blend_score + hot["bonus"], 100)
+        if over_score < TB_OVER_CUT:
             return None
+        final_score = over_score
         l5_s = r5["score"] if r5["games"] > 0 else None
         conv_flag = all(v >= TB_OVER_CUT
                         for v in [vs["score"], r10["score"] if r10["games"] > 0 else None, l5_s]
@@ -2082,11 +2130,13 @@ def run_tb_over_picks(run_date: str, team_schedule: dict, emit=None) -> list:
         cold_flag = (l5_s is not None and l5_s < TB_OVER_CUT - 15)
         return {"name": name, "team": player_team, "side": side, "opp": opp_name,
                 "pick": "OVER", "line": 1.5,
-                "rate_disp": vs["display"], "score": blend_score,
+                "rate_disp": vs["display"], "score": final_score, "base_score": blend_score,
                 "opp_score": vs["score"], "recent_l10": r10["display"], "recent_l5": r5["display"],
-                "games": vs["games"], "basis": "vs opp",
+                "games": vs["games"], "basis": vs.get("basis", ""),
                 "conv_flag": conv_flag, "cold_flag": cold_flag,
                 "wilson": round(_wilson_lb(vs["tb_games"], vs["games"]), 4),
+                "hot_bonus": hot["bonus"],
+                "hot_disp": hot["disp"],
                 "tb_over_odds": c.get("tb_over_odds"),
                 "book": _book_label(c.get("tb_over_odds_book")),
                 "batter_id": batter_id,
