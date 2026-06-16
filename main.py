@@ -4835,15 +4835,15 @@ function _evBadge(p){
     +(mp?'<span style="font-size:.62rem;color:#cbd5e1;font-family:monospace">'+mp+(ip?(' vs '+ip):'')+'</span>':'')
     +'</div>';
 }
-function _stuffBadge(p){
-  var sp=p.stuff_plus; if(sp==null) return '';
-  var diff=sp-100;
-  if(Math.abs(diff)<5) return '';
+function _krateBadge(p){
+  var sp=p.k_rate; if(sp==null) return '';
+  var diff=sp-22;
+  if(Math.abs(diff)<3) return '';
   var hi=diff>=0;
   var bg=hi?'rgba(99,202,183,.10)':'rgba(248,113,113,.10)';
   var bd=hi?'#22c55e':'#f87171';
   var fg=hi?'#4ade80':'#fca5a5';
-  var lbl='Stuff+ '+sp.toFixed(0)+(hi?' &#8679; elite stuff':' &#8681; below avg');
+  var lbl='K-rate '+sp.toFixed(0)+'%'+(hi?' &#8679; elite K%':' &#8681; below avg');
   return '<div style="margin-top:4px;display:flex;align-items:center;gap:6px;background:'+bg+';border:1px solid '+bd+';border-radius:6px;padding:3px 8px">'
     +'<span style="font-size:.60rem;font-weight:700;color:'+fg+'">'+lbl+'</span></div>';
 }
@@ -5936,7 +5936,7 @@ function _pitcherCard(p, rank, keyPfx) {
       <div style="margin-top:5px;font-size:.68rem;color:#94a3b8;line-height:1.6">K <strong style="color:#cbd5e1">${p.avg_k!=null?p.avg_k:'—'}</strong> · H <strong style="color:#cbd5e1">${p.avg_hits!=null?p.avg_hits:'—'}</strong> · ER <strong style="color:#cbd5e1">${p.avg_er!=null?p.avg_er:'—'}</strong> · Outs <strong style="color:#cbd5e1">${p.avg_outs!=null?p.avg_outs:'—'}</strong> · BB <strong style="color:#cbd5e1">${p.avg_bb!=null?p.avg_bb:'—'}</strong> · IP <strong style="color:#cbd5e1">${p.avg_ip!=null?p.avg_ip:'—'}</strong> · ERA <strong style="color:#cbd5e1">${p.era||'—'}</strong> <span style="color:#64748b">vr opp</span></div>
       ${p.k_consistency==='consistent'?'<div style="font-size:.66rem;color:#4ade80;margin-top:3px">&#10003; K Consistent (std '+(p.k_std||0)+')</div>':p.k_consistency==='volatile'?'<div style="font-size:.66rem;color:#fbbf24;margin-top:3px">&#126; K Volatile (std '+(p.k_std||0)+')</div>':p.k_consistency==='boom_bust'?'<div style="font-size:.66rem;color:#fb923c;margin-top:3px">&#9888; Boom/Bust K (std '+(p.k_std||0)+')</div>':''}
       <div style="margin-top:5px;display:flex;align-items:center;justify-content:flex-end"><span style="font-size:.66rem;color:#63cab7">all 5 markets →</span></div>
-      ${_stuffBadge(p)}
+      ${_krateBadge(p)}
       ${_veloBadge(p)}
       ${_evBadge(p)}
     </div>
