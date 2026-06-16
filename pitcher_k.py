@@ -39,12 +39,12 @@ LEAGUE_GB_PCT  = 43.0    # MLB avg groundball rate %, 2024-2025
 LEAGUE_XWOBA   = 0.315   # MLB avg xwOBA-against (pitcher), 2024-2025
 LEAGUE_TOTAL   = 8.5     # MLB avg game O/U total, 2024-2025
 LEAGUE_VELO    = 93.3    # MLB avg fastball velocity (mph), 2024-2025
-LEAGUE_STUFF   = 100.0   # Stuff+ normalized to 100 = MLB average
+LEAGUE_KRATE   = 22.0    # pitcher strikeout rate (K%) league average
 LEAGUE_AVG_PITCH_WOBA = 0.310  # MLB avg batter wOBA vs any pitch type, ~2024-2025
 _GB_XWOBA_CACHE: dict = {}     # {year: {player_id: {gb_pct, xwoba}}}
 _GAME_TOTALS:   dict = {}      # {(norm_home, norm_away): total_line}
 _VELO_CACHE:    dict = {}      # {year: {player_id: avg_release_speed_mph}}
-_STUFF_CACHE:   dict = {}      # {year: {player_id: stuff_plus}}
+_KRATE_CACHE:   dict = {}      # {year: {player_id: k_percent}}
 _PK_PITCH_TYPES    = ["FF", "SL", "SI", "CH", "CU", "FC"]
 _PK_ARSENAL_CACHE: dict = {}   # {pitcher_id: {pitch_type: usage_pct}}
 _PK_BATTER_WOBA_CACHE: dict = {}  # {batter_id: {pitch_type: woba}}
@@ -858,10 +858,11 @@ def _velo_lookup(pitcher_id: int) -> float | None:
     return prev.get(pitcher_id)
 
 
-def _fetch_stuff_map(year: str) -> dict:
-    """Bulk-fetch pitcher Stuff+ from Baseball Savant. Cached per year.
-    Stuff+ = 100 is MLB average; higher = better pitch quality → more Ks."""
-    if _STUFF_CACHE.get(year): return _STUFF_CACHE[year]
+def _fetch_krate_map(year: str) -> dict:
+    """Bulk-fetch pitcher strikeout rate (K%) from Baseball Savant. Cached per year.
+    K% league avg ~22; higher = more swing-and-miss / strikeout ability → more Ks.
+    (Replaces Stuff+, which Savant dropped from the custom leaderboard.)"""
+    if _KRATE_CACHE.get(year): return _KRATE_CACHE[year]
     import csv, io
     hdrs = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                           "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"}
@@ -870,12 +871,12 @@ def _fetch_stuff_map(year: str) -> dict:
         try:
             r = requests.get("https://baseballsavant.mlb.com/leaderboard/custom",
                 params={"year": str(year), "type": "pitcher", "filter": "", "min": "10",
-                        "selections": "stuff_plus", "csv": "true"},
+                        "selections": "k_percent", "csv": "true"},
                 headers=hdrs, timeout=15)
             for row in csv.DictReader(io.StringIO(r.text.lstrip("\ufeff"))):
                 try:
                     pid = int(row.get("player_id") or 0)
-                    sp  = row.get("stuff_plus") or ""
+                    sp  = row.get("k_percent") or ""
                     if pid and sp not in (None, ""):
                         out[pid] = float(sp)
                 except Exception:
@@ -884,15 +885,15 @@ def _fetch_stuff_map(year: str) -> dict:
             pass
         if out: break
         time.sleep(1.0)
-    if out: _STUFF_CACHE[year] = out
+    if out: _KRATE_CACHE[year] = out
     return out
 
 
-def _stuff_lookup(pitcher_id: int) -> float | None:
-    """Return pitcher Stuff+ — current season, prior-year fallback."""
-    cur = _STUFF_CACHE.get(SEASON, {})
+def _krate_lookup(pitcher_id: int) -> float | None:
+    """Return pitcher strikeout rate (K%) — current season, prior-year fallback."""
+    cur = _KRATE_CACHE.get(SEASON, {})
     if pitcher_id in cur: return cur[pitcher_id]
-    prev = _STUFF_CACHE.get(str(int(SEASON) - 1), {})
+    prev = _KRATE_CACHE.get(str(int(SEASON) - 1), {})
     return prev.get(pitcher_id)
 
 
@@ -1051,14 +1052,14 @@ def _days_rest(last_date: str, run_date: str) -> int | None:
 
 def _project_k(blended_avg, opp_k_pct, whiff_pct, days_rest,
                gb_pct=None, xwoba_pct=None, implied_total=None, velo_avg=None,
-               stuff_plus=None, arsenal_f=1.0):
-    """Opponent-adjusted K projection: blend × hand × whiff × rest × GB × xwOBA × total × velo × stuff × arsenal.
+               k_rate=None, arsenal_f=1.0):
+    """Opponent-adjusted K projection: blend × hand × whiff × rest × GB × xwOBA × total × velo × krate × arsenal.
     Each factor is clamped so a single thin signal can't swing the pick wildly.
     gb_pct: pitcher's groundball rate — groundballers miss fewer bats (slight K drag).
     xwoba_pct: pitcher's xwOBA-against — low xwOBA = limits hard contact = quality pitcher → more Ks.
     implied_total: today's game O/U line — low total = pitcher dominance expected → boost Ks.
     velo_avg: pitcher avg fastball velocity — higher velo = more swing-and-miss → K boost.
-    stuff_plus: Savant Stuff+ (100 = avg) — elite stuff = more Ks regardless of velo.
+    k_rate: pitcher season strikeout rate (K%, ~22 avg) — high-K arms project for more Ks.
     arsenal_f: pre-computed lineup matchup factor — how well opp hits pitcher's primary pitch."""
     if blended_avg is None:
         return None, {}
@@ -1087,17 +1088,17 @@ def _project_k(blended_avg, opp_k_pct, whiff_pct, days_rest,
     if velo_avg is not None:
         # Higher velo = more swing-and-miss = more Ks. >95 mph = +3%; <90 mph = -5%.
         velo_f = max(0.95, min(1.05, 1.0 + (velo_avg - LEAGUE_VELO) * 0.006))
-    stuff_f = 1.0
-    if stuff_plus is not None:
-        # Stuff+ 100 = avg. Each point above/below scales ±0.35% (capped ±3.5%).
-        stuff_f = max(0.965, min(1.035, 1.0 + (stuff_plus - LEAGUE_STUFF) * 0.0035))
-    proj = round(blended_avg * hand_f * whiff_f * rest_f * gb_f * xwoba_f * implied_f * velo_f * stuff_f * arsenal_f, 1)
+    krate_f = 1.0
+    if k_rate is not None:
+        # K% ~22 = avg. Each point above/below scales ±0.5% (capped ±3.5%).
+        krate_f = max(0.965, min(1.035, 1.0 + (k_rate - LEAGUE_KRATE) * 0.005))
+    proj = round(blended_avg * hand_f * whiff_f * rest_f * gb_f * xwoba_f * implied_f * velo_f * krate_f * arsenal_f, 1)
     factors = {"hand": round(hand_f, 3), "whiff": round(whiff_f, 3), "rest": round(rest_f, 3),
                "gb": round(gb_f, 3), "xwoba": round(xwoba_f, 3), "implied": round(implied_f, 3),
-               "velo": round(velo_f, 3), "stuff": round(stuff_f, 3), "arsenal": round(arsenal_f, 3),
+               "velo": round(velo_f, 3), "krate": round(krate_f, 3), "arsenal": round(arsenal_f, 3),
                "opp_k_pct": opp_k_pct, "whiff_pct": whiff_pct, "days_rest": days_rest,
                "gb_pct": gb_pct, "xwoba_pct": xwoba_pct, "implied_total": implied_total,
-               "velo_avg": velo_avg, "stuff_plus": stuff_plus}
+               "velo_avg": velo_avg, "k_rate": k_rate}
     return proj, factors
 
 
@@ -1380,12 +1381,12 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
         _xwoba    = _gbx.get("xwoba")
         _implied  = _lookup_game_total(pitcher_team, opp)
         _velo     = _velo_lookup(pid) if pid else None
-        _stuff    = _stuff_lookup(pid) if pid else None
+        _krate    = _krate_lookup(pid) if pid else None
         _ars_f    = _arsenal_opp_adj(pid, opp) if pid else 1.0
         proj_k, proj_factors = _project_k(blended_avg, opp_k_pct, whiff_pct, d_rest,
                                           gb_pct=_gb_pct, xwoba_pct=_xwoba,
                                           implied_total=_implied, velo_avg=_velo,
-                                          stuff_plus=_stuff, arsenal_f=_ars_f)
+                                          k_rate=_krate, arsenal_f=_ars_f)
         # The pick decides off the PROJECTION (falls back to blend if no factors).
         decision_val = proj_k if proj_k is not None else blended_avg
         if proj_factors:
@@ -1458,7 +1459,7 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                  "opp_k_rank": opp_k_rank, "opp_k_pg": opp_k_pg, "opp_k_total": opp_k_total,
                  "opp_k_rank_ha": opp_k_rank_ha, "opp_k_pg_ha": opp_k_pg_ha, "opp_k_context": opp_k_context,
                  "gb_pct": _gb_pct, "xwoba_against": _xwoba, "implied_total": _implied,
-                 "velo_avg": _velo, "stuff_plus": _stuff, "arsenal_f": round(_ars_f, 3),
+                 "velo_avg": _velo, "k_rate": _krate, "arsenal_f": round(_ars_f, 3),
                  "pid": pid,
                  "props": _build_prop_picks(name, pitcher_team, opp, side, hist, rf, pid,
                                             gb_pct=_gb_pct, xwoba_pct=_xwoba,
@@ -1472,15 +1473,15 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
     prob_starters = _fetch_probable_starters(run_date)
     prob_team_map = {_normalize(s["name"]): s["team"] for s in prob_starters if s.get("team")}
 
-    # Pre-load whiff%, GB%, xwOBA, velocity, Stuff+ leaderboards (current + prior-year fallback).
+    # Pre-load whiff%, GB%, xwOBA, velocity, K% leaderboards (current + prior-year fallback).
     _fetch_whiff_map(SEASON)
     _fetch_whiff_map(str(int(SEASON) - 1))
     _fetch_gb_xwoba_map(SEASON)
     _fetch_gb_xwoba_map(str(int(SEASON) - 1))
     _fetch_velo_map(SEASON)
     _fetch_velo_map(str(int(SEASON) - 1))
-    _fetch_stuff_map(SEASON)
-    _fetch_stuff_map(str(int(SEASON) - 1))
+    _fetch_krate_map(SEASON)
+    _fetch_krate_map(str(int(SEASON) - 1))
     # Pre-load pitch arsenal + batter wOBA vs pitch type for arsenal matchup.
     _pk_load_pitch_data(SEASON)
     _pk_load_pitch_data(str(int(SEASON) - 1))
@@ -1490,7 +1491,7 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
     # Pre-fetch today's game O/U totals (one Odds API call, cached for the run).
     _fetch_game_totals(run_date)
     emit({"type": "log", "msg": f"  ✅ Savant loaded: {len(_GB_XWOBA_CACHE.get(SEASON, {}))} pitchers · "
-          f"{len(_VELO_CACHE.get(SEASON, {}))} velo · {len(_STUFF_CACHE.get(SEASON, {}))} Stuff+ · "
+          f"{len(_VELO_CACHE.get(SEASON, {}))} velo · {len(_KRATE_CACHE.get(SEASON, {}))} K% · "
           f"{len(_PK_ARSENAL_CACHE)} arsenals · {len(_PK_LINEUP_MAP)} lineups · {len(_GAME_TOTALS)} totals"})
 
     # Fetch HP umpires for tonight's games; pre-load K-rate stats per ump.
@@ -1559,7 +1560,7 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                 "xwoba_against": _gb_xwoba_lookup(pid2).get("xwoba") if pid2 else None,
                 "implied_total": _lookup_game_total(st["team"], st["opp"]),
                 "velo_avg": _velo_lookup(pid2) if pid2 else None,
-                "stuff_plus": _stuff_lookup(pid2) if pid2 else None,
+                "k_rate": _krate_lookup(pid2) if pid2 else None,
                 "opp_k_rank": _opp_kr2["rank"]    if _opp_kr2 else None,
                 "opp_k_pg":   _opp_kr2["k_per_g"] if _opp_kr2 else None,
                 "opp_k_total": _opp_kr2["total"]  if _opp_kr2 else None,
