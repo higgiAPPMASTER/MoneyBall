@@ -6,7 +6,7 @@ main.py — FastAPI app for MoneyBall
   • GET  /api/results/{date} — fetch cached results
   • GET  /                   — serves the frontend SPA
 """
-import asyncio, json, os, uuid, glob as _glob
+import asyncio, json, os, uuid, glob as _glob, unicodedata as _ud
 import datetime as _dt, copy as _copy
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
@@ -649,6 +649,18 @@ async def get_results(date_str: str, request: Request, token: str = ""):
     raise HTTPException(status_code=404, detail="No results for this date.")
 
 
+def _norm_name(s) -> str:
+    """Normalize a player name for matching: strip accents, lowercase, drop
+    periods, collapse whitespace. Box scores spell names with accents while
+    odds-sourced bets store them plain; without this the grader can't match
+    and falsely VOIDs a bet whose player actually played."""
+    if not s:
+        return ""
+    s = _ud.normalize("NFKD", str(s))
+    s = "".join(c for c in s if not _ud.combining(c))
+    return " ".join(s.lower().replace(".", " ").split())
+
+
 # ── Grading core (shared by /api/grade and the Track Record ledger) ──────
 def _mlb_box_lookup(date_str: str):
     """Fetch box scores for a date. Returns (player_stats, name_stats, any_game, all_final).
@@ -734,7 +746,7 @@ def _mlb_box_lookup(date_str: str):
             for pid, full_name, entry in rows:
                 player_stats[pid] = entry
                 if full_name:
-                    name_stats[full_name.lower()] = entry
+                    name_stats[_norm_name(full_name)] = entry
         if not fetch_complete:
             all_final = False            # defer locking until a clean pass grades it
     return player_stats, name_stats, any_game, all_final
@@ -751,7 +763,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             if e:
                 return e
         if fallback_name:
-            return name_stats.get((fallback_name or "").lower())
+            return name_stats.get(_norm_name(fallback_name))
         return None
 
     def _grade(pick_dir, line, actual, final):
@@ -1664,7 +1676,7 @@ def _settle_bet_cached(bet: dict, name_stats: dict, all_final: bool = False) -> 
     (no action: refunded, excluded from W/L and ROI) — never stuck pending."""
     if bet.get("result") in ("WIN", "LOSS", "PUSH", "VOID"):
         return False
-    st = name_stats.get((bet.get("name") or "").lower())
+    st = name_stats.get(_norm_name(bet.get("name")))
     if not st or not st.get("final"):
         if (not st) and all_final:
             bet["result"] = "VOID"; bet["actual"] = None
@@ -1997,6 +2009,50 @@ async def delete_bet(bet_id: str, request: Request, token: str = "", admin: str 
             data[key] = new
             _save_bets(data)
     return {"ok": True}
+
+
+@app.post("/api/bets/{bet_id}/result")
+async def set_bet_result(bet_id: str, request: Request, token: str = "", admin: str = ""):
+    """Manually override a bet's result (WIN/LOSS/PUSH/VOID) or reset it to
+    pending. A manual result is LOCKED so auto-grading never overwrites it again;
+    resetting to pending re-enables auto-grading. Profit is recomputed from the
+    stored odds + stake (0 for PUSH/VOID)."""
+    tok = token or request.headers.get("Authorization", "").replace("Bearer ", "").strip()
+    if not _bet_admin_ok(tok, admin):
+        raise HTTPException(status_code=403, detail="Admin only")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    res = str(body.get("result", "")).upper().strip()
+    if res in ("", "PENDING", "CLEAR"):
+        res = ""
+    elif res not in ("WIN", "LOSS", "PUSH", "VOID"):
+        raise HTTPException(status_code=400, detail="result must be WIN, LOSS, PUSH, VOID or PENDING")
+    with _BET_LOCK:
+        data = _load_bets()
+        key = _bet_user_key(tok, admin)
+        target = next((b for b in data.get(key, []) if b.get("id") == bet_id), None)
+        if target is None:
+            raise HTTPException(status_code=404, detail="Bet not found")
+        if res == "":
+            target["result"] = "pending"
+            target["actual"] = None
+            target["profit"] = None
+            target["settled_at"] = None
+            target.pop("manual", None)
+            target.pop("manual_at", None)
+        else:
+            target["result"] = res
+            if res in ("WIN", "LOSS"):
+                target["profit"] = round(_american_profit(target.get("odds"), target.get("stake"), res), 2)
+            else:
+                target["profit"] = 0.0
+            target["manual"] = True
+            target["manual_at"] = date.today().isoformat()
+            target["settled_at"] = date.today().isoformat()
+        _save_bets(data)
+    return {"ok": True, "result": target.get("result")}
 
 
 @app.post("/api/bets/clear")
@@ -8373,6 +8429,14 @@ function renderMyBets(d){
   var rows=shownBets.map(function(b){
     var res=b.result||'pending';
     var delBtn='<button onclick="_deleteBet(&#39;'+b.id+'&#39;)" title="Remove" style="background:none;border:none;color:#64748b;cursor:pointer;font-size:1rem">\u2716</button>';
+    var editSel='<select onchange="_setBetResult(&#39;'+b.id+'&#39;,this.value)" title="Manually set this result" style="background:#0b1120;border:1px solid #334155;color:#cbd5e1;border-radius:6px;padding:3px 5px;font-size:.7rem;cursor:pointer;margin-right:6px">'
+      +'<option value="">edit\u2026</option>'
+      +'<option value="WIN">Win</option>'
+      +'<option value="LOSS">Loss</option>'
+      +'<option value="PUSH">Push</option>'
+      +'<option value="VOID">Void</option>'
+      +'<option value="PENDING">Pending</option>'
+      +'</select>';
     if(b.bet_type==='parlay'){
       var n=(b.legs||[]).length;
       var lid='pleg_'+b.id;
@@ -8393,9 +8457,9 @@ function renderMyBets(d){
         +'<td style="font-size:.78rem;color:#64748b">Combined</td>'
         +'<td style="font-family:monospace">'+_betOddsDisp(b.odds)+'</td>'
         +'<td style="font-family:monospace">'+_money(b.stake)+'</td>'
-        +'<td style="font-weight:800;color:'+_resColor(res)+'">'+(res==='pending'?'pending':res)+'</td>'
+        +'<td style="font-weight:800;color:'+_resColor(res)+'">'+(res==='pending'?'pending':res)+(b.manual?' <span title="Set manually" style="color:#fbbf24;font-size:.72rem">\u270e</span>':'')+'</td>'
         +'<td style="font-family:monospace;font-weight:700;color:'+((b.profit||0)>=0?'#4ade80':'#f87171')+'">'+(b.profit!=null?_money(b.profit):'—')+'</td>'
-        +'<td>'+delBtn+'</td>'
+        +'<td onclick="event.stopPropagation()" style="white-space:nowrap">'+editSel+delBtn+'</td>'
         +'</tr>'
         +'<tr id="'+lid+'" style="display:none"><td colspan="8" style="padding:0 12px 8px 24px;background:#080c14">'
         +'<div style="padding:6px 0">'+legRows+'</div>'
@@ -8409,9 +8473,9 @@ function renderMyBets(d){
       +'<td style="font-size:.82rem">'+_esc(pk)+'</td>'
       +'<td style="font-family:monospace">'+_betOddsDisp(b.odds)+'</td>'
       +'<td style="font-family:monospace">'+_money(b.stake)+'</td>'
-      +'<td style="font-weight:800;color:'+_resColor(res)+'">'+(res==='pending'?'pending':res)+actTxt+'</td>'
+      +'<td style="font-weight:800;color:'+_resColor(res)+'">'+(res==='pending'?'pending':res)+actTxt+(b.manual?' <span title="Set manually" style="color:#fbbf24;font-size:.72rem">\u270e</span>':'')+'</td>'
       +'<td style="font-family:monospace;font-weight:700;color:'+((b.profit||0)>=0?'#4ade80':'#f87171')+'">'+(b.profit!=null?_money(b.profit):'—')+'</td>'
-      +'<td>'+delBtn+'</td>'
+      +'<td onclick="event.stopPropagation()" style="white-space:nowrap">'+editSel+delBtn+'</td>'
       +'</tr>';
   }).join('');
   var dateBar='<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px"><label style="font-size:.85rem;color:#94a3b8;font-weight:700">Show day <input type="date" value="'+selDate+'" max="'+_maxd+'" onchange="_myBetsDate(this.value)" style="margin-left:8px;background:#020617;border:1px solid #334155;color:#fff;border-radius:7px;padding:7px 10px;font-size:.85rem"></label><span style="color:#64748b;font-size:.78rem">'+shownBets.length+' bet'+(shownBets.length===1?'':'s')+' on this day</span></div>';
@@ -8439,6 +8503,16 @@ async function _deleteBet(id){
     if(!res.ok){ throw new Error(await res.text()); }
     openMyBets(false);
   }catch(e){ alert(e.message||'Delete failed'); }
+}
+async function _setBetResult(id,val){
+  if(!val) return;
+  var lbl=(val==='PENDING')?'reset this bet to pending (auto-grading re-enabled)':('mark this bet '+val+' (locks it so auto-grading won\u2019t change it)');
+  if(!confirm('Manually '+lbl+'?')){ openMyBets(false); return; }
+  try{
+    var res=await fetch('/api/bets/'+encodeURIComponent(id)+'/result'+_betAuthQS(),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({result:val})});
+    if(!res.ok){ throw new Error(await res.text()); }
+    openMyBets(false);
+  }catch(e){ alert(e.message||'Update failed'); openMyBets(false); }
 }
 async function _wipeMyBets(){
   var d=window.__MYBETS__;
