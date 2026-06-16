@@ -1045,6 +1045,70 @@ def _recent_rbi_log(player_id, n: int = 5) -> list:
         return []
 
 
+# RBI OVER hot-hand bonus (Overs ONLY): recent power (HRs) + an active hit streak
+# nudge a hot hitter over the RBI_OVER_CUT they'd otherwise just miss. RBI tends to
+# travel with HRs and hitting streaks. All from game logs already pulled — zero
+# extra API calls. Unders ignore this entirely (bonus is always >= 0).
+RBI_HOT_WINDOW     = 10   # recent games to scan (any opp)
+RBI_HOT_HR_PTS     = 4    # bonus points per HR in the window (power)
+RBI_HOT_HR_MAX     = 8    # cap on the power bonus
+RBI_HOT_STREAK_HI  = 5    # active hit streak >= this -> full streak bonus
+RBI_HOT_STREAK_LO  = 3    # active hit streak >= this -> partial streak bonus
+RBI_HOT_STREAK_PTS = 5    # full streak bonus (partial = 3)
+
+
+def _rbi_hot_hand(player_id, n: int = RBI_HOT_WINDOW) -> dict:
+    """Recent power/contact signal for RBI OVERS only. Last n games (any opp).
+       Returns recent HR total, active hit-streak length, the point bonus, and a
+       short reason string. Bonus is always >= 0 (only ever helps an over)."""
+    blank = {"hr": 0, "streak": 0, "bonus": 0, "disp": ""}
+    if not player_id:
+        return blank
+    try:
+        from mlb_stats_splits import _get_game_logs
+        from datetime import date as _dt
+        cy = _dt.today().year
+        rows = []
+        for season in range(cy, cy - 2, -1):
+            splits = _get_game_logs(player_id, season)
+            for sp in reversed(splits):
+                stat = sp.get("stat", {})
+                if int(stat.get("atBats", 0) or 0) < 1:
+                    continue
+                rows.append((int(stat.get("homeRuns", 0) or 0),
+                             int(stat.get("hits", 0) or 0)))
+                if len(rows) >= n:
+                    break
+            if len(rows) >= n:
+                break
+        if not rows:
+            return blank
+        recent_hr = sum(hr for hr, _ in rows)
+        streak = 0
+        for _hr, h in rows:            # rows are newest-first
+            if h >= 1:
+                streak += 1
+            else:
+                break
+        power_bonus = min(recent_hr * RBI_HOT_HR_PTS, RBI_HOT_HR_MAX)
+        if streak >= RBI_HOT_STREAK_HI:
+            streak_bonus = RBI_HOT_STREAK_PTS
+        elif streak >= RBI_HOT_STREAK_LO:
+            streak_bonus = 3
+        else:
+            streak_bonus = 0
+        parts = []
+        if recent_hr:
+            parts.append(f"{recent_hr} HR L{len(rows)}")
+        if streak >= RBI_HOT_STREAK_LO:
+            parts.append(f"{streak}-game hit streak")
+        return {"hr": recent_hr, "streak": streak,
+                "bonus": power_bonus + streak_bonus,
+                "disp": ", ".join(parts)}
+    except Exception:
+        return blank
+
+
 def run_rbi_picks(run_date: str, team_schedule: dict, emit=None) -> list:
     _log(emit, "", "log")
     _log(emit, "▸ RBI Picks — Batter RBIs (Over/Under 0.5)", "section")
@@ -1097,10 +1161,17 @@ def run_rbi_picks(run_date: str, team_schedule: dict, emit=None) -> list:
         if r5["games"]  > 0: comps.append((0.25, r5["score"]  / 100.0))
         wsum = sum(w for w, _ in comps)
         blend_score = round(sum(w * v for w, v in comps) / wsum * 100)
-        if blend_score >= RBI_OVER_CUT:
+        # RBI OVERS only: a hot hand (recent power + active hit streak) nudges a
+        # hitter over the over-cut they'd otherwise just miss. Unders use the
+        # plain blend (bonus is >= 0, so it never pulls anyone toward an under).
+        hot = _rbi_hot_hand(batter_id)
+        over_score = min(blend_score + hot["bonus"], 100)
+        if over_score >= RBI_OVER_CUT:
             pick = "OVER"
+            final_score = over_score
         elif blend_score <= RBI_UNDER_CUT:
             pick = "UNDER"
+            final_score = blend_score
         else:
             return None
         l5_s = r5["score"] if r5["games"] > 0 else None
@@ -1112,7 +1183,7 @@ def run_rbi_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                      (pick == "UNDER" and l5_s is not None and l5_s >= RBI_OVER_CUT))
         return {"name": name, "team": player_team, "side": side, "opp": opp_name,
                 "pick": pick, "line": c.get("line", 0.5),
-                "rate_disp": rate["display"], "score": blend_score,
+                "rate_disp": rate["display"], "score": final_score, "base_score": blend_score,
                 "opp_score": rate["score"], "recent_l10": r10["display"], "recent_l5": r5["display"],
                 "games": rate["games"], "basis": rate.get("basis", ""),
                 "conv_flag": conv_flag, "cold_flag": cold_flag,
@@ -1121,6 +1192,8 @@ def run_rbi_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 "book": _book_label(c.get("over_book") if pick == "OVER" else c.get("under_book")),
                 "batter_id": batter_id,
                 "pitcher": pitcher_name, "s1_disp": s1_pit["display"], "s1_ab": s1_pit["ab"],
+                "hot_bonus": hot["bonus"] if pick == "OVER" else 0,
+                "hot_disp": hot["disp"] if pick == "OVER" else "",
                 "recent_rbi_log": _recent_rbi_log(batter_id)}
 
     picks = []
