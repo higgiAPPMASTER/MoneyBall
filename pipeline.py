@@ -686,6 +686,36 @@ def fetch_series_splits(player_id, today_opp: str, run_date: str, side: str = ""
         return _EMPTY
 
 
+_SERIES_GAMES_CACHE: dict = {}
+
+def _fetch_series_games(run_date: str) -> dict:
+    """Per-team series game number (G1/G2/G3…) for today's slate — authoritative
+    seriesGameNumber from the MLB Stats API schedule (one cached call). Some teams
+    open a series today (G1) while others are mid-series (G2/G3).
+    Returns {team_name: {"g": game_no, "of": games_in_series}}."""
+    if run_date in _SERIES_GAMES_CACHE:
+        return _SERIES_GAMES_CACHE[run_date]
+    out: dict = {}
+    try:
+        j = requests.get("https://statsapi.mlb.com/api/v1/schedule",
+                         params={"sportId": 1, "date": run_date}, timeout=15).json()
+        for _d in j.get("dates", []):
+            for _g in _d.get("games", []):
+                _gno = _g.get("seriesGameNumber")
+                if not _gno:
+                    continue
+                _gof = _g.get("gamesInSeries") or 0
+                for _sh in ("home", "away"):
+                    _nm = ((((_g.get("teams") or {}).get(_sh) or {}).get("team")) or {}).get("name")
+                    if _nm:
+                        out[_nm] = {"g": int(_gno), "of": int(_gof)}
+    except Exception:
+        pass
+    if out:
+        _SERIES_GAMES_CACHE[run_date] = out
+    return out
+
+
 from day_night_check  import get_game_time_type, find_espn_player_id, fetch_day_night_ba
 
 TOP_N_ERA_PITCHERS = 30
@@ -1843,6 +1873,44 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     except Exception as _exc:
         emit({"type": "log", "msg": f"⚠️ Pitcher series position skipped: {_exc}"})
 
+    # ── Series game number (G1/G2/G3) — authoritative from MLB schedule ──
+    # seriesGameNumber is a property of the GAME, so stamp it per TEAM onto EVERY
+    # pick (hitters + pitchers) — consistent across teammates, unlike the
+    # per-player today_pos heuristic above. Drives the compact G# chip on cards.
+    try:
+        _sgames = _fetch_series_games(run_date)
+
+        def _series_for_team(team_name):
+            if not team_name or not _sgames:
+                return None
+            s = _sgames.get(team_name)
+            if s:
+                return s
+            tl = team_name.lower()
+            for _k, _v in _sgames.items():
+                if tl in _k.lower() or _k.lower() in tl:
+                    return _v
+            return None
+
+        _sg_all = (list(top9) + list(also_ran) + list(under_picks_list)
+                   + list(runs_picks_list) + list(tb_picks_list)
+                   + list(tb_over_picks_list) + list(rbi_picks_list)
+                   + list(walks_picks_list) + list(hrr_picks_list)
+                   + list(hr_picks_list))
+        _sg_pit = list(pitcher_k_result.get("picks", [])) + list(pitcher_k_result.get("all", []))
+        for _b in pitcher_props.values():
+            _sg_pit += list(_b.get("picks", [])) + list(_b.get("all", []))
+        _sg_n = 0
+        for _p in _sg_all + _sg_pit:
+            _si = _series_for_team(_p.get("team", ""))
+            if _si:
+                _p["series_game"] = _si["g"]
+                _p["series_of"]   = _si["of"]
+                _sg_n += 1
+        emit({"type": "log", "msg": f"  ✅ Series game# stamped ({_sg_n} picks, {len(_sgames)} teams)"})
+    except Exception as _exc:
+        emit({"type": "log", "msg": f"⚠️ Series game# skipped: {_exc}"})
+
     # ── EV enrichment for ALL non-hit categories ────────────────────────
     # Each pick gets ev / edge / ev_prob from our model probability vs the
     # posted price for the SIDE we picked. Binary 0.5/1.5 batter markets use the
@@ -2085,6 +2153,24 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                 return pi["id"]
         return None
 
+    def _opp_pit_name(opp_name: str):
+        """Probable pitcher NAME for opp team (mirrors _opp_pit_id), or None."""
+        if not opp_name:
+            return None
+        ol = opp_name.lower()
+        sw = {"the", "of", "los", "san", "new", "de"}
+        for tn, pi in mlb_probable.items():
+            if pi.get("name") and tn.lower() == ol:
+                return pi["name"]
+        for tn, pi in mlb_probable.items():
+            if not pi.get("name"):
+                continue
+            twords = set(tn.lower().split()) - sw
+            owords = set(ol.split()) - sw
+            if twords and owords and twords & owords:
+                return pi["name"]
+        return None
+
     _nonhit_all = (
         under_picks_list + runs_picks_list +
         tb_picks_list + tb_over_picks_list +
@@ -2146,6 +2232,42 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     _rot_hit = sum(1 for x in (list(top9) + list(also_ran) + _nonhit_all) if x.get("opp_rot_rank"))
     _rot_pit = sum(1 for x in _pk_all if x.get("rot_rank"))
     emit({"type": "log", "msg": f"  ✅ Rotation rank: {len(_rot)} pitchers ranked, attached to {_rot_hit} hitters + {_rot_pit} pitcher picks"})
+
+    # ── Batter vs today's starter (head-to-head career line) for popups ──
+    # Every hitter popup shows the batter's career record vs the arm he faces
+    # (the user wanted this on ALL hitter props). _get_s1_vs_pitcher is cached and
+    # already called during scoring, so reusing it here is ~free. Hits carry
+    # player_id + pit_id; non-hits carry batter_id (resolve the arm via opp).
+    try:
+        from under_picks import _get_s1_vs_pitcher as _vsp_fn
+
+        def _set_vs_pit(pick, bid, pid):
+            if not bid or not pid:
+                return
+            vp = _vsp_fn(bid, pid)
+            if vp:
+                pick["vs_pit"] = {"display": vp.get("display", "N/A"),
+                                  "ab": vp.get("ab", 0), "hr": vp.get("hr", 0)}
+
+        _vp_n = 0
+        for _hp in list(top9) + list(also_ran):
+            _set_vs_pit(_hp, _hp.get("batter_id") or _hp.get("player_id"), _hp.get("pit_id"))
+            if _hp.get("vs_pit"):
+                _vp_n += 1
+        for _np in _nonhit_all + list(hr_picks_list):
+            _pid = _np.get("pit_id") or _opp_pit_id(_np.get("opp", ""))
+            _set_vs_pit(_np, _np.get("batter_id"), _pid)
+            # Batter Walks picks don't carry the opposing starter — stamp it so
+            # the facing-pitcher + career-vs-pitcher popup blocks render.
+            if (not _np.get("pitcher")) or _np.get("pitcher") == "TBD":
+                _pn = _opp_pit_name(_np.get("opp", ""))
+                if _pn:
+                    _np["pitcher"] = _pn
+            if _np.get("vs_pit"):
+                _vp_n += 1
+        emit({"type": "log", "msg": f"  ✅ Batter-vs-pitcher line stamped ({_vp_n} hitter picks)"})
+    except Exception as _exc:
+        emit({"type": "log", "msg": f"⚠️ Batter-vs-pitcher line skipped: {_exc}"})
 
     # ── Phase B: combined env + umpire RE-RANKING (reorder only) ──
     # Offense axis = weather/park env × umpire RUN factor (a wide strike zone
