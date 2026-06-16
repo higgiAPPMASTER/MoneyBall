@@ -2446,7 +2446,9 @@ _HTML = """
     .more-btn:hover{background:#1e293b;border-color:#475569}
     .mlb-pick-card{border-radius:14px;overflow:hidden;background:linear-gradient(180deg,#161616 0%,#0f0f0f 100%);border:1px solid #262626;display:flex;flex-direction:column}
     .mlb-pick-card:hover{border-color:rgba(245,158,11,.35)}
-    .mlb-card-header{padding:10px 14px;display:flex;align-items:center;justify-content:space-between;border-bottom:2px solid #f59e0b}
+    .mlb-card-header{padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:8px;border-bottom:2px solid #f59e0b}
+    .mlb-card-header>div:first-child{min-width:0;flex:1 1 auto;flex-wrap:wrap;row-gap:5px}
+    .mlb-card-header>img{flex:0 0 auto}
     .mlb-card-photo{position:relative;height:140px;overflow:hidden;background:radial-gradient(ellipse at center top,rgba(245,158,11,.15),transparent 70%),linear-gradient(180deg,#1a2a1a 0%,#0a1a0a 100%)}
     .mlb-card-name{background:#f59e0b;color:#000;text-align:center;padding:8px 10px;font-weight:900;font-size:1rem;letter-spacing:.01em}
     .mlb-card-body{padding:10px 12px 12px;flex:1;display:flex;flex-direction:column;gap:6px}
