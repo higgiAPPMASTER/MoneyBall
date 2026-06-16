@@ -4599,21 +4599,38 @@ function _bpChip(p){
   var bp=null, isPitcher=false;
   if(p&&p.bp_opp!=null){ bp=p.bp_opp; isPitcher=false; }
   else if(p&&p.bp_own!=null){ bp=p.bp_own; isPitcher=true; }
-  if(!bp||bp.bp_ip==null) return '';
-  var ip=bp.bp_ip, taxed=bp.taxed;
-  if(taxed){
-    var lbl=isPitcher?'🔥 Taxed Own BP':'🔥 Taxed Opp BP';
-    var clr=isPitcher?'#fbbf24':'#63cab7';
-    var tip=isPitcher
-      ?'Own bullpen threw '+ip+' IP in last 3 days \u2014 starter may be asked to go deeper'
-      :'Opponent bullpen threw '+ip+' IP in last 3 days \u2014 late-game pitching may be weaker';
-    return '<div class="env-chip" title="'+_esc(tip)+'" style="border-color:'+clr+'44;color:'+clr+'">'+lbl+' \u00b7 '+ip+' IP/3d</div>';
+  if(!bp) return '';
+  var out='';
+  // ── quality chip (hitter cards only): opponent bullpen ERA lean ──
+  if(!isPitcher&&bp.era!=null&&(bp.lean==='weak'||bp.lean==='elite')){
+    var weak=bp.lean==='weak';
+    var qclr=weak?'#4ade80':'#f87171';
+    var qlbl=(weak?'\u25B2 Weak Opp Pen':'\u25BC Elite Opp Pen')+' \u00b7 '+bp.era+' ERA';
+    var det=[];
+    if(bp.era_l14!=null) det.push('L14 '+bp.era_l14);
+    if(bp.era_szn!=null) det.push('Szn '+bp.era_szn);
+    var qtip=(weak
+      ?'Opponent bullpen ERA '+bp.era+' (above league) \u2014 boosts the hitter / over side'
+      :'Opponent bullpen ERA '+bp.era+' (well below league) \u2014 fades the over side')
+      +(det.length?' \u2014 '+det.join(' / '):'');
+    out+='<div class="env-chip" title="'+_esc(qtip)+'" style="border-color:'+qclr+'44;color:'+qclr+'">'+qlbl+'</div>';
   }
-  if(!isPitcher&&(p.pick==='UNDER'||(p.under_basis!=null))){
-    var tip2='Opponent bullpen fresh ('+ip+' IP in last 3 days) \u2014 supports under lean';
-    return '<div class="env-chip" title="'+_esc(tip2)+'" style="border-color:#60a5fa44;color:#60a5fa">\u2744\uFE0F Fresh Opp BP \u00b7 '+ip+' IP/3d</div>';
+  // ── fatigue chip (last 3 days IP) ──
+  if(bp.bp_ip!=null){
+    var ip=bp.bp_ip, taxed=bp.taxed;
+    if(taxed){
+      var lbl=isPitcher?'🔥 Taxed Own BP':'🔥 Taxed Opp BP';
+      var clr=isPitcher?'#fbbf24':'#63cab7';
+      var tip=isPitcher
+        ?'Own bullpen threw '+ip+' IP in last 3 days \u2014 starter may be asked to go deeper'
+        :'Opponent bullpen threw '+ip+' IP in last 3 days \u2014 late-game pitching may be weaker';
+      out+='<div class="env-chip" title="'+_esc(tip)+'" style="border-color:'+clr+'44;color:'+clr+'">'+lbl+' \u00b7 '+ip+' IP/3d</div>';
+    } else if(!isPitcher&&(p.pick==='UNDER'||(p.under_basis!=null))){
+      var tip2='Opponent bullpen fresh ('+ip+' IP in last 3 days) \u2014 supports under lean';
+      out+='<div class="env-chip" title="'+_esc(tip2)+'" style="border-color:#60a5fa44;color:#60a5fa">\u2744\uFE0F Fresh Opp BP \u00b7 '+ip+' IP/3d</div>';
+    }
   }
-  return '';
+  return out;
 }
 function _ssBlock(p){
   var ss=p.series_splits||{}; var sp=ss.today_pos||1;
