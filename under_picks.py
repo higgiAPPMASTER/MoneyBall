@@ -959,7 +959,8 @@ def run_runs_picks(run_date: str, team_schedule: dict, emit=None) -> list:
 RBI_OVER_CUT  = 60   # >= this % → likely to drive in a run
 RBI_UNDER_CUT = 30   # <= this % → likely NOT to drive in a run
 RBI_MIN_GAMES = 3    # minimum head-to-head games vs THIS opponent to qualify
-RBI_TOP_N     = 20   # cap per side
+RBI_TOP_N       = 20   # cap per side (OVER)
+RBI_UNDER_TOP_N = 30   # UNDER cap: top 10 + 20 overflow (Unders only)
 
 
 def _rbi_consistency(player_id, side: str, opp_name: str = "",
@@ -1139,7 +1140,7 @@ def run_rbi_picks(run_date: str, team_schedule: dict, emit=None) -> list:
         -p["games"],
     ))
     overs  = [p for p in picks if p["pick"] == "OVER"][:RBI_TOP_N]
-    unders = [p for p in picks if p["pick"] == "UNDER"][:RBI_TOP_N]
+    unders = [p for p in picks if p["pick"] == "UNDER"][:RBI_UNDER_TOP_N]
     picks = overs + unders
     _log(emit, f"✅ RBI Picks: {len(picks)} "
                f"({sum(1 for p in picks if p['pick']=='OVER')} over / "
