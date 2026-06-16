@@ -942,69 +942,181 @@ def _get_pitcher_baa(pid, season):
     return baa
 
 
-def _fetch_bullpen_fatigue(run_date: str) -> dict:
+def _fetch_bullpen_stats(run_date: str) -> dict:
     """
-    Returns {team_full_name: {"bp_ip": float, "games": int, "taxed": bool}}
-    for every MLB team that played in the last 3 days.
-    Uses one MLB Stats API schedule call with boxscore hydration.
-    Taxed = bullpen threw >= 9 IP across last 3 days (~3 IP/day avg).
+    Per-team bullpen profile = FATIGUE (last 3 days IP) + QUALITY (reliever ERA,
+    recent 14-day blended 60/40 with season-long).
+
+    Returns {team_full_name: {
+        "bp_ip": float, "games": int, "taxed": bool,   # fatigue (last 3 days)
+        "era_l14": float|None, "g14": int,             # recent reliever ERA
+        "era_szn": float|None,                         # season reliever ERA
+        "era": float|None,                             # blended (display + nudge)
+        "factor": float, "lean": str                   # offense nudge + label
+    }}
+
+    Bullpen = every pitcher AFTER the starter in each box score. The recent
+    window is pulled per game from /game/{pk}/boxscore — schedule
+    hydrate=boxscore returns 0 players so it cannot be used. Season reliever
+    ERA comes from one league-wide team statSplits (sitCodes=rp) call. Silent
+    on failure (-> {}); None-safe downstream (no chip / neutral 1.0 nudge).
     """
     from datetime import datetime, timedelta
-    BP_TAXED = 9.0
-    today   = datetime.strptime(run_date, "%Y-%m-%d")
-    d_start = (today - timedelta(days=3)).strftime("%Y-%m-%d")
-    d_end   = (today - timedelta(days=1)).strftime("%Y-%m-%d")
-    try:
-        url  = (f"https://statsapi.mlb.com/api/v1/schedule?sportId=1"
-                f"&startDate={d_start}&endDate={d_end}&hydrate=boxscore")
-        data = requests.get(url, timeout=20).json()
-    except Exception:
-        return {}
+    BP_TAXED   = 9.0       # >= 9 IP across last 3 days = taxed pen
+    BP_CAP     = 0.08      # max +/- 8% offense nudge
+    BP_K       = 0.03      # nudge per ERA run above/below league
+    BP_GATE    = 0.75      # ERA gap vs league to label weak / elite
+    W_RECENT   = 0.6
+    W_SEASON   = 0.4
+    MIN_OUTS14 = 30        # >= 10 IP before a 14-day ERA is trusted
 
-    team_ip: dict = {}   # team_name -> {"bp_ip": float, "games": int}
+    today    = datetime.strptime(run_date, "%Y-%m-%d")
+    d_recent = (today - timedelta(days=3)).strftime("%Y-%m-%d")   # fatigue start
+    d_start  = (today - timedelta(days=14)).strftime("%Y-%m-%d")  # ERA window start
+    d_end    = (today - timedelta(days=1)).strftime("%Y-%m-%d")
 
-    def _parse_ip(raw) -> float:
+    def _parse_outs(raw) -> int:
         try:
             parts = str(raw).split(".")
             full  = int(parts[0]) if parts[0] else 0
             outs  = int(parts[1]) if len(parts) > 1 and parts[1] else 0
-            return full + outs / 3.0
+            return full * 3 + outs
         except Exception:
-            return 0.0
+            return 0
 
-    for date_entry in data.get("dates", []):
-        for game in date_entry.get("games", []):
-            if game.get("status", {}).get("abstractGameState", "") != "Final":
+    # ── recent window: gamePk + date for every Final regular-season game ──
+    try:
+        sched = requests.get(
+            "https://statsapi.mlb.com/api/v1/schedule",
+            params={"sportId": 1, "startDate": d_start, "endDate": d_end,
+                    "gameType": "R"}, timeout=20).json()
+    except Exception:
+        sched = {}
+    game_days = []   # (gamePk, "YYYY-MM-DD")
+    for de in sched.get("dates", []):
+        gd = de.get("date", "")
+        for g in de.get("games", []):
+            if g.get("status", {}).get("abstractGameState", "") == "Final":
+                game_days.append((g.get("gamePk"), gd))
+
+    def _box(pk):
+        try:
+            return requests.get(
+                f"https://statsapi.mlb.com/api/v1/game/{pk}/boxscore",
+                timeout=15).json()
+        except Exception:
+            return None
+
+    boxes = []
+    if game_days:
+        try:
+            with _TPEx(max_workers=12) as ex:
+                boxes = list(ex.map(lambda gp: (_box(gp[0]), gp[1]), game_days))
+        except Exception:
+            boxes = []
+
+    teams: dict = {}   # name -> accumulators
+    for box, gd in boxes:
+        if not box:
+            continue
+        for side in ("home", "away"):
+            td   = box.get("teams", {}).get(side, {})
+            name = td.get("team", {}).get("name", "")
+            if not name:
                 continue
-            box = game.get("boxscore", {})
-            if not box:
-                continue
-            for side in ("home", "away"):
-                td = box.get("teams", {}).get(side, {})
-                team_name = td.get("team", {}).get("name", "")
-                if not team_name:
+            pitchers = td.get("pitchers", [])
+            players  = td.get("players", {})
+            er = 0; outs = 0; ip3 = 0.0
+            for idx, pid in enumerate(pitchers):
+                if idx == 0:          # starter — skip
                     continue
-                pitchers = td.get("pitchers", [])   # ordered list of player IDs
-                players  = td.get("players", {})    # "ID<n>": {...}
-                bp_ip = 0.0
-                for idx, pid in enumerate(pitchers):
-                    if idx == 0:         # starter — skip
-                        continue
-                    pdata = players.get(f"ID{pid}", {})
-                    ip_raw = (pdata.get("stats", {})
-                                   .get("pitching", {})
-                                   .get("inningsPitched", "0"))
-                    bp_ip += _parse_ip(ip_raw)
-                acc = team_ip.setdefault(team_name, {"bp_ip": 0.0, "games": 0})
-                acc["bp_ip"]  += bp_ip
-                acc["games"]  += 1
+                ps = (players.get(f"ID{pid}", {})
+                             .get("stats", {}).get("pitching", {}))
+                o   = _parse_outs(ps.get("inningsPitched", "0"))
+                er  += int(ps.get("earnedRuns", 0) or 0)
+                outs += o
+                if gd >= d_recent:
+                    ip3 += o / 3.0
+            acc = teams.setdefault(name, {"er": 0, "outs": 0, "g14": 0,
+                                          "bp_ip": 0.0, "games": 0})
+            acc["er"]   += er
+            acc["outs"] += outs
+            acc["g14"]  += 1
+            if gd >= d_recent:
+                acc["bp_ip"] += ip3
+                acc["games"] += 1
 
-    return {
-        name: {"bp_ip": round(d["bp_ip"], 1),
-               "games": d["games"],
-               "taxed": d["bp_ip"] >= BP_TAXED}
-        for name, d in team_ip.items()
-    }
+    # ── season reliever ERA (one league-wide statSplits call) ──
+    season = run_date[:4]
+    szn_era: dict = {}
+    szn_tot_er = 0; szn_tot_outs = 0
+    try:
+        sjs = requests.get(
+            "https://statsapi.mlb.com/api/v1/teams/stats",
+            params={"season": season, "sportIds": 1, "stats": "statSplits",
+                    "group": "pitching", "sitCodes": "rp", "gameType": "R"},
+            timeout=20).json()
+        for s in sjs.get("stats", [{}])[0].get("splits", []):
+            nm = s.get("team", {}).get("name", "")
+            st = s.get("stat", {})
+            try:
+                e = float(st.get("era"))
+            except Exception:
+                e = None
+            if nm and e is not None:
+                szn_era[nm] = e
+            szn_tot_outs += _parse_outs(st.get("inningsPitched", "0"))
+            szn_tot_er   += int(st.get("earnedRuns", 0) or 0)
+    except Exception:
+        pass
+
+    # ── league baselines (same 60/40 blend as the per-team ERA) ──
+    lg_er   = sum(d["er"] for d in teams.values())
+    lg_outs = sum(d["outs"] for d in teams.values())
+    LG_l14  = (lg_er * 27.0 / lg_outs) if lg_outs else None
+    LG_szn  = (szn_tot_er * 27.0 / szn_tot_outs) if szn_tot_outs else None
+    if LG_l14 is not None and LG_szn is not None:
+        LG = W_RECENT * LG_l14 + W_SEASON * LG_szn
+    elif LG_l14 is not None:
+        LG = LG_l14
+    elif LG_szn is not None:
+        LG = LG_szn
+    else:
+        LG = 4.10
+
+    out: dict = {}
+    for nm in (set(teams) | set(szn_era)):
+        d = teams.get(nm, {"er": 0, "outs": 0, "g14": 0, "bp_ip": 0.0, "games": 0})
+        era_l14 = (d["er"] * 27.0 / d["outs"]) if d["outs"] >= MIN_OUTS14 else None
+        era_szn = szn_era.get(nm)
+        if era_l14 is not None and era_szn is not None:
+            era = W_RECENT * era_l14 + W_SEASON * era_szn
+        elif era_l14 is not None:
+            era = era_l14
+        else:
+            era = era_szn
+        if era is None:
+            factor, lean = 1.0, "avg"
+        else:
+            delta = era - LG
+            if delta >= 0:                      # weak pen -> boost overs
+                factor = 1.0 + min(BP_CAP, delta * BP_K)
+                lean   = "weak" if delta >= BP_GATE else "avg"
+            else:                               # elite pen -> fade overs
+                factor = 1.0 - min(BP_CAP, (-delta) * BP_K)
+                lean   = "elite" if (-delta) >= BP_GATE else "avg"
+        out[nm] = {
+            "bp_ip":   round(d["bp_ip"], 1),
+            "games":   d["games"],
+            "taxed":   d["bp_ip"] >= BP_TAXED,
+            "era_l14": round(era_l14, 2) if era_l14 is not None else None,
+            "g14":     d["g14"],
+            "era_szn": round(era_szn, 2) if era_szn is not None else None,
+            "era":     round(era, 2) if era is not None else None,
+            "factor":  round(factor, 4),
+            "lean":    lean,
+        }
+    return out
 
 
 # ── Platoon split helpers ────────────────────────────────────────────────
@@ -1891,13 +2003,13 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                 except Exception:
                     _pp["ump"] = None
 
-    # ── Phase A3: bullpen fatigue (chip-only, last 3 days) ──
-    # Hitters get bp_opp = opponent team's bullpen usage.
-    # Pitchers get bp_own = their own team's bullpen usage (affects how deep
-    # they might pitch if the bullpen is taxed). Chip displayed in main.py;
-    # no re-ranking here — signal only.
+    # ── Phase A3: bullpen — fatigue (last 3d) + QUALITY (reliever ERA) ──
+    # Hitters get bp_opp = opponent bullpen profile; its quality `factor` nudges
+    # the OVER/hitter side in Phase B (weak pen -> overs up, elite pen -> down;
+    # unders inverse). Pitchers get bp_own = own bullpen (fatigue display only,
+    # no re-rank). Chips rendered in main.py.
     try:
-        _bp_map = _fetch_bullpen_fatigue(run_date)
+        _bp_map = _fetch_bullpen_stats(run_date)
         if _bp_map:
             def _bp_for(team_name: str):
                 if not team_name:
@@ -1912,7 +2024,10 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                 return None
 
             _hitter_bp = (list(top9) + list(also_ran)
-                          + list(under_picks_list) + list(runs_picks_list))
+                          + list(under_picks_list) + list(runs_picks_list)
+                          + list(rbi_picks_list) + list(hrr_picks_list)
+                          + list(tb_picks_list) + list(tb_over_picks_list)
+                          + list(walks_picks_list) + list(hr_picks_list))
             _pitcher_bp: list = (list(pitcher_k_result.get("picks", []))
                                  + list(pitcher_k_result.get("all", [])))
             for _bk in pitcher_props.values():
@@ -1929,9 +2044,9 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                 except Exception:
                     _pp["bp_own"] = None
             emit({"type": "log",
-                  "msg": f"  ✅ Bullpen fatigue attached ({len(_bp_map)} teams)"})
+                  "msg": f"  ✅ Bullpen fatigue+quality attached ({len(_bp_map)} teams)"})
     except Exception as _bp_exc:
-        emit({"type": "log", "msg": f"⚠️ Bullpen fatigue skipped: {_bp_exc}"})
+        emit({"type": "log", "msg": f"⚠️ Bullpen stats skipped: {_bp_exc}"})
 
     # ── Platoon adj for hits picks ────────────────────────────────────────
     # Favorable handedness matchup: LHB vs RHP or RHB vs LHP → +50 boost.
@@ -2052,8 +2167,15 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         except Exception:
             f = 1.0
         return f if f and f > 0 else 1.0
+    def _bpf(p):                        # opponent-bullpen offense factor
+        b = p.get("bp_opp")
+        try:
+            f = float(b.get("factor")) if b else 1.0
+        except Exception:
+            f = 1.0
+        return f if f and f > 0 else 1.0
     def _offf(p):                       # combined offense multiplier
-        return _envf(p) * _umpf(p, "rFactor")
+        return _envf(p) * _umpf(p, "rFactor") * _bpf(p)
 
     # Hitters ("to record a hit", all OVER): points × offense factor, plus
     # pitch-type BvP, lineup-spot, and platoon-matchup adjustments.
