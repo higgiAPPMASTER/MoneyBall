@@ -688,8 +688,14 @@ def _mlb_box_lookup(date_str: str):
         for game in d.get("games", []):
             any_game = True
             status = game.get("status", {}).get("detailedState", "Scheduled")
+            _sl    = status.lower()
             final  = status in ("Final", "Game Over")
-            if not final:
+            # A cancelled/postponed game produces no stats today, so it must NOT
+            # keep the slate "not final" forever — that would strand every player
+            # in it on "pending" and block the date from ever locking. Treat it
+            # as resolved; its players then VOID (no action) below.
+            dead   = ("cancel" in _sl) or ("postpone" in _sl)
+            if not final and not dead:
                 all_final = False
             pk = game.get("gamePk")
             if pk and status not in _NOT_STARTED:
@@ -1670,29 +1676,61 @@ def _am_to_dec(odds) -> float:
         return 0.0
     return round(1 + o / 100, 6) if o > 0 else round(1 + 100 / abs(o), 6)
 
+_REGRADE_DAYS = 3   # re-verify already-settled bets this many days, so a later
+                    # MLB stat correction (e.g. an RBI added the next day) flips a
+                    # wrong WIN/LOSS instead of staying locked forever.
+
+def _recent_bet(d) -> bool:
+    """True if a game date is recent enough that MLB could still post a stat
+    correction — i.e. inside the re-grade window."""
+    if not d:
+        return False
+    try:
+        return 0 <= (date.today() - date.fromisoformat(str(d))).days <= _REGRADE_DAYS
+    except Exception:
+        return False
+
 def _settle_bet_cached(bet: dict, name_stats: dict, all_final: bool = False) -> bool:
     """Grade a pending bet using pre-fetched name_stats (no extra API call).
     A player who never appears on a fully-Final, cleanly-fetched slate is VOID
-    (no action: refunded, excluded from W/L and ROI) — never stuck pending."""
-    if bet.get("result") in ("WIN", "LOSS", "PUSH", "VOID"):
+    (no action: refunded, excluded from W/L and ROI) — never stuck pending, and a
+    missing stat line is NEVER scored 0 (that would auto-win every UNDER).
+    Already-settled bets are re-checked for a few days so a later MLB stat
+    correction can flip a wrong result."""
+    prev = bet.get("result")
+    if prev in ("WIN", "LOSS", "PUSH", "VOID") and not _recent_bet(bet.get("date")):
         return False
+
+    def _void():
+        if bet.get("result") == "VOID":
+            return False
+        bet["result"] = "VOID"; bet["actual"] = None
+        bet["profit"] = 0.0; bet["settled_at"] = date.today().isoformat()
+        return True
+
+    def _apply(res, actual):
+        prof = round(_american_profit(bet.get("odds"), bet.get("stake"), res), 2)
+        if bet.get("result") == res and bet.get("actual") == actual and bet.get("profit") == prof:
+            return False   # unchanged on a re-verify pass — no churn
+        bet["result"] = res; bet["actual"] = actual
+        bet["profit"] = prof; bet["settled_at"] = date.today().isoformat()
+        return True
+
     st = name_stats.get(_norm_name(bet.get("name")))
     if not st or not st.get("final"):
+        # game not final yet, or player absent on an incomplete slate: only a
+        # fully-final slate with the player missing is a confirmed no-show -> VOID
         if (not st) and all_final:
-            bet["result"] = "VOID"; bet["actual"] = None
-            bet["profit"] = 0.0; bet["settled_at"] = date.today().isoformat()
-            return True
+            return _void()
         return False
     stat_key = bet.get("stat_key")
     actual = st.get(stat_key)
     if actual is None:
-        if stat_key in _BET_PITCH_STATS:
-            if all_final:
-                bet["result"] = "VOID"; bet["actual"] = None
-                bet["profit"] = 0.0; bet["settled_at"] = date.today().isoformat()
-                return True
-            return False  # pitcher didn't pitch yet → leave pending
-        actual = 0        # batter appeared but no hits/runs
+        # stat line missing (DNP / not yet posted). NEVER assume 0 — void on a
+        # fully-final slate, otherwise leave pending until the box populates.
+        if all_final:
+            return _void()
+        return False
     try:
         line = float(bet.get("line"))
     except Exception:
@@ -1704,11 +1742,7 @@ def _settle_bet_cached(bet: dict, name_stats: dict, all_final: bool = False) -> 
         res = "WIN" if actual > line else "LOSS"
     else:
         res = "WIN" if actual < line else "LOSS"
-    bet["result"] = res
-    bet["actual"] = actual
-    bet["profit"] = round(_american_profit(bet.get("odds"), bet.get("stake"), res), 2)
-    bet["settled_at"] = date.today().isoformat()
-    return True
+    return _apply(res, actual)
 
 def _settle_bet(bet: dict) -> bool:
     """Grade a still-pending bet against final box scores. Returns True if it
@@ -1728,41 +1762,38 @@ def _settle_bet(bet: dict) -> bool:
 
 def _settle_parlay_cached(parlay: dict, ns_cache: dict, af_cache: dict = None) -> bool:
     """Grade a parlay using pre-fetched ns_cache. WIN=all legs win, LOSS=any leg
-    loses. A VOID leg (player DNP) is no-action: it can't keep the parlay pending,
-    and a parlay with no loser but a voided leg refunds (PUSH)."""
-    if parlay.get("result") in ("WIN", "LOSS", "PUSH", "VOID"):
-        return False
+    loses. A VOID leg (player DNP / cancelled game) is no-action: it can't keep
+    the parlay pending, and a parlay with no loser but a voided leg refunds
+    (PUSH). Recently-settled parlays are re-checked so a corrected leg flips the
+    parlay too (e.g. a wrong WIN -> LOSS once a stat correction lands)."""
     legs = parlay.get("legs") or []
+    recent = any(_recent_bet(lg.get("date")) for lg in legs)
+    if parlay.get("result") in ("WIN", "LOSS", "PUSH", "VOID") and not recent:
+        return False
     for lg in legs:
-        if lg.get("result") in ("WIN", "LOSS", "PUSH", "VOID"):
+        if lg.get("result") in ("WIN", "LOSS", "PUSH", "VOID") and not _recent_bet(lg.get("date")):
             continue
         bdate = lg.get("date")
         if bdate and bdate in ns_cache:
             _settle_bet_cached(lg, ns_cache[bdate], (af_cache or {}).get(bdate, False))
     results = [lg.get("result") for lg in legs]
-    if not results or any(r not in ("WIN", "LOSS", "PUSH", "VOID") for r in results):
-        if any(r == "LOSS" for r in results):
-            pass  # fall through to LOSS
-        else:
-            return False  # still pending legs
+    pending = (not results) or any(r not in ("WIN", "LOSS", "PUSH", "VOID") for r in results)
     if any(r == "LOSS" for r in results):
-        parlay["result"] = "LOSS"
-        parlay["profit"] = round(-float(parlay.get("stake") or 0), 2)
-        parlay["settled_at"] = date.today().isoformat()
-        return True
-    if all(r == "WIN" for r in results):
+        newres, newprofit = "LOSS", round(-float(parlay.get("stake") or 0), 2)
+    elif pending:
+        return False  # no loss yet and legs still ungraded
+    elif all(r == "WIN" for r in results):
         dec = _am_to_dec(parlay.get("odds"))
         stake = float(parlay.get("stake") or 0)
-        parlay["result"] = "WIN"
-        parlay["profit"] = round(stake * (dec - 1), 2) if dec else None
-        parlay["settled_at"] = date.today().isoformat()
-        return True
-    if all(r in ("WIN", "PUSH", "VOID") for r in results):
-        parlay["result"] = "PUSH"
-        parlay["profit"] = 0.0
-        parlay["settled_at"] = date.today().isoformat()
-        return True
-    return False
+        newres, newprofit = "WIN", (round(stake * (dec - 1), 2) if dec else None)
+    else:  # all resolved, no loser, some PUSH/VOID -> refund
+        newres, newprofit = "PUSH", 0.0
+    if parlay.get("result") == newres and parlay.get("profit") == newprofit:
+        return False
+    parlay["result"] = newres
+    parlay["profit"] = newprofit
+    parlay["settled_at"] = date.today().isoformat()
+    return True
 
 def _settle_parlay(parlay: dict) -> bool:
     """One-shot settle attempt for a just-logged parlay."""
@@ -1787,15 +1818,19 @@ def _settle_bets_batch(bets: list) -> bool:
     unique date. Returns True if any bet changed."""
     today = date.today().isoformat()
     dates_needed: set = set()
+    _TERM = ("WIN", "LOSS", "PUSH", "VOID")
+    def _want(d, res):
+        # need a box lookup for any past-dated bet that's still open OR was
+        # settled recently enough to re-verify against a possible stat correction
+        return bool(d) and d < today and (res not in _TERM or _recent_bet(d))
     for b in bets:
-        if b.get("result") in ("WIN", "LOSS", "PUSH"):
-            continue
         if b.get("bet_type") == "parlay":
             for lg in b.get("legs") or []:
-                if lg.get("result") not in ("WIN", "LOSS", "PUSH") and lg.get("date") and lg["date"] < today:
+                if _want(lg.get("date"), lg.get("result")):
                     dates_needed.add(lg["date"])
-        elif b.get("date") and b["date"] < today:
-            dates_needed.add(b["date"])
+        else:
+            if _want(b.get("date"), b.get("result")):
+                dates_needed.add(b["date"])
     if not dates_needed:
         return False
     ns_cache: dict = {}
