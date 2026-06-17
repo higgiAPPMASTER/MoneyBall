@@ -2,7 +2,7 @@
 fic_cache.py — Step 1: Player pool builder.
 
 SOURCE 1 (PRIMARY): MLB Stats API — career BA vs today's probable pitcher.
-        Filter: min 4 AB, min .250 BA. Parallelised (8 threads, fast).
+        Filter: min 3 AB, min .225 BA. Parallelised (8 threads, fast).
 
 SOURCE 2: MLB Stats API — active hitting streaks (full team scan).
         Scans every hitter on a team playing today, computes current
@@ -23,9 +23,10 @@ MIN_STREAK = 5   # minimum current hit-streak length to qualify (Source 2)
 
 
 def _cache_path(run_date: str) -> str:
-    # v2: pool entries now carry a career_qualified flag — never read a pre-flag
-    # cache, or the hit-list gate would drop everyone.
-    return os.path.join(CACHE_DIR, f"fic_step1_v2_{run_date.replace('-','')}.json")
+    # v3: career_qualified flag is threshold-dependent (now .225 / min 3 AB);
+    # bump on every threshold change so a cache tagged under old cutoffs is never
+    # reused. (v2 added the flag itself; pre-flag caches must never be read.)
+    return os.path.join(CACHE_DIR, f"fic_step1_v3_{run_date.replace('-','')}.json")
 
 
 def _short_name(full_name: str) -> str:
@@ -383,7 +384,7 @@ def _merge(*sources) -> list:
 
 # ── PUBLIC API ────────────────────────────────────────────────────────
 
-def get_step1_players_or_scrape(run_date=None, min_ab=4, min_ba=0.250, emit=None):
+def get_step1_players_or_scrape(run_date=None, min_ab=3, min_ba=0.225, emit=None):
     if run_date is None:
         run_date = _date.today().strftime("%Y-%m-%d")
 
@@ -404,12 +405,12 @@ def get_step1_players_or_scrape(run_date=None, min_ab=4, min_ba=0.250, emit=None
     s3 = _get_recent_hot_hitters(run_date, emit)
 
     combined = _merge(s1, s2, s3)
-    # Tag Source-1 career-qualified (>= .250 career BA vs today's pitcher, min 4
+    # Tag Source-1 career-qualified (>= .225 career BA vs today's pitcher, min 3
     # AB). The flag survives the merge even when a hotter streak/last-7 copy won
     # the higher-BA tiebreak, so the hit list can be gated to it. Streak/hot-only
     # batters stay in the pool (they still nudge ranking via the merged BA) but
     # are flagged False so they can't reach the hit list unless they ALSO clear
-    # .250 vs the pitcher.
+    # .225 vs the pitcher.
     _s1_names = {p["batter"] for p in s1}
     for _p in combined:
         _p["career_qualified"] = _p["batter"] in _s1_names
