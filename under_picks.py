@@ -330,6 +330,26 @@ def _s1_ha_fields(batter_id, pitcher_id, side, fallback) -> dict:
     return {"s1_disp": fb.get("display", "N/A"), "s1_ab": fb.get("ab", 0), "s1_tag": ""}
 
 
+def _prewarm_s1_ha_cache(pairs: list) -> None:
+    """Pre-fetch Statcast venue-split data for a list of (batter_id, pitcher_id)
+    pairs using a small controlled pool (3 workers) so the main scoring executor
+    never makes a live Statcast network call — every _s1_ha_fields call hits cache.
+    Silent on any failure; the per-player fallback in _s1_ha_fields is unchanged."""
+    unique = list({(b, p) for b, p in pairs if b})
+    if not unique:
+        return
+    def _fetch(bp):
+        try:
+            _get_s1_vs_pitcher_ha(bp[0], bp[1])
+        except Exception:
+            pass
+    try:
+        with ThreadPoolExecutor(max_workers=3) as _pw:
+            list(_pw.map(_fetch, unique))
+    except Exception:
+        pass
+
+
 def _get_last7_ba(batter_id) -> dict:
     if not batter_id:
         return {"ba": None, "display": "N/A", "ab": 0}
@@ -719,6 +739,20 @@ def run_under_picks(run_date: str, team_schedule: dict, emit=None,
     _log(emit, "  ✅ Teams resolved")
     _log(emit, f"  Evaluating {len(candidates)} candidates…")
 
+    # Pre-warm Statcast venue-split cache (3 workers) before the main executor
+    # fires so worker threads never make a live network call.
+    _pw_pairs = []
+    for _c in candidates:
+        _bid = id_map.get(_c["name"])
+        _pt  = team_map.get(_bid, "") if _bid else ""
+        if not _bid or not _pt: continue
+        if _team_match(_pt, _c["home_team"]):   _opp = _c["away_team"]
+        elif _team_match(_pt, _c["away_team"]): _opp = _c["home_team"]
+        else: continue
+        _pid = next((pi.get("id") for pt, pi in pitchers.items() if _team_match(pt, _opp)), None)
+        _pw_pairs.append((_bid, _pid))
+    _prewarm_s1_ha_cache(_pw_pairs)
+
     # Evaluate candidates in parallel (≤8 threads). Each worker is independent —
     # it does up to 4 MLB Stats API calls with short-circuit filters — and the
     # shared splits _CACHE / id maps are GIL-safe (worst case = harmless dup
@@ -1013,6 +1047,18 @@ def run_runs_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 "pitcher": pitcher_name, **_s1_ha_fields(batter_id, pitcher_id, side, s1_pit),
                 "recent_runs_log": _recent_runs_log(batter_id)}
 
+    _pw_pairs = []
+    for _c in candidates:
+        _bid = id_map.get(_c["name"])
+        _pt  = team_map.get(_bid, "") if _bid else ""
+        if not _bid or not _pt: continue
+        if _team_match(_pt, _c["home_team"]):   _opp = _c["away_team"]
+        elif _team_match(_pt, _c["away_team"]): _opp = _c["home_team"]
+        else: continue
+        _pid = next((pi.get("id") for pt, pi in pitchers.items() if _team_match(pt, _opp)), None)
+        _pw_pairs.append((_bid, _pid))
+    _prewarm_s1_ha_cache(_pw_pairs)
+
     picks = []
     with ThreadPoolExecutor(max_workers=8) as _ex:
         _futs = {_ex.submit(_eval, c): c for c in candidates}
@@ -1291,6 +1337,18 @@ def run_rbi_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 "hot_bonus": hot["bonus"] if pick == "OVER" else 0,
                 "hot_disp": hot["disp"] if pick == "OVER" else "",
                 "recent_rbi_log": _recent_rbi_log(batter_id)}
+
+    _pw_pairs = []
+    for _c in candidates:
+        _bid = id_map.get(_c["name"])
+        _pt  = team_map.get(_bid, "") if _bid else ""
+        if not _bid or not _pt: continue
+        if _team_match(_pt, _c["home_team"]):   _opp = _c["away_team"]
+        elif _team_match(_pt, _c["away_team"]): _opp = _c["home_team"]
+        else: continue
+        _pid = next((pi.get("id") for pt, pi in pitchers.items() if _team_match(pt, _opp)), None)
+        _pw_pairs.append((_bid, _pid))
+    _prewarm_s1_ha_cache(_pw_pairs)
 
     picks = []
     with ThreadPoolExecutor(max_workers=8) as _ex:
@@ -2103,6 +2161,18 @@ def run_hrr_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 "pitcher": pitcher_name, **_s1_ha_fields(batter_id, pitcher_id, side, s1_pit),
                 "recent_hrr_log": _recent_hrr_log(batter_id)}
 
+    _pw_pairs = []
+    for _c in candidates:
+        _bid = id_map.get(_c["name"])
+        _pt  = team_map.get(_bid, "") if _bid else ""
+        if not _bid or not _pt: continue
+        if _team_match(_pt, _c["home_team"]):   _opp = _c["away_team"]
+        elif _team_match(_pt, _c["away_team"]): _opp = _c["home_team"]
+        else: continue
+        _pid = next((pi.get("id") for pt, pi in pitchers.items() if _team_match(pt, _opp)), None)
+        _pw_pairs.append((_bid, _pid))
+    _prewarm_s1_ha_cache(_pw_pairs)
+
     picks = []
     with ThreadPoolExecutor(max_workers=8) as _ex:
         _futs = {_ex.submit(_eval, c): c for c in candidates}
@@ -2218,6 +2288,18 @@ def run_tb_over_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 "pitcher": pitcher_name, **_s1_ha_fields(batter_id, pitcher_id, side, s1_pit),
                 "recent_tb_log": _recent_tb_log(batter_id)}
 
+    _pw_pairs = []
+    for _c in candidates:
+        _bid = id_map.get(_c["name"])
+        _pt  = team_map.get(_bid, "") if _bid else ""
+        if not _bid or not _pt: continue
+        if _team_match(_pt, _c["home_team"]):   _opp = _c["away_team"]
+        elif _team_match(_pt, _c["away_team"]): _opp = _c["home_team"]
+        else: continue
+        _pid = next((pi.get("id") for pt, pi in pitchers.items() if _team_match(pt, _opp)), None)
+        _pw_pairs.append((_bid, _pid))
+    _prewarm_s1_ha_cache(_pw_pairs)
+
     picks = []
     with ThreadPoolExecutor(max_workers=8) as _ex:
         _futs = {_ex.submit(_eval, c): c for c in candidates}
@@ -2311,6 +2393,18 @@ def run_tb_under_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 "batter_id": batter_id,
                 "pitcher": pitcher_name, **_s1_ha_fields(batter_id, pitcher_id, side, s1_pit),
                 "recent_tb_log": _recent_tb_log(batter_id)}
+
+    _pw_pairs = []
+    for _c in candidates:
+        _bid = id_map.get(_c["name"])
+        _pt  = team_map.get(_bid, "") if _bid else ""
+        if not _bid or not _pt: continue
+        if _team_match(_pt, _c["home_team"]):   _opp = _c["away_team"]
+        elif _team_match(_pt, _c["away_team"]): _opp = _c["home_team"]
+        else: continue
+        _pid = next((pi.get("id") for pt, pi in pitchers.items() if _team_match(pt, _opp)), None)
+        _pw_pairs.append((_bid, _pid))
+    _prewarm_s1_ha_cache(_pw_pairs)
 
     picks = []
     with ThreadPoolExecutor(max_workers=8) as _ex:
