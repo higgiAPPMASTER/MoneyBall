@@ -250,12 +250,20 @@ def _get_s1_vs_pitcher_uncached(batter_id, pitcher_id) -> dict:
     if not batter_id or not pitcher_id:
         return {"ba": None, "display": "N/A", "ab": 0}
     try:
+        # Use vsPlayerTotal = the TRUE career aggregate vs this pitcher (one
+        # split). The old "vsPlayer" query returns PER-SEASON splits, so reading
+        # splits[0] grabbed a single season — often the earliest/empty one — and
+        # badly understated the head-to-head (e.g. Albies .375/16AB career
+        # showed as "no history" because splits[0] was an empty 2018; Reynolds'
+        # real .250/20AB showed as a current-season .200/5AB). This is also the
+        # exact stat the hit-list gate (_check_batter) qualifies on, so the card
+        # now shows the SAME number that lets a batter onto the list.
         r = requests.get(
             f"https://statsapi.mlb.com/api/v1/people/{batter_id}/stats",
-            params={"stats": "vsPlayer", "opposingPlayerId": pitcher_id,
-                    "group": "hitting", "gameType": "R"}, timeout=10)
+            params={"stats": "vsPlayerTotal", "opposingPlayerId": pitcher_id,
+                    "group": "hitting"}, timeout=10)
         splits = r.json().get("stats", [{}])[0].get("splits", [])
-        if not splits: return {"ba": None, "display": "N/A", "ab": 0}
+        if not splits: return {"ba": None, "display": "N/A", "ab": 0, "hr": 0}
         stat = splits[0].get("stat", {})
         ab = int(stat.get("atBats", 0) or 0)
         h  = int(stat.get("hits",   0) or 0)
