@@ -1226,14 +1226,14 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     # ── STEP 1 ────────────────────────────────────────────────────────
     emit({"type": "section", "msg": "Step 1 — Loading player list from MLB Stats API"})
     step1 = get_step1_players_or_scrape(run_date, emit=emit)
-    # HIT LIST ONLY: keep batters who clear .250 career BA vs today's pitcher
-    # (min 4 AB) — i.e. Source-1 career-qualified. Streak / last-7 hot batters
+    # HIT LIST ONLY: keep batters who clear .225 career BA vs today's pitcher
+    # (min 3 AB) — i.e. Source-1 career-qualified. Streak / last-7 hot batters
     # that don't clear that bar are dropped from the hit candidates (they still
     # influenced ranking via the merged pool BA). No other category uses top30.
     top30 = [p for p in step1 if p.get("career_qualified")]
     pitcher_map = {p["batter"]: p["pitcher"] for p in top30}
     emit({"type": "step1_done",
-          "msg": f"✅ {len(top30)} hitters clear .250 vs pitcher (min 4 AB) — "
+          "msg": f"✅ {len(top30)} hitters clear .225 vs pitcher (min 3 AB) — "
                  f"from pool of {len(step1)}",
           "count": len(top30)})
 
