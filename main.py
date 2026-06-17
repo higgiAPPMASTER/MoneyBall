@@ -3740,19 +3740,34 @@ function _oppPitObj(pitName, market){
 // "No prior at-bats" when they've never met. Distinct from _oppPitBlock, which
 // shows that starter's OWN prop line.
 function _vsPitBlock(p){
-  var vp=p&&p.vs_pit; if(!vp) return '';
   var pit=(p.pitcher&&p.pitcher!=='TBD')?p.pitcher:'';
   if(!pit) return '';
-  var ab=vp.ab||0, inner;
-  if(ab>0){
-    var hr=vp.hr||0;
-    inner='<span style="font-family:monospace;font-weight:800;color:#e2e8f0">'+_esc(vp.display||'')+'</span>'
-      +(hr>0?('<span style="color:#fbbf24;font-weight:800;margin-left:8px">'+hr+' HR</span>'):'');
+  var vp=p&&p.vs_pit;
+  var inner, lbl;
+  if(p.s1_tag&&(p.s1_ab||0)>0){
+    // Statcast venue-split — matches the card face display exactly
+    lbl=(p.s1_tag||'Career')+' vs';
+    inner='<span style="font-family:monospace;font-weight:800;color:#e2e8f0">'+_esc(p.s1_disp||'')+'</span>';
+    // Show combined MLB Stats API career as a secondary footnote when available
+    if(vp&&(vp.ab||0)>0){
+      var hr=vp.hr||0;
+      inner+='<span style="color:#64748b;font-size:.76rem;margin-left:10px">'+_esc(vp.display||'')+' career'+(hr?(' \u00b7 '+hr+' HR'):'')+'</span>';
+    }
+  } else if(vp){
+    lbl='Career vs';
+    var ab=vp.ab||0;
+    if(ab>0){
+      var hr=vp.hr||0;
+      inner='<span style="font-family:monospace;font-weight:800;color:#e2e8f0">'+_esc(vp.display||'')+'</span>'
+        +(hr>0?('<span style="color:#fbbf24;font-weight:800;margin-left:8px">'+hr+' HR</span>'):'');
+    } else {
+      inner='<span style="font-size:.78rem;color:#64748b">No prior at-bats vs this starter</span>';
+    }
   } else {
-    inner='<span style="font-size:.78rem;color:#64748b">No prior at-bats vs this starter</span>';
+    return '';
   }
   return '<div style="margin-top:12px;padding:10px 12px;background:#0c1622;border-radius:8px;border:1px solid #1e2f3a">'
-    +'<div style="font-size:.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Career vs &middot; <span style="color:#cbd5e1">'+_esc(pit)+'</span></div>'
+    +'<div style="font-size:.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">'+lbl+' &middot; <span style="color:#cbd5e1">'+_esc(pit)+'</span></div>'
     +'<div style="font-size:.9rem">'+inner+'</div></div>';
 }
 function _oppPitBlock(p, market, statLabel, unit){
