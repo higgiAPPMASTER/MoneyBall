@@ -825,13 +825,20 @@ def _build_blurb(r):
     # line entirely when there's no real head-to-head sample (0 AB) or the
     # starter is still TBD.
     if pitcher and pitcher != "TBD":
+        _vline = ""
         try:
-            from under_picks import _get_s1_vs_pitcher
-            _vsp = _get_s1_vs_pitcher(r.get("player_id"), r.get("pit_id"))
+            from under_picks import _get_s1_vs_pitcher, _get_s1_vs_pitcher_ha
+            _hd = (_get_s1_vs_pitcher_ha(r.get("player_id"), r.get("pit_id")) or {}).get(side_str) or {}
+            if _hd.get("ab"):
+                _vline = f"{side_str.capitalize()} .{int(_hd['ba'] * 1000):03d} vs {pitcher} ({_hd['ab']} AB)"
+            else:
+                _vsp = _get_s1_vs_pitcher(r.get("player_id"), r.get("pit_id"))
+                if _vsp and (_vsp.get("ab") or 0) > 0 and _vsp.get("ba") is not None:
+                    _vline = f"Career .{int(_vsp['ba'] * 1000):03d} vs {pitcher} ({_vsp['ab']} AB)"
         except Exception:
-            _vsp = None
-        if _vsp and (_vsp.get("ab") or 0) > 0 and _vsp.get("ba") is not None:
-            parts.append(f"Career .{int(_vsp['ba'] * 1000):03d} vs {pitcher} ({_vsp['ab']} AB)")
+            _vline = ""
+        if _vline:
+            parts.append(_vline)
     s4 = r.get("s4") or {}
     if s4.get("games", 0) >= 1:
         hits_g = s4.get("hits_games", 0)
