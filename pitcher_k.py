@@ -43,6 +43,7 @@ LEAGUE_KRATE   = 22.0    # pitcher strikeout rate (K%) league average
 LEAGUE_AVG_PITCH_WOBA = 0.310  # MLB avg batter wOBA vs any pitch type, ~2024-2025
 _GB_XWOBA_CACHE: dict = {}     # {year: {player_id: {gb_pct, xwoba}}}
 _GAME_TOTALS:   dict = {}      # {(norm_home, norm_away): total_line}
+_EVENTS_CACHE:  dict = {}      # {run_date: [event, ...]} — shared across K + props fetch
 _VELO_CACHE:    dict = {}      # {year: {player_id: avg_release_speed_mph}}
 _KRATE_CACHE:   dict = {}      # {year: {player_id: k_percent}}
 _PK_PITCH_TYPES    = ["FF", "SL", "SI", "CH", "CU", "FC"]
@@ -206,6 +207,31 @@ def _get_bottom_k_teams(season: str, n: int = BOTTOM_K_TEAMS_N):
         return set(), []
 
 
+def _get_events_for_date(run_date: str) -> list:
+    """Fetch today's event list once and cache it — shared by K and props fetches."""
+    global _EVENTS_CACHE
+    if run_date in _EVENTS_CACHE:
+        return _EVENTS_CACHE[run_date]
+    tomorrow = (time.strftime("%Y-%m-%d",
+                 time.gmtime(time.mktime(time.strptime(run_date, "%Y-%m-%d")) + 86400)))
+    def _is_run_date_game(ct: str) -> bool:
+        if not ct: return False
+        day = ct[:10]
+        if day == run_date: return True
+        if day == tomorrow:
+            try:
+                return int(ct[11:13]) < 9
+            except Exception:
+                return False
+        return False
+    r = requests.get(f"{ODDS_BASE}/sports/baseball_mlb/events",
+        params={"apiKey": ODDS_API_KEY, "dateFormat": "iso"}, timeout=15)
+    r.raise_for_status()
+    events = [e for e in r.json() if _is_run_date_game(e.get("commence_time", ""))]
+    _EVENTS_CACHE[run_date] = events
+    return events
+
+
 def _fetch_k_lines(run_date: str, emit=None) -> list:
     """Per-event Odds API call — works on all paid plans."""
     def log(m):
@@ -216,35 +242,10 @@ def _fetch_k_lines(run_date: str, emit=None) -> list:
         return []
 
     PREFERRED = ["draftkings", "fanduel", "betmgm", "williamhill_us", "caesars", "betrivers", "ballybet", "bet365", "espnbet", "bet99", "thescore", "fliff", "mybookieag", "betonlineag", "bovada"]
-    MARKETS   = ["pitcher_strikeouts", "pitcher_strikeouts_alternate"]
-    # Tomorrow's UTC date derived from run_date (matches under_picks). Used only
-    # to keep tonight's late games that roll past midnight UTC — NOT to pull
-    # tomorrow's actual slate.
-    tomorrow  = (time.strftime("%Y-%m-%d",
-                  time.gmtime(time.mktime(time.strptime(run_date, "%Y-%m-%d")) + 86400)))
+    K_MARKETS = "pitcher_strikeouts,pitcher_strikeouts_alternate"
 
     try:
-        r = requests.get(f"{ODDS_BASE}/sports/baseball_mlb/events",
-            params={"apiKey": ODDS_API_KEY, "dateFormat": "iso"}, timeout=15)
-        if not r.ok:
-            log(f"  ⚠️  Odds API events returned {r.status_code}")
-            return []
-
-        def _is_run_date_game(ct: str) -> bool:
-            """True only for run_date games, plus tonight's late games that roll
-            into tomorrow's UTC date before 09:00 UTC. Tomorrow's real slate is
-            excluded."""
-            if not ct: return False
-            day = ct[:10]
-            if day == run_date: return True
-            if day == tomorrow:
-                try:
-                    return int(ct[11:13]) < 9
-                except Exception:
-                    return False
-            return False
-        events = [e for e in r.json()
-                  if _is_run_date_game(e.get("commence_time", ""))]
+        events = _get_events_for_date(run_date)
         log(f"  Odds API: {len(events)} games for {run_date}")
         seen: dict = {}
         ladder: dict = {}
@@ -252,40 +253,39 @@ def _fetch_k_lines(run_date: str, emit=None) -> list:
         for ev in events:
             home_team = ev.get("home_team", "")
             away_team = ev.get("away_team", "")
-            for market in MARKETS:
-                r2 = requests.get(
-                    f"{ODDS_BASE}/sports/baseball_mlb/events/{ev['id']}/odds",
-                    params={"apiKey": ODDS_API_KEY, "regions": "us,us2,ca",
-                            "markets": market,
-                            "oddsFormat": "american"}, timeout=15)
-                if not r2.ok: continue
-                for bm in r2.json().get("bookmakers", []):
-                    bk = bm.get("key")
-                    for mkt in bm.get("markets", []):
-                        for oc in mkt.get("outcomes", []):
-                            name  = (oc.get("description") or oc.get("name", "")).strip()
-                            pt    = oc.get("point")
-                            side  = oc.get("name", "")
-                            price = oc.get("price")
-                            if not name or pt is None: continue
-                            key = _normalize(name)
-                            if side == "Over" and price is not None:
-                                ladder.setdefault(key, {}).setdefault(float(pt), price)
-                            entry = seen.get(key)
-                            if entry is None:
-                                entry = {"name": name, "line": float(pt),
-                                         "home_team": home_team, "away_team": away_team,
-                                         "over_odds": None, "under_odds": None}
-                                seen[key] = entry
-                            # Only take odds posted at the displayed line so the
-                            # best-book price always matches the shown line.
-                            if abs(float(pt) - entry["line"]) > 1e-9:
-                                continue
-                            if side == "Over":
-                                _take_odds(entry, "over_odds", "over_odds_book", price, bk)
-                            elif side == "Under":
-                                _take_odds(entry, "under_odds", "under_odds_book", price, bk)
-                    break
+            r2 = requests.get(
+                f"{ODDS_BASE}/sports/baseball_mlb/events/{ev['id']}/odds",
+                params={"apiKey": ODDS_API_KEY, "regions": "us,us2,ca",
+                        "markets": K_MARKETS,
+                        "oddsFormat": "american"}, timeout=15)
+            if not r2.ok: continue
+            for bm in r2.json().get("bookmakers", []):
+                bk = bm.get("key")
+                for mkt in bm.get("markets", []):
+                    for oc in mkt.get("outcomes", []):
+                        name  = (oc.get("description") or oc.get("name", "")).strip()
+                        pt    = oc.get("point")
+                        side  = oc.get("name", "")
+                        price = oc.get("price")
+                        if not name or pt is None: continue
+                        key = _normalize(name)
+                        if side == "Over" and price is not None:
+                            ladder.setdefault(key, {}).setdefault(float(pt), price)
+                        entry = seen.get(key)
+                        if entry is None:
+                            entry = {"name": name, "line": float(pt),
+                                     "home_team": home_team, "away_team": away_team,
+                                     "over_odds": None, "under_odds": None}
+                            seen[key] = entry
+                        # Only take odds posted at the displayed line so the
+                        # best-book price always matches the shown line.
+                        if abs(float(pt) - entry["line"]) > 1e-9:
+                            continue
+                        if side == "Over":
+                            _take_odds(entry, "over_odds", "over_odds_book", price, bk)
+                        elif side == "Under":
+                            _take_odds(entry, "under_odds", "under_odds_book", price, bk)
+                break
         for key, entry in seen.items():
             entry["over_ladder"] = ladder.get(key, {})
         return list(seen.values())
@@ -309,28 +309,8 @@ def _fetch_pitcher_props(run_date: str, emit=None) -> None:
         log("⚠️  ODDS_API_KEY not set — Pitcher prop picks skipped")
         return
 
-    tomorrow  = (time.strftime("%Y-%m-%d",
-                  time.gmtime(time.mktime(time.strptime(run_date, "%Y-%m-%d")) + 86400)))
-
-    def _is_run_date_game(ct: str) -> bool:
-        if not ct: return False
-        day = ct[:10]
-        if day == run_date: return True
-        if day == tomorrow:
-            try:
-                return int(ct[11:13]) < 9
-            except Exception:
-                return False
-        return False
-
     try:
-        r = requests.get(f"{ODDS_BASE}/sports/baseball_mlb/events",
-            params={"apiKey": ODDS_API_KEY, "dateFormat": "iso"}, timeout=15)
-        if not r.ok:
-            log(f"  ⚠️  Odds API events returned {r.status_code} (props)")
-            return
-        events = [e for e in r.json()
-                  if _is_run_date_game(e.get("commence_time", ""))]
+        events = _get_events_for_date(run_date)
         for ev in events:
             home_team = ev.get("home_team", "")
             away_team = ev.get("away_team", "")
