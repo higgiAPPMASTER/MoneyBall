@@ -719,10 +719,15 @@ def _mlb_box_lookup(date_str: str):
                 bat = pdata.get("stats", {}).get("batting")  or {}
                 pit = pdata.get("stats", {}).get("pitching") or {}
                 _hrr = ((bat.get("hits") or 0) + (bat.get("runs") or 0) + (bat.get("rbi") or 0)) if bat else None
+                _tb = bat.get("totalBases") if bat else None
+                if bat and _tb is None and bat.get("hits") is not None:
+                    _h = bat.get("hits") or 0; _2b = bat.get("doubles") or 0
+                    _3b = bat.get("triples") or 0; _hr = bat.get("homeRuns") or 0
+                    _tb = (_h - _2b - _3b - _hr) + 2 * _2b + 3 * _3b + 4 * _hr
                 rows.append((int(pid), full_name, {
                     "hits":         bat.get("hits"),
                     "runs":         bat.get("runs"),
-                    "total_bases":  bat.get("totalBases"),
+                    "total_bases":  _tb,
                     "rbi":          bat.get("rbi"),
                     "walks_bat":    bat.get("baseOnBalls"),
                     "homeRuns":     bat.get("homeRuns"),
@@ -1690,6 +1695,42 @@ def _recent_bet(d) -> bool:
     except Exception:
         return False
 
+# Parlay legs are logged from the cart with a category code (BWALK/TBO/RBI/…) but,
+# for several batter categories, the frontend historically stored an EMPTY stat_key.
+# An empty key makes the box lookup read st.get("") -> None, so the leg can NEVER
+# grade — under the old default-0 logic it silently auto-won every UNDER and auto-lost
+# every batter OVER. Recover the real stat field from the leg's stat_label (preferred,
+# unambiguous) or its category code so already-logged legs heal on the next re-grade.
+_STAT_LABEL_KEYS = {
+    "hits": "hits", "runs": "runs", "total bases": "total_bases", "rbi": "rbi",
+    "hr": "homeRuns", "home runs": "homeRuns", "walks": "walks_bat",
+    "batter walks": "walks_bat", "h+r+rbi": "hrr", "ks": "strikeOuts",
+    "strikeouts": "strikeOuts", "outs": "outs", "hits allowed": "hits_allowed",
+    "earned runs": "earnedRuns", "walks allowed": "walks",
+}
+_STAT_CAT_KEYS = {
+    "hit": "hits", "hits": "hits", "hitter hits": "hits", "run": "runs",
+    "runs": "runs", "rbi": "rbi", "hrr": "hrr", "hr": "homeRuns",
+    "bwalk": "walks_bat", "batter walks": "walks_bat", "tb": "total_bases",
+    "tbo": "total_bases", "tbu": "total_bases", "tb over": "total_bases",
+    "tb under": "total_bases", "k": "strikeOuts", "pitcher ks": "strikeOuts",
+    "pitcher outs": "outs", "pitcher hits allowed": "hits_allowed",
+    "pitcher_hits_allowed": "hits_allowed", "pitcher_outs": "outs",
+    "pitcher_earned_runs": "earnedRuns", "pitcher_walks": "walks",
+    "pitcher walks": "walks",
+}
+def _resolve_stat_key(bet: dict) -> str:
+    """The stat field this bet grades against. Falls back to stat_label / category
+    when stat_key is blank (older parlay legs were logged without one)."""
+    sk = (bet.get("stat_key") or "").strip()
+    if sk:
+        return sk
+    lbl = (bet.get("stat_label") or "").strip().lower()
+    if lbl in _STAT_LABEL_KEYS:
+        return _STAT_LABEL_KEYS[lbl]
+    cat = (bet.get("category") or "").strip().lower()
+    return _STAT_CAT_KEYS.get(cat, "")
+
 def _settle_bet_cached(bet: dict, name_stats: dict, all_final: bool = False) -> bool:
     """Grade a pending bet using pre-fetched name_stats (no extra API call).
     A player who never appears on a fully-Final, cleanly-fetched slate is VOID
@@ -1723,8 +1764,8 @@ def _settle_bet_cached(bet: dict, name_stats: dict, all_final: bool = False) -> 
         if (not st) and all_final:
             return _void()
         return False
-    stat_key = bet.get("stat_key")
-    actual = st.get(stat_key)
+    stat_key = _resolve_stat_key(bet)
+    actual = st.get(stat_key) if stat_key else None
     if actual is None:
         # stat line missing (DNP / not yet posted). NEVER assume 0 — void on a
         # fully-final slate, otherwise leave pending until the box populates.
@@ -1960,7 +2001,7 @@ async def add_bet(request: Request, token: str = "", admin: str = ""):
                 "opp":        (lg.get("opp") or "").strip(),
                 "category":   (lg.get("category") or "").strip(),
                 "side":       (lg.get("side") or "OVER").strip().upper(),
-                "stat_key":   (lg.get("stat_key") or "").strip(),
+                "stat_key":   _resolve_stat_key(lg),
                 "stat_label": (lg.get("stat_label") or "").strip(),
                 "line":       lline,
                 "odds":       lg.get("odds"),
@@ -8091,11 +8132,18 @@ async function _saveManualBet(){
   }catch(e){ msg.textContent=(e.message||'Save failed'); btn.disabled=false; btn.textContent='Log Bet'; }
 }
 function _legStatKey(l){
-  if(l.type==='UNDER') return l.stat==='Total Bases'?'':'hits';
-  var m={HIT:'hits',K:'strikeOuts',RUN:'runs',
+  var lbl=((l.stat||'')+'').toLowerCase().trim();
+  var byLabel={'hits':'hits','runs':'runs','total bases':'total_bases','rbi':'rbi',
+    'hr':'homeRuns','home runs':'homeRuns','walks':'walks_bat','batter walks':'walks_bat',
+    'h+r+rbi':'hrr','ks':'strikeOuts','strikeouts':'strikeOuts','outs':'outs',
+    'hits allowed':'hits_allowed','earned runs':'earnedRuns','walks allowed':'walks'};
+  if(byLabel[lbl]) return byLabel[lbl];
+  var byType={HIT:'hits',HITS:'hits',K:'strikeOuts',RUN:'runs',RUNS:'runs',
+    RBI:'rbi',HRR:'hrr',HR:'homeRuns',BWALK:'walks_bat',TB:'total_bases',
+    TBO:'total_bases',TBU:'total_bases',
     pitcher_hits_allowed:'hits_allowed',pitcher_outs:'outs',
     pitcher_earned_runs:'earnedRuns',pitcher_walks:'walks'};
-  return m[l.type]||'';
+  return byType[l.type]||'';
 }
 function _parlayBetForm(){
   var legs=window._parlayLegs||[]; if(!legs.length) return;
