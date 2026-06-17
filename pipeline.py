@@ -1,60 +1,843 @@
 
 """
-pipeline.py — MLB Daily Picks master pipeline (web-optimized).
-Runs all 4 steps with real-time progress via emit callback.
+pitcher_k.py — Pitcher Strikeout Picks for MoneyBall.
+
+Algorithm:
+  Step 1 : Get pitcher K lines from The Odds API (pitcher_strikeouts market).
+  Step 2 : Pull career H/A game logs vs today's specific opponent.
+           Calculate avg Ks in those H/A starts.
+  Pick   : avg > line -> OVER  |  avg < line -> UNDER
+           Min 2 qualifying starts required.
 """
-import os, sys, time, json, math, requests
-from concurrent.futures import ThreadPoolExecutor as _TPEx
+import os, time, requests
+from datetime import date
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+ODDS_API_KEY  = os.environ.get("ODDS_API_KEY", "")
+ODDS_BASE     = "https://api.the-odds-api.com/v4"
+MLB_API       = "https://statsapi.mlb.com/api/v1"
 
-from fic_cache        import get_step1_players_or_scrape, slate_has_tbd
-from mlb_roster       import build_player_roster
-from mlb_stats_splits import fetch_step2_ba, fetch_step3_ba, prefetch_game_logs
+MIN_STARTS       = 1
+MIN_IP_START     = 3.0
+K_SEASONS        = [2021, 2022, 2023, 2024, 2025, 2026]
+SEASON           = "2026"
+BOTTOM_K_TEAMS_N = 0  # disabled — show all teams
+MIN_K_EDGE       = 0.5  # projection must beat the line by ≥0.5 K or pick is dropped
+LEAGUE_AVG_K_PER_GAME = 16.5   # 2024-2026 MLB avg Ks per game (both teams combined)
+_UMP_K_CACHE: dict = {}         # {ump_name: ump_dict | None} — season-level cache
+# ── Projection-model edges (handedness K% + whiff% + rest) ──────────────────
+LEAGUE_K_PCT   = 0.222   # MLB avg strikeout rate (SO / PA), 2024-2025
+LEAGUE_WHIFF   = 24.5    # MLB avg whiff% (whiffs / swings), Baseball Savant
+LEAGUE_AVG     = 0.243   # MLB avg batting average, 2024-2025 (hits projection)
+LEAGUE_BB_PCT  = 0.083   # MLB avg walk rate (BB / PA), 2024-2025 (walks projection)
+LEAGUE_OPS     = 0.711   # MLB avg OPS, 2024-2025 (earned-runs projection)
+_WHIFF_CACHE: dict = {}        # {year: {player_id: whiff_pct}}
+_PITCH_HAND_CACHE: dict = {}   # {pitcher_id: "R"/"L"}
+_OPP_KPCT_CACHE: dict = {}     # {(opp_id, hand, season): k_pct}
+_OPP_SPLIT_CACHE: dict = {}    # {(opp_id, hand, season): {k_pct,avg,bb_pct,ops}}
+LEAGUE_GB_PCT  = 43.0    # MLB avg groundball rate %, 2024-2025
+LEAGUE_XWOBA   = 0.315   # MLB avg xwOBA-against (pitcher), 2024-2025
+LEAGUE_TOTAL   = 8.5     # MLB avg game O/U total, 2024-2025
+LEAGUE_VELO    = 93.3    # MLB avg fastball velocity (mph), 2024-2025
+LEAGUE_KRATE   = 22.0    # pitcher strikeout rate (K%) league average
+LEAGUE_AVG_PITCH_WOBA = 0.310  # MLB avg batter wOBA vs any pitch type, ~2024-2025
+_GB_XWOBA_CACHE: dict = {}     # {year: {player_id: {gb_pct, xwoba}}}
+_GAME_TOTALS:   dict = {}      # {(norm_home, norm_away): total_line}
+_VELO_CACHE:    dict = {}      # {year: {player_id: avg_release_speed_mph}}
+_KRATE_CACHE:   dict = {}      # {year: {player_id: k_percent}}
+_PK_PITCH_TYPES    = ["FF", "SL", "SI", "CH", "CU", "FC"]
+_PK_ARSENAL_CACHE: dict = {}   # {pitcher_id: {pitch_type: usage_pct}}
+_PK_BATTER_WOBA_CACHE: dict = {}  # {batter_id: {pitch_type: woba}}
+_PK_PITCH_LOADED:  set  = set()   # years fetched for pitch-type data
+_PK_LINEUP_MAP:    dict = {}      # {norm_team: [batter_id_int]} — tonight's lineups
 
-# ── BvP pitch-type matchup ────────────────────────────────────────────────
-# For each opposing pitcher: load their pitch-usage % from Statcast.
-# For each hitter: load their wOBA vs each pitch type from Statcast.
-# Compute a weighted wOBA (weighted by pitcher's usage %) → ranking nudge.
-# All data is season-level (cached once per run); silently skipped on Savant
-# throttle so no picks are lost when the endpoint returns an empty 200.
+# ── Best-price book selection ──────────────────────────────────────────────
+# Show the BEST price across ALL sportsbooks; big US books win on ties.
+# Priority: DraftKings / FanDuel / BetMGM / Caesars first, then mid-tier,
+# then smaller books (Fliff, ESPN BET, offshore, etc.) at the bottom.
+_PRIORITY_BOOKS = ("draftkings", "fanduel", "betmgm", "williamhill_us", "caesars",
+                   "betrivers", "ballybet", "bet365", "espnbet",
+                   "bet99", "thescore", "fliff", "mybookieag", "betonlineag", "bovada")
+_BOOK_PRIORITY = {b: i for i, b in enumerate(_PRIORITY_BOOKS)}
+_BOOK_LABEL = {"bet99":"Bet99","thescore":"theScore","bet365":"Bet365","draftkings":"DK","fanduel":"FanDuel","betmgm":"BetMGM","caesars":"Caesars","williamhill_us":"Caesars","betrivers":"BetRivers","ballybet":"Bally Bet","espnbet":"ESPN BET","fliff":"Fliff","mybookieag":"MyBookie","betonlineag":"BetOnline","bovada":"Bovada"}
+def _book_label(k):
+    return _BOOK_LABEL.get(k, (k or "").replace("_"," ").title())
+def _take_odds(entry, price_field, book_field, price, book_key):
+    """All books: keep the best American price; tie-break by book priority (big books first)."""
+    if price is None:
+        return
+    cur = entry.get(price_field)
+    cur_book = entry.get(book_field)
+    if cur is None or price > cur or (price == cur and _BOOK_PRIORITY.get(book_key, 999) < _BOOK_PRIORITY.get(cur_book, 999)):
+        entry[price_field] = price
+        entry[book_field] = book_key
 
-_PITCH_TYPES    = ["FF", "SL", "SI", "CH", "CU", "FC", "FS", "ST"]
-_ARSENAL_CACHE: dict = {}   # pitcher_id (int) -> {pitch_type: usage_pct}
-_BATTER_PITCH_CACHE: dict = {}  # batter_id (int) -> {pitch_type: woba}
-_PITCH_LOADED:  set  = set()   # years already fetched
-
-_SAVANT_HDRS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                  "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"
+# ── Pitcher prop O/U categories (real Odds API markets, parallel to K) ─────
+# Each is a true Over/Under betting line that feeds the parlay builder.
+# Data comes from the SAME pitching gameLog already pulled for K's:
+#   hits allowed = stat["hits"], outs = inningsPitched×3, earned runs = stat["earnedRuns"].
+PROP_MARKETS = ["pitcher_hits_allowed", "pitcher_outs", "pitcher_earned_runs", "pitcher_walks"]
+# market -> (display label, per-start value field on the stat dicts, unit suffix)
+PROP_META = {
+    "pitcher_hits_allowed": ("Hits Allowed", "h",    "H"),
+    "pitcher_outs":         ("Outs",         "outs", " outs"),
+    "pitcher_earned_runs":  ("Earned Runs",  "er",   "ER"),
+    "pitcher_walks":        ("Walks Allowed", "bb",  "BB"),
 }
+# Min projection-vs-line edge to post an O/U pick (thin coin-flips dropped).
+# Membership ALSO flags which markets get the opponent-adjusted projection.
+# Outs use a larger edge (~half an inning) since outs are bigger, noisier numbers
+# than hits/walks/ER, so a fraction-of-an-out "edge" would be meaningless.
+PROP_EDGE = {
+    "pitcher_hits_allowed": 0.6,
+    "pitcher_earned_runs":  0.5,
+    "pitcher_walks":        0.4,
+    "pitcher_outs":         1.5,
+}
+# Populated by _fetch_pitcher_props each run (cleared at the start so a warm
+# process / 3×-day scheduler never serves a stale matchup):
+#   {market: {norm_name: {name,line,over_odds,under_odds,home_team,away_team}}}
+PROP_ODDS = {}
 
-_BATTER_SAV_CACHE: dict = {}   # {year: {player_id: {xba, hard_hit_pct}}}
-LEAGUE_HARD_HIT   = 35.0       # MLB avg hard-hit rate % (exit velo >= 95 mph), 2024-2025
-LEAGUE_XBA        = 0.245      # MLB avg expected batting average (xBA), 2024-2025
+# Populated by _get_bottom_k_teams each run.
+# Full MLB team K/game ranking: key = team name, value = {rank, k_per_g, total}
+# rank 1 = most Ks (easiest matchup for pitcher), rank 30 = fewest Ks (toughest).
+TEAM_K_RANKS: dict = {}
+# Home/away split K rankings (rank 1 = most Ks = easiest matchup for pitcher)
+TEAM_K_RANKS_HOME: dict = {}   # opponent's rank when playing at HOME
+TEAM_K_RANKS_AWAY: dict = {}   # opponent's rank when playing AWAY (road)
+# Full MLB team BB/game ranking (walks DRAWN by offense).
+# rank 1 = most BBs drawn (hardest matchup for pitcher control), rank 30 = fewest.
+TEAM_BB_RANKS: dict = {}
 
-def _fetch_batter_savant(year: str) -> dict:
-    """Bulk-fetch hitter xBA + hard-hit% from Baseball Savant. Cached per year."""
-    if _BATTER_SAV_CACHE.get(year):
-        return _BATTER_SAV_CACHE[year]
+_pitcher_id_cache = {}
+_team_id_cache    = {}
+
+
+def _normalize(text: str) -> str:
+    subs = {'á':'a','à':'a','ä':'a','é':'e','è':'e','ë':'e',
+            'í':'i','ì':'i','ó':'o','ò':'o','ö':'o','ú':'u',
+            'ù':'u','ü':'u','ñ':'n','ç':'c'}
+    t = text.lower()
+    for a, p in subs.items():
+        t = t.replace(a, p)
+    return t
+
+
+def _teams_match(t1: str, t2: str) -> bool:
+    n1, n2 = _normalize(t1), _normalize(t2)
+    if n1 == n2 or n1 in n2 or n2 in n1: return True
+    stop = {"of", "the", "los", "las", "san", "new", "de"}
+    w1 = set(n1.split()) - stop
+    w2 = set(n2.split()) - stop
+    return len(w1 & w2) >= 2
+
+
+def _ip_to_float(ip_str) -> float:
+    try:
+        parts = str(ip_str).split(".")
+        return int(parts[0]) + (int(parts[1]) if len(parts) > 1 else 0) / 3.0
+    except Exception:
+        return 0.0
+
+
+def _get_bottom_k_teams(season: str, n: int = BOTTOM_K_TEAMS_N):
+    global TEAM_K_RANKS, TEAM_BB_RANKS, TEAM_K_RANKS_HOME, TEAM_K_RANKS_AWAY
+    try:
+        r = requests.get(f"{MLB_API}/teams/stats",
+            params={"season": season, "sportId": 1, "group": "hitting", "stats": "season"},
+            timeout=12)
+        splits = r.json().get("stats", [{}])[0].get("splits", [])
+        teams_data = []
+        bb_data = []
+        for sp in splits:
+            stat = sp.get("stat", {})
+            tname = sp.get("team", {}).get("name", "")
+            ks = stat.get("strikeOuts", 0)
+            bb = stat.get("baseOnBalls", 0)
+            gp = stat.get("gamesPlayed", 1)
+            if gp < 5: continue
+            teams_data.append({"name": tname, "k_per_g": round(ks / gp, 2)})
+            bb_data.append({"name": tname, "bb_per_g": round(bb / gp, 2)})
+        teams_data.sort(key=lambda x: x["k_per_g"])
+        bottom_n = teams_data[:n]
+        # Build full K ranking: rank 1 = most Ks per game (easiest for pitchers)
+        teams_desc = sorted(teams_data, key=lambda x: x["k_per_g"], reverse=True)
+        total = len(teams_desc)
+        TEAM_K_RANKS = {t["name"]: {"rank": i + 1, "k_per_g": t["k_per_g"], "total": total}
+                        for i, t in enumerate(teams_desc)}
+        # Build BB ranking: rank 1 = most BBs drawn (hardest for pitcher command)
+        bb_desc = sorted(bb_data, key=lambda x: x["bb_per_g"], reverse=True)
+        bb_total = len(bb_desc)
+        TEAM_BB_RANKS = {t["name"]: {"rank": i + 1, "bb_per_g": t["bb_per_g"], "total": bb_total}
+                         for i, t in enumerate(bb_desc)}
+        # ── Home / Away K split rankings ─────────────────────────────────────
+        try:
+            rha = requests.get(f"{MLB_API}/teams/stats",
+                params={"season": season, "sportId": 1, "group": "hitting", "stats": "homeAndAway"},
+                timeout=12)
+            ha_splits = rha.json().get("stats", [{}])[0].get("splits", [])
+            home_data, away_data = [], []
+            for sp in ha_splits:
+                stat = sp.get("stat", {})
+                tname = sp.get("team", {}).get("name", "")
+                ks = stat.get("strikeOuts", 0)
+                gp = stat.get("gamesPlayed", 1)
+                code = (sp.get("split") or {}).get("code", "")
+                if gp < 3: continue
+                entry = {"name": tname, "k_per_g": round(ks / gp, 2)}
+                if code == "H":
+                    home_data.append(entry)
+                elif code in ("A", "R"):
+                    away_data.append(entry)
+            for data, is_home in ((home_data, True), (away_data, False)):
+                desc = sorted(data, key=lambda x: x["k_per_g"], reverse=True)
+                tot = len(desc)
+                ranks = {t["name"]: {"rank": i + 1, "k_per_g": t["k_per_g"], "total": tot}
+                         for i, t in enumerate(desc)}
+                if is_home:
+                    TEAM_K_RANKS_HOME = ranks
+                else:
+                    TEAM_K_RANKS_AWAY = ranks
+        except Exception as e:
+            print(f"[pitcher_k] home/away K ranks failed: {e}")
+        return {t["name"] for t in bottom_n}, bottom_n
+    except Exception:
+        return set(), []
+
+
+def _fetch_k_lines(run_date: str, emit=None) -> list:
+    """Per-event Odds API call — works on all paid plans."""
+    def log(m):
+        if emit: emit({"type": "log", "msg": m})
+
+    if not ODDS_API_KEY:
+        log("⚠️  ODDS_API_KEY not set — Pitcher K Picks skipped")
+        return []
+
+    PREFERRED = ["draftkings", "fanduel", "betmgm", "williamhill_us", "caesars", "betrivers", "ballybet", "bet365", "espnbet", "bet99", "thescore", "fliff", "mybookieag", "betonlineag", "bovada"]
+    MARKETS   = ["pitcher_strikeouts", "pitcher_strikeouts_alternate"]
+    # Tomorrow's UTC date derived from run_date (matches under_picks). Used only
+    # to keep tonight's late games that roll past midnight UTC — NOT to pull
+    # tomorrow's actual slate.
+    tomorrow  = (time.strftime("%Y-%m-%d",
+                  time.gmtime(time.mktime(time.strptime(run_date, "%Y-%m-%d")) + 86400)))
+
+    try:
+        r = requests.get(f"{ODDS_BASE}/sports/baseball_mlb/events",
+            params={"apiKey": ODDS_API_KEY, "dateFormat": "iso"}, timeout=15)
+        if not r.ok:
+            log(f"  ⚠️  Odds API events returned {r.status_code}")
+            return []
+
+        def _is_run_date_game(ct: str) -> bool:
+            """True only for run_date games, plus tonight's late games that roll
+            into tomorrow's UTC date before 09:00 UTC. Tomorrow's real slate is
+            excluded."""
+            if not ct: return False
+            day = ct[:10]
+            if day == run_date: return True
+            if day == tomorrow:
+                try:
+                    return int(ct[11:13]) < 9
+                except Exception:
+                    return False
+            return False
+        events = [e for e in r.json()
+                  if _is_run_date_game(e.get("commence_time", ""))]
+        log(f"  Odds API: {len(events)} games for {run_date}")
+        seen: dict = {}
+        ladder: dict = {}
+
+        for ev in events:
+            home_team = ev.get("home_team", "")
+            away_team = ev.get("away_team", "")
+            for market in MARKETS:
+                r2 = requests.get(
+                    f"{ODDS_BASE}/sports/baseball_mlb/events/{ev['id']}/odds",
+                    params={"apiKey": ODDS_API_KEY, "regions": "us,us2,ca",
+                            "markets": market,
+                            "oddsFormat": "american"}, timeout=15)
+                if not r2.ok: continue
+                for bm in r2.json().get("bookmakers", []):
+                    bk = bm.get("key")
+                    for mkt in bm.get("markets", []):
+                        for oc in mkt.get("outcomes", []):
+                            name  = (oc.get("description") or oc.get("name", "")).strip()
+                            pt    = oc.get("point")
+                            side  = oc.get("name", "")
+                            price = oc.get("price")
+                            if not name or pt is None: continue
+                            key = _normalize(name)
+                            if side == "Over" and price is not None:
+                                ladder.setdefault(key, {}).setdefault(float(pt), price)
+                            entry = seen.get(key)
+                            if entry is None:
+                                entry = {"name": name, "line": float(pt),
+                                         "home_team": home_team, "away_team": away_team,
+                                         "over_odds": None, "under_odds": None}
+                                seen[key] = entry
+                            # Only take odds posted at the displayed line so the
+                            # best-book price always matches the shown line.
+                            if abs(float(pt) - entry["line"]) > 1e-9:
+                                continue
+                            if side == "Over":
+                                _take_odds(entry, "over_odds", "over_odds_book", price, bk)
+                            elif side == "Under":
+                                _take_odds(entry, "under_odds", "under_odds_book", price, bk)
+                    break
+        for key, entry in seen.items():
+            entry["over_ladder"] = ladder.get(key, {})
+        return list(seen.values())
+    except Exception as exc:
+        log(f"  ⚠️  Odds API error: {exc}")
+        return []
+
+
+def _fetch_pitcher_props(run_date: str, emit=None) -> None:
+    """Pull the 3 pitcher prop O/U lines (hits allowed / outs / earned runs) into
+    the module-global PROP_ODDS. ONE Odds API call per event (all 3 markets in a
+    single request) — separate from the K fetch so the proven K path is untouched.
+    First posted line per pitcher per market wins; captures Over AND Under odds."""
+    def log(m):
+        if emit: emit({"type": "log", "msg": m})
+
+    PROP_ODDS.clear()
+    for m in PROP_MARKETS:
+        PROP_ODDS[m] = {}
+    if not ODDS_API_KEY:
+        log("⚠️  ODDS_API_KEY not set — Pitcher prop picks skipped")
+        return
+
+    tomorrow  = (time.strftime("%Y-%m-%d",
+                  time.gmtime(time.mktime(time.strptime(run_date, "%Y-%m-%d")) + 86400)))
+
+    def _is_run_date_game(ct: str) -> bool:
+        if not ct: return False
+        day = ct[:10]
+        if day == run_date: return True
+        if day == tomorrow:
+            try:
+                return int(ct[11:13]) < 9
+            except Exception:
+                return False
+        return False
+
+    try:
+        r = requests.get(f"{ODDS_BASE}/sports/baseball_mlb/events",
+            params={"apiKey": ODDS_API_KEY, "dateFormat": "iso"}, timeout=15)
+        if not r.ok:
+            log(f"  ⚠️  Odds API events returned {r.status_code} (props)")
+            return
+        events = [e for e in r.json()
+                  if _is_run_date_game(e.get("commence_time", ""))]
+        for ev in events:
+            home_team = ev.get("home_team", "")
+            away_team = ev.get("away_team", "")
+            r2 = requests.get(
+                f"{ODDS_BASE}/sports/baseball_mlb/events/{ev['id']}/odds",
+                params={"apiKey": ODDS_API_KEY, "regions": "us,us2,ca",
+                        "markets": ",".join(PROP_MARKETS),
+                        "oddsFormat": "american"}, timeout=15)
+            if not r2.ok: continue
+            for bm in r2.json().get("bookmakers", []):
+                bk = bm.get("key")
+                for mkt in bm.get("markets", []):
+                    mk = mkt.get("key")
+                    if mk not in PROP_ODDS: continue
+                    for oc in mkt.get("outcomes", []):
+                        name  = (oc.get("description") or oc.get("name", "")).strip()
+                        pt    = oc.get("point")
+                        side  = oc.get("name", "")
+                        price = oc.get("price")
+                        if not name or pt is None or price is None: continue
+                        key = _normalize(name)
+                        d = PROP_ODDS[mk].get(key)
+                        if d is None:
+                            d = {"name": name, "line": float(pt),
+                                 "home_team": home_team, "away_team": away_team,
+                                 "over_odds": None, "under_odds": None}
+                            PROP_ODDS[mk][key] = d
+                        if abs(float(pt) - d["line"]) > 1e-9:
+                            continue  # only the displayed line for this pitcher
+                        if side == "Over":
+                            _take_odds(d, "over_odds", "over_odds_book", price, bk)
+                        elif side == "Under":
+                            _take_odds(d, "under_odds", "under_odds_book", price, bk)
+        log(f"  Pitcher props: " +
+            ", ".join(f"{PROP_META[m][0]} {len(PROP_ODDS[m])}" for m in PROP_MARKETS))
+    except Exception as exc:
+        log(f"  ⚠️  Odds API error (props): {exc}")
+
+
+def _get_pitcher_id(full_name: str):
+    key = _normalize(full_name)
+    if key in _pitcher_id_cache: return _pitcher_id_cache[key]
+    try:
+        last = full_name.strip().split()[-1]
+        r = requests.get(f"{MLB_API}/people/search",
+            params={"names": last, "sportId": 1}, timeout=8)
+        norm = _normalize(full_name)
+        candidates = r.json().get("people", [])
+        # Pass 1: exact full name + pitcher/TWP position
+        for p in candidates:
+            if (_normalize(p.get("fullName", "")) == norm and p.get("active") and
+                    p.get("primaryPosition", {}).get("code") in ("1", "TWP")):
+                _pitcher_id_cache[key] = p["id"]
+                return p["id"]
+        # Pass 2: last name + pitcher/TWP position
+        for p in candidates:
+            if (_normalize(p.get("lastName", "")) == _normalize(last) and
+                    p.get("active") and p.get("primaryPosition", {}).get("code") in ("1", "TWP")):
+                _pitcher_id_cache[key] = p["id"]
+                return p["id"]
+        # Pass 3: exact full name, any position — catches two-way players (e.g. Ohtani)
+        # whose primaryPosition code is registered as DH/hitter in the API.
+        # Safe because we still require an exact full-name match.
+        for p in candidates:
+            if _normalize(p.get("fullName", "")) == norm and p.get("active"):
+                _pitcher_id_cache[key] = p["id"]
+                return p["id"]
+        # Pass 4: exact full name + pitcher/TWP, ignore active flag — catches IL/rehab
+        # pitchers who have an Odds API K line today but are still marked inactive in
+        # the MLB Stats API (e.g. McClanahan post-TJ, E. Rodriguez on IL start).
+        for p in candidates:
+            if (_normalize(p.get("fullName", "")) == norm and
+                    p.get("primaryPosition", {}).get("code") in ("1", "TWP")):
+                _pitcher_id_cache[key] = p["id"]
+                return p["id"]
+    except Exception:
+        pass
+    return None
+
+
+def _get_pitcher_team(pitcher_id: int) -> str:
+    try:
+        r = requests.get(f"{MLB_API}/people/{pitcher_id}",
+            params={"hydrate": "currentTeam"}, timeout=8)
+        return r.json()["people"][0].get("currentTeam", {}).get("name", "")
+    except Exception:
+        return ""
+
+
+def _get_team_id(team_name: str):
+    key = _normalize(team_name)
+    if key in _team_id_cache: return _team_id_cache[key]
+    try:
+        r = requests.get(f"{MLB_API}/teams",
+            params={"sportId": 1, "season": SEASON}, timeout=8)
+        for t in r.json().get("teams", []):
+            if _teams_match(t.get("name", ""), team_name):
+                _team_id_cache[key] = t["id"]
+                return t["id"]
+    except Exception:
+        pass
+    return None
+
+
+def _get_pitching_logs(pitcher_id: int, season: int) -> list:
+    try:
+        r = requests.get(f"{MLB_API}/people/{pitcher_id}/stats",
+            params={"stats": "gameLog", "group": "pitching",
+                    "season": season, "gameType": "R"}, timeout=12)
+        data = r.json().get("stats", [])
+        return data[0].get("splits", []) if data else []
+    except Exception:
+        return []
+
+
+def _get_recent_k_form(pitcher_id: int, n: int = 5) -> dict:
+    """Last n actual starts (any opponent) from the current season."""
+    splits = _get_pitching_logs(pitcher_id, int(SEASON))
+    starts = [sp for sp in splits
+              if _ip_to_float(sp.get("stat", {}).get("inningsPitched", "0")) >= MIN_IP_START]
+    recent = starts[-n:]
+    if not recent:
+        return {"recent_avg_k": None, "recent_k_list": [], "recent_starts": 0, "recent_k_log": [],
+                "recent_avg_hits": None, "recent_hits_list": [],
+                "recent_avg_er": None, "recent_er_list": [],
+                "recent_avg_outs": None, "recent_outs_list": [],
+                "recent_avg_bb": None, "recent_bb_list": []}
+    k_list    = [sp.get("stat", {}).get("strikeOuts", 0) for sp in recent]
+    h_list    = [int(sp.get("stat", {}).get("hits", 0) or 0) for sp in recent]
+    er_list   = [int(sp.get("stat", {}).get("earnedRuns", 0) or 0) for sp in recent]
+    outs_list = [round(_ip_to_float(sp.get("stat", {}).get("inningsPitched", "0")) * 3) for sp in recent]
+    bb_list   = [int(sp.get("stat", {}).get("baseOnBalls", 0) or 0) for sp in recent]
+    k_log = [{
+        "d": (sp.get("date") or "")[5:],
+        "v": sp.get("stat", {}).get("strikeOuts", 0),
+        "h": int(sp.get("stat", {}).get("hits", 0) or 0),
+        "er": int(sp.get("stat", {}).get("earnedRuns", 0) or 0),
+        "outs": round(_ip_to_float(sp.get("stat", {}).get("inningsPitched", "0")) * 3),
+        "bb": int(sp.get("stat", {}).get("baseOnBalls", 0) or 0),
+        "ip": sp.get("stat", {}).get("inningsPitched", ""),
+        "opp": (sp.get("opponent", {}) or {}).get("name", ""),
+    } for sp in reversed(recent)]
+    return {
+        "recent_avg_k": round(sum(k_list) / len(k_list), 1),
+        "recent_k_list": k_list,
+        "recent_starts": len(k_list),
+        "recent_k_log": k_log,
+        "last_start_date": (recent[-1].get("date") or "") if recent else "",
+        "recent_avg_hits": round(sum(h_list) / len(h_list), 1) if h_list else None,
+        "recent_hits_list": h_list,
+        "recent_avg_er": round(sum(er_list) / len(er_list), 1) if er_list else None,
+        "recent_er_list": er_list,
+        "recent_avg_outs": round(sum(outs_list) / len(outs_list), 1) if outs_list else None,
+        "recent_outs_list": outs_list,
+        "recent_avg_bb": round(sum(bb_list) / len(bb_list), 1) if bb_list else None,
+        "recent_bb_list": bb_list,
+    }
+
+
+def career_ha_ks_vs_opp(pitcher_id: int, side: str, opp_name: str) -> dict:
+    opp_id = _get_team_id(opp_name)
+    time.sleep(0.1)
+    if not opp_id: return None
+    is_home = (side == "HOME")
+    k_list    = []
+    ip_list   = []
+    era_list  = []
+    h_list    = []          # hits allowed per start vs opp
+    er_list   = []          # earned runs per start vs opp
+    outs_list = []          # outs recorded per start vs opp (IP×3)
+    bb_list   = []          # walks allowed per start vs opp
+    vs_log    = []          # dated per-start log vs opp (K + hits + ER + outs + BB)
+    for season in reversed(K_SEASONS):
+        splits = _get_pitching_logs(pitcher_id, season)
+        time.sleep(0.08)
+        for sp in reversed(splits):
+            if sp.get("opponent", {}).get("id") != opp_id: continue
+            if sp.get("isHome") != is_home: continue
+            stat = sp.get("stat", {})
+            ip = _ip_to_float(stat.get("inningsPitched", "0"))
+            if ip < MIN_IP_START: continue
+            k = stat.get("strikeOuts", 0)
+            h = int(stat.get("hits", 0) or 0)   # "hits" in pitching gameLog = hits ALLOWED
+            er = int(stat.get("earnedRuns", 0) or 0)
+            bb = int(stat.get("baseOnBalls", 0) or 0)   # walks ALLOWED
+            outs = round(ip * 3)
+            k_list.append(k)
+            h_list.append(h)
+            er_list.append(er)
+            bb_list.append(bb)
+            outs_list.append(outs)
+            ip_list.append(ip)
+            if ip > 0:
+                era_list.append(round(er / ip * 9, 2))
+            vs_log.append({"d": (sp.get("date") or ""), "k": k, "h": h, "er": er,
+                           "bb": bb, "outs": outs, "ip": stat.get("inningsPitched", "")})
+    # newest-first; compact the date to YY-MM-DD (vs-opp log spans seasons)
+    vs_log.sort(key=lambda e: e["d"], reverse=True)
+    for e in vs_log:
+        e["d"] = (e["d"] or "")[2:]
+    if len(k_list) < MIN_STARTS:
+        return {"avg_k": None, "starts": len(k_list), "k_list": k_list,
+                "min_k": None, "max_k": None, "avg_ip": None, "era": None,
+                "avg_hits": None, "h_list": h_list, "avg_er": None, "er_list": er_list,
+                "avg_outs": None, "outs_list": outs_list,
+                "avg_bb": None, "bb_list": bb_list, "vs_opp_log": vs_log}
+    avg_k    = round(sum(k_list) / len(k_list), 1)
+    avg_ip   = round(sum(ip_list) / len(ip_list), 1) if ip_list else None
+    era      = round(sum(era_list) / len(era_list), 2) if era_list else None
+    avg_hits = round(sum(h_list) / len(h_list), 1) if h_list else None
+    avg_er   = round(sum(er_list) / len(er_list), 1) if er_list else None
+    avg_outs = round(sum(outs_list) / len(outs_list), 1) if outs_list else None
+    avg_bb   = round(sum(bb_list) / len(bb_list), 1) if bb_list else None
+    return {"avg_k": avg_k, "starts": len(k_list), "k_list": k_list,
+            "min_k": min(k_list), "max_k": max(k_list),
+            "avg_ip": avg_ip, "era": era,
+            "avg_hits": avg_hits, "h_list": h_list,
+            "avg_er": avg_er, "er_list": er_list,
+            "avg_outs": avg_outs, "outs_list": outs_list,
+            "avg_bb": avg_bb, "bb_list": bb_list, "vs_opp_log": vs_log}
+
+
+def _fetch_probable_starters(run_date: str) -> list:
+    """Fetch today's probable starting pitchers from MLB schedule API."""
+    try:
+        r = requests.get(
+            f"{MLB_API}/schedule",
+            params={"sportId": 1, "date": run_date,
+                    "hydrate": "probablePitcher,team", "gameType": "R"},
+            timeout=12)
+        starters = []
+        for d in r.json().get("dates", []):
+            for game in d.get("games", []):
+                home_team = game.get("teams", {}).get("home", {}).get("team", {}).get("name", "")
+                away_team = game.get("teams", {}).get("away", {}).get("team", {}).get("name", "")
+                for side_key, side_val in [("home", "HOME"), ("away", "AWAY")]:
+                    t = game.get("teams", {}).get(side_key, {})
+                    pitcher = t.get("probablePitcher", {})
+                    if pitcher and pitcher.get("fullName"):
+                        opp = away_team if side_val == "HOME" else home_team
+                        starters.append({
+                            "name": pitcher.get("fullName", "TBD"),
+                            "mlb_id": pitcher.get("id"),
+                            "side": side_val,
+                            "team": home_team if side_val == "HOME" else away_team,
+                            "opp": opp,
+                        })
+        return starters
+    except Exception:
+        return []
+
+
+def _fetch_game_umps(run_date: str) -> dict:
+    """Return {(norm_home, norm_away): ump_name} for today's games via MLB officials hydration."""
+    try:
+        r = requests.get(
+            f"{MLB_API}/schedule",
+            params={"sportId": 1, "date": run_date,
+                    "hydrate": "team,officials", "gameType": "R"},
+            timeout=12)
+        result = {}
+        for d in r.json().get("dates", []):
+            for game in d.get("games", []):
+                officials = game.get("officials", [])
+                hp = next((o.get("official", {}).get("fullName", "")
+                           for o in officials if o.get("officialType") == "Home Plate"), None)
+                if hp:
+                    home = _normalize(game.get("teams", {}).get("home", {}).get("team", {}).get("name", ""))
+                    away = _normalize(game.get("teams", {}).get("away", {}).get("team", {}).get("name", ""))
+                    result[(home, away)] = hp
+        return result
+    except Exception:
+        return {}
+
+
+def _fetch_ump_stats(ump_name: str) -> dict | None:
+    """Fetch ump K-rate from umpscorecards.com; return chip dict or None on failure."""
+    try:
+        import datetime
+        year = str(datetime.date.today().year)
+        r = requests.get("https://umpscorecards.com/api/umpires/",
+                         params={"year": year}, timeout=8)
+        data = r.json()
+        items = data if isinstance(data, list) else (data.get("umpires") or data.get("data") or [])
+        norm_target = _normalize(ump_name)
+        for u in items:
+            uname = u.get("name") or u.get("umpire_name") or u.get("fullName") or ""
+            if _normalize(uname) != norm_target:
+                continue
+            games   = int(u.get("games") or u.get("game_count") or 0)
+            k_total = float(u.get("total_strikeouts") or u.get("strikeouts")
+                            or u.get("k_total") or u.get("totalStrikeouts") or 0)
+            k_pg    = float(u.get("k_per_game") or u.get("kPerGame") or 0) or (
+                      round(k_total / games, 2) if games else 0)
+            if not k_pg:
+                continue
+            factor = round(k_pg / LEAGUE_AVG_K_PER_GAME, 3)
+            zone   = "WIDE" if factor >= 1.03 else ("TIGHT" if factor <= 0.97 else "NORMAL")
+            zone_lbl = {"WIDE": "Wide Zone", "TIGHT": "Tight Zone", "NORMAL": "Normal Zone"}[zone]
+            return {"name": ump_name, "summary": f"{ump_name} \u00b7 {zone_lbl}",
+                    "zone": zone, "games": games, "k_per_game": k_pg, "kFactor": factor}
+        return None
+    except Exception:
+        return None
+
+
+def _get_pitch_hand(pitcher_id: int) -> str:
+    """Pitcher's throwing hand ('R'/'L'), cached. Defaults 'R' on failure."""
+    if pitcher_id in _PITCH_HAND_CACHE:
+        return _PITCH_HAND_CACHE[pitcher_id]
+    hand = "R"
+    try:
+        r = requests.get(f"{MLB_API}/people", params={"personIds": pitcher_id}, timeout=8)
+        hand = ((r.json().get("people", [{}]) or [{}])[0].get("pitchHand", {}) or {}).get("code", "R") or "R"
+    except Exception:
+        pass
+    _PITCH_HAND_CACHE[pitcher_id] = hand
+    return hand
+
+
+def _get_opp_k_pct_vs_hand(opp_name: str, hand: str, season) -> float | None:
+    """Opponent team's strikeout rate (SO/PA) vs the pitcher's hand. Cached."""
+    opp_id = _get_team_id(opp_name)
+    if not opp_id:
+        return None
+    key = (opp_id, hand, str(season))
+    if key in _OPP_KPCT_CACHE:
+        return _OPP_KPCT_CACHE[key]
+    code = "vl" if hand == "L" else "vr"
+    val = None
+    try:
+        r = requests.get(f"{MLB_API}/teams/{opp_id}/stats",
+            params={"stats": "statSplits", "sitCodes": code, "group": "hitting",
+                    "season": str(season), "gameType": "R"}, timeout=10)
+        for s in r.json().get("stats", []):
+            for sp in s.get("splits", []):
+                st = sp.get("stat", {})
+                pa = int(st.get("plateAppearances", 0) or 0)
+                so = int(st.get("strikeOuts", 0) or 0)
+                if pa:
+                    val = round(so / pa, 3)
+    except Exception:
+        pass
+    _OPP_KPCT_CACHE[key] = val
+    return val
+
+
+def _get_opp_split_rates(opp_name: str, hand: str, season):
+    """Opponent team's hitting rates vs the pitcher's hand, in ONE statSplits call.
+    Returns {k_pct, avg, bb_pct, ops} (powers hits/walks/earned-runs projections),
+    or None on failure. Cached by (opp_id, hand, season)."""
+    opp_id = _get_team_id(opp_name)
+    if not opp_id:
+        return None
+    key = (opp_id, hand, str(season))
+    if key in _OPP_SPLIT_CACHE:
+        return _OPP_SPLIT_CACHE[key]
+    code = "vl" if hand == "L" else "vr"
+    rates = None
+    try:
+        r = requests.get(f"{MLB_API}/teams/{opp_id}/stats",
+            params={"stats": "statSplits", "sitCodes": code, "group": "hitting",
+                    "season": str(season), "gameType": "R"}, timeout=10)
+        for s in r.json().get("stats", []):
+            for sp in s.get("splits", []):
+                st = sp.get("stat", {})
+                pa = int(st.get("plateAppearances", 0) or 0)
+                ab = int(st.get("atBats", 0) or 0)
+                so = int(st.get("strikeOuts", 0) or 0)
+                bb = int(st.get("baseOnBalls", 0) or 0)
+                h  = int(st.get("hits", 0) or 0)
+                if not pa:
+                    continue
+                def _f(x):
+                    try:
+                        return float(x)
+                    except Exception:
+                        return None
+                avg = _f(st.get("avg"))
+                if avg is None and ab:
+                    avg = round(h / ab, 3)
+                rates = {"k_pct":  round(so / pa, 3),
+                         "bb_pct": round(bb / pa, 3),
+                         "avg":    avg,
+                         "ops":    _f(st.get("ops"))}
+    except Exception:
+        pass
+    _OPP_SPLIT_CACHE[key] = rates
+    return rates
+
+
+def _fetch_whiff_map(year: str) -> dict:
+    """Bulk-fetch every pitcher's whiff% from Baseball Savant once per year. Cached.
+    Savant throttles rapid requests with an EMPTY 200 body, so retry once on empty.
+    Only caches a NON-empty result — an empty fetch stays uncached so a later
+    pitcher eval can re-try rather than serving a permanently blank map."""
+    if _WHIFF_CACHE.get(year):
+        return _WHIFF_CACHE[year]
     import csv, io
+    hdrs = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"}
     out = {}
     for _attempt in range(2):
         try:
             r = requests.get("https://baseballsavant.mlb.com/leaderboard/custom",
-                params={"year": str(year), "type": "batter", "filter": "", "min": "30",
-                        "selections": "xba,hard_hit_percent", "csv": "true"},
-                headers=_SAVANT_HDRS, timeout=15)
+                params={"year": str(year), "type": "pitcher", "filter": "", "min": "10",
+                        "selections": "whiff_percent", "csv": "true"},
+                headers=hdrs, timeout=15)
             for row in csv.DictReader(io.StringIO(r.text.lstrip("\ufeff"))):
                 try:
-                    pid  = int(row.get("player_id") or 0)
-                    xba  = row.get("xba") or ""
-                    hh   = (row.get("hard_hit_percent") or row.get("hard_hit_pct") or "")
-                    if not pid: continue
+                    pid = int(row.get("player_id") or 0)
+                    wp = row.get("whiff_percent")
+                    if pid and wp not in (None, ""):
+                        out[pid] = float(wp)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        if out:
+            break
+        time.sleep(1.0)
+    if out:
+        _WHIFF_CACHE[year] = out
+    return out
+
+
+def _whiff_lookup(pitcher_id: int) -> float | None:
+    """This pitcher's whiff% — current season, falling back to prior year."""
+    cur = _WHIFF_CACHE.get(SEASON, {})
+    if pitcher_id in cur:
+        return cur[pitcher_id]
+    prev = _WHIFF_CACHE.get(str(int(SEASON) - 1), {})
+    return prev.get(pitcher_id)
+
+
+def _fetch_gb_xwoba_map(year: str) -> dict:
+    """Bulk-fetch pitcher GB% and xwOBA-against from Baseball Savant. Cached per year.
+    Returns {player_id: {gb_pct: float, xwoba: float}}. Falls back to {} on error."""
+    if _GB_XWOBA_CACHE.get(year):
+        return _GB_XWOBA_CACHE[year]
+    import csv, io
+    hdrs = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"}
+    out = {}
+    for _attempt in range(2):
+        try:
+            r = requests.get("https://baseballsavant.mlb.com/leaderboard/custom",
+                params={"year": str(year), "type": "pitcher", "filter": "", "min": "10",
+                        "selections": "gb_percent,xwoba", "csv": "true"},
+                headers=hdrs, timeout=15)
+            for row in csv.DictReader(io.StringIO(r.text.lstrip("\ufeff"))):
+                try:
+                    pid = int(row.get("player_id") or 0)
+                    if not pid:
+                        continue
+                    gb_raw = (row.get("gb_percent") or row.get("groundballs_percent") or
+                              row.get("gb%") or "")
+                    xw_raw = (row.get("xwoba") or row.get("est_woba") or "")
                     entry: dict = {}
-                    if xba not in (None, ""): entry["xba"]          = float(xba)
-                    if hh  not in (None, ""): entry["hard_hit_pct"] = float(hh)
-                    if entry: out[pid] = entry
+                    if gb_raw not in (None, ""):
+                        entry["gb_pct"] = float(gb_raw)
+                    if xw_raw not in (None, ""):
+                        entry["xwoba"] = float(xw_raw)
+                    if entry:
+                        out[pid] = entry
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        if out:
+            break
+        time.sleep(1.0)
+    if out:
+        _GB_XWOBA_CACHE[year] = out
+    return out
+
+
+def _gb_xwoba_lookup(pitcher_id: int) -> dict:
+    """Return {gb_pct, xwoba} for this pitcher — current season with prior-year fallback."""
+    cur = _GB_XWOBA_CACHE.get(SEASON, {})
+    if pitcher_id in cur:
+        return cur[pitcher_id]
+    prev = _GB_XWOBA_CACHE.get(str(int(SEASON) - 1), {})
+    return prev.get(pitcher_id, {})
+
+
+def _fetch_velo_map(year: str) -> dict:
+    """Bulk-fetch pitcher avg fastball velocity from Baseball Savant. Cached per year.
+    Returns {player_id: avg_velo_mph}. Falls back to {} on error."""
+    if _VELO_CACHE.get(year):
+        return _VELO_CACHE[year]
+    import csv, io
+    hdrs = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"}
+    out = {}
+    for _attempt in range(2):
+        try:
+            r = requests.get("https://baseballsavant.mlb.com/leaderboard/custom",
+                params={"year": str(year), "type": "pitcher", "filter": "", "min": "10",
+                        "selections": "fastball_avg_speed", "csv": "true"},
+                headers=hdrs, timeout=15)
+            for row in csv.DictReader(io.StringIO(r.text.lstrip("\ufeff"))):
+                try:
+                    pid = int(row.get("player_id") or 0)
+                    rv  = (row.get("fastball_avg_speed") or row.get("release_speed_avg") or row.get("avg_speed") or "")
+                    if pid and rv not in (None, ""):
+                        out[pid] = float(rv)
                 except Exception:
                     continue
         except Exception:
@@ -62,2397 +845,772 @@ def _fetch_batter_savant(year: str) -> dict:
         if out: break
         time.sleep(1.0)
     if out:
-        _BATTER_SAV_CACHE[year] = out
+        _VELO_CACHE[year] = out
     return out
 
-def _batter_sav_lookup(player_id) -> dict:
-    """Return {xba, hard_hit_pct} for this batter — current season, prior-year fallback."""
-    if not player_id: return {}
-    pid = int(player_id)
-    from datetime import date as _d
-    yr = str(_d.today().year)
-    cur = _BATTER_SAV_CACHE.get(yr, {})
-    if pid in cur: return cur[pid]
-    prev = _BATTER_SAV_CACHE.get(str(int(yr) - 1), {})
-    return prev.get(pid, {})
 
-def _xba_hardhit_adj(player_id, current_ba) -> tuple:
-    """(xba_adj, hardhit_adj) ranking nudges from Statcast quality-of-contact metrics.
-    xBA gap >= .020 above current BA => positive (due for positive regression).
-    Hard-hit % vs 35% avg => +/-50 pts. Ranking-only — never affects totals."""
-    sav = _batter_sav_lookup(player_id)
-    xba_adj = 0
-    if sav.get("xba") is not None and current_ba is not None:
-        gap = sav["xba"] - current_ba
-        xba_adj = int(max(-100, min(100, round(gap * 2000))))
-    hardhit_adj = 0
-    if sav.get("hard_hit_pct") is not None:
-        hardhit_adj = int(max(-50, min(50, round((sav["hard_hit_pct"] - LEAGUE_HARD_HIT) * 2))))
-    return xba_adj, hardhit_adj
+def _velo_lookup(pitcher_id: int) -> float | None:
+    """Return pitcher avg fastball velocity — current season, prior-year fallback."""
+    cur = _VELO_CACHE.get(SEASON, {})
+    if pitcher_id in cur:
+        return cur[pitcher_id]
+    prev = _VELO_CACHE.get(str(int(SEASON) - 1), {})
+    return prev.get(pitcher_id)
 
-def _fetch_one_pt(args):
-    """Fetch one (pitch_type, player_type, year) combination from Savant."""
+
+def _fetch_krate_map(year: str) -> dict:
+    """Bulk-fetch pitcher strikeout rate (K%) from Baseball Savant. Cached per year.
+    K% league avg ~22; higher = more swing-and-miss / strikeout ability → more Ks.
+    (Replaces Stuff+, which Savant dropped from the custom leaderboard.)"""
+    if _KRATE_CACHE.get(year): return _KRATE_CACHE[year]
+    import csv, io
+    hdrs = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"}
+    out = {}
+    for _attempt in range(2):
+        try:
+            r = requests.get("https://baseballsavant.mlb.com/leaderboard/custom",
+                params={"year": str(year), "type": "pitcher", "filter": "", "min": "10",
+                        "selections": "k_percent", "csv": "true"},
+                headers=hdrs, timeout=15)
+            for row in csv.DictReader(io.StringIO(r.text.lstrip("\ufeff"))):
+                try:
+                    pid = int(row.get("player_id") or 0)
+                    sp  = row.get("k_percent") or ""
+                    if pid and sp not in (None, ""):
+                        out[pid] = float(sp)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        if out: break
+        time.sleep(1.0)
+    if out: _KRATE_CACHE[year] = out
+    return out
+
+
+def _krate_lookup(pitcher_id: int) -> float | None:
+    """Return pitcher strikeout rate (K%) — current season, prior-year fallback."""
+    cur = _KRATE_CACHE.get(SEASON, {})
+    if pitcher_id in cur: return cur[pitcher_id]
+    prev = _KRATE_CACHE.get(str(int(SEASON) - 1), {})
+    return prev.get(pitcher_id)
+
+
+def _pk_fetch_one_pt(args) -> None:
+    """Fetch pitcher pitch-usage% or batter wOBA vs pitch type from Savant arsenal endpoint."""
     import csv, io
     pt, ptype, year = args
+    hdrs = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"}
     try:
         r = requests.get(
             "https://baseballsavant.mlb.com/leaderboard/pitch-arsenal-stats",
             params={"type": ptype, "pitchType": pt, "year": str(year),
                     "position": "", "team": "", "min": "1",
                     "stat": "p_run_exp", "sort": "1", "sortDir": "desc", "csv": "true"},
-            headers=_SAVANT_HDRS, timeout=15)
+            headers=hdrs, timeout=15)
         txt = r.text.lstrip("\ufeff").strip()
-        if not txt or txt.startswith("<"):
-            return  # throttled / HTML error
+        if not txt or txt.startswith("<"): return
         for row in csv.DictReader(io.StringIO(txt)):
             try:
                 pid = int(row.get("player_id") or 0)
-                if not pid:
-                    continue
+                if not pid: continue
                 if ptype == "pitcher":
                     pct = float(row.get("pitch_usage") or row.get("pitch_percent") or 0)
-                    _ARSENAL_CACHE.setdefault(pid, {})[pt] = pct
+                    _PK_ARSENAL_CACHE.setdefault(pid, {})[pt] = pct
                 else:
                     w = row.get("woba") or row.get("est_woba") or ""
                     if w:
-                        _BATTER_PITCH_CACHE.setdefault(pid, {})[pt] = float(w)
+                        _PK_BATTER_WOBA_CACHE.setdefault(pid, {})[pt] = float(w)
             except Exception:
                 continue
     except Exception:
         pass
 
-def _load_pitch_data(year: str) -> None:
-    """Parallel-fetch pitcher arsenal + batter-vs-pitch-type wOBA for `year`.
-    Capped at 4 workers to be gentle on Savant. No-op if already loaded."""
-    if year in _PITCH_LOADED:
-        return
-    combos = [(pt, ptype, year)
-              for pt in _PITCH_TYPES
-              for ptype in ("pitcher", "batter")]
-    with _TPEx(max_workers=4) as ex:
-        list(ex.map(_fetch_one_pt, combos))
-    _PITCH_LOADED.add(year)
 
-def _fetch_batting_order(run_date: str) -> dict:
-    """Fetch today's confirmed lineups from MLB Stats API.
-    Returns {player_id (int): batting_spot (1-9)}.
-    Lineup order = position in homePlayers/awayPlayers array (0-indexed → +1).
-    Returns {} silently on any error or when lineups aren't posted yet."""
+def _pk_load_pitch_data(year: str) -> None:
+    """Parallel-fetch pitcher arsenal% + batter wOBA vs pitch type from Savant.
+    No-op if already loaded for this year."""
+    if year in _PK_PITCH_LOADED: return
+    combos = [(pt, ptype, year)
+              for pt in _PK_PITCH_TYPES
+              for ptype in ("pitcher", "batter")]
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        list(ex.map(_pk_fetch_one_pt, combos))
+    _PK_PITCH_LOADED.add(year)
+
+
+def _pk_fetch_lineup_map(run_date: str) -> dict:
+    """Fetch tonight's confirmed lineups. Returns {team_name_lower: [batter_id_int]}.
+    Falls back to {} when lineups aren't posted yet."""
     try:
         r = requests.get(
             "https://statsapi.mlb.com/api/v1/schedule",
             params={"sportId": 1, "date": run_date, "hydrate": "lineups"},
             timeout=12)
-        out = {}
+        out: dict = {}
         for date_entry in r.json().get("dates", []):
             for game in date_entry.get("games", []):
-                lu = game.get("lineups", {})
-                for side in ("homePlayers", "awayPlayers"):
-                    for idx, p in enumerate(lu.get(side, [])):
-                        pid = p.get("id")
-                        if pid:
-                            out[int(pid)] = idx + 1   # 1-indexed batting spot
+                lu    = game.get("lineups", {})
+                teams = game.get("teams", {})
+                for side_key, lu_key in (("home", "homePlayers"), ("away", "awayPlayers")):
+                    tname = (teams.get(side_key, {}).get("team", {}).get("name") or "").lower()
+                    ids   = [int(p["id"]) for p in lu.get(lu_key, []) if p.get("id")]
+                    if tname and ids:
+                        out[tname] = ids
         return out
     except Exception:
         return {}
 
-def _lineup_adj(spot) -> int:
-    """Ranking-only nudge based on batting order spot.
-    More PAs and protection = higher. Never affects displayed total."""
-    if spot is None:
-        return 0
-    if spot == 1:   return  75   # leadoff — most PAs
-    if spot == 2:   return  50
-    if spot <= 5:   return  25   # heart of order
-    if spot <= 7:   return -25   # bottom third
-    return -75                   # 8-9 hole
 
-_ROT_RANK_CACHE: dict = {}    # run_date -> {pitcher_id(int): {"rank","gs","recent","rookie"}}
-_ROT_EDITOR_CACHE: dict = {}  # run_date -> {tid(str): {"name","pitchers":[...],"has_override"}}
+def _arsenal_opp_adj(pitcher_id: int, opp_team: str) -> float:
+    """Compute arsenal-vs-lineup matchup factor for K projection.
+    Finds pitcher's primary pitch type (by usage%), then measures tonight's opp lineup
+    avg wOBA vs that pitch vs league average.  Weak lineup vs pitch → K boost; strong → drag.
+    Returns factor in [0.94, 1.06]. Returns 1.0 when data is sparse."""
+    arsenal = _PK_ARSENAL_CACHE.get(pitcher_id, {})
+    if not arsenal: return 1.0
+    primary_pt = max(arsenal, key=lambda k: arsenal[k])
+    if arsenal[primary_pt] < 20: return 1.0   # < 20% usage = not truly dominant
+    opp_norm = opp_team.lower()
+    lineup_ids = next(
+        (ids for team, ids in _PK_LINEUP_MAP.items()
+         if opp_norm in team or team in opp_norm or
+         (opp_norm.split()[-1:] or [''])[0] in team),
+        None)
+    if not lineup_ids: return 1.0
+    wobas = [_PK_BATTER_WOBA_CACHE[bid][primary_pt]
+             for bid in lineup_ids
+             if bid in _PK_BATTER_WOBA_CACHE and primary_pt in _PK_BATTER_WOBA_CACHE[bid]]
+    if len(wobas) < 3: return 1.0
+    avg_woba = sum(wobas) / len(wobas)
+    gap = avg_woba - LEAGUE_AVG_PITCH_WOBA  # positive = lineup hits this pitch well = K drag
+    return max(0.94, min(1.06, 1.0 - gap * 3.0))
 
-# ── Manual rotation override (admin-set, persisted in Supabase) ──────────
-# Render's filesystem is ephemeral, so the admin's hand-ranked rotation order
-# lives in the shared mpa_track_ledger table as a single special row:
-#   app=mlb, date=__rotation__, category=__rotation__, side=ALL,
-#   detail = { "<team_id>": [[pid, "Name"], ...], ... }   (list order = rank 1..n)
-# pipeline.py cannot import main.py, so it carries its own tiny read-only client.
-_SB_URL_RAW_PL = os.environ.get("SUPABASE_URL", "").strip().rstrip("/")
-_SB_URL_PL = (f"https://{_SB_URL_RAW_PL}.supabase.co"
-              if _SB_URL_RAW_PL and not _SB_URL_RAW_PL.startswith("http")
-              else _SB_URL_RAW_PL)
-_SB_KEY_PL = os.environ.get("SUPABASE_SERVICE_KEY", "")
-_ROT_OVR_CAT = "__rotation__"
 
-def _load_rot_override() -> dict:
-    """Read the admin rotation-override row. Returns
-    {team_id(str): {"order":[(pid,name),...], "inj":[(pid,name),...],
-                    "tier":{pid:1|2|3}}} or {}. tier is a per-pitcher tier label
-    override (1 ace / 2 mid / 3 back-end); absent/0 = auto (rank-derived).
-    Back-compat: a legacy plain-list detail value is read as order-only (no INJ)."""
-    if not (_SB_URL_PL and _SB_KEY_PL):
-        return {}
+def _fetch_game_totals(run_date: str) -> dict:
+    """Fetch today's MLB game O/U totals from the Odds API.
+    Returns {(norm_home, norm_away): total_line}. Cached for the run."""
+    global _GAME_TOTALS
+    if _GAME_TOTALS:
+        return _GAME_TOTALS
     try:
-        hdrs = {"apikey": _SB_KEY_PL, "Authorization": f"Bearer {_SB_KEY_PL}"}
-        rsp = requests.get(
-            f"{_SB_URL_PL}/rest/v1/mpa_track_ledger", headers=hdrs,
-            params={"app": "eq.mlb", "category": f"eq.{_ROT_OVR_CAT}",
-                    "side": "eq.ALL", "date": f"eq.{_ROT_OVR_CAT}",
-                    "select": "detail", "limit": "1"}, timeout=10)
-        if rsp.status_code == 200 and rsp.json():
-            det = (rsp.json()[0] or {}).get("detail") or {}
-
-            def _pairs(lst):
-                norm = []
-                for it in (lst or []):
-                    if isinstance(it, (list, tuple)) and it:
-                        norm.append((int(it[0]),
-                                     str(it[1]) if len(it) > 1 else ""))
-                    elif isinstance(it, dict) and it.get("id") is not None:
-                        norm.append((int(it["id"]), str(it.get("name", ""))))
-                return norm
-
-            out = {}
-            for tid, val in det.items():
-                tier = {}
-                if isinstance(val, dict):
-                    order = _pairs(val.get("order"))
-                    inj = _pairs(val.get("inj"))
-                    for pid_, n_ in (val.get("tier") or {}).items():
-                        try:
-                            ni = int(n_)
-                        except Exception:
-                            continue
-                        if ni in (1, 2, 3):
-                            tier[int(pid_)] = ni
-                else:
-                    order = _pairs(val)   # legacy: ordered list, no INJ bucket
-                    inj = []
-                if order or inj or tier:
-                    out[str(tid)] = {"order": order, "inj": inj, "tier": tier}
-            return out
-    except Exception as e:
-        print(f"[rot] override load failed: {e}")
-    return {}
-
-def _build_rotation_ranks(run_date: str) -> dict:
-    """Rank each team's CURRENT rotation via the MLB Stats API (official feed
-    only, no scraping). Returns {pitcher_id: {"rank","gs","recent","rookie"}}.
-
-    Membership = RECURRING listed starters from the probable-pitcher schedule:
-    a pitcher is in the rotation only if he made >=2 starts in the trailing window
-    OR has an upcoming probable start. A single trailing start with nothing ahead
-    is a one-off (bullpen-day opener, spot starter, an arm that just hit the IL, or
-    a demotion to AAA) and is dropped. Pure relievers never appear at all (they are
-    never listed as a probable starter). A reliever recently promoted into the
-    rotation qualifies on his recurring recent starts even though his season line
-    still reads like a reliever. Within the rotation the order is a POWER RANKING by
-    season ERA asc (lowest ERA = toughest arm = SP1), NOT games-started, so the
-    staff's best arm reads as the ace; games-started / recent starts break ties.
-    An admin override still wins over this auto order.
-
-    Rookie = 10 or fewer career games pitched (0-10 rookie, 11+ established).
-    Cached per run_date for the life of the process."""
-    if run_date in _ROT_RANK_CACHE:
-        return _ROT_RANK_CACHE[run_date]
-    from datetime import datetime as _DT, timedelta as _TD
-    season = run_date[:4]
-    rank_map: dict = {}
-    editor: dict = {}
-    try:
-        _d0 = _DT.strptime(run_date, "%Y-%m-%d")
-    except Exception:
-        _ROT_RANK_CACHE[run_date] = rank_map
-        _ROT_EDITOR_CACHE[run_date] = editor
-        return rank_map
-    win_start = (_d0 - _TD(days=21)).strftime("%Y-%m-%d")
-    win_end   = (_d0 + _TD(days=10)).strftime("%Y-%m-%d")
-
-    team_ids = set()
-    team_names: dict = {}
-    try:
-        sched = requests.get(
-            f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={run_date}",
-            timeout=15).json()
-        for d in sched.get("dates", []):
-            for g in d.get("games", []):
-                teams = g.get("teams", {}) or {}
-                for _sh in ("home", "away"):
-                    tm = ((teams.get(_sh) or {}).get("team") or {})
-                    tid = tm.get("id")
-                    if tid:
-                        team_ids.add(tid)
-                        if tm.get("name"):
-                            team_names[tid] = tm.get("name")
-    except Exception:
-        team_ids = set()
-    if not team_ids:
-        _ROT_RANK_CACHE[run_date] = rank_map
-        _ROT_EDITOR_CACHE[run_date] = editor
-        return rank_map
-    tid_list = list(team_ids)
-
-    def _team_rotation(tid):
-        # Membership = the probable-pitcher schedule (the listed starter of record
-        # per game), split into trailing starts vs upcoming starts. Pure relievers
-        # never appear here (they are never a probable starter); the past/upcoming
-        # split then separates RECURRING starters from one-off bullpen openers, IL
-        # guys, and demotions.
-        past: dict = {}   # pid -> starts made in the trailing window
-        upc:  dict = {}   # pid -> upcoming probable starts (game date >= run_date)
-        names: dict = {}
-        try:
-            r = requests.get(
-                "https://statsapi.mlb.com/api/v1/schedule?sportId=1"
-                f"&teamId={tid}&startDate={win_start}&endDate={win_end}"
-                "&hydrate=probablePitcher", timeout=15).json()
-            for d in r.get("dates", []):
-                gdate = d.get("date", "")
-                for g in d.get("games", []):
-                    teams = g.get("teams", {}) or {}
-                    for _sh in ("home", "away"):
-                        t = teams.get(_sh) or {}
-                        if ((t.get("team") or {}).get("id")) != tid:
-                            continue
-                        pp = (t.get("probablePitcher") or {})
-                        pid = pp.get("id")
-                        if pid:
-                            pid = int(pid)
-                            if gdate >= run_date:
-                                upc[pid] = upc.get(pid, 0) + 1
-                            else:
-                                past[pid] = past.get(pid, 0) + 1
-                            if pp.get("fullName"):
-                                names[pid] = pp.get("fullName")
-        except Exception:
-            past, upc = {}, {}
-        recent = {p: past.get(p, 0) + upc.get(p, 0)
-                  for p in set(past) | set(upc)}
-        # Season ERA powers the ranking (best arm = SP1); GS only breaks ties.
-        seas: dict = {}   # pid -> season games started
-        era:  dict = {}   # pid -> season ERA (float; 999.0 when none / 0 IP)
-        try:
-            r = requests.get(
-                "https://statsapi.mlb.com/api/v1/stats?stats=season&group=pitching"
-                f"&season={season}&gameType=R&teamId={tid}&playerPool=all&limit=200",
-                timeout=15).json()
-            for blk in r.get("stats", []):
-                for s in blk.get("splits", []):
-                    pl = (s.get("player") or {})
-                    pid = pl.get("id")
-                    stt = (s.get("stat") or {})
-                    if pid:
-                        pid = int(pid)
-                        seas[pid] = int(stt.get("gamesStarted", 0) or 0)
-                        try:
-                            ip = float(stt.get("inningsPitched", 0) or 0)
-                            era[pid] = float(stt.get("era")) if ip > 0 else 999.0
-                        except (TypeError, ValueError):
-                            era[pid] = 999.0
-                        if pl.get("fullName") and pid not in names:
-                            names[pid] = pl.get("fullName")
-        except Exception:
-            seas = {}
-        # CURRENT ROTATION = recurring listed starters: >=2 trailing starts OR an
-        # upcoming probable start. A single trailing start with nothing upcoming is
-        # a one-off (bullpen opener, spot starter, an arm that just hit the IL, or
-        # a demotion) and is dropped. Newly promoted arms (a reliever moved into
-        # the rotation) qualify on their recurring recent starts even though their
-        # season line still reads like a reliever. If nothing recurs, fall back to
-        # anyone listed as a probable starter in the window.
-        cand = [p for p in recent if past.get(p, 0) >= 2 or upc.get(p, 0) >= 1]
-        if not cand:
-            cand = list(recent.keys())
-        # POWER RANKING: season ERA asc (lowest ERA = toughest arm = SP1);
-        # games-started / recent-start count break ties.
-        def _key(p):
-            return (era.get(p, 999.0), -seas.get(p, 0), -recent.get(p, 0))
-        cand.sort(key=_key)
-        return [(p, names.get(p, ""), seas.get(p, 0), recent.get(p, 0))
-                for p in cand]
-
-    try:
-        with _TPEx(max_workers=8) as _ex:
-            results = list(_ex.map(_team_rotation, tid_list))
-    except Exception:
-        results = [_team_rotation(t) for t in tid_list]
-
-    override = _load_rot_override()
-
-    pids = []
-    for tid, rotation in zip(tid_list, results):
-        auto = [(pid, nm) for (pid, nm, sgs, rc) in rotation]
-        meta = {pid: (sgs, rc) for (pid, nm, sgs, rc) in rotation}
-        name_by_pid = {pid: nm for (pid, nm) in auto if nm}
-        ovr = override.get(str(tid))
-        tier_ovr = (ovr.get("tier") or {}) if ovr else {}
-        inj_order = []   # [(pid,name)] parked in the INJ bucket (gets no rank)
-        if ovr:
-            # Admin order wins. Pinned starters take ranks 1..k in the saved
-            # order; arms moved to the INJ bucket (injured / optioned) are
-            # dropped from the ranking entirely so the real starters re-rank
-            # 1..k. Any auto-detected starter not pinned or INJ is appended.
-            inj_order = ovr.get("inj") or []
-            inj_pids = set(pid for pid, nm in inj_order)
-            for pid, nm in (ovr.get("order") or []) + inj_order:
-                if nm:
-                    name_by_pid[pid] = nm
-            seen = set(); final = []
-            for pid, nm in (ovr.get("order") or []):
-                if pid in seen or pid in inj_pids:
-                    continue
-                seen.add(pid); final.append(pid)
-            for pid, nm in auto:
-                if pid not in seen and pid not in inj_pids:
-                    seen.add(pid); final.append(pid)
-            has_ovr = True
-        else:
-            inj_pids = set()
-            final = [pid for pid, nm in auto]
-            has_ovr = False
-        ed_pitchers = []
-        for i, pid in enumerate(final, 1):
-            sgs, rc = meta.get(pid, (0, 0))
-            rank_map[pid] = {"rank": i, "gs": sgs, "recent": rc,
-                             "rookie": False, "tier": tier_ovr.get(pid, 0)}
-            pids.append(pid)
-            ed_pitchers.append({"id": pid,
-                                "name": name_by_pid.get(pid, str(pid)),
-                                "rank": i, "override": has_ovr,
-                                "tier": tier_ovr.get(pid, 0)})
-        ed_injured = [{"id": pid, "name": name_by_pid.get(pid, str(pid))}
-                      for pid, nm in inj_order]
-        editor[str(tid)] = {"name": team_names.get(tid, str(tid)),
-                            "pitchers": ed_pitchers, "injured": ed_injured,
-                            "has_override": has_ovr}
-
-    # Rookie flag — 10 or fewer career games pitched (batched career hydrate).
-    try:
-        for i in range(0, len(pids), 40):
-            chunk = pids[i:i + 40]
-            r = requests.get(
-                "https://statsapi.mlb.com/api/v1/people?personIds=" +
-                ",".join(str(x) for x in chunk) +
-                "&hydrate=stats(group=[pitching],type=[career])",
-                timeout=15).json()
-            for person in r.get("people", []):
-                pid = person.get("id")
-                cg = None
-                for blk in person.get("stats", []):
-                    for s in blk.get("splits", []):
-                        v = (s.get("stat") or {}).get("gamesPitched")
-                        if v is not None:
-                            cg = v
-                if pid in rank_map and cg is not None and int(cg) <= 10:
-                    rank_map[pid]["rookie"] = True
-    except Exception:
-        pass
-
-    _ROT_RANK_CACHE[run_date] = rank_map
-    _ROT_EDITOR_CACHE[run_date] = editor
-    return rank_map
-
-
-def rotation_editor_data(run_date: str) -> dict:
-    """Per-team rotation (names + ranks + override flag) for the admin Rotation
-    Order panel. Builds (and caches) the ranks first if not already done."""
-    if run_date not in _ROT_EDITOR_CACHE:
-        _build_rotation_ranks(run_date)
-    data = _ROT_EDITOR_CACHE.get(run_date, {}) or {}
-    teams = []
-    for tid, info in data.items():
-        teams.append({"team_id": tid,
-                      "team_name": info.get("name", tid),
-                      "has_override": info.get("has_override", False),
-                      "pitchers": info.get("pitchers", []),
-                      "injured": info.get("injured", [])})
-    teams.sort(key=lambda t: (t["team_name"] or ""))
-    return {"date": run_date, "teams": teams}
-
-
-def _pitch_adj(batter_id, pitcher_id) -> int:
-    """Ranking-only nudge [-150, +150] from BvP pitch-type matchup.
-    High = batter excels vs pitcher's primary pitches; Low = struggles.
-    Returns 0 when data is missing for either player (no penalty applied)."""
-    if not batter_id or not pitcher_id:
-        return 0
-    arsenal = _ARSENAL_CACHE.get(int(pitcher_id), {})
-    splits  = _BATTER_PITCH_CACHE.get(int(batter_id), {})
-    if not arsenal or not splits:
-        return 0
-    # Weighted avg batter wOBA over pitcher's top-3 pitch types by usage
-    total_wgt = wgt_woba = 0.0
-    for pt, pct in sorted(arsenal.items(), key=lambda x: -x[1])[:3]:
-        w = splits.get(pt)
-        if w is not None and pct > 0:
-            total_wgt += pct
-            wgt_woba  += pct * w
-    if total_wgt < 5:   # not enough shared pitch-type data
-        return 0
-    weighted_woba = wgt_woba / total_wgt
-    # League-avg wOBA ~.310; scale deviation to ±150 ranking pts
-    return int(max(-150, min(150, round((weighted_woba - 0.310) * 1500))))
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# ── Step 4: L10 H/A hit-consistency (added) ──────────────────────────────
-def fetch_step4_consistency(player_id, side: str, opp_name: str = "",
-                            max_games: int = 10) -> dict:
-    """S4 — Last 10 career H/A games vs THIS opponent (5 seasons back),
-       counting games with 1+ hit. Used as ranking tiebreaker."""
-    if not player_id:
-        return {"hits_games": 0, "games": 0, "display": "N/A", "score": 0}
-    try:
-        from mlb_stats_splits import _get_game_logs, _team_name_match
-        from datetime import date as _dt
-        current_year = _dt.today().year
-        seasons = list(range(current_year, current_year - 5, -1))
-        matching = []
-        for season in seasons:
-            splits = _get_game_logs(player_id, season)
-            for sp in reversed(splits):
-                is_home = sp.get("isHome", False)
-                if (side.upper() == "HOME") != is_home:
-                    continue
-                if opp_name:
-                    opp = sp.get("opponent", {}).get("name", "")
-                    if not _team_name_match(opp, opp_name):
+        r = requests.get(f"{ODDS_BASE}/sports/baseball_mlb/odds",
+            params={"apiKey": ODDS_API_KEY, "regions": "us,us2,ca", "markets": "totals",
+                    "dateFormat": "iso", "oddsFormat": "american"},
+            timeout=15)
+        out = {}
+        for ev in r.json():
+            ht = _normalize(ev.get("home_team", ""))
+            at = _normalize(ev.get("away_team", ""))
+            for bk in ev.get("bookmakers", []):
+                for mkt in bk.get("markets", []):
+                    if mkt.get("key") != "totals":
                         continue
-                stat = sp.get("stat", {})
-                ab = int(stat.get("atBats", 0) or 0)
-                h  = int(stat.get("hits",   0) or 0)
-                if ab < 1:
-                    continue
-                matching.append(1 if h >= 1 else 0)
-                if len(matching) >= max_games:
-                    break
-            if len(matching) >= max_games:
-                break
-        games = len(matching)
-        hits_games = sum(matching)
-        if games == 0:
-            return {"hits_games": 0, "games": 0, "display": "N/A", "score": 0}
-        score = round(hits_games / games * 100)
-        return {"hits_games": hits_games, "games": games,
-                "display": f"{hits_games}/{games}", "score": score}
-    except Exception:
-        return {"hits_games": 0, "games": 0, "display": "ERR", "score": 0}
-
-
-def _recent_hit_log(player_id, n: int = 5) -> list:
-    """Last n games (any opponent), newest-first: date, hits, total bases, opp, H/A.
-       Mirrors the pitcher recent-form log so hitter cards/under picks can show
-       a 'recent form' click-through popup."""
-    if not player_id:
-        return []
-    try:
-        from mlb_stats_splits import _get_game_logs
-        from datetime import date as _dt
-        cy = _dt.today().year
-        games = []
-        for season in range(cy, cy - 2, -1):        # current + prior season for recency
-            splits = _get_game_logs(player_id, season)
-            for sp in reversed(splits):             # splits oldest-first → iterate newest-first
-                stat = sp.get("stat", {})
-                ab = int(stat.get("atBats", 0) or 0)
-                if ab < 1:
-                    continue
-                games.append({
-                    "d":   (sp.get("date") or "")[5:],
-                    "h":   int(stat.get("hits", 0) or 0),
-                    "tb":  int(stat.get("totalBases", 0) or 0),
-                    "opp": (sp.get("opponent", {}) or {}).get("name", ""),
-                    "ha":  "H" if sp.get("isHome") else "A",
-                })
-                if len(games) >= n:
-                    break
-            if len(games) >= n:
-                break
-        return games
-    except Exception:
-        return []
-
-
-def fetch_series_splits(player_id, today_opp: str, run_date: str, side: str = "") -> dict:
-    """G1/G2/G3+ BA splits — current season only, filtered by home/away."""
-    _EMPTY = {"today_pos": 1, "g1_ba": None, "g1_ab": 0,
-               "g2_ba": None, "g2_ab": 0, "g3_ba": None, "g3_ab": 0, "ha": side or ""}
-    if not player_id:
-        return _EMPTY
-    try:
-        from mlb_stats_splits import _get_game_logs
-        from datetime import date as _dt
-        cy = _dt.today().year
-        want_home = (side.upper() == "HOME") if side else None
-        all_games = []
-        for sp in _get_game_logs(player_id, cy):
-            stat = sp.get("stat", {})
-            ab = int(stat.get("atBats", 0) or 0)
-            if ab < 1:
-                continue
-            if want_home is not None and sp.get("isHome") != want_home:
-                continue
-            raw = (sp.get("date") or "")[:10]
-            try:
-                gdate = _dt.fromisoformat(raw)
-            except Exception:
-                continue
-            all_games.append({
-                "date": gdate,
-                "hits": int(stat.get("hits", 0) or 0),
-                "ab": ab,
-                "opp": (sp.get("opponent", {}) or {}).get("name", ""),
-            })
-        if not all_games:
-            return _EMPTY
-
-        all_games.sort(key=lambda g: g["date"])
-
-        # Group consecutive games vs same opponent (≤4 day gap) into series
-        pos_stats = {1: [0, 0], 2: [0, 0], 3: [0, 0]}
-        i = 0
-        while i < len(all_games):
-            g = all_games[i]; series = [g]; j = i + 1
-            while j < len(all_games):
-                prev = all_games[j - 1]; curr = all_games[j]
-                if curr["opp"] == g["opp"] and (curr["date"] - prev["date"]).days <= 4:
-                    series.append(curr); j += 1
-                else:
-                    break
-            for pos, sg in enumerate(series, 1):
-                k = min(pos, 3)
-                pos_stats[k][0] += sg["hits"]
-                pos_stats[k][1] += sg["ab"]
-            i = j
-
-        def _ba(h, a): return round(h / a, 3) if a >= 5 else None
-
-        # Today's series position — count recent consecutive games vs same opp
-        try:
-            today_d = _dt.fromisoformat(run_date[:10])
-        except Exception:
-            today_d = _dt.today()
-        opp_norm = set((today_opp or "").lower().split()) - {"the", "at", "vs"}
-        def _match(opp_str):
-            if not opp_norm: return False
-            return bool(opp_norm & (set((opp_str or "").lower().split()) - {"the", "at", "vs"}))
-        recent = [g for g in reversed(all_games)
-                  if _match(g["opp"]) and 0 < (today_d - g["date"]).days <= 5]
-        streak = 0; prev_d = today_d
-        for g in recent:
-            if (prev_d - g["date"]).days <= 2:
-                streak += 1; prev_d = g["date"]
-            else:
-                break
-
-        return {
-            "today_pos": min(streak + 1, 3),
-            "g1_ba": _ba(pos_stats[1][0], pos_stats[1][1]), "g1_ab": pos_stats[1][1],
-            "g2_ba": _ba(pos_stats[2][0], pos_stats[2][1]), "g2_ab": pos_stats[2][1],
-            "g3_ba": _ba(pos_stats[3][0], pos_stats[3][1]), "g3_ab": pos_stats[3][1],
-            "ha": side or "",
-        }
-    except Exception:
-        return _EMPTY
-
-
-_SERIES_GAMES_CACHE: dict = {}
-
-def _fetch_series_games(run_date: str) -> dict:
-    """Per-team series game number (G1/G2/G3…) for today's slate — authoritative
-    seriesGameNumber from the MLB Stats API schedule (one cached call). Some teams
-    open a series today (G1) while others are mid-series (G2/G3).
-    Returns {team_name: {"g": game_no, "of": games_in_series}}."""
-    if run_date in _SERIES_GAMES_CACHE:
-        return _SERIES_GAMES_CACHE[run_date]
-    out: dict = {}
-    try:
-        j = requests.get("https://statsapi.mlb.com/api/v1/schedule",
-                         params={"sportId": 1, "date": run_date}, timeout=15).json()
-        for _d in j.get("dates", []):
-            for _g in _d.get("games", []):
-                _gno = _g.get("seriesGameNumber")
-                if not _gno:
-                    continue
-                _gof = _g.get("gamesInSeries") or 0
-                for _sh in ("home", "away"):
-                    _nm = ((((_g.get("teams") or {}).get(_sh) or {}).get("team")) or {}).get("name")
-                    if _nm:
-                        out[_nm] = {"g": int(_gno), "of": int(_gof)}
-    except Exception:
-        pass
-    if out:
-        _SERIES_GAMES_CACHE[run_date] = out
-    return out
-
-
-from day_night_check  import get_game_time_type, find_espn_player_id, fetch_day_night_ba
-
-TOP_N_ERA_PITCHERS = 30
-MIN_IP_STARTER     = 30.0
-MIN_GS_STARTER     = 5
-
-
-def _get_active_player_ids(season: str) -> set:
-    """IDs on every team's CURRENT active roster.
-       A player on the IL (or optioned to the minors) is dropped from the
-       active roster, so this set is used to exclude injured pitchers."""
-    try:
-        from concurrent.futures import ThreadPoolExecutor
-        teams = requests.get(
-            "https://statsapi.mlb.com/api/v1/teams",
-            params={"sportId": 1, "season": season}, timeout=14,
-        ).json().get("teams", [])
-        team_ids = [t["id"] for t in teams if t.get("sport", {}).get("id") == 1]
-
-        def _roster(tid):
-            try:
-                r = requests.get(
-                    f"https://statsapi.mlb.com/api/v1/teams/{tid}/roster",
-                    params={"rosterType": "active"}, timeout=10,
-                ).json()
-                return {p["person"]["id"] for p in r.get("roster", [])}
-            except Exception:
-                return set()
-
-        ids = set()
-        with ThreadPoolExecutor(max_workers=10) as ex:
-            for s in ex.map(_roster, team_ids):
-                ids |= s
-        return ids
-    except Exception:
-        return set()
-
-
-def _get_top_era_starters(season: str, n: int = TOP_N_ERA_PITCHERS,
-                          min_ip: float = MIN_IP_STARTER, min_gs: int = MIN_GS_STARTER):
-    """Top-N lowest-ERA active STARTING pitchers.
-       Scans ALL pitchers (playerPool=All), keeps only starters (started the
-       majority of their appearances, >= min_gs starts and >= min_ip IP),
-       drops anyone not on a current active roster (i.e. on the IL / optioned),
-       then sorts by ERA ascending and returns the top N. This includes elite
-       arms (e.g. Wheeler) who fall below MLB's innings qualifier, while
-       excluding relievers, small samples, and injured pitchers."""
-    try:
-        active_ids = _get_active_player_ids(season)
-        r = requests.get(
-            "https://statsapi.mlb.com/api/v1/stats",
-            params={"stats": "season", "group": "pitching", "gameType": "R",
-                    "season": season, "sportId": 1, "limit": 800,
-                    "sortStat": "earnedRunAverage", "order": "asc",
-                    "playerPool": "All"},
-            timeout=14,
-        )
-        splits = r.json().get("stats", [{}])[0].get("splits", [])
-        starters = []
-        for sp in splits:
-            stat = sp.get("stat", {})
-            pl   = sp.get("player", {})
-            try:
-                ip  = float(stat.get("inningsPitched", 0))
-                era = float(stat.get("era", 99.0))
-            except (ValueError, TypeError):
-                continue
-            gs = int(stat.get("gamesStarted", 0) or 0)
-            g  = int(stat.get("gamesPlayed", 0) or 0)
-            if gs < min_gs or ip < min_ip:          # small sample → skip
-                continue
-            if gs < g * 0.5:                         # mostly reliever → skip
-                continue
-            if active_ids and pl.get("id") not in active_ids:  # on IL → skip
-                continue
-            starters.append({"name": pl.get("fullName", ""), "era": era, "ip": ip})
-        starters.sort(key=lambda p: p["era"])
-        top_n = starters[:n]
-        last_name_set = set()
-        for p in top_n:
-            parts = p["name"].lower().split()
-            if parts:
-                last_name_set.add(parts[-1])
-        return last_name_set, top_n
-    except Exception:
-        return set(), []
-
-
-def _pitcher_last_name(pitcher_raw: str) -> str:
-    name = pitcher_raw.strip()
-    if "." in name:
-        last = name.split(".")[-1].strip()
-    else:
-        parts = name.split()
-        last  = parts[-1] if parts else name
-    return last.lower()
-
-
-def _build_blurb(r):
-    parts = []
-    side_str = "home" if r.get("side") == "HOME" else "away"
-    pitcher  = (r.get("pitcher") or "").strip()
-    opp      = (r.get("opp") or "").strip()
-    # Career line uses the TRUE head-to-head vs today's pitcher (same source the
-    # popup's "Career vs" block shows), NOT the pool-entry BA — a hot-streak or
-    # last-7-day average must never be mislabeled "Career vs pitcher". Omit the
-    # line entirely when there's no real head-to-head sample (0 AB) or the
-    # starter is still TBD.
-    if pitcher and pitcher != "TBD":
-        try:
-            from under_picks import _get_s1_vs_pitcher
-            _vsp = _get_s1_vs_pitcher(r.get("player_id"), r.get("pit_id"))
-        except Exception:
-            _vsp = None
-        if _vsp and (_vsp.get("ab") or 0) > 0 and _vsp.get("ba") is not None:
-            parts.append(f"Career .{int(_vsp['ba'] * 1000):03d} vs {pitcher} ({_vsp['ab']} AB)")
-    s4 = r.get("s4") or {}
-    if s4.get("games", 0) >= 1:
-        hits_g = s4.get("hits_games", 0)
-        games  = s4.get("games", 0)
-        opp_str = f" vs {opp}" if opp else ""
-        parts.append(f"{hits_g} out of {games} {side_str} games with a hit{opp_str}")
-    s3 = r.get("s3") or {}
-    s3_ba = s3.get("ba")
-    if s3_ba and s3_ba > 0 and "✅" in (s3.get("flag") or ""):
-        parts.append(f".{round(s3_ba * 1000):03d} BA last 10 {side_str} games")
-    return " · ".join(parts)
-
-
-def _wilson_lb(hits: int, games: int, z: float = 1.96) -> float:
-    """Lower bound of a 95% Wilson confidence interval for the S4 hit rate.
-    Rewards sample size: a proven 9/10 outranks a lucky 4/4, while strong big
-    samples (10/10) stay on top. Drives the final HIT-list rank order."""
-    if not games:
-        return 0.0
-    p = hits / games
-    den = 1.0 + z * z / games
-    centre = p + z * z / (2 * games)
-    margin = z * math.sqrt(p * (1 - p) / games + z * z / (4 * games * games))
-    return (centre - margin) / den
-
-
-# ── Matchup-value (Log5 + EV) helpers ──────────────────────────────────────
-# Blend a batter's season hit ability with the OPPOSING pitcher's hits-allowed
-# level (Log5), convert to P(1+ hit), and compare to the posted "to record a
-# hit" price to surface +EV value. Frontend uses ev/edge for the green badge,
-# the value re-rank (default), and the +EV-only toggle.
-_BATTER_RATE_CACHE = {}
-_PITCHER_BAA_CACHE = {}
-
-
-def _ml_implied(am):
-    """Implied probability from American odds."""
-    try:
-        am = float(am)
-    except Exception:
-        return None
-    return (-am) / ((-am) + 100.0) if am < 0 else 100.0 / (am + 100.0)
-
-
-def _ml_ev(p, am):
-    """Expected value per 1u stake at American odds `am` given win prob `p`."""
-    try:
-        am = float(am)
-    except Exception:
-        return None
-    dec = 1.0 + (100.0 / (-am)) if am < 0 else 1.0 + (am / 100.0)
-    return p * (dec - 1.0) - (1.0 - p)
-
-
-def _set_ev(p, p_win, am):
-    """Attach ev / edge / ev_prob to pick `p` for win-prob `p_win` at odds `am`.
-    Always defines the three keys (None when not computable) so the frontend can
-    render uniformly. `edge` = our prob minus the book's implied prob."""
-    p["ev"] = None
-    p["edge"] = None
-    p["ev_prob"] = None
-    if p_win is None or am is None:
-        return
-    ev = _ml_ev(p_win, am)
-    if ev is None:
-        return
-    p["ev"] = round(ev, 4)
-    p["ev_prob"] = round(float(p_win), 4)
-    imp = _ml_implied(am)
-    if imp is not None:
-        p["edge"] = round(float(p_win) - imp, 4)
-
-
-def _pois_cdf(k, mean):
-    """P(X <= k) for X ~ Poisson(mean). Small means only (cheap loop). Used to
-    turn a pitcher count projection into an over/under win probability."""
-    try:
-        if mean is None or mean <= 0:
-            return None
-        if k < 0:
-            return 0.0
-        import math
-        k = int(k)
-        term = math.exp(-mean)
-        cum = term
-        for i in range(1, k + 1):
-            term *= mean / i
-            cum += term
-        return min(cum, 1.0)
-    except Exception:
-        return None
-
-
-def _log5(B, P, Lg):
-    """Log5 matchup-adjusted batting average (Bill James)."""
-    try:
-        n = B * P / Lg
-        d = n + ((1 - B) * (1 - P) / (1 - Lg))
-        return n / d if d > 0 else B
-    except Exception:
-        return B
-
-
-def _get_batter_season_rate(pid, season):
-    """Season BA + expected AB/game for a batter, cached. Returns dict or None."""
-    key = (pid, season)
-    if key in _BATTER_RATE_CACHE:
-        return _BATTER_RATE_CACHE[key]
-    out = None
-    try:
-        r = requests.get(
-            f"https://statsapi.mlb.com/api/v1/people/{pid}/stats",
-            params={"stats": "season", "season": season, "group": "hitting"},
-            timeout=12,
-        )
-        st = r.json()["stats"][0]["splits"][0]["stat"]
-        ba = float(st.get("avg") or 0)
-        ab = int(st.get("atBats") or 0)
-        g = int(st.get("gamesPlayed") or 0)
-        est_ab = round(ab / g, 2) if g > 0 else 3.9
-        if ba > 0:
-            out = {"ba": ba, "est_ab": est_ab}
-    except Exception:
-        out = None
-    _BATTER_RATE_CACHE[key] = out
-    return out
-
-
-def _get_pitcher_baa(pid, season):
-    """Opposing pitcher's batting-average-against (season), cached. float or None."""
-    key = (pid, season)
-    if key in _PITCHER_BAA_CACHE:
-        return _PITCHER_BAA_CACHE[key]
-    baa = None
-    try:
-        r = requests.get(
-            f"https://statsapi.mlb.com/api/v1/people/{pid}/stats",
-            params={"stats": "season", "season": season, "group": "pitching"},
-            timeout=12,
-        )
-        v = r.json()["stats"][0]["splits"][0]["stat"].get("avg")
-        if v not in (None, "-", ".---", ""):
-            baa = float(v)
-    except Exception:
-        baa = None
-    _PITCHER_BAA_CACHE[key] = baa
-    return baa
-
-
-def _fetch_bullpen_stats(run_date: str) -> dict:
-    """
-    Per-team bullpen profile = FATIGUE (last 3 days IP) + QUALITY (reliever ERA,
-    recent 14-day blended 60/40 with season-long).
-
-    Returns {team_full_name: {
-        "bp_ip": float, "games": int, "taxed": bool,   # fatigue (last 3 days)
-        "era_l14": float|None, "g14": int,             # recent reliever ERA
-        "era_szn": float|None,                         # season reliever ERA
-        "era": float|None,                             # blended (display + nudge)
-        "factor": float, "lean": str                   # offense nudge + label
-    }}
-
-    Bullpen = every pitcher AFTER the starter in each box score. The recent
-    window is pulled per game from /game/{pk}/boxscore — schedule
-    hydrate=boxscore returns 0 players so it cannot be used. Season reliever
-    ERA comes from one league-wide team statSplits (sitCodes=rp) call. Silent
-    on failure (-> {}); None-safe downstream (no chip / neutral 1.0 nudge).
-    """
-    from datetime import datetime, timedelta
-    BP_TAXED   = 9.0       # >= 9 IP across last 3 days = taxed pen
-    BP_CAP     = 0.08      # max +/- 8% offense nudge
-    BP_K       = 0.03      # nudge per ERA run above/below league
-    BP_GATE    = 0.75      # ERA gap vs league to label weak / elite
-    W_RECENT   = 0.6
-    W_SEASON   = 0.4
-    MIN_OUTS14 = 30        # >= 10 IP before a 14-day ERA is trusted
-
-    today    = datetime.strptime(run_date, "%Y-%m-%d")
-    d_recent = (today - timedelta(days=3)).strftime("%Y-%m-%d")   # fatigue start
-    d_start  = (today - timedelta(days=14)).strftime("%Y-%m-%d")  # ERA window start
-    d_end    = (today - timedelta(days=1)).strftime("%Y-%m-%d")
-
-    def _parse_outs(raw) -> int:
-        try:
-            parts = str(raw).split(".")
-            full  = int(parts[0]) if parts[0] else 0
-            outs  = int(parts[1]) if len(parts) > 1 and parts[1] else 0
-            return full * 3 + outs
-        except Exception:
-            return 0
-
-    # ── recent window: gamePk + date for every Final regular-season game ──
-    try:
-        sched = requests.get(
-            "https://statsapi.mlb.com/api/v1/schedule",
-            params={"sportId": 1, "startDate": d_start, "endDate": d_end,
-                    "gameType": "R"}, timeout=20).json()
-    except Exception:
-        sched = {}
-    game_days = []   # (gamePk, "YYYY-MM-DD")
-    for de in sched.get("dates", []):
-        gd = de.get("date", "")
-        for g in de.get("games", []):
-            if g.get("status", {}).get("abstractGameState", "") == "Final":
-                game_days.append((g.get("gamePk"), gd))
-
-    def _box(pk):
-        try:
-            return requests.get(
-                f"https://statsapi.mlb.com/api/v1/game/{pk}/boxscore",
-                timeout=15).json()
-        except Exception:
-            return None
-
-    boxes = []
-    if game_days:
-        try:
-            with _TPEx(max_workers=12) as ex:
-                boxes = list(ex.map(lambda gp: (_box(gp[0]), gp[1]), game_days))
-        except Exception:
-            boxes = []
-
-    teams: dict = {}   # name -> accumulators
-    for box, gd in boxes:
-        if not box:
-            continue
-        for side in ("home", "away"):
-            td   = box.get("teams", {}).get(side, {})
-            name = td.get("team", {}).get("name", "")
-            if not name:
-                continue
-            pitchers = td.get("pitchers", [])
-            players  = td.get("players", {})
-            er = 0; outs = 0; ip3 = 0.0
-            for idx, pid in enumerate(pitchers):
-                if idx == 0:          # starter — skip
-                    continue
-                ps = (players.get(f"ID{pid}", {})
-                             .get("stats", {}).get("pitching", {}))
-                o   = _parse_outs(ps.get("inningsPitched", "0"))
-                er  += int(ps.get("earnedRuns", 0) or 0)
-                outs += o
-                if gd >= d_recent:
-                    ip3 += o / 3.0
-            acc = teams.setdefault(name, {"er": 0, "outs": 0, "g14": 0,
-                                          "bp_ip": 0.0, "games": 0})
-            acc["er"]   += er
-            acc["outs"] += outs
-            acc["g14"]  += 1
-            if gd >= d_recent:
-                acc["bp_ip"] += ip3
-                acc["games"] += 1
-
-    # ── season reliever ERA (one league-wide statSplits call) ──
-    season = run_date[:4]
-    szn_era: dict = {}
-    szn_tot_er = 0; szn_tot_outs = 0
-    try:
-        sjs = requests.get(
-            "https://statsapi.mlb.com/api/v1/teams/stats",
-            params={"season": season, "sportIds": 1, "stats": "statSplits",
-                    "group": "pitching", "sitCodes": "rp", "gameType": "R"},
-            timeout=20).json()
-        for s in sjs.get("stats", [{}])[0].get("splits", []):
-            nm = s.get("team", {}).get("name", "")
-            st = s.get("stat", {})
-            try:
-                e = float(st.get("era"))
-            except Exception:
-                e = None
-            if nm and e is not None:
-                szn_era[nm] = e
-            szn_tot_outs += _parse_outs(st.get("inningsPitched", "0"))
-            szn_tot_er   += int(st.get("earnedRuns", 0) or 0)
-    except Exception:
-        pass
-
-    # ── league baselines (same 60/40 blend as the per-team ERA) ──
-    lg_er   = sum(d["er"] for d in teams.values())
-    lg_outs = sum(d["outs"] for d in teams.values())
-    LG_l14  = (lg_er * 27.0 / lg_outs) if lg_outs else None
-    LG_szn  = (szn_tot_er * 27.0 / szn_tot_outs) if szn_tot_outs else None
-    if LG_l14 is not None and LG_szn is not None:
-        LG = W_RECENT * LG_l14 + W_SEASON * LG_szn
-    elif LG_l14 is not None:
-        LG = LG_l14
-    elif LG_szn is not None:
-        LG = LG_szn
-    else:
-        LG = 4.10
-
-    out: dict = {}
-    for nm in (set(teams) | set(szn_era)):
-        d = teams.get(nm, {"er": 0, "outs": 0, "g14": 0, "bp_ip": 0.0, "games": 0})
-        era_l14 = (d["er"] * 27.0 / d["outs"]) if d["outs"] >= MIN_OUTS14 else None
-        era_szn = szn_era.get(nm)
-        if era_l14 is not None and era_szn is not None:
-            era = W_RECENT * era_l14 + W_SEASON * era_szn
-        elif era_l14 is not None:
-            era = era_l14
-        else:
-            era = era_szn
-        if era is None:
-            factor, lean = 1.0, "avg"
-        else:
-            delta = era - LG
-            if delta >= 0:                      # weak pen -> boost overs
-                factor = 1.0 + min(BP_CAP, delta * BP_K)
-                lean   = "weak" if delta >= BP_GATE else "avg"
-            else:                               # elite pen -> fade overs
-                factor = 1.0 - min(BP_CAP, (-delta) * BP_K)
-                lean   = "elite" if (-delta) >= BP_GATE else "avg"
-        out[nm] = {
-            "bp_ip":   round(d["bp_ip"], 1),
-            "games":   d["games"],
-            "taxed":   d["bp_ip"] >= BP_TAXED,
-            "era_l14": round(era_l14, 2) if era_l14 is not None else None,
-            "g14":     d["g14"],
-            "era_szn": round(era_szn, 2) if era_szn is not None else None,
-            "era":     round(era, 2) if era is not None else None,
-            "factor":  round(factor, 4),
-            "lean":    lean,
-        }
-    return out
-
-
-# ── Platoon split helpers ────────────────────────────────────────────────
-_PITCHER_HAND_CACHE: dict = {}
-_PLATOON_CACHE:      dict = {}
-
-def _get_pitcher_hand(pitcher_id):
-    """Pitcher throwing hand: 'R', 'L', or None."""
-    if not pitcher_id:
-        return None
-    if pitcher_id in _PITCHER_HAND_CACHE:
-        return _PITCHER_HAND_CACHE[pitcher_id]
-    try:
-        r = requests.get(
-            f"https://statsapi.mlb.com/api/v1/people/{pitcher_id}",
-            params={"fields": "people,pitchHand,code"}, timeout=8)
-        hand = (r.json().get("people", [{}])[0]
-                        .get("pitchHand", {}).get("code"))
-        _PITCHER_HAND_CACHE[pitcher_id] = hand
-        return hand
-    except Exception:
-        _PITCHER_HAND_CACHE[pitcher_id] = None
-        return None
-
-def _get_batter_platoon(batter_id):
-    """Career platoon splits: bat_hand (R/L/S), vs_r {ba,ab}, vs_l {ba,ab}."""
-    if not batter_id:
-        return {}
-    if batter_id in _PLATOON_CACHE:
-        return _PLATOON_CACHE[batter_id]
-    try:
-        ph = requests.get(
-            f"https://statsapi.mlb.com/api/v1/people/{batter_id}",
-            params={"fields": "people,batSide,code"}, timeout=8)
-        bat_hand = (ph.json().get("people", [{}])[0]
-                              .get("batSide", {}).get("code"))  # R, L, or S
-        sr = requests.get(
-            f"https://statsapi.mlb.com/api/v1/people/{batter_id}/stats",
-            params={"stats": "career", "group": "hitting",
-                    "sitCodes": "vr,vl", "gameType": "R"}, timeout=10)
-        splits = sr.json().get("stats", [{}])[0].get("splits", [])
-        vs_r = vs_l = None
-        for sp in splits:
-            code = sp.get("split", {}).get("code", "")
-            st   = sp.get("stat", {})
-            ab   = int(st.get("atBats", 0) or 0)
-            h    = int(st.get("hits",   0) or 0)
-            ba   = round(h / ab, 3) if ab > 0 else None
-            if code == "vr":   vs_r = {"ba": ba, "ab": ab}
-            elif code == "vl": vs_l = {"ba": ba, "ab": ab}
-        result = {"bat_hand": bat_hand, "vs_r": vs_r, "vs_l": vs_l}
-        _PLATOON_CACHE[batter_id] = result
-        return result
-    except Exception:
-        _PLATOON_CACHE[batter_id] = {}
-        return {}
-
-def run_pipeline(run_date: str, emit=None) -> dict:
-    if emit is None:
-        emit = lambda _: None
-
-    t_start   = time.time()
-    date_espn = run_date.replace("-", "")
-
-    def log(msg, type_="log"):
-        emit({"type": type_, "msg": msg})
-
-    # ── STEP 1 ────────────────────────────────────────────────────────
-    emit({"type": "section", "msg": "Step 1 — Loading player list from MLB Stats API"})
-    step1 = get_step1_players_or_scrape(run_date, emit=emit)
-    top30 = step1
-    pitcher_map = {p["batter"]: p["pitcher"] for p in top30}
-    emit({"type": "step1_done", "msg": f"✅ {len(top30)} players loaded", "count": len(top30)})
-
-    # Pre-load batter Savant xBA + hard-hit% leaderboards (cached for the run).
-    _yr = run_date[:4]
-    _fetch_batter_savant(_yr)
-    _fetch_batter_savant(str(int(_yr) - 1))
-    emit({"type": "log", "msg": f"  ✅ Batter Savant loaded: {len(_BATTER_SAV_CACHE.get(_yr, {}))} hitters (xBA + hard-hit%)"})
-
-    # ── ESPN Schedule ─────────────────────────────────────────────────
-    emit({"type": "section", "msg": "ESPN — Fetching today's schedule"})
-    espn_r = requests.get(
-        f"https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard?dates={date_espn}",
-        timeout=15).json()
-    team_schedule = {}
-    for event in espn_r.get("events", []):
-        comps = event.get("competitions", [{}])[0]
-        g_start = event.get("date", "")   # ISO UTC first-pitch time (e.g. 2026-05-30T23:05Z)
-        home = away = None
-        for t in comps.get("competitors", []):
-            if t["homeAway"] == "home": home = t["team"]
-            else:                       away = t["team"]
-        if home and away:
-            team_schedule[home["displayName"]] = {
-                "side": "HOME", "opponent": away["displayName"],
-                "opp_slug": away["displayName"].lower().replace(" ", "-"),
-                "game_start": g_start}
-            team_schedule[away["displayName"]] = {
-                "side": "AWAY", "opponent": home["displayName"],
-                "opp_slug": home["displayName"].lower().replace(" ", "-"),
-                "game_start": g_start}
-    log(f"✅ {len(team_schedule) // 2} games found today")
-
-    # ── Roster Lookup ─────────────────────────────────────────────────
-    emit({"type": "section", "msg": "Roster — Resolving player teams via MLB Stats API"})
-    log(f"Looking up {len(top30)} players (this takes ~30 seconds)…")
-    roster = build_player_roster([p["batter"] for p in top30], date_espn, pitcher_map)
-    found = len([v for v in roster.values() if v.get("player_id")])
-    log(f"✅ Resolved {found}/{len(top30)} players")
-
-    # ── STEPS 2 & 3 ───────────────────────────────────────────────────
-    emit({"type": "section", "msg": "Steps 2 & 3 — Fetching MLB Stats API H/A game logs"})
-    all_player_ids = [roster.get(p["batter"], {}).get("player_id") or p.get("player_id") for p in top30]
-    log(f"  Pre-fetching game logs for {len(all_player_ids)} players (parallel)...")
-    prefetch_game_logs(all_player_ids)
-    log("  ✅ Game logs cached — running splits...")
-
-    results = []
-    for i, p in enumerate(top30):
-        name  = p["batter"]
-        info  = roster.get(name, {})
-        # Fallback: fic_cache already resolved player_id + team_name. Use them
-        # when build_player_roster failed to match the abbreviated name (e.g.
-        # "H. Lee", "A. Rosario" — common surnames with multiple MLB players).
-        if not info.get("player_id") and p.get("player_id"):
-            info = dict(info)
-            info["player_id"] = p["player_id"]
-        if not info.get("team_name") and p.get("team_name"):
-            info = dict(info)
-            info["team_name"] = p.get("team_name", "")
-        slug  = info.get("slug", "")
-        team  = info.get("team_name", "")
-        sched = team_schedule.get(team, {})
-        if not sched and team:
-            tl = team.lower()
-            for k, v in team_schedule.items():
-                if tl in k.lower() or k.lower() in tl:
-                    sched = v
-                    break
-        side     = sched.get("side", "")
-        opp_name = sched.get("opponent", "")
-        game_start = sched.get("game_start", "")
-
-        emit({"type": "progress", "current": i + 1, "total": len(top30), "name": name})
-
-        player_id = info.get("player_id")
-        if not side or not player_id:
-            emit({"type": "player_skip", "name": name, "reason": "no game today"})
-            continue
-
-        s2 = fetch_step2_ba(player_id, side, opp_name)
-        s3 = fetch_step3_ba(player_id, side)
-
-        dq = []
-        if s2["ba"] is None:
-            dq.append("S2 N/A")
-        elif "✅" in s2["flag"] and s2["ba"] < 0.250:
-            dq.append(f"S2 {s2['display']}")
-        if s3["ba"] is None:
-            dq.append("S3 N/A")
-        elif "✅" in s3["flag"] and s3["ba"] < 0.250:
-            dq.append(f"S3 {s3['display']}")
-
-        s2s   = round(s2["ba"] * 1000) if s2["ba"] and "✅" in s2["flag"] else 0
-        s3s   = round(s3["ba"] * 1000) if s3["ba"] and "✅" in s3["flag"] else 0
-        total = round(p["ba"] * 1000) + s2s + s3s if not dq else 0
-
-        _sav_dat = _batter_sav_lookup(player_id)
-        _xba_adj, _hh_adj = _xba_hardhit_adj(player_id, p.get("ba"))
-        player_result = {
-            "name": name, "pos": p["pos"], "s1": p["ba"],
-            "team": team, "opp": opp_name, "side": side, "slug": slug,
-            "full_name": info.get("full_name", name),
-            "pitcher": pitcher_map.get(name, ""),
-            "s2": s2, "s3": s3, "total": total,
-            "dq": bool(dq), "dq_reason": " & ".join(dq),
-            "player_id": player_id,
-            "game_start": game_start,
-            "xba": _sav_dat.get("xba"), "hard_hit_pct": _sav_dat.get("hard_hit_pct"),
-            "xba_adj": _xba_adj, "hardhit_adj": _hh_adj,
-        }
-        results.append(player_result)
-
-        if dq:
-            emit({"type": "player_dq", "name": name,
-                  "s1": f"{p['ba']:.3f}", "s2": s2["display"], "s3": s3["display"],
-                  "reason": " & ".join(dq)})
-        else:
-            emit({"type": "player_ok", "name": name,
-                  "s1": f"{p['ba']:.3f}", "s2": s2["display"], "s3": s3["display"],
-                  "opp": opp_name, "side": side, "total": total})
-
-    # ── STEP 4 ────────────────────────────────────────────────────────
-    emit({"type": "section", "msg": "Step 4 — ESPN Day/Night BA filter"})
-    qualified, dn_dq = [], []
-    for r in [x for x in results if not x["dq"]]:
-        team      = roster.get(r["name"], {}).get("team_name", "")
-        full_name = r.get("full_name", r["name"])
-        gtype     = get_game_time_type(team, date_espn)
-        eid       = find_espn_player_id(full_name) or r.get("player_id")
-        dn = (fetch_day_night_ba(eid, gtype)
-              if eid and gtype != "unknown"
-              else {"display": "N/A", "flag": "❌ skip", "dq": False, "ba": None, "ab": None})
-        label = "DAY" if gtype == "day" else "NIGHT"
-        r["dn"] = dn
-        r["dn_label"] = label
-        if dn["dq"]:
-            r["dq"] = True
-            r["dq_reason"] = f"Step 4 {label} {dn['display']} < .200"
-            dn_dq.append(r)
-            emit({"type": "dn_dq", "name": r["name"], "label": label, "display": dn["display"]})
-        else:
-            qualified.append(r)
-            emit({"type": "dn_ok", "name": r["name"], "label": label, "display": dn["display"]})
-
-    # ── STEP 5 ────────────────────────────────────────────────────────
-    emit({"type": "section", "msg": f"Step 5 — Pitcher ERA reference (top {TOP_N_ERA_PITCHERS} lowest ERA · display only, never removes a hitter)"})
-    era_qualified, era_dq = [], []
-    top_era_lastnames, top_era_list = _get_top_era_starters(run_date[:4])
-    # Fetch MLB schedule probable pitchers as fallback when FIC pitcher data is missing
-    try:
-        from under_picks import _get_probable_pitchers as _mlb_probs
-        mlb_probable = _mlb_probs(run_date)  # team_name -> {"name": ..., "id": ...}
-    except Exception:
-        mlb_probable = {}
-    if top_era_lastnames:
-        emit({"type": "log", "msg": f"✅ Top {TOP_N_ERA_PITCHERS} ERA: " +
-              ", ".join(f"{p['name']} ({p['era']:.2f})" for p in top_era_list)})
-        for r in qualified:
-            pitcher_raw = r.get("pitcher", "")
-            # Fallback: if FIC has no pitcher, look up from MLB schedule by opponent team
-            if not pitcher_raw or pitcher_raw.strip().lower() in ("", "tbd", "unknown"):
-                opp = r.get("opp", "").lower()
-                stop = {"the", "of", "los", "san", "new", "de"}
-                o_words = set(opp.split()) - stop
-                for t, pinfo in mlb_probable.items():
-                    t_words = set(t.lower().split()) - stop
-                    if t_words & o_words:
-                        pitcher_raw = pinfo.get("name", "")
-                        r["pitcher"] = pitcher_raw
+                    for oc in mkt.get("outcomes", []):
+                        if oc.get("name") == "Over":
+                            try:
+                                pt = float(oc.get("point", 0))
+                                if pt > 0:
+                                    out[(ht, at)] = pt
+                            except Exception:
+                                pass
+                    if (ht, at) in out:
                         break
-            pitcher_last = _pitcher_last_name(pitcher_raw)
-            if pitcher_last and pitcher_last in top_era_lastnames:
-                matched_era = next((p["era"] for p in top_era_list
-                                    if p["name"].lower().endswith(pitcher_last)), None)
-                era_str = f" ERA {matched_era:.2f}" if matched_era else ""
-                # DISPLAY ONLY — tag a reference chip for the card. Top 30 ERA is a
-                # reference, NOT a gate: the hitter is never removed from the pool.
-                r["facing_top_era"] = pitcher_raw
-                r["top_era_val"] = matched_era
-                emit({"type": "log", "msg": f"  • {r['name']} — facing top-ERA {pitcher_raw}{era_str} (reference only)"})
-            era_qualified.append(r)
+                if (ht, at) in out:
+                    break
+        _GAME_TOTALS = out
+    except Exception:
+        pass
+    return _GAME_TOTALS
+
+
+def _lookup_game_total(pitcher_team: str, opp: str) -> float | None:
+    """Return the game O/U total line for this pitcher's matchup, or None."""
+    pt = _normalize(pitcher_team)
+    op = _normalize(opp)
+    for (ht, at), total in _GAME_TOTALS.items():
+        if (pt in ht or ht in pt) and (op in at or at in op):
+            return total
+        if (pt in at or at in pt) and (op in ht or ht in op):
+            return total
+    return None
+
+
+def _days_rest(last_date: str, run_date: str) -> int | None:
+    """Days between the pitcher's last start and tonight's game."""
+    try:
+        import datetime
+        d1 = datetime.date.fromisoformat(last_date[:10])
+        d2 = datetime.date.fromisoformat(run_date[:10])
+        diff = (d2 - d1).days
+        return diff if diff >= 0 else None
+    except Exception:
+        return None
+
+
+def _project_k(blended_avg, opp_k_pct, whiff_pct, days_rest,
+               gb_pct=None, xwoba_pct=None, implied_total=None, velo_avg=None,
+               k_rate=None, arsenal_f=1.0):
+    """Opponent-adjusted K projection: blend × hand × whiff × rest × GB × xwOBA × total × velo × krate × arsenal.
+    Each factor is clamped so a single thin signal can't swing the pick wildly.
+    gb_pct: pitcher's groundball rate — groundballers miss fewer bats (slight K drag).
+    xwoba_pct: pitcher's xwOBA-against — low xwOBA = limits hard contact = quality pitcher → more Ks.
+    implied_total: today's game O/U line — low total = pitcher dominance expected → boost Ks.
+    velo_avg: pitcher avg fastball velocity — higher velo = more swing-and-miss → K boost.
+    k_rate: pitcher season strikeout rate (K%, ~22 avg) — high-K arms project for more Ks.
+    arsenal_f: pre-computed lineup matchup factor — how well opp hits pitcher's primary pitch."""
+    if blended_avg is None:
+        return None, {}
+    hand_f = 1.0
+    if opp_k_pct:
+        hand_f = max(0.85, min(1.15, opp_k_pct / LEAGUE_K_PCT))
+    whiff_f = 1.0
+    if whiff_pct:
+        whiff_f = max(0.90, min(1.12, 1 + (whiff_pct - LEAGUE_WHIFF) * 0.008))
+    rest_f = 1.0
+    if days_rest is not None:
+        if days_rest >= 6:
+            rest_f = 1.03
+        elif days_rest <= 3:
+            rest_f = 0.97
+    gb_f = 1.0
+    if gb_pct is not None:
+        gb_f = max(0.97, min(1.03, 1.0 - (gb_pct - LEAGUE_GB_PCT) * 0.002))
+    xwoba_f = 1.0
+    if xwoba_pct is not None:
+        xwoba_f = max(0.94, min(1.06, 1.0 + (LEAGUE_XWOBA - xwoba_pct) * 1.5))
+    implied_f = 1.0
+    if implied_total is not None:
+        implied_f = max(0.94, min(1.06, 1.0 + (LEAGUE_TOTAL - implied_total) * 0.02))
+    velo_f = 1.0
+    if velo_avg is not None:
+        # Higher velo = more swing-and-miss = more Ks. >95 mph = +3%; <90 mph = -5%.
+        velo_f = max(0.95, min(1.05, 1.0 + (velo_avg - LEAGUE_VELO) * 0.006))
+    krate_f = 1.0
+    if k_rate is not None:
+        # K% ~22 = avg. Each point above/below scales ±0.5% (capped ±3.5%).
+        krate_f = max(0.965, min(1.035, 1.0 + (k_rate - LEAGUE_KRATE) * 0.005))
+    proj = round(blended_avg * hand_f * whiff_f * rest_f * gb_f * xwoba_f * implied_f * velo_f * krate_f * arsenal_f, 1)
+    factors = {"hand": round(hand_f, 3), "whiff": round(whiff_f, 3), "rest": round(rest_f, 3),
+               "gb": round(gb_f, 3), "xwoba": round(xwoba_f, 3), "implied": round(implied_f, 3),
+               "velo": round(velo_f, 3), "krate": round(krate_f, 3), "arsenal": round(arsenal_f, 3),
+               "opp_k_pct": opp_k_pct, "whiff_pct": whiff_pct, "days_rest": days_rest,
+               "gb_pct": gb_pct, "xwoba_pct": xwoba_pct, "implied_total": implied_total,
+               "velo_avg": velo_avg, "k_rate": k_rate}
+    return proj, factors
+
+
+def _project_prop(market, blended, rates, whiff_pct,
+                  gb_pct=None, xwoba_pct=None, implied_total=None):
+    """Opponent-adjusted projection for hits/walks/earned-runs (parallel to
+    _project_k). Dominant signal = opp matchup rate vs pitcher hand; whiff% is a
+    smaller inverse nudge; GB%, xwOBA-against, and implied total add further
+    context. Each factor clamped so one thin signal can't swing the pick wildly.
+    Returns (proj, factors) or (None, {})."""
+    if blended is None or not rates:
+        return None, {}
+    hand_f, whiff_f, gb_f, xwoba_f, implied_f = 1.0, 1.0, 1.0, 1.0, 1.0
+    if market == "pitcher_hits_allowed":
+        if rates.get("avg"):
+            hand_f = max(0.85, min(1.15, rates["avg"] / LEAGUE_AVG))
+        if whiff_pct:
+            whiff_f = max(0.92, min(1.08, 1 - (whiff_pct - LEAGUE_WHIFF) * 0.006))
+        if gb_pct is not None:
+            gb_f = max(0.90, min(1.10, 1.0 - (gb_pct - LEAGUE_GB_PCT) * 0.004))
+        if xwoba_pct is not None:
+            xwoba_f = max(0.90, min(1.10, 1.0 + (xwoba_pct - LEAGUE_XWOBA) * 2.0))
+        if implied_total is not None:
+            implied_f = max(0.90, min(1.10, 1.0 + (implied_total - LEAGUE_TOTAL) * 0.025))
+    elif market == "pitcher_walks":
+        if rates.get("bb_pct"):
+            hand_f = max(0.85, min(1.15, rates["bb_pct"] / LEAGUE_BB_PCT))
+        if implied_total is not None:
+            implied_f = max(0.97, min(1.03, 1.0 + (implied_total - LEAGUE_TOTAL) * 0.01))
+    elif market == "pitcher_earned_runs":
+        if rates.get("ops"):
+            hand_f = max(0.85, min(1.15, rates["ops"] / LEAGUE_OPS))
+        if whiff_pct:
+            whiff_f = max(0.94, min(1.06, 1 - (whiff_pct - LEAGUE_WHIFF) * 0.004))
+        if gb_pct is not None:
+            gb_f = max(0.88, min(1.12, 1.0 - (gb_pct - LEAGUE_GB_PCT) * 0.005))
+        if xwoba_pct is not None:
+            xwoba_f = max(0.88, min(1.12, 1.0 + (xwoba_pct - LEAGUE_XWOBA) * 2.5))
+        if implied_total is not None:
+            implied_f = max(0.88, min(1.12, 1.0 + (implied_total - LEAGUE_TOTAL) * 0.03))
+    elif market == "pitcher_outs":
+        # Outs = how deep the start goes. Tougher offense (higher OPS / xwOBA) and a
+        # higher game total => pulled earlier => FEWER outs (inverse signals).
+        # Whiffs and grounders => more efficient innings => slightly MORE outs.
+        if rates.get("ops"):
+            hand_f = max(0.85, min(1.15, 1.0 - (rates["ops"] - LEAGUE_OPS) * 1.5))
+        if whiff_pct:
+            whiff_f = max(0.95, min(1.05, 1.0 + (whiff_pct - LEAGUE_WHIFF) * 0.004))
+        if gb_pct is not None:
+            gb_f = max(0.92, min(1.08, 1.0 + (gb_pct - LEAGUE_GB_PCT) * 0.004))
+        if xwoba_pct is not None:
+            xwoba_f = max(0.90, min(1.10, 1.0 - (xwoba_pct - LEAGUE_XWOBA) * 2.0))
+        if implied_total is not None:
+            implied_f = max(0.90, min(1.10, 1.0 - (implied_total - LEAGUE_TOTAL) * 0.025))
     else:
-        emit({"type": "log", "msg": "⚠️ ERA rankings unavailable — skipping Step 5"})
-        era_qualified = qualified
+        return None, {}
+    proj = round(blended * hand_f * whiff_f * gb_f * xwoba_f * implied_f, 1)
+    factors = {"hand": round(hand_f, 3), "whiff": round(whiff_f, 3),
+               "gb": round(gb_f, 3), "xwoba": round(xwoba_f, 3),
+               "implied": round(implied_f, 3),
+               "rates": rates, "whiff_pct": whiff_pct,
+               "gb_pct": gb_pct, "xwoba_pct": xwoba_pct, "implied_total": implied_total}
+    return proj, factors
 
-    # ── LINEUP CHECK ─────────────────────────────────────────────
-    emit({"type": "section", "msg": "Lineup Check — MLB Stats API + Rotowire"})
-    dq_lineup = []
-    try:
-        from lineup_check import build_lineup_map, get_lineup_status
-        id_map, name_map, teams_confirmed, rw_lineups, rw_teams = build_lineup_map(run_date)
-        projected = len(rw_teams - teams_confirmed)
-        emit({"type": "log", "msg": f"✅ Coverage: {len(teams_confirmed)} confirmed + {projected} projected teams"})
-        lineup_qualified = []
-        for r in era_qualified:
-            info      = roster.get(r["name"], {})
-            player_id = info.get("player_id") or r.get("player_id")
-            full_name = r.get("full_name") or info.get("full_name", r["name"])
-            team_name = info.get("team_name", "")
-            status    = get_lineup_status(player_id, full_name, team_name,
-                                          id_map, name_map, teams_confirmed,
-                                          rw_lineups, rw_teams)
-            r["lineup_status"] = status
-            if status == "NOT_IN_LINEUP":
-                r["dq"] = True
-                r["dq_reason"] = "Not in lineup"
-                dq_lineup.append(r)
-                emit({"type": "lineup_ok", "name": r["name"], "status": "NOT_IN_LINEUP"})
-            else:
-                lineup_qualified.append(r)
-                emit({"type": "lineup_ok", "name": r["name"], "status": status})
-        emit({"type": "log", "msg": f"✅ Lineup: {len(lineup_qualified)} in/TBD, {len(dq_lineup)} removed"})
-    except Exception as exc:
-        emit({"type": "log", "msg": f"⚠️ Lineup check skipped: {exc}"})
-        lineup_qualified = era_qualified
-        for r in lineup_qualified:
-            r.setdefault("lineup_status", "TBD")
 
-    _bat_order: dict = {}   # player_id -> batting spot (1-9); populated below
-    # ── Batting Order Position ─────────────────────────────────────────────
-    emit({"type": "section", "msg": "Lineup context — fetching batting order spots"})
-    try:
-        _bat_order = _fetch_batting_order(run_date)
-        _spot_n = 0
-        for r in lineup_qualified:
-            pid   = r.get("player_id")
-            spot  = _bat_order.get(int(pid)) if pid else None
-            r["lineup_spot"] = spot
-            r["lineup_adj"]  = _lineup_adj(spot)
-            if spot:
-                _spot_n += 1
-        emit({"type": "log", "msg": f"  Batting order: {_spot_n}/{len(lineup_qualified)} hitters placed"})
-    except Exception as _exc:
-        emit({"type": "log", "msg": f"  Batting order skipped: {_exc}"})
-        for r in lineup_qualified:
-            r.setdefault("lineup_spot", None)
-            r.setdefault("lineup_adj", 0)
+def _blend(career_avg, recent_avg, recent_n):
+    """50/50 blend of career-vs-opp avg + recent-form avg (mirrors the K logic)."""
+    if career_avg is not None and recent_avg is not None:
+        return round((career_avg + recent_avg) / 2, 1), f"career {career_avg} · L{recent_n} {recent_avg}"
+    if career_avg is not None:
+        return career_avg, f"career {career_avg} only"
+    if recent_avg is not None:
+        return recent_avg, f"L{recent_n} {recent_avg} only (no career vs opp)"
+    return None, "no data"
 
-    # ── Platoon Splits ─────────────────────────────────────────────────────
-    emit({"type": "section", "msg": "Platoon — Fetching batter/pitcher handedness"})
-    try:
-        pit_id_map = {tn: pi.get("id") for tn, pi in mlb_probable.items() if pi.get("id")}
-        _pltn_bids = list({r.get("player_id") for r in lineup_qualified if r.get("player_id")})
-        _pltn_pids = list({pid for pid in pit_id_map.values() if pid})
-        with _TPEx(max_workers=8) as _ex:
-            list(_ex.map(_get_batter_platoon, _pltn_bids))
-        with _TPEx(max_workers=8) as _ex:
-            list(_ex.map(_get_pitcher_hand, _pltn_pids))
-        _stop_w = {"the", "of", "los", "san", "new", "de"}
-        def _match_opp(opp):
-            opp_l = opp.lower()
-            for tn, pid in pit_id_map.items():
-                if tn.lower() == opp_l: return pid
-            for tn, pid in pit_id_map.items():
-                if (set(tn.lower().split()) - _stop_w) & (set(opp_l.split()) - _stop_w):
-                    return pid
-            return None
-        enriched = 0
-        for r in lineup_qualified:
-            batter_id = r.get("player_id")
-            pit_id    = _match_opp(r.get("opp", ""))
-            r["pit_id"] = pit_id   # stored for pitch-type matchup ranking
-            pl        = _get_batter_platoon(batter_id)
-            bat_hand  = pl.get("bat_hand")
-            pit_hand  = _get_pitcher_hand(pit_id) if pit_id else None
-            if bat_hand and pit_hand:
-                eff = ("L" if pit_hand == "R" else "R") if bat_hand == "S" else bat_hand
-                split = pl.get("vs_r" if pit_hand == "R" else "vs_l") or {}
-                ba   = split.get("ba")
-                ab   = split.get("ab", 0)
-                adv  = (eff == "L" and pit_hand == "R") or (eff == "R" and pit_hand == "L")
-                ba_d = (".%03d" % int(ba * 1000)) if ba is not None else "N/A"
-                r["platoon"] = {
-                    "bat_hand": bat_hand, "pit_hand": pit_hand,
-                    "ba": ba, "ab": ab, "adv": adv,
-                    "display": f"{ba_d} ({ab}AB)",
-                    "label": f"{'L' if bat_hand=='S' else bat_hand}HB vs {pit_hand}HP",
-                }
-                enriched += 1
-            else:
-                r["platoon"] = None
-        emit({"type": "log", "msg": f"✅ Platoon: {enriched}/{len(lineup_qualified)} enriched"})
-    except Exception as _exc:
-        emit({"type": "log", "msg": f"⚠️ Platoon enrichment skipped: {_exc}"})
-        for r in lineup_qualified:
-            r.setdefault("platoon", None)
 
-    # ── BvP pitch-type matchup ranking nudge ──────────────────────────
-    # Loads Statcast pitch-arsenal + batter-vs-pitch-type wOBA once per season.
-    # Silently skipped on Savant throttle — no picks are lost.
-    emit({"type": "section", "msg": "BvP pitch-type matchup — loading Statcast arsenal"})
-    try:
-        _load_pitch_data(run_date[:4])
-        _adj_n = 0
-        for r in lineup_qualified:
-            adj = _pitch_adj(r.get("player_id"), r.get("pit_id"))
-            r["pitch_adj"] = adj
-            if adj != 0:
-                _adj_n += 1
-        emit({"type": "log", "msg": f"  Pitch-type adj applied to {_adj_n}/{len(lineup_qualified)} hitters"})
-    except Exception as _exc:
-        emit({"type": "log", "msg": f"  Pitch-type adj skipped: {_exc}"})
-        for r in lineup_qualified:
-            r.setdefault("pitch_adj", 0)
+# market -> (career avg field, career list field, recent avg field, recent list field)
+_PROP_SRC = {
+    "pitcher_hits_allowed": ("avg_hits", "h_list",    "recent_avg_hits", "recent_hits_list"),
+    "pitcher_outs":         ("avg_outs", "outs_list", "recent_avg_outs", "recent_outs_list"),
+    "pitcher_earned_runs":  ("avg_er",   "er_list",   "recent_avg_er",   "recent_er_list"),
+    "pitcher_walks":        ("avg_bb",   "bb_list",   "recent_avg_bb",   "recent_bb_list"),
+}
 
-    # ── S4 (L10 H/A consistency ≥50%) — filter then re-rank ──────────
-    emit({"type": "section", "msg": "S4 (L10 H/A consistency ≥50%) + S5 (D/N BA) — filter & re-rank"})
-    s4_qualified, s4_dq = [], []
-    for r in lineup_qualified:
-        info       = roster.get(r["name"], {})
-        player_id  = info.get("player_id") or r.get("player_id")
-        s4         = fetch_step4_consistency(player_id, r["side"], r.get("opp", ""))
-        r["s4"]    = s4
-        # DQ if S4 has qualifying games but hit rate < 60%
-        if s4["games"] > 0 and s4["score"] < 60:
-            r["dq"] = True
-            r["dq_reason"] = f"S4 {s4['display']} ({s4['score']}%) < 60% H/A hit rate vs opp"
-            s4_dq.append(r)
-            emit({"type": "log", "msg": f"  ❌ {r['name']}: S4 {s4['display']} ({s4['score']}%) < 60% — DQ"})
+
+def _build_prop_picks(name, team, opp, side, hist, rf, pid=None,
+                      gb_pct=None, xwoba_pct=None, implied_total=None) -> list:
+    """One Over/Under pick per prop market that has a posted line in PROP_ODDS.
+    Uniform dict so the frontend can render all 3 categories generically."""
+    props = []
+    nkey = _normalize(name)
+    # Computed lazily on the first projected market that has a posted line, so a
+    # pitcher with no prop lines costs zero extra API calls.
+    pit_hand   = _get_pitch_hand(pid) if pid else "R"
+    _whiff     = _whiff_lookup(pid) if pid else None
+    _opp_rates = None
+    _rates_done = False
+    for market in PROP_MARKETS:
+        odds = PROP_ODDS.get(market, {}).get(nkey)
+        if not odds:
             continue
-        dn_ba      = (r.get("dn", {}) or {}).get("ba")
-        s5_score   = round(dn_ba * 1000) if dn_ba else 0
-        r["s5"]    = {"ba": dn_ba, "score": s5_score,
-                      "display": f"{dn_ba:.3f}" if dn_ba else "N/A"}
-        # S5 (day/night BA) IS added to the total — total = (S1+S2+S3+S5)×1000 — and
-        # also filters (DQ below the cutoff). S4 (H/A hit rate vs opp) is NOT in the
-        # total; it drives the final HIT-list order (see sort below).
-        r["total"] = (r.get("total", 0) or 0) + s5_score
-        emit({"type": "log",
-              "msg": f"  ✅ {r['name']}: S4 {s4['display']} ({s4['score']}%) ranking signal | "
-                     f"S5 {r['s5']['display']} (+{s5_score}) → total {r['total']}"})
-        r["blurb"] = _build_blurb(r)
-        s4_qualified.append(r)
+        label, vfield, unit = PROP_META[market]
+        c_avg_f, c_list_f, r_avg_f, r_list_f = _PROP_SRC[market]
+        career_avg  = hist.get(c_avg_f) if hist else None
+        career_list = (hist.get(c_list_f) if hist else None) or []
+        recent_avg  = rf.get(r_avg_f) if rf else None
+        recent_n    = rf.get("recent_starts", 0) if rf else 0
+        line = odds["line"]
+        blended, blend_src = _blend(career_avg, recent_avg, recent_n)
 
-    emit({"type": "log", "msg": f"S4 filter: {len(s4_qualified)} pass, {len(s4_dq)} DQ'd (<50%)"})
-    # Rank by model total (points) — S4 hit rate is displayed on the card for
-    # consistency reference only and does not affect ordering.
-    all_ranked = sorted(
-        s4_qualified,
-        key=lambda x: x.get("total", 0) + x.get("pitch_adj", 0) + x.get("lineup_adj", 0),
-        reverse=True,
-    )
-    top9     = all_ranked[:10]
-    also_ran = all_ranked[10:]
+        # ── Opponent-adjusted projection (hits/walks/ER only; outs excluded) ──
+        proj, proj_factors = None, {}
+        decision_val = blended
+        if blended is not None and market in PROP_EDGE:
+            if not _rates_done:
+                _opp_rates = _get_opp_split_rates(opp, pit_hand, SEASON)
+                _rates_done = True
+            proj, proj_factors = _project_prop(
+                market, blended, _opp_rates, _whiff,
+                gb_pct=gb_pct, xwoba_pct=xwoba_pct, implied_total=implied_total)
+            if proj is not None:
+                decision_val = proj
+                blend_src += (f" → proj {proj} [hand×{proj_factors['hand']}"
+                              f" whiff×{proj_factors['whiff']}"
+                              f" gb×{proj_factors['gb']}"
+                              f" xwoba×{proj_factors['xwoba']}"
+                              f" total×{proj_factors['implied']}]")
+        edge = PROP_EDGE.get(market, 0.0)
 
-    # Recent form: last 5 games (date/opp/hits/total-bases) for the click-through popup
-    for _hp in top9 + also_ran:
-        _hp["recent_hit_log"] = _recent_hit_log(_hp.get("player_id"))
+        if decision_val is None:
+            pick, pick_note = None, f"no data vs {opp}"
+        elif edge and abs(decision_val - line) < edge:
+            pick, pick_note = None, f"edge too thin (proj {decision_val} vs line {line}, need ≥{edge})"
+        elif decision_val > line:
+            pick, pick_note = "OVER",  f"proj {decision_val} > line {line} ({blend_src})"
+        elif decision_val < line:
+            pick, pick_note = "UNDER", f"proj {decision_val} < line {line} ({blend_src})"
+        else:
+            pick, pick_note = None, f"proj {decision_val} exactly on line {line}"
+        starts = hist.get("starts", 0) if hist else 0
+        over_hits = sum(1 for v in career_list if v is not None and v > line)
+        hit_rate = f"{over_hits}/{len(career_list)}" if career_list else "—"
+        vs_opp_log = [{"d": e.get("d", ""), "v": e.get(vfield), "ip": e.get("ip", "")}
+                      for e in ((hist.get("vs_opp_log") if hist else None) or [])]
+        recent_log = [{"d": e.get("d", ""), "v": e.get(vfield), "ip": e.get("ip", ""),
+                       "opp": e.get("opp", "")}
+                      for e in ((rf.get("recent_k_log") if rf else None) or [])]
+        pick_dict = {
+            "market": market, "label": label, "unit": unit, "_prop": True,
+            "name": name, "team": team, "opp": opp, "side": side,
+            "pid": pid,
+            "line": line, "over_odds": odds.get("over_odds"), "under_odds": odds.get("under_odds"),
+            "book": _book_label(odds.get("over_odds_book") if pick == "OVER" else odds.get("under_odds_book")),
+            "career_avg": career_avg, "recent_avg": recent_avg, "recent_starts": recent_n,
+            "blended": blended, "avg": blended, "blend_src": blend_src, "starts": starts,
+            "proj": proj, "proj_factors": proj_factors, "pit_hand": pit_hand,
+            "vs_opp_log": vs_opp_log, "recent_log": recent_log,
+            "hit_rate": hit_rate, "pick": pick, "pick_note": pick_note,
+            "gb_pct": gb_pct, "xwoba_against": xwoba_pct, "implied_total": implied_total,
+        }
+        if market == "pitcher_walks":
+            _opp_bbr = next((v for k, v in TEAM_BB_RANKS.items() if _teams_match(k, opp)), None)
+            pick_dict["opp_bb_rank"]  = _opp_bbr["rank"]    if _opp_bbr else None
+            pick_dict["opp_bb_pg"]    = _opp_bbr["bb_per_g"] if _opp_bbr else None
+            pick_dict["opp_bb_total"] = _opp_bbr["total"]    if _opp_bbr else None
+        props.append(pick_dict)
+    return props
 
-    # Series game-position splits (G1/G2/G3+)
-    for _hp in top9 + also_ran:
-        _hp["series_splits"] = fetch_series_splits(
-            _hp.get("player_id"), _hp.get("opp", ""), run_date, _hp.get("side", "")
-        )
 
-    # ── Under Picks ───────────────────────────────────────────────────
+def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
+    if emit is None: emit = lambda _: None
+
+    emit({"type": "section", "msg": "⚾ Pitcher K Picks — Fetching lines from The Odds API"})
+    all_lines = _fetch_k_lines(run_date, emit)
+    if not all_lines:
+        # No K lines today — but the 3 prop markets (hits/outs/ER) may still have
+        # lines posted. Do NOT bail; continue so probable starters get prop picks
+        # built (maximizes parlay depth even on no-K days).
+        emit({"type": "log", "msg": "⚠️ No pitcher K lines found — continuing for prop markets"})
+        all_lines = []
+    else:
+        emit({"type": "log", "msg": f"✅ {len(all_lines)} pitcher K lines found"})
+
+    bottom_k_set, bottom_k_list = _get_bottom_k_teams(SEASON)
+    if bottom_k_set:
+        emit({"type": "log", "msg": f"✅ Bottom {BOTTOM_K_TEAMS_N} K teams (DQ): " +
+              ", ".join(f"{t['name']} ({t['k_per_g']} K/G)" for t in bottom_k_list)})
+
+    # Fetch the 3 prop O/U lines (hits allowed / outs / earned runs) into PROP_ODDS
+    # BEFORE the eval loop so each worker can attach its prop picks. Separate fetch
+    # from K — never blocks the K path if props fail.
+    emit({"type": "section", "msg": "⚾ Pitcher Props — Fetching hits/outs/earned-runs lines"})
     try:
-        from under_picks import run_under_picks
-        under_picks_list = run_under_picks(run_date, team_schedule, emit=emit,
-                                           top_era=top_era_lastnames, top_era_list=top_era_list)
-    except Exception as exc:
-        emit({"type": "log", "msg": f"⚠️ Under Picks skipped: {exc}"})
-        under_picks_list = []
+        _fetch_pitcher_props(run_date, emit)
+    except Exception as _pexc:
+        emit({"type": "log", "msg": f"  ⚠️ Pitcher props fetch failed: {_pexc}"})
+        PROP_ODDS.clear()
 
-    # ── Enrich top9 + also_ran with hit odds (0.5 line "to record a hit") ──
-    try:
-        from under_picks import (HIT_ODDS as _HIT_ODDS, HIT_ODDS_BOOK as _HIT_ODDS_BOOK,
-                                  _norm_name as _nn, _book_label as _hit_book_label)
-        # Build last-name index for fallback (only use when unambiguous)
-        _last_idx: dict = {}
-        for _k, _v in _HIT_ODDS.items():
-            _parts = _k.split()
-            if _parts:
-                _last = _parts[-1]
-                _last_idx[_last] = (_last_idx[_last] + [(_k, _v)]) if _last in _last_idx else [(_k, _v)]
+    emit({"type": "section", "msg": "⚾ Pitcher K Picks — Pulling career H/A K history"})
+    all_results = []
 
-        def _name_variants(raw: str):
-            """Generate all name variants to try against HIT_ODDS."""
-            s = _nn(raw)
-            if not s: return []
-            variants = [s]
-            parts = s.split()
-            if len(parts) >= 2:
-                last  = parts[-1]
-                first_parts = parts[:-1]  # everything before last name
-                # single initial: "J. Last"
-                variants.append(f"{first_parts[0][0]}. {last}")
-                # multi-word first: "Jung Hoo Lee" → "J.H. Lee"
-                if len(first_parts) >= 2:
-                    initials = ".".join(p[0] for p in first_parts) + "."
-                    variants.append(f"{initials} {last}")
-                # hyphen variant: "ha seong kim" → "ha-seong kim"
-                if len(first_parts) >= 2:
-                    variants.append(f"{'-'.join(first_parts)} {last}")
-                # no-space variant: "junghoo lee"
-                if len(first_parts) >= 2:
-                    variants.append(f"{''.join(first_parts)} {last}")
-            return variants
+    # Pull each pitcher's H/A K history in parallel (≤8 threads). Each worker is
+    # independent (3 MLB Stats API calls); the id/team caches are GIL-safe. Each
+    # worker returns (result, logs) and the main thread emits logs as futures
+    # complete so the live progress feed stays intact. Sequential time.sleep
+    # pacing is no longer needed — the bounded pool throttles concurrency.
+    def _eval_pitcher(pl):
+        logs = []
+        name = pl["name"]
+        line = pl["line"]
+        pid  = _get_pitcher_id(name)
+        if not pid:
+            logs.append(f"  ⚠️ {name} — not found, skipping")
+            return None, logs
 
-        def _lookup_odds(p):
-            candidates = []
-            for field in ("full_name", "name"):
-                candidates.extend(_name_variants(p.get(field, "")))
-            # 1. exact match on any variant
-            for v in candidates:
-                if v in _HIT_ODDS: return v
-            # 2. unambiguous last-name fallback (skip common last names)
-            seen_last = set()
-            for v in candidates:
-                parts = v.split()
-                last = parts[-1] if parts else ""
-                if not last or last in seen_last: continue
-                seen_last.add(last)
-                matches = _last_idx.get(last, [])
-                if len(matches) == 1: return matches[0][0]
-            return None
+        # Prefer the big-league club from today's probable-starters schedule;
+        # _get_pitcher_team (currentTeam) can be a minor-league affiliate for
+        # optioned pitchers (e.g. "Toledo Mud Hens" instead of "Detroit Tigers").
+        pitcher_team = prob_team_map.get(_normalize(name)) or _get_pitcher_team(pid)
+        side = "HOME" if _teams_match(pitcher_team, pl["home_team"]) else "AWAY"
+        opp  = pl["away_team"] if side == "HOME" else pl["home_team"]
 
-        for _p in top9 + also_ran:
-            # Hit picks are always the "to record a hit" OVER on the 0.5 line, so the
-            # displayed-side book is whichever book posted that best price.
-            _mk = _lookup_odds(_p)
-            _p["hit_odds"] = _HIT_ODDS.get(_mk) if _mk else None
-            _p["book"]     = _hit_book_label(_HIT_ODDS_BOOK.get(_mk)) if _mk else ""
-        emit({"type": "log", "msg": f"  ✅ Hit odds matched for {sum(1 for p in top9+also_ran if p.get('hit_odds') is not None)}/{len(top9)+len(also_ran)} picks"})
-    except Exception as _exc:
-        emit({"type": "log", "msg": f"⚠️ Hit odds enrichment skipped: {_exc}"})
+        # Full K-rank lookup for the chip (rank 1 = most Ks = easiest matchup)
+        _opp_kr = next((v for k, v in TEAM_K_RANKS.items() if _teams_match(k, opp)), None)
+        opp_k_rank = _opp_kr["rank"]   if _opp_kr else None
+        opp_k_pg   = _opp_kr["k_per_g"] if _opp_kr else None
+        opp_k_total = _opp_kr["total"] if _opp_kr else None
+        # H/A split: pitcher HOME → opp is traveling (road); pitcher AWAY → opp at home
+        _ha_tbl = TEAM_K_RANKS_AWAY if side == "HOME" else TEAM_K_RANKS_HOME
+        _opp_kr_ha = next((v for k, v in _ha_tbl.items() if _teams_match(k, opp)), None)
+        opp_k_rank_ha = _opp_kr_ha["rank"]    if _opp_kr_ha else None
+        opp_k_pg_ha   = _opp_kr_ha["k_per_g"] if _opp_kr_ha else None
+        opp_k_context = "road" if side == "HOME" else "home"
 
-    # ── Matchup-value (Log5 + EV) enrichment for hit picks ──────────────
-    # Adds matchup_prob / season_ba / proj_baa / impl_prob / ev / edge to every
-    # hit pick. Frontend re-ranks by ev (default keeps ALL plays) + shows a green
-    # edge badge, with a "+EV only" toggle. No play is dropped server-side.
-    try:
-        _SEASON_YR = str(run_date)[:4]
-        _LG_BA = 0.244
-        _pid_map = {tn: pi.get("id") for tn, pi in mlb_probable.items() if pi.get("id")}
-        _stopw = {"the", "of", "los", "san", "new", "de"}
+        opp_k_info = next((t for t in bottom_k_list if _teams_match(t["name"], opp)), None)
+        if bottom_k_set and opp_k_info:
+            dq_note = f"Opp {opp} is bottom {BOTTOM_K_TEAMS_N} K team ({opp_k_info['k_per_g']} K/G)"
+            logs.append(f"  ❌ {name} — {dq_note}")
+            return ({"name": name, "team": pitcher_team, "opp": opp, "side": side,
+                     "line": line, "over_odds": pl.get("over_odds"),
+                     "under_odds": pl.get("under_odds"), "avg_k": None, "starts": 0,
+                     "min_k": None, "max_k": None, "k_history": "—",
+                     "book": _book_label(pl.get("over_odds_book") or pl.get("under_odds_book")),
+                     "pick": None, "pick_note": dq_note}), logs
 
-        def _opp_pid(opp):
-            ol = (opp or "").lower()
-            if not ol:
-                return None
-            for tn, pid in _pid_map.items():
-                if tn.lower() == ol:
-                    return pid
-            for tn, pid in _pid_map.items():
-                if (set(tn.lower().split()) - _stopw) & (set(ol.split()) - _stopw):
-                    return pid
-            return None
+        logs.append(f"  {name}  K line:{line}  {side} vs {opp}...")
+        hist   = career_ha_ks_vs_opp(pid, side, opp)
+        avg_k  = hist["avg_k"]  if hist else None
+        starts = hist["starts"] if hist else 0
+        k_list = hist["k_list"] if hist else []
 
-        _ev_pool = list(top9) + list(also_ran)
-        _bids = {p.get("player_id") for p in _ev_pool if p.get("player_id")}
-        _opids = {x for x in (_opp_pid(p.get("opp", "")) for p in _ev_pool) if x}
-        with _TPEx(max_workers=8) as _ex:
-            list(_ex.map(lambda i: _get_batter_season_rate(i, _SEASON_YR), _bids))
-        with _TPEx(max_workers=8) as _ex:
-            list(_ex.map(lambda i: _get_pitcher_baa(i, _SEASON_YR), _opids))
+        # Recent form: last 5 starts any opponent (current season)
+        rf = _get_recent_k_form(pid)
+        recent_avg_k  = rf["recent_avg_k"]
+        recent_k_list = rf["recent_k_list"]
+        recent_starts = rf["recent_starts"]
 
-        _ev_n = 0
-        for _p in _ev_pool:
-            _p["matchup_prob"] = None
-            _p["ev"] = None
-            _p["edge"] = None
-            _p["impl_prob"] = None
-            _p["proj_baa"] = None
-            _br = _get_batter_season_rate(_p.get("player_id"), _SEASON_YR)
-            if not _br:
-                continue
-            _opid = _opp_pid(_p.get("opp", ""))
-            _baa = _get_pitcher_baa(_opid, _SEASON_YR) if _opid else None
-            _ba, _est_ab = _br["ba"], _br["est_ab"]
-            _adj = _log5(_ba, _baa, _LG_BA) if _baa else _ba
-            _mp = 1.0 - (1.0 - _adj) ** _est_ab
-            _p["matchup_prob"] = round(_mp, 4)
-            _p["season_ba"] = round(_ba, 3)
-            _p["est_ab"] = _est_ab
-            if _baa:
-                _p["proj_baa"] = round(_baa, 3)
-            _am = _p.get("hit_odds")
-            if _am is not None:
-                _imp = _ml_implied(_am)
-                _e = _ml_ev(_mp, _am)
-                _p["impl_prob"] = round(_imp, 4) if _imp is not None else None
-                _p["ev"] = round(_e, 4) if _e is not None else None
-                _p["edge"] = round(_mp - _imp, 4) if _imp is not None else None
-                _ev_n += 1
-        emit({"type": "log", "msg": f"  ✅ Matchup EV computed for {_ev_n}/{len(_ev_pool)} hit picks"})
-    except Exception as _exc:
-        emit({"type": "log", "msg": f"⚠️ Matchup EV enrichment skipped: {_exc}"})
+        # Blended average: 60% recent form + 40% career H/A vs opp.
+        # Recent stuff/form is more predictive of Ks than a thin career-vs-team sample.
+        if avg_k is not None and recent_avg_k is not None:
+            blended_avg = round(avg_k * 0.4 + recent_avg_k * 0.6, 1)
+            blend_src   = f"career {avg_k} · L{recent_starts} {recent_avg_k} (60/40 recent)"
+        elif avg_k is not None:
+            blended_avg = avg_k
+            blend_src   = f"career {avg_k} only"
+        elif recent_avg_k is not None:
+            blended_avg = recent_avg_k
+            blend_src   = f"L{recent_starts} {recent_avg_k} only (no career vs opp)"
+        else:
+            blended_avg = None
+            blend_src   = "no data"
 
-    # Inject team + first-pitch time into each under pick (reverse-lookup from team_schedule)
-    for _up in under_picks_list:
-        _side, _opp = _up.get("side", ""), _up.get("opp", "")
-        for _t, _sched in team_schedule.items():
-            if _sched.get("side") == _side and _sched.get("opponent") == _opp:
-                _up["team"] = _t
-                _up["game_start"] = _sched.get("game_start", "")
+        # ── Opponent-adjusted projection: handedness K% + whiff% + days rest ──
+        pit_hand  = _get_pitch_hand(pid) if blended_avg is not None else "R"
+        opp_k_pct = _get_opp_k_pct_vs_hand(opp, pit_hand, SEASON) if blended_avg is not None else None
+        whiff_pct = _whiff_lookup(pid)
+        d_rest    = _days_rest(rf.get("last_start_date", ""), run_date)
+        _gbx      = _gb_xwoba_lookup(pid) if pid else {}
+        _gb_pct   = _gbx.get("gb_pct")
+        _xwoba    = _gbx.get("xwoba")
+        _implied  = _lookup_game_total(pitcher_team, opp)
+        _velo     = _velo_lookup(pid) if pid else None
+        _krate    = _krate_lookup(pid) if pid else None
+        _ars_f    = _arsenal_opp_adj(pid, opp) if pid else 1.0
+        proj_k, proj_factors = _project_k(blended_avg, opp_k_pct, whiff_pct, d_rest,
+                                          gb_pct=_gb_pct, xwoba_pct=_xwoba,
+                                          implied_total=_implied, velo_avg=_velo,
+                                          k_rate=_krate, arsenal_f=_ars_f)
+        # The pick decides off the PROJECTION (falls back to blend if no factors).
+        decision_val = proj_k if proj_k is not None else blended_avg
+        if proj_factors:
+            blend_src += (f" → proj {proj_k} [hand×{proj_factors['hand']}"
+                          f" whiff×{proj_factors['whiff']} rest×{proj_factors['rest']}]")
+
+        sugg_line, sugg_odds = None, None
+        if decision_val is None:
+            pick, pick_note = None, f"N/A — {starts} starts vs {opp}, no recent data"
+        elif abs(decision_val - line) < MIN_K_EDGE:
+            pick, pick_note = None, f"edge too thin (proj {decision_val} vs line {line}, need ≥{MIN_K_EDGE}K edge — {blend_src})"
+            logs.append(f"    ⚠️ skip thin edge {decision_val} vs {line} ({blend_src})")
+        elif decision_val > line:
+            pick, pick_note = "OVER",  f"proj {decision_val} > line {line} ({blend_src})"
+            logs.append(f"    ✅ OVER proj {decision_val} > {line} ({blend_src})")
+        elif decision_val < line:
+            pick, pick_note = "UNDER", f"proj {decision_val} < line {line} ({blend_src})"
+            logs.append(f"    ✅ UNDER proj {decision_val} < {line} ({blend_src})")
+        else:
+            # projection exactly on line → try alt line from career k_list floor
+            sugg_line = (min(k_list) - 0.5) if k_list else None
+            k_ladder  = pl.get("over_ladder") or {}
+            sugg_odds = k_ladder.get(sugg_line) if sugg_line is not None else None
+            if sugg_line is not None and sugg_line < line:
+                pick = "OVER"
+                pick_note = (f"proj {decision_val} on line {line} → floor OVER {sugg_line} ({blend_src})")
+                logs.append(f"    ✅ OVER {sugg_line} (alt) proj on line")
+            else:
+                pick, pick_note = None, f"proj {decision_val} exactly on line"
+                sugg_line, sugg_odds = None, None
+
+        hits_over = sum(1 for k in k_list if k > line) if k_list else 0
+        k_hit_rate = f"{hits_over}/{starts}" if starts else "—"
+        _ump_data = None
+        for (_nh, _na), _uname in game_ump_map.items():
+            if _teams_match(_nh, pitcher_team) or _teams_match(_na, pitcher_team):
+                _ump_data = _UMP_K_CACHE.get(_uname)
                 break
-        _up.setdefault("team", "")
-        _up.setdefault("game_start", "")
-        _up["recent_hit_log"] = _recent_hit_log(_up.get("batter_id"))
-        _up["series_splits"]  = fetch_series_splits(_up.get("batter_id"), _up.get("opp", ""), run_date, _up.get("side", ""))
+        # K consistency: variance of recent K output across last N starts
+        _k_mean = sum(recent_k_list) / len(recent_k_list) if recent_k_list else 0
+        _k_std  = (sum((k - _k_mean) ** 2 for k in recent_k_list) / len(recent_k_list)) ** 0.5 \
+                  if recent_k_list and len(recent_k_list) >= 2 else None
+        _k_consistency = ("consistent" if _k_std is not None and _k_std < 1.5 else
+                          "volatile"   if _k_std is not None and _k_std < 3.0 else
+                          "boom_bust"  if _k_std is not None else None)
+        return ({"name": name, "team": pitcher_team, "opp": opp, "side": side,
+                 "line": line, "over_odds": pl.get("over_odds"),
+                 "under_odds": pl.get("under_odds"),
+                 "book": _book_label(pl.get("over_odds_book") if pick == "OVER" else pl.get("under_odds_book")),
+                 "avg_k": avg_k,
+                 "starts": starts, "min_k": hist["min_k"] if hist else None,
+                 "max_k": hist["max_k"] if hist else None,
+                 "avg_ip": hist["avg_ip"] if hist else None,
+                 "era":    hist["era"]    if hist else None,
+                 "avg_hits":   hist["avg_hits"]   if hist else None,
+                 "avg_er":     hist["avg_er"]     if hist else None,
+                 "avg_outs":   hist["avg_outs"]   if hist else None,
+                 "avg_bb":     hist["avg_bb"]     if hist else None,
+                 "vs_opp_log": hist["vs_opp_log"] if hist else [],
+                 "k_hit_rate": k_hit_rate,
+                 "k_history": ", ".join(str(k) for k in k_list) if k_list else "—",
+                 "sugg_line": sugg_line, "sugg_odds": sugg_odds,
+                 "recent_avg_k": recent_avg_k, "recent_k_list": recent_k_list,
+                 "recent_starts": recent_starts, "recent_k_log": rf["recent_k_log"],
+                 "k_consistency": _k_consistency, "k_std": round(_k_std, 2) if _k_std is not None else None,
+                 "blended_avg_k": blended_avg, "blend_src": blend_src,
+                 "proj_k": proj_k, "proj_factors": proj_factors,
+                 "pit_hand": pit_hand, "days_rest": d_rest,
+                 "whiff_pct": whiff_pct, "opp_k_pct_hand": opp_k_pct,
+                 "opp_k_rank": opp_k_rank, "opp_k_pg": opp_k_pg, "opp_k_total": opp_k_total,
+                 "opp_k_rank_ha": opp_k_rank_ha, "opp_k_pg_ha": opp_k_pg_ha, "opp_k_context": opp_k_context,
+                 "gb_pct": _gb_pct, "xwoba_against": _xwoba, "implied_total": _implied,
+                 "velo_avg": _velo, "k_rate": _krate, "arsenal_f": round(_ars_f, 3),
+                 "pid": pid,
+                 "props": _build_prop_picks(name, pitcher_team, opp, side, hist, rf, pid,
+                                            gb_pct=_gb_pct, xwoba_pct=_xwoba,
+                                            implied_total=_implied),
+                 "ump": _ump_data,
+                 "pick": pick, "pick_note": pick_note}), logs
 
-    # ── Pitcher K Picks ───────────────────────────────────────────────
-    try:
-        from pitcher_k import run_pitcher_k_picks
-        pitcher_k_result = run_pitcher_k_picks(run_date, team_schedule, emit=emit)
-    except Exception as exc:
-        emit({"type": "log", "msg": f"⚠️ Pitcher K Picks skipped: {exc}"})
-        pitcher_k_result = {"picks": [], "all": []}
+    # Today's probable starters — used to map each pitcher to his big-league club
+    # (so optioned pitchers don't show their minor-league affiliate) and reused
+    # below for no-K-line starters (avoids a second schedule API call).
+    prob_starters = _fetch_probable_starters(run_date)
+    prob_team_map = {_normalize(s["name"]): s["team"] for s in prob_starters if s.get("team")}
 
-    # Stamp first-pitch time on pitcher K picks so the frontend can hide started games.
-    # Pitcher team names come from the MLB Stats API; match them to the ESPN schedule
-    # (exact key first, else substring) to pull that game's start time.
-    def _game_start_for(team_name):
-        if not team_name:
-            return ""
-        s = team_schedule.get(team_name)
-        if s:
-            return s.get("game_start", "")
-        tl = team_name.lower()
-        for _k, _v in team_schedule.items():
-            if tl in _k.lower() or _k.lower() in tl:
-                return _v.get("game_start", "")
-        return ""
-    for _pk in (pitcher_k_result.get("picks", []) + pitcher_k_result.get("all", [])):
-        _pk["game_start"] = _game_start_for(_pk.get("team", ""))
+    # Pre-load whiff%, GB%, xwOBA, velocity, K% leaderboards (current + prior-year fallback).
+    _fetch_whiff_map(SEASON)
+    _fetch_whiff_map(str(int(SEASON) - 1))
+    _fetch_gb_xwoba_map(SEASON)
+    _fetch_gb_xwoba_map(str(int(SEASON) - 1))
+    _fetch_velo_map(SEASON)
+    _fetch_velo_map(str(int(SEASON) - 1))
+    _fetch_krate_map(SEASON)
+    _fetch_krate_map(str(int(SEASON) - 1))
+    # Pre-load pitch arsenal + batter wOBA vs pitch type for arsenal matchup.
+    _pk_load_pitch_data(SEASON)
+    _pk_load_pitch_data(str(int(SEASON) - 1))
+    # Pre-fetch tonight's confirmed lineups for arsenal matchup computation.
+    _PK_LINEUP_MAP.clear()
+    _PK_LINEUP_MAP.update(_pk_fetch_lineup_map(run_date))
+    # Pre-fetch today's game O/U totals (one Odds API call, cached for the run).
+    _fetch_game_totals(run_date)
+    emit({"type": "log", "msg": f"  ✅ Savant loaded: {len(_GB_XWOBA_CACHE.get(SEASON, {}))} pitchers · "
+          f"{len(_VELO_CACHE.get(SEASON, {}))} velo · {len(_KRATE_CACHE.get(SEASON, {}))} K% · "
+          f"{len(_PK_ARSENAL_CACHE)} arsenals · {len(_PK_LINEUP_MAP)} lineups · {len(_GAME_TOTALS)} totals"})
 
-    # Stamp first-pitch time on the 3 pitcher prop categories (hits allowed / outs /
-    # earned runs) too, so the frontend can hide games that already started.
-    pitcher_props = pitcher_k_result.get("props", {}) or {}
-    for _mkt, _bucket in pitcher_props.items():
-        for _pp in (_bucket.get("picks", []) + _bucket.get("all", [])):
-            _pp["game_start"] = _game_start_for(_pp.get("team", ""))
+    # Fetch HP umpires for tonight's games; pre-load K-rate stats per ump.
+    game_ump_map = _fetch_game_umps(run_date)
+    for _uname in set(game_ump_map.values()):
+        if _uname not in _UMP_K_CACHE:
+            _UMP_K_CACHE[_uname] = _fetch_ump_stats(_uname)
+    emit({"type": "log", "msg": f"  ⚖️ Umpires: {len(game_ump_map)} games · "
+          + ", ".join(f"{v} ({'W' if (_UMP_K_CACHE.get(v) or {}).get('zone')=='WIDE' else 'T' if (_UMP_K_CACHE.get(v) or {}).get('zone')=='TIGHT' else 'N'})" for v in set(game_ump_map.values()))})
 
-    # ── Runs Picks (Batter Runs Scored, Over/Under 0.5) ───────────────
-    try:
-        from under_picks import run_runs_picks
-        runs_picks_list = run_runs_picks(run_date, team_schedule, emit=emit)
-    except Exception as exc:
-        emit({"type": "log", "msg": f"⚠️ Runs Picks skipped: {exc}"})
-        runs_picks_list = []
-    for _rp in runs_picks_list:
-        _rp["game_start"]    = _game_start_for(_rp.get("team", ""))
-        _rp["series_splits"] = fetch_series_splits(_rp.get("batter_id"), _rp.get("opp", ""), run_date, _rp.get("side", ""))
-
-    # ── TB Under Picks (batter total bases Under 1.5) ─────────────────────
-    try:
-        from under_picks import run_tb_under_picks
-        tb_picks_list = run_tb_under_picks(run_date, team_schedule, emit=emit)
-    except Exception as exc:
-        emit({"type": "log", "msg": f"⚠️ TB Under picks skipped: {exc}"})
-        tb_picks_list = []
-    for _tp in tb_picks_list:
-        _tp["game_start"]    = _game_start_for(_tp.get("team", ""))
-        _tp["series_splits"] = fetch_series_splits(_tp.get("batter_id"), _tp.get("opp", ""), run_date, _tp.get("side", ""))
-
-    # ── TB Over Picks (batter total bases Over 1.5) ───────────────────────
-    try:
-        from under_picks import run_tb_over_picks
-        tb_over_picks_list = run_tb_over_picks(run_date, team_schedule, emit=emit)
-    except Exception as exc:
-        emit({"type": "log", "msg": f"⚠️ TB Over picks skipped: {exc}"})
-        tb_over_picks_list = []
-    for _tov in tb_over_picks_list:
-        _tov["game_start"]    = _game_start_for(_tov.get("team", ""))
-        _tov["series_splits"] = fetch_series_splits(_tov.get("batter_id"), _tov.get("opp", ""), run_date, _tov.get("side", ""))
-
-    # ── RBI Picks (Batter RBIs, Over/Under 0.5) ───────────────────────────
-    try:
-        from under_picks import run_rbi_picks
-        rbi_picks_list = run_rbi_picks(run_date, team_schedule, emit=emit)
-    except Exception as exc:
-        emit({"type": "log", "msg": f"⚠️ RBI picks skipped: {exc}"})
-        rbi_picks_list = []
-    for _xp in rbi_picks_list:
-        _xp["game_start"]    = _game_start_for(_xp.get("team", ""))
-        _xp["series_splits"] = fetch_series_splits(_xp.get("batter_id"), _xp.get("opp", ""), run_date, _xp.get("side", ""))
-
-    # ── Batter Walks Picks (Batter Walks, Over/Under 0.5) ─────────────────
-    try:
-        from under_picks import run_walks_picks
-        walks_picks_list = run_walks_picks(run_date, team_schedule, emit=emit)
-    except Exception as exc:
-        emit({"type": "log", "msg": f"⚠️ Batter Walks picks skipped: {exc}"})
-        walks_picks_list = []
-    for _wp in walks_picks_list:
-        _wp["game_start"]    = _game_start_for(_wp.get("team", ""))
-        _wp["series_splits"] = fetch_series_splits(_wp.get("batter_id"), _wp.get("opp", ""), run_date, _wp.get("side", ""))
-
-    # ── HRR Picks (Hits+Runs+RBI Over 1.5) ────────────────────────────────
-    try:
-        from under_picks import run_hrr_picks
-        hrr_picks_list = run_hrr_picks(run_date, team_schedule, emit=emit)
-    except Exception as exc:
-        emit({"type": "log", "msg": f"⚠️ HRR picks skipped: {exc}"})
-        hrr_picks_list = []
-    for _hp in hrr_picks_list:
-        _hp["game_start"]    = _game_start_for(_hp.get("team", ""))
-        _hp["series_splits"] = fetch_series_splits(_hp.get("batter_id"), _hp.get("opp", ""), run_date, _hp.get("side", ""))
-
-    # ── HR Picks (Batter Home Runs, Over/Under 0.5) ───────────────────────
-    try:
-        from under_picks import run_hr_picks
-        hr_picks_list = run_hr_picks(run_date, team_schedule, emit=emit)
-    except Exception as exc:
-        emit({"type": "log", "msg": f"⚠️ HR picks skipped: {exc}"})
-        hr_picks_list = []
-    for _hrp in hr_picks_list:
-        _hrp["game_start"]    = _game_start_for(_hrp.get("team", ""))
-        _hrp["series_splits"] = fetch_series_splits(_hrp.get("batter_id"), _hrp.get("opp", ""), run_date, _hrp.get("side", ""))
-
-    # ── Pitcher series position (G1/G2/G3) ────────────────────────────────
-    # Pitchers have no batting logs, so derive each game's series slot from the
-    # hitters in that same game: a pitcher's start IS game N of his team's
-    # series, and his team's hitters already carry today_pos vs the opponent.
-    # Use the MAX today_pos seen for the team (the hitter who played every game
-    # reflects the true series position). Stamp a minimal series_splits so the
-    # frontend G# badge + strategy dot render on pitcher cards too.
-    try:
-        _team_pos: dict = {}
-        for _lst in (top9, also_ran, under_picks_list, runs_picks_list,
-                     tb_picks_list, tb_over_picks_list, rbi_picks_list,
-                     walks_picks_list, hrr_picks_list, hr_picks_list):
-            for _hh in _lst:
-                _tm  = (_hh.get("team") or "").strip()
-                _pos = ((_hh.get("series_splits") or {}).get("today_pos")) or 0
-                if _tm and _pos and _pos > _team_pos.get(_tm, 0):
-                    _team_pos[_tm] = _pos
-
-        def _pos_for_team(team_name):
-            if not team_name:
-                return 0
-            _p = _team_pos.get(team_name)
-            if _p:
-                return _p
-            _tl = team_name.lower()
-            for _k, _v in _team_pos.items():
-                if _tl in _k.lower() or _k.lower() in _tl:
-                    return _v
-            return 0
-
-        _pit_all = list(pitcher_k_result.get("picks", [])) + list(pitcher_k_result.get("all", []))
-        for _b in pitcher_props.values():
-            _pit_all += list(_b.get("picks", [])) + list(_b.get("all", []))
-        _stamped = 0
-        for _pp in _pit_all:
-            _pos = _pos_for_team(_pp.get("team", ""))
-            if _pos:
-                _pp["series_splits"] = {"today_pos": _pos}
-                _stamped += 1
-        emit({"type": "log", "msg": f"  ✅ Pitcher series position stamped ({_stamped} picks, {len(_team_pos)} teams)"})
-    except Exception as _exc:
-        emit({"type": "log", "msg": f"⚠️ Pitcher series position skipped: {_exc}"})
-
-    # ── Series game number (G1/G2/G3) — authoritative from MLB schedule ──
-    # seriesGameNumber is a property of the GAME, so stamp it per TEAM onto EVERY
-    # pick (hitters + pitchers) — consistent across teammates, unlike the
-    # per-player today_pos heuristic above. Drives the compact G# chip on cards.
-    try:
-        _sgames = _fetch_series_games(run_date)
-
-        def _series_for_team(team_name):
-            if not team_name or not _sgames:
-                return None
-            s = _sgames.get(team_name)
-            if s:
-                return s
-            tl = team_name.lower()
-            for _k, _v in _sgames.items():
-                if tl in _k.lower() or _k.lower() in tl:
-                    return _v
-            return None
-
-        _sg_all = (list(top9) + list(also_ran) + list(under_picks_list)
-                   + list(runs_picks_list) + list(tb_picks_list)
-                   + list(tb_over_picks_list) + list(rbi_picks_list)
-                   + list(walks_picks_list) + list(hrr_picks_list)
-                   + list(hr_picks_list))
-        _sg_pit = list(pitcher_k_result.get("picks", [])) + list(pitcher_k_result.get("all", []))
-        for _b in pitcher_props.values():
-            _sg_pit += list(_b.get("picks", [])) + list(_b.get("all", []))
-        _sg_n = 0
-        for _p in _sg_all + _sg_pit:
-            _si = _series_for_team(_p.get("team", ""))
-            if _si:
-                _p["series_game"] = _si["g"]
-                _p["series_of"]   = _si["of"]
-                _sg_n += 1
-        emit({"type": "log", "msg": f"  ✅ Series game# stamped ({_sg_n} picks, {len(_sgames)} teams)"})
-    except Exception as _exc:
-        emit({"type": "log", "msg": f"⚠️ Series game# skipped: {_exc}"})
-
-    # ── EV enrichment for ALL non-hit categories ────────────────────────
-    # Each pick gets ev / edge / ev_prob from our model probability vs the
-    # posted price for the SIDE we picked. Binary 0.5/1.5 batter markets use the
-    # empirical vs-opp rate (score); Under-1.5-hits uses a binomial off season
-    # BA; pitcher count markets use a Poisson off the opponent-adjusted
-    # projection. Frontend shows a badge; the "+EV only" toggle filters on
-    # ev>0. No play is dropped server-side. Hit picks already enriched above.
-    try:
-        _SY = str(run_date)[:4]
-
-        def _ev_ou(p, p_over, over_am, under_am):
-            """Two-sided market: P(OVER)=p_over, attach for the picked side."""
-            if p.get("pick") == "UNDER":
-                _set_ev(p, (1.0 - p_over) if p_over is not None else None, under_am)
-            else:
-                _set_ev(p, p_over, over_am)
-
-        for _p in rbi_picks_list:
-            _s = _p.get("score")
-            _ev_ou(_p, (_s / 100.0) if _s is not None else None,
-                   _p.get("over_odds"), _p.get("under_odds"))
-        for _p in walks_picks_list:
-            _s = _p.get("score")
-            _ev_ou(_p, (_s / 100.0) if _s is not None else None,
-                   _p.get("over_odds"), _p.get("under_odds"))
-        for _p in runs_picks_list:
-            _s = _p.get("score")
-            _ev_ou(_p, (_s / 100.0) if _s is not None else None,
-                   _p.get("over_odds"), _p.get("under_odds"))
-        for _p in hrr_picks_list:
-            _s = _p.get("score")
-            _ev_ou(_p, (_s / 100.0) if _s is not None else None,
-                   _p.get("hrr_over_odds"), _p.get("hrr_under_odds"))
-        for _p in hr_picks_list:
-            _s = _p.get("score")
-            _ev_ou(_p, (_s / 100.0) if _s is not None else None,
-                   _p.get("over_odds"), _p.get("under_odds"))
-        for _p in tb_over_picks_list:                 # OVER only
-            _s = _p.get("score")
-            _set_ev(_p, (_s / 100.0) if _s is not None else None,
-                    _p.get("tb_over_odds"))
-        for _p in tb_picks_list:                      # TB UNDER (score = % OVER)
-            _s = _p.get("score")
-            _po = (_s / 100.0) if _s is not None else None
-            _set_ev(_p, (1.0 - _po) if _po is not None else None,
-                    _p.get("tb_under_odds"))
-
-        # Under-1.5-hits: P(<=1 hit) = binomial(0)+binomial(1) off season BA.
-        for _p in under_picks_list:
-            _br = _get_batter_season_rate(_p.get("batter_id"), _SY)
-            if _br:
-                _b, _n = _br["ba"], _br["est_ab"]
-                _pu = (1.0 - _b) ** _n + _n * _b * (1.0 - _b) ** (_n - 1)
-                _set_ev(_p, min(max(_pu, 0.0), 1.0), _p.get("under_odds"))
-            else:
-                _set_ev(_p, None, None)
-
-        # Pitcher count markets — Poisson off the projection (fallback blend).
-        import math as _math
-        def _ev_pois(p, mean):
-            ln = p.get("line")
-            if mean is None or ln is None:
-                _set_ev(p, None, None)
-                return
-            if p.get("pick") == "UNDER":
-                _cdf = _pois_cdf(int(_math.floor(ln)), mean)
-                _set_ev(p, _cdf, p.get("under_odds"))
-            else:
-                _alt = p.get("sugg_line")
-                if _alt is not None and p.get("pick") == "OVER":
-                    _c = _pois_cdf(int(_math.floor(_alt)), mean)
-                    _set_ev(p, (1.0 - _c) if _c is not None else None,
-                            p.get("sugg_odds") or p.get("over_odds"))
-                else:
-                    _c = _pois_cdf(int(_math.floor(ln)), mean)
-                    _set_ev(p, (1.0 - _c) if _c is not None else None,
-                            p.get("over_odds"))
-
-        for _pk in (pitcher_k_result.get("picks", [])
-                    + pitcher_k_result.get("all", [])):
-            _ev_pois(_pk, _pk.get("proj_k") if _pk.get("proj_k") is not None
-                     else _pk.get("blended_avg_k"))
-        for _mkt, _bk in pitcher_props.items():
-            for _pp in _bk.get("picks", []):
-                _ev_pois(_pp, _pp.get("proj") if _pp.get("proj") is not None
-                         else _pp.get("blended"))
-        emit({"type": "log", "msg": "  ✅ EV computed for all non-hit categories"})
-    except Exception as _exc:
-        emit({"type": "log", "msg": f"⚠️ Category EV enrichment skipped: {_exc}"})
-
-    # ── Game-environment re-ranking inputs (weather + home-plate umpire) ──
-    # Build the shared target list ONCE; ballpark/weather and umpire each stamp
-    # onto it (Phase A), then a single combined Phase B re-ranks every category
-    # (reorder only — qualification gates are never touched, so the same picks
-    # appear, just in a different order). Either factor missing -> neutral 1.0.
-    _rr_targets = list(top9) + list(also_ran) + list(under_picks_list) + list(runs_picks_list) + list(tb_picks_list) + list(tb_over_picks_list) + list(rbi_picks_list) + list(walks_picks_list) + list(hrr_picks_list) + list(hr_picks_list)
-    _rr_targets += pitcher_k_result.get("picks", []) + pitcher_k_result.get("all", [])
-    for _b in pitcher_props.values():
-        _rr_targets += _b.get("picks", []) + _b.get("all", [])
-
-    # ── Phase A1: ballpark + weather env chip (per HOME park) ──
-    # Per-game factor = Savant park factor x Open-Meteo temp/wind. Silent on
-    # failure (env=None -> no chip, neutral re-rank).
-    try:
-        from ballpark import game_env
-    except Exception as _exc:
-        emit({"type": "log", "msg": f"⚠️ Ballpark env unavailable: {_exc}"})
-        game_env = None
-    if game_env is not None:
-        def _home_team(team_name):
-            if not team_name:
-                return ""
-            s = team_schedule.get(team_name)
-            if s:
-                return team_name if s.get("side") == "HOME" else s.get("opponent", "")
-            tl = team_name.lower()
-            for _k, _v in team_schedule.items():
-                if tl in _k.lower() or _k.lower() in tl:
-                    return _k if _v.get("side") == "HOME" else _v.get("opponent", "")
-            return ""
-        _env_cache = {}
-        def _env_for(team_name, game_start):
-            home = _home_team(team_name)
-            if not home:
-                return None
-            if home not in _env_cache:
-                try:
-                    _env_cache[home] = game_env(home, game_start)
-                except Exception:
-                    _env_cache[home] = None
-            return _env_cache[home]
-        for _pp in _rr_targets:
+    with ThreadPoolExecutor(max_workers=8) as _ex:
+        _futs = [_ex.submit(_eval_pitcher, pl) for pl in all_lines]
+        for _fut in as_completed(_futs):
             try:
-                _pp["env"] = _env_for(_pp.get("team", ""), _pp.get("game_start", ""))
-            except Exception:
-                _pp["env"] = None
-        emit({"type": "log", "msg": f"  ✅ Ballpark/weather env computed for {len(_env_cache)} stadium(s)"})
+                _res, _logs = _fut.result()
+            except Exception as _exc:
+                _res, _logs = None, [f"  ⚠️ pitcher eval failed: {_exc}"]
+            for _m in _logs:
+                emit({"type": "log", "msg": _m})
+            if _res:
+                all_results.append(_res)
 
-    # ── Phase A2: home-plate umpire effect (per game) ──
-    # Each game's HP umpire + how their games trend on K/BB/runs vs league
-    # (statsapi only, cached per day). Silent on failure / unposted officials.
+    # Add today's probable starters who have no K line posted
     try:
-        from umpire import build_today as _ump_build, lookup as _ump_lookup
-    except Exception as _exc:
-        emit({"type": "log", "msg": f"⚠️ Umpire effect unavailable: {_exc}"})
-        _ump_build = None
-        _ump_lookup = None
-    if _ump_build is not None:
-        try:
-            _ump_map = _ump_build(run_date, emit=emit) or {}
-        except Exception as _exc:
-            emit({"type": "log", "msg": f"⚠️ Umpire effect skipped: {_exc}"})
-            _ump_map = {}
-        if _ump_map:
-            for _pp in _rr_targets:
-                try:
-                    _pp["ump"] = _ump_lookup(_ump_map, _pp.get("team", ""))
-                except Exception:
-                    _pp["ump"] = None
+        starters = prob_starters
+        seen_names = {_normalize(r["name"]) for r in all_results}
+        new_starters = [st for st in starters if _normalize(st["name"]) not in seen_names]
 
-    # ── Phase A3: bullpen — fatigue (last 3d) + QUALITY (reliever ERA) ──
-    # Hitters get bp_opp = opponent bullpen profile; its quality `factor` nudges
-    # the OVER/hitter side in Phase B (weak pen -> overs up, elite pen -> down;
-    # unders inverse). Pitchers get bp_own = own bullpen (fatigue display only,
-    # no re-rank). Chips rendered in main.py.
-    try:
-        _bp_map = _fetch_bullpen_stats(run_date)
-        if _bp_map:
-            def _bp_for(team_name: str):
-                if not team_name:
-                    return None
-                d = _bp_map.get(team_name)
-                if d:
-                    return d
-                tl = team_name.lower()
-                for _k, _v in _bp_map.items():
-                    if tl in _k.lower() or _k.lower() in tl:
-                        return _v
-                return None
+        def _eval_starter(st):
+            pid2 = _get_pitcher_id(st["name"])
+            hist2 = career_ha_ks_vs_opp(pid2, st["side"], st["opp"]) if pid2 else None
+            avg_k2 = hist2["avg_k"] if hist2 else None
+            starts2 = hist2["starts"] if hist2 else 0
+            k_list2 = hist2["k_list"] if hist2 else []
+            k_history2 = ", ".join(str(k) for k in k_list2) if k_list2 else "—"
+            rf2 = _get_recent_k_form(pid2) if pid2 else {"recent_avg_k": None, "recent_k_list": [], "recent_starts": 0, "recent_k_log": []}
+            _opp_kr2 = next((v for k, v in TEAM_K_RANKS.items() if _teams_match(k, st["opp"])), None)
+            _ha_tbl2 = TEAM_K_RANKS_AWAY if st["side"] == "HOME" else TEAM_K_RANKS_HOME
+            _opp_kr2_ha = next((v for k, v in _ha_tbl2.items() if _teams_match(k, st["opp"])), None)
+            _hand2  = _get_pitch_hand(pid2) if pid2 else "R"
+            _whiff2 = _whiff_lookup(pid2) if pid2 else None
+            _rest2  = _days_rest(rf2.get("last_start_date", ""), run_date)
+            _oppkp2 = _get_opp_k_pct_vs_hand(st["opp"], _hand2, SEASON) if pid2 else None
+            return {
+                "name": st["name"], "team": st["team"], "opp": st["opp"],
+                "side": st["side"], "line": None,
+                "over_odds": None, "under_odds": None,
+                "avg_k": avg_k2, "starts": starts2,
+                "min_k": min(k_list2) if k_list2 else None,
+                "max_k": max(k_list2) if k_list2 else None,
+                "avg_ip": hist2["avg_ip"] if hist2 else None,
+                "era": hist2["era"] if hist2 else None,
+                "avg_hits": hist2["avg_hits"] if hist2 else None,
+                "avg_er":   hist2["avg_er"]   if hist2 else None,
+                "avg_outs": hist2["avg_outs"] if hist2 else None,
+                "avg_bb":   hist2["avg_bb"]   if hist2 else None,
+                "vs_opp_log": hist2["vs_opp_log"] if hist2 else [],
+                "k_hit_rate": "—", "k_history": k_history2,
+                "recent_avg_k": rf2["recent_avg_k"], "recent_k_list": rf2["recent_k_list"],
+                "recent_starts": rf2["recent_starts"], "recent_k_log": rf2["recent_k_log"],
+                "blended_avg_k": None, "blend_src": None,
+                "proj_k": None, "proj_factors": {},
+                "pit_hand": _hand2, "days_rest": _rest2,
+                "whiff_pct": _whiff2, "opp_k_pct_hand": _oppkp2,
+                "gb_pct": _gb_xwoba_lookup(pid2).get("gb_pct") if pid2 else None,
+                "xwoba_against": _gb_xwoba_lookup(pid2).get("xwoba") if pid2 else None,
+                "implied_total": _lookup_game_total(st["team"], st["opp"]),
+                "velo_avg": _velo_lookup(pid2) if pid2 else None,
+                "k_rate": _krate_lookup(pid2) if pid2 else None,
+                "opp_k_rank": _opp_kr2["rank"]    if _opp_kr2 else None,
+                "opp_k_pg":   _opp_kr2["k_per_g"] if _opp_kr2 else None,
+                "opp_k_total": _opp_kr2["total"]  if _opp_kr2 else None,
+                "opp_k_rank_ha": _opp_kr2_ha["rank"]    if _opp_kr2_ha else None,
+                "opp_k_pg_ha":   _opp_kr2_ha["k_per_g"] if _opp_kr2_ha else None,
+                "opp_k_context": "road" if st["side"] == "HOME" else "home",
+                "pid": pid2,
+                # Pitchers with NO K line may still have hits/outs/ER lines posted —
+                # build their prop picks too so the parlay pool is as deep as possible.
+                "props": _build_prop_picks(st["name"], st["team"], st["opp"], st["side"], hist2, rf2, pid2),
+                "pick": None, "pick_note": "No K line posted today",
+                "ump": next((_UMP_K_CACHE.get(un) for (nh, na), un in game_ump_map.items()
+                             if _teams_match(nh, st["team"]) or _teams_match(na, st["team"])), None),
+            }
 
-            _hitter_bp = (list(top9) + list(also_ran)
-                          + list(under_picks_list) + list(runs_picks_list)
-                          + list(rbi_picks_list) + list(hrr_picks_list)
-                          + list(tb_picks_list) + list(tb_over_picks_list)
-                          + list(walks_picks_list) + list(hr_picks_list))
-            _pitcher_bp: list = (list(pitcher_k_result.get("picks", []))
-                                 + list(pitcher_k_result.get("all", [])))
-            for _bk in pitcher_props.values():
-                _pitcher_bp += list(_bk.get("picks", [])) + list(_bk.get("all", []))
+        with ThreadPoolExecutor(max_workers=8) as _ex:
+            for _r in _ex.map(_eval_starter, new_starters):
+                all_results.append(_r)
+        emit({"type": "log", "msg": f"  ✅ {len(starters)} probable starters fetched — "
+              f"{len([r for r in all_results if r.get('pick_note')=='No K line posted today'])} added (no line)"})
+    except Exception as exc:
+        emit({"type": "log", "msg": f"  ⚠️ Probable starters fetch failed: {exc}"})
 
-            for _pp in _hitter_bp:
-                try:
-                    _pp["bp_opp"] = _bp_for(_pp.get("opp", ""))
-                except Exception:
-                    _pp["bp_opp"] = None
-            for _pp in _pitcher_bp:
-                try:
-                    _pp["bp_own"] = _bp_for(_pp.get("team", ""))
-                except Exception:
-                    _pp["bp_own"] = None
-            emit({"type": "log",
-                  "msg": f"  ✅ Bullpen fatigue+quality attached ({len(_bp_map)} teams)"})
-    except Exception as _bp_exc:
-        emit({"type": "log", "msg": f"⚠️ Bullpen stats skipped: {_bp_exc}"})
+    # name as a deterministic tie-breaker (workers finish out of order); stable
+    # sort keeps name order within equal edge sizes.
+    confirmed = sorted([r for r in all_results if r["pick"]], key=lambda r: r["name"])
+    confirmed = sorted(confirmed,
+                       key=lambda r: abs((r["blended_avg_k"] if r["blended_avg_k"] is not None else (r["avg_k"] or 0)) - (r["line"] or 0)), reverse=True)
+    emit({"type": "log", "msg": f"✅ Pitcher K done — {len(confirmed)} picks, {len(all_results)} total pitchers"})
 
-    # ── Platoon adj for hits picks ────────────────────────────────────────
-    # Favorable handedness matchup: LHB vs RHP or RHB vs LHP → +50 boost.
-    # Unfavorable: -25 drag. 0 when data absent.
-    def _plat_adj(r):
-        pl = r.get("platoon") or {}
-        adv = pl.get("adv")
-        if adv is True:   return 50
-        if adv is False:  return -25
-        return 0
-    for _hp in list(top9) + list(also_ran):
-        _hp["platoon_adj"] = _plat_adj(_hp)
-
-    # ── Attach pitch_adj + lineup_adj to ALL non-hits hitter categories ──
-    # Each non-hits pick already carries batter_id from under_picks.py.
-    # We look up the opp probable pitcher from mlb_probable to get pit_id,
-    # then call the same _pitch_adj / _lineup_adj functions used for hits.
-    # Falls back to 0 when data is absent (cache miss, no probable pitcher).
-    def _opp_pit_id(opp_name: str):
-        """Return probable pitcher MLB id for opp team, or None."""
-        if not opp_name:
-            return None
-        ol = opp_name.lower()
-        sw = {"the", "of", "los", "san", "new", "de"}
-        for tn, pi in mlb_probable.items():
-            if not pi.get("id"):
+    # Collect the 3 prop categories from every pitcher's embedded `props` list.
+    # picks = qualifying (has a pick), ranked by edge (|blend − line|) desc;
+    # all   = every pitcher with a posted line in that market (for the no-pick table).
+    prop_picks = {m: {"picks": [], "all": []} for m in PROP_MARKETS}
+    for r in all_results:
+        for pr in r.get("props", []):
+            m = pr.get("market")
+            if m not in prop_picks:
                 continue
-            if tn.lower() == ol:
-                return pi["id"]
-        for tn, pi in mlb_probable.items():
-            if not pi.get("id"):
-                continue
-            twords = set(tn.lower().split()) - sw
-            owords = set(ol.split()) - sw
-            if twords and owords and twords & owords:
-                return pi["id"]
-        return None
+            prop_picks[m]["all"].append(pr)
+            if pr.get("pick"):
+                prop_picks[m]["picks"].append(pr)
+    for m in prop_picks:
+        prop_picks[m]["picks"].sort(
+            key=lambda x: abs((x["blended"] if x["blended"] is not None else 0) - (x["line"] or 0)),
+            reverse=True)
+        prop_picks[m]["all"].sort(key=lambda x: x.get("name", ""))
+    emit({"type": "log", "msg": "✅ Pitcher props — " +
+          ", ".join(f"{PROP_META[m][0]}: {len(prop_picks[m]['picks'])}" for m in PROP_MARKETS)})
 
-    def _opp_pit_name(opp_name: str):
-        """Probable pitcher NAME for opp team (mirrors _opp_pit_id), or None."""
-        if not opp_name:
-            return None
-        ol = opp_name.lower()
-        sw = {"the", "of", "los", "san", "new", "de"}
-        for tn, pi in mlb_probable.items():
-            if pi.get("name") and tn.lower() == ol:
-                return pi["name"]
-        for tn, pi in mlb_probable.items():
-            if not pi.get("name"):
-                continue
-            twords = set(tn.lower().split()) - sw
-            owords = set(ol.split()) - sw
-            if twords and owords and twords & owords:
-                return pi["name"]
-        return None
-
-    _nonhit_all = (
-        under_picks_list + runs_picks_list +
-        tb_picks_list + tb_over_picks_list +
-        rbi_picks_list + walks_picks_list + hrr_picks_list
-    )
-    _nh_enriched = 0
-    for _np in _nonhit_all:
-        bid  = _np.get("batter_id")
-        pit  = _opp_pit_id(_np.get("opp", ""))
-        padj = _pitch_adj(bid, pit) if bid else 0
-        spot = _bat_order.get(int(bid)) if bid else None
-        ladj = _lineup_adj(spot)
-        _np.setdefault("pitch_adj",  padj)
-        _np.setdefault("lineup_adj", ladj)
-        if padj or ladj:
-            _nh_enriched += 1
-    emit({"type": "log", "msg": f"  ✅ Pitch/lineup adj attached to {_nh_enriched}/{len(_nonhit_all)} non-hits picks"})
-
-    # ── Rotation rank (SP1..SP5) — drives the card depth-chart dot ──────────
-    # Rank each team's pitchers by season games-started (most-started = ace,
-    # SP1). Hitters get opp_rot_rank (the arm they face); pitchers get rot_rank
-    # (their own). Frontend tiers: SP1 ace, SP2-3 mid (neutral), SP4+/rookie
-    # back-end. MLB Stats API only — no scraping.
-    try:
-        _rot = _build_rotation_ranks(run_date)
-    except Exception as _rexc:
-        emit({"type": "log", "msg": f"⚠️ Rotation ranks skipped: {_rexc}"})
-        _rot = {}
-
-    def _rot_get(pid):
-        try:
-            return _rot.get(int(pid)) if pid else None
-        except Exception:
-            return None
-
-    def _set_opp_rot(pick, pid):
-        info = _rot_get(pid)
-        if info:
-            pick["opp_rot_rank"]   = info.get("rank")
-            pick["opp_rot_rookie"] = info.get("rookie", False)
-            pick["opp_rot_tier"]   = info.get("tier", 0)
-
-    def _set_own_rot(pick, pid):
-        info = _rot_get(pid)
-        if info:
-            pick["rot_rank"]   = info.get("rank")
-            pick["rot_rookie"] = info.get("rookie", False)
-            pick["rot_tier"]   = info.get("tier", 0)
-
-    for _hp in list(top9) + list(also_ran):
-        _set_opp_rot(_hp, _hp.get("pit_id"))
-    for _np in _nonhit_all:
-        _set_opp_rot(_np, _np.get("pit_id") or _opp_pit_id(_np.get("opp", "")))
-    _pk_all = list(pitcher_k_result.get("picks", [])) + list(pitcher_k_result.get("all", []))
-    for _mkt, _bucket in (pitcher_k_result.get("props", {}) or {}).items():
-        _pk_all += list(_bucket.get("picks", [])) + list(_bucket.get("all", []))
-    for _pk in _pk_all:
-        _set_own_rot(_pk, _pk.get("pid"))
-    _rot_hit = sum(1 for x in (list(top9) + list(also_ran) + _nonhit_all) if x.get("opp_rot_rank"))
-    _rot_pit = sum(1 for x in _pk_all if x.get("rot_rank"))
-    emit({"type": "log", "msg": f"  ✅ Rotation rank: {len(_rot)} pitchers ranked, attached to {_rot_hit} hitters + {_rot_pit} pitcher picks"})
-
-    # ── Batter vs today's starter (head-to-head career line) for popups ──
-    # Every hitter popup shows the batter's career record vs the arm he faces
-    # (the user wanted this on ALL hitter props). _get_s1_vs_pitcher is cached and
-    # already called during scoring, so reusing it here is ~free. Hits carry
-    # player_id + pit_id; non-hits carry batter_id (resolve the arm via opp).
-    try:
-        from under_picks import _get_s1_vs_pitcher as _vsp_fn
-
-        def _set_vs_pit(pick, bid, pid):
-            if not bid or not pid:
-                return
-            vp = _vsp_fn(bid, pid)
-            if vp:
-                pick["vs_pit"] = {"display": vp.get("display", "N/A"),
-                                  "ab": vp.get("ab", 0), "hr": vp.get("hr", 0)}
-
-        _vp_n = 0
-        for _hp in list(top9) + list(also_ran):
-            _set_vs_pit(_hp, _hp.get("batter_id") or _hp.get("player_id"), _hp.get("pit_id"))
-            if _hp.get("vs_pit"):
-                _vp_n += 1
-        for _np in _nonhit_all + list(hr_picks_list):
-            _pid = _np.get("pit_id") or _opp_pit_id(_np.get("opp", ""))
-            _set_vs_pit(_np, _np.get("batter_id"), _pid)
-            # Batter Walks picks don't carry the opposing starter — stamp it so
-            # the facing-pitcher + career-vs-pitcher popup blocks render.
-            if (not _np.get("pitcher")) or _np.get("pitcher") == "TBD":
-                _pn = _opp_pit_name(_np.get("opp", ""))
-                if _pn:
-                    _np["pitcher"] = _pn
-            if _np.get("vs_pit"):
-                _vp_n += 1
-        emit({"type": "log", "msg": f"  ✅ Batter-vs-pitcher line stamped ({_vp_n} hitter picks)"})
-    except Exception as _exc:
-        emit({"type": "log", "msg": f"⚠️ Batter-vs-pitcher line skipped: {_exc}"})
-
-    # ── Phase B: combined env + umpire RE-RANKING (reorder only) ──
-    # Offense axis = weather/park env × umpire RUN factor (a wide strike zone
-    # suppresses offense; a tight zone inflates it). Pitcher Walks uses the
-    # umpire WALK factor. Pitcher Strikeouts are re-ranked CLIENT-SIDE in
-    # main.py (the only category the frontend re-sorts) via the K factor.
-    # Outs stay excluded. Both factors default to 1.0 -> base order preserved.
-    def _envf(p):
-        e = p.get("env")
-        try:
-            f = float(e.get("factor")) if e else 1.0
-        except Exception:
-            f = 1.0
-        return f if f and f > 0 else 1.0
-    def _umpf(p, comp):
-        u = p.get("ump")
-        try:
-            f = float(u.get(comp)) if u else 1.0
-        except Exception:
-            f = 1.0
-        return f if f and f > 0 else 1.0
-    def _bpf(p):                        # opponent-bullpen offense factor
-        b = p.get("bp_opp")
-        try:
-            f = float(b.get("factor")) if b else 1.0
-        except Exception:
-            f = 1.0
-        return f if f and f > 0 else 1.0
-    def _offf(p):                       # combined offense multiplier
-        return _envf(p) * _umpf(p, "rFactor") * _bpf(p)
-
-    # Hitters ("to record a hit", all OVER): points × offense factor, plus
-    # pitch-type BvP, lineup-spot, and platoon-matchup adjustments.
-    # Re-split the headline Top-10 vs Money Ball from the same pool.
-    _hit_pool = list(top9) + list(also_ran)
-    _hit_pool.sort(
-        key=lambda x: (
-            x.get("total", 0)
-            + x.get("pitch_adj", 0)
-            + x.get("lineup_adj", 0)
-            + x.get("platoon_adj", 0)
-            + x.get("xba_adj", 0)
-            + x.get("hardhit_adj", 0)
-        ) * _offf(x),
-        reverse=True,
-    )
-    top9     = _hit_pool[:10]
-    also_ran = _hit_pool[10:]
-
-    # Under 1.5 hits (all UNDER): under_score lower=colder=better.
-    # Good BvP (high pitch_adj) or high lineup spot = more PAs = worse under
-    # → ADD adj to push those picks DOWN the board.
-    under_picks_list.sort(key=lambda p: (
-        (p.get("under_score", 0) + p.get("pitch_adj", 0) + p.get("lineup_adj", 0)) * _offf(p),
-        p.get("name", ""),
-    ))
-
-    # Runs 0.5: OVERs boosted (-wilson × offense - adjs), UNDERs penalized
-    # (score × offense + adjs). OVER block stays ahead of UNDER block.
-    runs_picks_list.sort(key=lambda p: (
-        0 if p.get("pick") == "OVER" else 1,
-        (-(p.get("wilson", 0) * _offf(p))
-         - p.get("pitch_adj", 0) - p.get("lineup_adj", 0))
-        if p.get("pick") == "OVER"
-        else (p.get("score", 0) * _offf(p)
-              + p.get("pitch_adj", 0) + p.get("lineup_adj", 0)),
-        -p.get("games", 0),
-    ))
-
-    # RBI 0.5: OVERs ranked by wilson × offense + adjs; UNDERs by score × offense + adjs.
-    rbi_picks_list.sort(key=lambda p: (
-        0 if p.get("pick") == "OVER" else 1,
-        -((p.get("wilson", 0) * _offf(p))
-          + p.get("pitch_adj", 0) + p.get("lineup_adj", 0))
-        if p.get("pick") == "OVER"
-        else (p.get("score", 0) * _offf(p)
-              + p.get("pitch_adj", 0) + p.get("lineup_adj", 0)),
-        -p.get("games", 0),
-    ))
-
-    # Batter Walks 0.5: same signed-adj pattern as RBI.
-    walks_picks_list.sort(key=lambda p: (
-        0 if p.get("pick") == "OVER" else 1,
-        -((p.get("wilson", 0) * _offf(p))
-          + p.get("pitch_adj", 0) + p.get("lineup_adj", 0))
-        if p.get("pick") == "OVER"
-        else (p.get("score", 0) * _offf(p)
-              + p.get("pitch_adj", 0) + p.get("lineup_adj", 0)),
-        -p.get("games", 0),
-    ))
-
-    # HRR 1.5: same signed-adj pattern as RBI.
-    hrr_picks_list.sort(key=lambda p: (
-        0 if p.get("pick") == "OVER" else 1,
-        -((p.get("wilson", 0) * _offf(p))
-          + p.get("pitch_adj", 0) + p.get("lineup_adj", 0))
-        if p.get("pick") == "OVER"
-        else (p.get("score", 0) * _offf(p)
-              + p.get("pitch_adj", 0) + p.get("lineup_adj", 0)),
-        -p.get("games", 0),
-    ))
-
-    # HR 0.5: OVERs by blended likelihood (wilson=blended prob) × offense;
-    # UNDERs ranked biggest-hitter-first by under juice — least-juiced under
-    # (closest to even, e.g. -150 before -500) on top = strongest power threats
-    # the market fades. (Selection/juice cap lives in under_picks.run_hr_picks.)
-    hr_picks_list.sort(key=lambda p: (
-        0 if p.get("pick") == "OVER" else 1,
-        -((p.get("wilson", 0) * _offf(p))
-          + p.get("pitch_adj", 0) + p.get("lineup_adj", 0))
-        if p.get("pick") == "OVER"
-        else -(p.get("under_odds") if p.get("under_odds") is not None else -100000),
-        -p.get("games", 0),
-    ))
-
-    # TB Over 1.5 (all OVER): wilson × offense + adjs, best at top.
-    tb_over_picks_list.sort(
-        key=lambda p: (
-            p.get("wilson", 0) * _offf(p)
-            + p.get("pitch_adj", 0) + p.get("lineup_adj", 0)
-        ),
-        reverse=True,
-    )
-
-    # TB Under 1.5 (all UNDER): score + adjs × offense; lower = colder = better.
-    tb_picks_list.sort(
-        key=lambda p: (
-            p.get("score", 0) + p.get("pitch_adj", 0) + p.get("lineup_adj", 0)
-        ) * _offf(p),
-    )
-
-    # Pitcher props — Hits Allowed + Earned Runs use the offense axis; Walks use
-    # the umpire walk factor (wide zone -> fewer walks -> Under boosted). Outs +
-    # K excluded here. OVER × factor, UNDER × 1/factor.
-    def _prop_val(x):
-        """Use the fully-adjusted projection when available; fall back to blend."""
-        p = x.get("proj")
-        return p if p is not None else (x.get("blended") or 0)
-
-    for _mkt, _bk in pitcher_props.items():
-        if _mkt in ("pitcher_hits_allowed", "pitcher_earned_runs"):
-            _bk["picks"].sort(
-                key=lambda x: abs(_prop_val(x) - (x.get("line") or 0))
-                              * (_offf(x) if x.get("pick") == "OVER" else 1.0 / _offf(x)),
-                reverse=True,
-            )
-        elif _mkt == "pitcher_walks":
-            _bk["picks"].sort(
-                key=lambda x: abs(_prop_val(x) - (x.get("line") or 0))
-                              * (_umpf(x, "bbFactor") if x.get("pick") == "OVER"
-                                 else 1.0 / _umpf(x, "bbFactor")),
-                reverse=True,
-            )
-    emit({"type": "log", "msg": "  ✅ Env + umpire re-ranking applied (reorder only, gates untouched)"})
-
-    elapsed = round(time.time() - t_start, 1)
-    result = {
-        "date": run_date, "top9": top9, "also_ran": also_ran,
-        "under_picks": under_picks_list, "runs_picks": runs_picks_list, "tb_picks": tb_picks_list, "tb_over_picks": tb_over_picks_list, "rbi_picks": rbi_picks_list, "walks_picks": walks_picks_list, "hrr_picks": hrr_picks_list, "hr_picks": hr_picks_list,
-        "all_qualified": era_qualified,
-        "dq_s1_s3": [x for x in results if x["dq"] and x not in dn_dq and x not in era_dq and x not in dq_lineup and x not in s4_dq],
-        "dq_step4": dn_dq, "dq_step5": era_dq, "dq_lineup": dq_lineup, "dq_s4": s4_dq, "pitcher_k": pitcher_k_result,
-        "pitcher_props": pitcher_props,
-        "stats": {"step1_count": len(top30), "games": len(team_schedule) // 2,
-                  "elapsed": elapsed, "picks": len(top9),
-                  "under_count": len(under_picks_list),
-                  "runs_count": len(runs_picks_list),
-                  "tb_count": len(tb_picks_list),
-                  "tb_over_count": len(tb_over_picks_list),
-                  "rbi_count": len(rbi_picks_list),
-                  "walks_count": len(walks_picks_list),
-                  "hrr_count": len(hrr_picks_list),
-                  "hr_count": len(hr_picks_list),
-                  "pitcher_k_count": len(pitcher_k_result.get("picks", [])),
-                  "prop_counts": {m: len(b.get("picks", [])) for m, b in pitcher_props.items()},
-                  "has_tbd": slate_has_tbd(run_date)},
-    }
-    emit({"type": "done", "result": result})
-    return result
+    return {"picks": confirmed, "all": all_results, "props": prop_picks,
+            "team_k_ranks": [{"name": k, "rank": v["rank"], "k_per_g": v["k_per_g"]}
+                             for k, v in sorted(TEAM_K_RANKS.items(), key=lambda x: x[1]["rank"])]}
