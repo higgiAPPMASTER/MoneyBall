@@ -819,10 +819,19 @@ def _build_blurb(r):
     side_str = "home" if r.get("side") == "HOME" else "away"
     pitcher  = (r.get("pitcher") or "").strip()
     opp      = (r.get("opp") or "").strip()
-    s1 = r.get("s1")
-    if s1 and s1 > 0:
-        label = f"vs {pitcher}" if pitcher else "vs today's pitcher"
-        parts.append(f"Career .{round(s1 * 1000):03d} {label}")
+    # Career line uses the TRUE head-to-head vs today's pitcher (same source the
+    # popup's "Career vs" block shows), NOT the pool-entry BA — a hot-streak or
+    # last-7-day average must never be mislabeled "Career vs pitcher". Omit the
+    # line entirely when there's no real head-to-head sample (0 AB) or the
+    # starter is still TBD.
+    if pitcher and pitcher != "TBD":
+        try:
+            from under_picks import _get_s1_vs_pitcher
+            _vsp = _get_s1_vs_pitcher(r.get("player_id"), r.get("pit_id"))
+        except Exception:
+            _vsp = None
+        if _vsp and (_vsp.get("ab") or 0) > 0 and _vsp.get("ba") is not None:
+            parts.append(f"Career .{int(_vsp['ba'] * 1000):03d} vs {pitcher} ({_vsp['ab']} AB)")
     s4 = r.get("s4") or {}
     if s4.get("games", 0) >= 1:
         hits_g = s4.get("hits_games", 0)
