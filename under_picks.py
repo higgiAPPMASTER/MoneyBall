@@ -250,18 +250,10 @@ def _get_s1_vs_pitcher_uncached(batter_id, pitcher_id) -> dict:
     if not batter_id or not pitcher_id:
         return {"ba": None, "display": "N/A", "ab": 0}
     try:
-        # Use vsPlayerTotal = the TRUE career aggregate vs this pitcher (one
-        # split). The old "vsPlayer" query returns PER-SEASON splits, so reading
-        # splits[0] grabbed a single season — often the earliest/empty one — and
-        # badly understated the head-to-head (e.g. Albies .375/16AB career
-        # showed as "no history" because splits[0] was an empty 2018; Reynolds'
-        # real .250/20AB showed as a current-season .200/5AB). This is also the
-        # exact stat the hit-list gate (_check_batter) qualifies on, so the card
-        # now shows the SAME number that lets a batter onto the list.
         r = requests.get(
             f"https://statsapi.mlb.com/api/v1/people/{batter_id}/stats",
-            params={"stats": "vsPlayerTotal", "opposingPlayerId": pitcher_id,
-                    "group": "hitting"}, timeout=10)
+            params={"stats": "vsPlayer", "opposingPlayerId": pitcher_id,
+                    "group": "hitting", "gameType": "R"}, timeout=10)
         splits = r.json().get("stats", [{}])[0].get("splits", [])
         if not splits: return {"ba": None, "display": "N/A", "ab": 0, "hr": 0}
         stat = splits[0].get("stat", {})
@@ -273,6 +265,69 @@ def _get_s1_vs_pitcher_uncached(batter_id, pitcher_id) -> dict:
         return {"ba": ba, "display": f".{int(ba*1000):03d} ({ab}AB)", "ab": ab, "hr": hr}
     except Exception:
         return {"ba": None, "display": "N/A", "ab": 0}
+
+
+_S1_HA_CACHE: dict = {}
+
+def _get_s1_vs_pitcher_ha(batter_id, pitcher_id) -> dict:
+    """Statcast home/away split of a batter's BA vs a SPECIFIC pitcher.
+    DISPLAY ONLY — never feeds any gate or score. Groups every PA in the
+    matchup by venue via `inning_topbot` (Bot = batter's team batting at home,
+    Top = batter on the road). Returns {"home": {ba,ab,h}, "away": {...}};
+    a side is omitted when it has no at-bats. An empty/throttled CSV leaves
+    both sides empty so callers fall back to the combined-career line."""
+    if not batter_id or not pitcher_id:
+        return {"home": {}, "away": {}}
+    _ck = (batter_id, pitcher_id)
+    if _ck in _S1_HA_CACHE:
+        return _S1_HA_CACHE[_ck]
+    res = {"home": {}, "away": {}}
+    try:
+        import csv, io
+        r = requests.get(
+            "https://baseballsavant.mlb.com/statcast_search/csv",
+            params={"type": "details", "player_type": "batter",
+                    "batters_lookup[]": batter_id, "pitchers_lookup[]": pitcher_id,
+                    "hfSea": "2021|2022|2023|2024|2025|2026|", "hfGT": "R|",
+                    "all": "true", "min_pitches": "0", "min_results": "0",
+                    "group_by": "name", "sort_col": "pitches",
+                    "player_event_sort": "api_p_release_speed", "sort_order": "desc"},
+            headers={"User-Agent": "Mozilla/5.0"}, timeout=25)
+        HIT   = {"single", "double", "triple", "home_run"}
+        NONAB = {"walk", "intent_walk", "hit_by_pitch", "sac_fly", "sac_bunt",
+                 "catcher_interf", "sac_fly_double_play", "sac_bunt_double_play"}
+        agg = {"home": [0, 0], "away": [0, 0]}  # side -> [ab, hits]
+        for row in csv.DictReader(io.StringIO(r.text.lstrip("\ufeff"))):
+            ev = (row.get("events") or "").strip()
+            if not ev:
+                continue  # events populated only on the last pitch of a PA
+            sd = "home" if (row.get("inning_topbot", "").strip().lower().startswith("bot")) else "away"
+            if ev not in NONAB:
+                agg[sd][0] += 1
+            if ev in HIT:
+                agg[sd][1] += 1
+        for sd, (ab, h) in agg.items():
+            if ab > 0:
+                res[sd] = {"ba": h / ab, "ab": ab, "h": h}
+    except Exception:
+        res = {"home": {}, "away": {}}
+    _S1_HA_CACHE[_ck] = res
+    return res
+
+
+def _s1_ha_fields(batter_id, pitcher_id, side, fallback) -> dict:
+    """Card fields for the "vs Today's Pitcher" box, venue-matched to today's
+    game (DISPLAY ONLY). Returns {"s1_disp","s1_ab","s1_tag"}; falls back to the
+    combined-career `fallback` dict (tag "") when Statcast has no rows for that
+    venue, so the card is never blank and gates/scoring stay on career."""
+    is_home = str(side).upper() == "HOME"
+    sd = "home" if is_home else "away"
+    d  = _get_s1_vs_pitcher_ha(batter_id, pitcher_id).get(sd) or {}
+    if d.get("ab"):
+        return {"s1_disp": f".{int(d['ba'] * 1000):03d} ({d['ab']}AB)",
+                "s1_ab": d["ab"], "s1_tag": ("Home" if is_home else "Away")}
+    fb = fallback or {}
+    return {"s1_disp": fb.get("display", "N/A"), "s1_ab": fb.get("ab", 0), "s1_tag": ""}
 
 
 def _get_last7_ba(batter_id) -> dict:
@@ -721,8 +776,8 @@ def run_under_picks(run_date: str, team_schedule: dict, emit=None,
         if _sav_u.get("hard_hit_pct") is not None:
             under_score += int(max(-20, min(30, round((_sav_u["hard_hit_pct"] - LEAGUE_HARD_HIT_UP) * 1.5))))
         return {"name": name, "team": player_team, "pos": "—", "side": side, "opp": opp_name,
-                "pitcher": pitcher_name, "s1_disp": s1["display"],
-                "s1_ab": s1["ab"], "s2": s2, "s3": s3, "l7": l7,
+                "pitcher": pitcher_name, **_s1_ha_fields(batter_id, pitcher_id, side, s1),
+                "s2": s2, "s3": s3, "l7": l7,
                 "lineup_status": "TBD", "under_score": under_score,
                 "batter_id": batter_id, "under_basis": "vs-ace" if ace else "recent",
                 "ace_era": ace_era,
@@ -955,7 +1010,7 @@ def run_runs_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 "over_odds": c.get("over"), "under_odds": c.get("under"),
                 "book": _book_label(c.get("over_book") if pick == "OVER" else c.get("under_book")),
                 "batter_id": batter_id,
-                "pitcher": pitcher_name, "s1_disp": s1_pit["display"], "s1_ab": s1_pit["ab"],
+                "pitcher": pitcher_name, **_s1_ha_fields(batter_id, pitcher_id, side, s1_pit),
                 "recent_runs_log": _recent_runs_log(batter_id)}
 
     picks = []
@@ -1232,7 +1287,7 @@ def run_rbi_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 "over_odds": c.get("over"), "under_odds": c.get("under"),
                 "book": _book_label(c.get("over_book") if pick == "OVER" else c.get("under_book")),
                 "batter_id": batter_id,
-                "pitcher": pitcher_name, "s1_disp": s1_pit["display"], "s1_ab": s1_pit["ab"],
+                "pitcher": pitcher_name, **_s1_ha_fields(batter_id, pitcher_id, side, s1_pit),
                 "hot_bonus": hot["bonus"] if pick == "OVER" else 0,
                 "hot_disp": hot["disp"] if pick == "OVER" else "",
                 "recent_rbi_log": _recent_rbi_log(batter_id)}
@@ -2045,7 +2100,7 @@ def run_hrr_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 "hrr_under_odds": c.get("hrr_under_odds"),
                 "book": _book_label(c.get("hrr_over_odds_book") if pick == "OVER" else c.get("hrr_under_odds_book")),
                 "batter_id": batter_id,
-                "pitcher": pitcher_name, "s1_disp": s1_pit["display"], "s1_ab": s1_pit["ab"],
+                "pitcher": pitcher_name, **_s1_ha_fields(batter_id, pitcher_id, side, s1_pit),
                 "recent_hrr_log": _recent_hrr_log(batter_id)}
 
     picks = []
@@ -2160,7 +2215,7 @@ def run_tb_over_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 "tb_over_odds": c.get("tb_over_odds"),
                 "book": _book_label(c.get("tb_over_odds_book")),
                 "batter_id": batter_id,
-                "pitcher": pitcher_name, "s1_disp": s1_pit["display"], "s1_ab": s1_pit["ab"],
+                "pitcher": pitcher_name, **_s1_ha_fields(batter_id, pitcher_id, side, s1_pit),
                 "recent_tb_log": _recent_tb_log(batter_id)}
 
     picks = []
@@ -2254,7 +2309,7 @@ def run_tb_under_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 "tb_under_odds": c.get("tb_under_odds"),
                 "book": _book_label(c.get("tb_under_odds_book")),
                 "batter_id": batter_id,
-                "pitcher": pitcher_name, "s1_disp": s1_pit["display"], "s1_ab": s1_pit["ab"],
+                "pitcher": pitcher_name, **_s1_ha_fields(batter_id, pitcher_id, side, s1_pit),
                 "recent_tb_log": _recent_tb_log(batter_id)}
 
     picks = []
