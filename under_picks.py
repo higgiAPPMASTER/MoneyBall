@@ -252,8 +252,8 @@ def _get_s1_vs_pitcher_uncached(batter_id, pitcher_id) -> dict:
     try:
         r = requests.get(
             f"https://statsapi.mlb.com/api/v1/people/{batter_id}/stats",
-            params={"stats": "vsPlayer", "opposingPlayerId": pitcher_id,
-                    "group": "hitting", "gameType": "R"}, timeout=10)
+            params={"stats": "vsPlayerTotal", "opposingPlayerId": pitcher_id,
+                    "group": "hitting"}, timeout=10)
         splits = r.json().get("stats", [{}])[0].get("splits", [])
         if not splits: return {"ba": None, "display": "N/A", "ab": 0, "hr": 0}
         stat = splits[0].get("stat", {})
