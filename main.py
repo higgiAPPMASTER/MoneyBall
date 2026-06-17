@@ -4770,17 +4770,29 @@ function _catLbl(cat, accent){
   var dot = cat ? (' <span style="color:'+accent+'">&#183; '+cat+'</span>') : '';
   return '<span style="font-size:.7rem;letter-spacing:.08em;font-weight:800;white-space:nowrap"><span style="color:#64748b">MLB</span>'+dot+'</span>';
 }
-// Shared clean card header: rank + team logo + label on the left (label
-// truncates), series/rotation chips grouped on the right. One tidy row, no
-// generic headshot. rc = rank-circle [bg,color].
+// Shared clean card header: team logo + label on the left (label truncates),
+// series/rotation chips grouped on the right. The rank now lives in the name
+// bar (see _nameBar), so it is not drawn here. rank/rc kept for signature
+// stability with the call sites.
 function _cardHdr(rank, rc, labelHtml, teamLogo, teamName, tagHtml){
   var logo = teamLogo ? ('<img src="'+teamLogo+'" alt="'+(teamName||'')+'" style="height:22px;width:22px;object-fit:contain;flex:0 0 auto" onerror="this.remove()">') : '';
   return '<div style="display:flex;align-items:center;gap:7px;min-width:0;flex:1 1 auto">'
-    + '<div style="width:23px;height:23px;border-radius:50%;background:'+rc[0]+';color:'+rc[1]+';display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.85rem;flex:0 0 auto">'+rank+'</div>'
     + logo
     + '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 1 auto">'+labelHtml+'</span>'
     + '</div>'
     + '<div style="display:flex;align-items:center;gap:4px;flex:0 0 auto">'+(tagHtml||'')+'</div>';
+}
+// Orange name bar, left-aligned: rank badge + player headshot + name. Rank
+// number color follows the podium accent (gold/silver/bronze for ranks 1-3,
+// else the category accent). Missing/broken photo id => no image.
+function _nameBar(rank, rc, photoId, name){
+  var nc = (rc && rc[0]==='#1e1e1e') ? rc[1] : (rc?rc[0]:'#f59e0b');
+  var face = photoId ? ('<img src="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/'+photoId+'/headshot/67/current" alt="" style="width:27px;height:27px;border-radius:50%;object-fit:cover;object-position:center 18%;border:1px solid rgba(0,0,0,.28);flex:0 0 auto" onerror="this.remove()">') : '';
+  return '<div class="mlb-card-name" style="display:flex;align-items:center;gap:8px;text-align:left">'
+    + '<div style="width:23px;height:23px;border-radius:50%;background:#111;color:'+nc+';display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.86rem;flex:0 0 auto">'+rank+'</div>'
+    + face
+    + '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0">'+(name||'')+'</span>'
+    + '</div>';
 }
 // Plain-English depth-chart writeup for a detail popup. Maps the starter&#39;s
 // rotation rank (SP1-2 ace / SP3-4 mid / SP5+ back-end) to the market lean in
@@ -4945,7 +4957,7 @@ function _mlbCard(p, rank, dim) {
   window.__HIT_REG__=window.__HIT_REG__||{}; window.__HIT_REG__['h'+rank]=p;
   return `<div class="mlb-pick-card" onclick="_hitForm('h${rank}')" title="Click for recent form" style="cursor:pointer;${dim?'opacity:0.85':''}">
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#1a2a1a 0%,#0a1a0a 100%)">${_cardHdr(rank,rnkColors,_catLbl(p.pos||'','#f59e0b'),teamLogo,p.team,_seriesTag(p,'O',false,0))}</div>
-    <div class="mlb-card-name">${p.full_name||p.name}</div>
+    ${_nameBar(rank,rnkColors,p.player_id,p.full_name||p.name)}
     <div class="mlb-card-body">
       <div style="display:flex;align-items:center;justify-content:space-between">
         <span style="font-size:.82rem;color:#94a3b8">vs <strong style="color:#fff">${p.opp||'—'}</strong></span>
@@ -4992,7 +5004,7 @@ function _underCard(p, rank) {
   window.__HIT_REG__=window.__HIT_REG__||{}; window.__HIT_REG__['u'+rank]=p;
   return `<div class="mlb-pick-card" onclick="_hitForm('u${rank}')" title="Click for recent form" style="cursor:pointer">
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#2a1414 0%,#180808 100%)">${_cardHdr(rank,rnkColors,_catLbl('UNDER','#ff8a65'),teamLogo,p.team,_seriesTag(p,'U',false,0))}</div>
-    <div class="mlb-card-name">${p.name}</div>
+    ${_nameBar(rank,rnkColors,p.batter_id,p.name)}
     <div class="mlb-card-body">
       <div style="display:flex;align-items:center;justify-content:space-between">
         <span style="font-size:.82rem;color:#94a3b8">vs <strong style="color:#fff">${p.opp||'—'}</strong></span>
@@ -5063,7 +5075,7 @@ function _runsCard(p, rank, pfx) {
   window.__RUNS_REG__=window.__RUNS_REG__||{}; window.__RUNS_REG__[pfx+rank]=p;
   return `<div class="mlb-pick-card" onclick="_runsForm('${pfx}${rank}')" title="Click for recent form" style="cursor:pointer">
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#0e1f33 0%,#08111d 100%)">${_cardHdr(rank,rnkColors,_catLbl('RUN','#60a5fa'),teamLogo,p.team,_seriesTag(p,(p.pick==='OVER'?'O':'U'),false,3))}</div>
-    <div class="mlb-card-name">${p.name}</div>
+    ${_nameBar(rank,rnkColors,p.batter_id,p.name)}
     <div class="mlb-card-body">
       <div style="display:flex;align-items:center;justify-content:space-between">
         <span style="font-size:.82rem;color:#94a3b8">vs <strong style="color:#fff">${p.opp||'—'}</strong></span>
@@ -5114,7 +5126,7 @@ function _rbiCard(p, rank, pfx) {
   window.__RBI_REG__=window.__RBI_REG__||{}; window.__RBI_REG__[pfx+rank]=p;
   return `<div class="mlb-pick-card" onclick="_rbiForm('${pfx}${rank}')" title="Click for recent form" style="cursor:pointer">
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#1a1200 0%,#0d0900 100%)">${_cardHdr(rank,rnkColors,_catLbl('RBI','#f59e0b'),teamLogo,p.team,_seriesTag(p,(p.pick==='OVER'?'O':'U'),false,4))}</div>
-    <div class="mlb-card-name">${p.name}</div>
+    ${_nameBar(rank,rnkColors,p.batter_id,p.name)}
     <div class="mlb-card-body">
       <div style="display:flex;align-items:center;justify-content:space-between">
         <span style="font-size:.82rem;color:#94a3b8">vs <strong style="color:#fff">${p.opp||'—'}</strong></span>
@@ -5214,7 +5226,7 @@ function _hrCard(p, rank, pfx) {
   window.__HR_REG__=window.__HR_REG__||{}; window.__HR_REG__[pfx+rank]=p;
   return `<div class="mlb-pick-card" onclick="_hrForm('${pfx}${rank}')" title="Click for recent form" style="cursor:pointer">
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#1a0007 0%,#0d0004 100%)">${_cardHdr(rank,rnkColors,_catLbl('HR','#f43f5e'),teamLogo,p.team,_seriesTag(p,(p.pick==='OVER'?'O':'U'),false,2))}</div>
-    <div class="mlb-card-name">${p.name}</div>
+    ${_nameBar(rank,rnkColors,p.batter_id,p.name)}
     <div class="mlb-card-body">
       <div style="display:flex;align-items:center;justify-content:space-between">
         <span style="font-size:.82rem;color:#94a3b8">vs <strong style="color:#fff">${p.opp||'—'}</strong></span>
@@ -5311,7 +5323,7 @@ function _walksCard(p, rank, pfx) {
   window.__WALKS_REG__=window.__WALKS_REG__||{}; window.__WALKS_REG__[pfx+rank]=p;
   return `<div class="mlb-pick-card" onclick="_walksForm('${pfx}${rank}')" title="Click for recent form" style="cursor:pointer">
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#022c22 0%,#01140f 100%)">${_cardHdr(rank,rnkColors,_catLbl('BB','#34d399'),teamLogo,p.team,_seriesTag(p,(p.pick==='OVER'?'O':'U'),false,5))}</div>
-    <div class="mlb-card-name">${p.name}</div>
+    ${_nameBar(rank,rnkColors,p.batter_id,p.name)}
     <div class="mlb-card-body">
       <div style="display:flex;align-items:center;justify-content:space-between">
         <span style="font-size:.82rem;color:#94a3b8">vs <strong style="color:#fff">${p.opp||'—'}</strong></span>
@@ -5403,7 +5415,7 @@ function _tbCard(p, rank) {
   window.__TB_REG__=window.__TB_REG__||{}; window.__TB_REG__['tb'+rank]=p;
   return `<div class="mlb-pick-card" onclick="_tbForm('tb${rank}')" title="Click for recent form" style="cursor:pointer">
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#1a1030 0%,#0e0820 100%)">${_cardHdr(rank,rnkColors,_catLbl('TB','#a78bfa'),teamLogo,p.team,_seriesTag(p,'U',false,1))}</div>
-    <div class="mlb-card-name">${p.name}</div>
+    ${_nameBar(rank,rnkColors,p.batter_id,p.name)}
     <div class="mlb-card-body">
       <div style="display:flex;align-items:center;justify-content:space-between">
         <span style="font-size:.82rem;color:#94a3b8">vs <strong style="color:#fff">${p.opp||'—'}</strong></span>
@@ -5448,7 +5460,7 @@ function _tbOverCard(p, rank) {
   window.__TBO_REG__=window.__TBO_REG__||{}; window.__TBO_REG__['tbo'+rank]=p;
   return `<div class="mlb-pick-card" onclick="_tbOverForm('tbo${rank}')" title="Click for recent form" style="cursor:pointer">
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#052e16 0%,#0a1a0a 100%)">${_cardHdr(rank,rnkColors,_catLbl('TBO','#4ade80'),teamLogo,p.team,_seriesTag(p,'O',false,1))}</div>
-    <div class="mlb-card-name">${p.name}</div>
+    ${_nameBar(rank,rnkColors,p.batter_id,p.name)}
     <div class="mlb-card-body">
       <div style="display:flex;align-items:center;justify-content:space-between">
         <span style="font-size:.82rem;color:#94a3b8">vs <strong style="color:#fff">${p.opp||'—'}</strong></span>
@@ -5682,7 +5694,7 @@ function _top10Card(p, rank) {
     +'<div class="mlb-card-header" style="background:linear-gradient(135deg,#2d2600 0%,#0f0e00 100%)">'
       +_cardHdr(rank,rnkColors,'<span style="font-size:.66rem;letter-spacing:.1em;background:'+kc+';color:#000;padding:2px 6px;border-radius:4px;font-weight:900">'+_t10KindBadge(kind)+'</span>',teamLogo,(p.team||''),_seriesTag(p,'O',false,0))
     +'</div>'
-    +'<div class="mlb-card-name">'+(p.name||p.full_name||'')+'</div>'
+    +_nameBar(rank,rnkColors,p.batter_id,(p.name||p.full_name||''))
     +'<div class="mlb-card-body">'
       +'<div style="display:flex;align-items:center;justify-content:space-between">'
         +'<span style="font-size:.82rem;color:#94a3b8">vs <strong style="color:#fff">'+(p.opp||'—')+'</strong></span>'
@@ -5725,7 +5737,7 @@ function _hrrCard(p, rank, pfx) {
   window.__HRR_REG__=window.__HRR_REG__||{}; window.__HRR_REG__[pfx+rank]=p;
   return `<div class="mlb-pick-card" onclick="_hrrForm('${pfx}${rank}')" title="Click for recent form" style="cursor:pointer">
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#431407 0%,#1a0a00 100%)">${_cardHdr(rank,rnkColors,_catLbl('HRR','#fb923c'),teamLogo,p.team,_seriesTag(p,(isOver?'O':'U'),false,2))}</div>
-    <div class="mlb-card-name">${p.name}</div>
+    ${_nameBar(rank,rnkColors,p.batter_id,p.name)}
     <div class="mlb-card-body">
       <div style="display:flex;align-items:center;justify-content:space-between">
         <span style="font-size:.82rem;color:#94a3b8">vs <strong style="color:#fff">${p.opp||'—'}</strong></span>
@@ -5875,7 +5887,7 @@ function _pitcherCard(p, rank, keyPfx) {
   window.__PK_REG__=window.__PK_REG__||{}; window.__PK_REG__[keyPfx+rank]=p;
   return `<div class="mlb-pick-card" onclick="_pkForm('${keyPfx}${rank}')" title="Click for all 5 markets" style="cursor:pointer">
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#0f2420 0%,#08160f 100%)">${_cardHdr(rank,rnkColors,_catLbl('P','#63cab7'),teamLogo,p.team,_seriesTag(p,((p.sugg_line!=null||p.pick==='OVER')?'O':'U'),true,0))}</div>
-    <div class="mlb-card-name">${p.name}</div>
+    ${_nameBar(rank,rnkColors,p.pid,p.name)}
     <div class="mlb-card-body">
       <div style="display:flex;align-items:center;justify-content:space-between">
         <span style="font-size:.82rem;color:#94a3b8">vs <strong style="color:#fff">${p.opp||'—'}</strong></span>
