@@ -1739,7 +1739,7 @@ def _settle_bet_cached(bet: dict, name_stats: dict, all_final: bool = False) -> 
     Already-settled bets are re-checked for a few days so a later MLB stat
     correction can flip a wrong result."""
     prev = bet.get("result")
-    if prev in ("WIN", "LOSS", "PUSH", "VOID") and not _recent_bet(bet.get("date")):
+    if prev in ("WIN", "LOSS", "PUSH", "VOID") and (bet.get("manual") or not _recent_bet(bet.get("date"))):
         return False
 
     def _void():
@@ -1789,7 +1789,7 @@ def _settle_bet(bet: dict) -> bool:
     """Grade a still-pending bet against final box scores. Returns True if it
     changed. Only settles past dates; a player whose game isn't Final (or who
     didn't pitch, for pitching props) stays pending."""
-    if bet.get("result") in ("WIN", "LOSS", "PUSH"):
+    if bet.get("result") in ("WIN", "LOSS", "PUSH") or bet.get("manual"):
         return False
     bdate = bet.get("date")
     if not bdate or bdate >= date.today().isoformat():
