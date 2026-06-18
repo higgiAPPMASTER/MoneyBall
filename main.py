@@ -3792,7 +3792,13 @@ function _oppPitBlock(p, market, statLabel, unit){
   }).join(''):'<tr><td colspan="3" style="padding:8px;color:#64748b;text-align:center;font-size:.74rem">No recent starts on record</td></tr>';
   var meta=[];
   if(line!=null) meta.push('Line '+line+' '+unit);
-  if(o.blended!=null) meta.push(o.blended+' '+unit+' avg');
+  var shownAvg=null;
+  if(log.length){ var shownSum=0, shownCount=0; for(var i=0;i<log.length;i++){ var vv=log[i].v; if(vv!=null){ shownSum+=Number(vv); shownCount++; } } if(shownCount) shownAvg=(shownSum/shownCount).toFixed(1); }
+  if(shownAvg!=null) meta.push('Last 5 avg '+shownAvg+' '+unit);
+  var voLog=(o.vs_opp_log||[]).slice(0,5);
+  var voAvg=null;
+  if(voLog.length){ var voSum=0, voCount=0; for(var i=0;i<voLog.length;i++){ var vv=voLog[i].v; if(vv!=null){ voSum+=Number(vv); voCount++; } } if(voCount) voAvg=(voSum/voCount).toFixed(1); }
+  if(voAvg!=null) meta.push('vs '+_esc(o.opp||'')+' avg '+voAvg+' '+unit+' ('+voLog.length+')');
   if(o.pick) meta.push('<span style="color:'+(o.pick==='OVER'?'#63cab7':'#ff8a65')+';font-weight:800">'+o.pick+'</span>');
   return vsb+head
     +'<div style="font-size:.72rem;color:#94a3b8;margin-bottom:6px">'+statLabel+' &middot; last '+log.length+(meta.length?(' &middot; '+meta.join(' &middot; ')):'')+'</div>'
