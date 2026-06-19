@@ -179,12 +179,13 @@ def _resolve_id(name: str):
     if not parts: return None
     last, first = parts[-1], parts[0]
     # Last-name fallback (handles accents/nickname spellings) but ALSO require the
-    # first initial to match — otherwise distinct players sharing a surname
-    # (e.g. Nick Gonzales vs Marco Gonzales) collapse onto one id → same pic+stats.
+    # first TWO characters to match — one initial isn't enough when two teammates
+    # share a surname AND the same starting letter (e.g. Esmerlyn vs Enmanuel Valdez).
+    # Two chars: "es" ≠ "en", but "mike"/"michael" still match on "mi", etc.
     for k, v in _PLAYER_MAP.items():
         kp = k.split()
         if not kp: continue
-        if kp[-1] == last and kp[0][:1] == first[:1] and abs(len(k) - len(key)) <= 6:
+        if kp[-1] == last and kp[0][:2] == first[:2] and abs(len(k) - len(key)) <= 6:
             return v
     return None
 
