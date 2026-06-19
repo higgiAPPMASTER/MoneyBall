@@ -3381,27 +3381,67 @@ function _filterStarted(result){
   return r;
 }
 function showResults(result) {
-  // Hide players whose game has already started so the cards, parlay, all-by-game view
-  // and CSV only show bettable plays. Re-run picks after deploy to populate game_start.
   result = _filterStarted(result);
   window._lastResult = result;
   if(typeof _renderLeanBanner==='function') _renderLeanBanner();
-  // Admin-only "Unders Only" view: hide every OVER-based pick (hitter Top Picks,
-  // Money Ball, pitcher K OVERs) and keep only UNDER plays. window._lastResult
-  // stays the FULL result so parlay/CSV/search are unaffected — we only filter a
-  // local render copy.
+  // Hide all section cards FIRST — before any filtering — so stale cards from a
+  // previous render can never persist if the filter or any later code throws.
+  ['top10-plays-card','under-picks-card','tb-picks-card','tb-over-picks-card','hrr-over-card','hrr-under-card','rbi-over-card','rbi-under-card','hr-over-card','hr-under-card','runs-over-card','runs-under-card','bwalk-over-card','bwalk-under-card','pitch-day-card','pitcher-all-card','k-over-card','k-under-card','prop-ha-over-card','prop-ha-under-card','prop-outs-over-card','prop-outs-under-card','prop-er-over-card','prop-er-under-card','prop-bb-over-card','prop-bb-under-card'].forEach(hide);
+  // Odds-range filter: self-contained, uses the EXACT field each card displays.
+  // Applied directly to the source data before _vBase / EV-filter so every
+  // category is covered and there is nothing to guess or chain.
+  var _renderSrc = result;
+  if(window.ODDS_RANGE){
+    var _rok=function(v){
+      if(v==null||v==='') return false;
+      var o=parseFloat(v); if(isNaN(o)) return false;
+      var r=window.ODDS_RANGE;
+      if(r==='le-500')      return o<=-500;
+      if(r==='-500to-450')  return o>-500  && o<=-450;
+      if(r==='-450to-400')  return o>-450  && o<=-400;
+      if(r==='-400to-350')  return o>-400  && o<=-350;
+      if(r==='-350to-300')  return o>-350  && o<=-300;
+      if(r==='-300to-250')  return o>-300  && o<=-250;
+      if(r==='-250to-200')  return o>-250  && o<=-200;
+      if(r==='-200to-150')  return o>-200  && o<=-150;
+      if(r==='-150to-100')  return o>-150  && o<=-100;
+      if(r==='+100to+150')  return o>=100  && o<=150;
+      if(r==='+150to+200')  return o>150   && o<=200;
+      if(r==='+200to+250')  return o>200   && o<=250;
+      if(r==='+250to+300')  return o>250   && o<=300;
+      if(r==='ge+300')      return o>=300;
+      return true;
+    };
+    var _rpk=result.pitcher_k;
+    var _rpp=result.pitcher_props||{};
+    _renderSrc=Object.assign({},result,{
+      top9:        (result.top9||[]).filter(function(p){return _rok(p.hit_odds);}),
+      also_ran:    (result.also_ran||[]).filter(function(p){return _rok(p.hit_odds);}),
+      under_picks: (result.under_picks||[]).filter(function(p){return _rok(p.under_odds);}),
+      tb_picks:    (result.tb_picks||[]).filter(function(p){return _rok(p.tb_under_odds);}),
+      tb_over_picks:(result.tb_over_picks||[]).filter(function(p){return _rok(p.tb_over_odds);}),
+      rbi_picks:   (result.rbi_picks||[]).filter(function(p){return p.pick==='OVER'?_rok(p.over_odds):_rok(p.under_odds);}),
+      hr_picks:    (result.hr_picks||[]).filter(function(p){return p.pick==='OVER'?_rok(p.over_odds):_rok(p.under_odds);}),
+      runs_picks:  (result.runs_picks||[]).filter(function(p){return p.pick==='OVER'?_rok(p.over_odds):_rok(p.under_odds);}),
+      walks_picks: (result.walks_picks||[]).filter(function(p){return p.pick==='OVER'?_rok(p.over_odds):_rok(p.under_odds);}),
+      hrr_picks:   (result.hrr_picks||[]).filter(function(p){return p.pick==='UNDER'?_rok(p.hrr_under_odds):_rok(p.hrr_over_odds);}),
+      pitcher_k:   _rpk?Object.assign({},_rpk,{picks:(_rpk.picks||[]).filter(function(p){return _rok(p.odds);}),all:(_rpk.all||[]).filter(function(p){return _rok(p.odds);})}):_rpk,
+      pitcher_props:(function(){var out={};Object.keys(_rpp).forEach(function(m){var b=_rpp[m]||{};out[m]={picks:(b.picks||[]).filter(function(p){return _rok(p.odds);}),all:(b.all||[]).filter(function(p){return _rok(p.odds);})}; });return out;})(),
+    });
+  }
+  // Admin-only "Unders Only" view — applied on top of the odds-filtered source.
   const _vBase = (window.UNDERS_ONLY && (window.IS_ADMIN||window.IS_TESTER))
-    ? Object.assign({}, result, {
+    ? Object.assign({}, _renderSrc, {
         top9: [],
         also_ran: [],
-        pitcher_k: result.pitcher_k ? Object.assign({}, result.pitcher_k, {
-          all: (result.pitcher_k.all || []).filter(p => p.pick === 'UNDER'),
-          picks: (result.pitcher_k.picks || []).filter(p => p.pick === 'UNDER'),
-        }) : result.pitcher_k,
-        runs_picks: (result.runs_picks || []).filter(p => p.pick === 'UNDER'),
-        walks_picks: (result.walks_picks || []).filter(p => p.pick === 'UNDER'),
+        pitcher_k: _renderSrc.pitcher_k ? Object.assign({}, _renderSrc.pitcher_k, {
+          all: (_renderSrc.pitcher_k.all || []).filter(p => p.pick === 'UNDER'),
+          picks: (_renderSrc.pitcher_k.picks || []).filter(p => p.pick === 'UNDER'),
+        }) : _renderSrc.pitcher_k,
+        runs_picks: (_renderSrc.runs_picks || []).filter(p => p.pick === 'UNDER'),
+        walks_picks: (_renderSrc.walks_picks || []).filter(p => p.pick === 'UNDER'),
         pitcher_props: (function(){
-          var src=result.pitcher_props||{}, out={};
+          var src=_renderSrc.pitcher_props||{}, out={};
           Object.keys(src).forEach(function(m){
             var b=src[m]||{};
             out[m]={picks:(b.picks||[]).filter(p=>p.pick==='UNDER'),
@@ -3410,12 +3450,10 @@ function showResults(result) {
           return out;
         })(),
       })
-    : result;
-  // "+EV Only" + odds-range: filter render copy only; _lastResult stays full.
+    : _renderSrc;
+  // "+EV Only" filter on top; odds filter already applied above.
   var view = window.EV_ONLY ? _evFilterView(_vBase) : _vBase;
-  if(window.ODDS_RANGE) view = _oddsFilterView(view);
   const { top9, stats, pitcher_k } = view;
-  ['top10-plays-card','under-picks-card','tb-picks-card','tb-over-picks-card','hrr-over-card','hrr-under-card','rbi-over-card','rbi-under-card','hr-over-card','hr-under-card','runs-over-card','runs-under-card','bwalk-over-card','bwalk-under-card','pitch-day-card','pitcher-all-card','k-over-card','k-under-card','prop-ha-over-card','prop-ha-under-card','prop-outs-over-card','prop-outs-under-card','prop-er-over-card','prop-er-under-card','prop-bb-over-card','prop-bb-under-card'].forEach(hide);
 
   document.getElementById('stats-row').innerHTML = [
       statCard('⭐','Top 10 Hitters',_buildTop10(view).length,'top10-plays-card'),
@@ -5090,29 +5128,26 @@ function _seriesBadge(p,isPit){
     :(((ri.rank!=null&&ri.rank>0)?('Back-end starter (SP'+ri.rank+')'):'Spot starter')+(ri.rookie?' \u2014 rookie':''));
   return '<span title="'+tip+'" style="font-size:.62rem;font-weight:900;padding:2px 6px;border-radius:4px;background:'+bg+';color:'+clr+';letter-spacing:.06em">'+lbl+rk+'</span>';
 }
-function _slotDot(p, side, isPit, catIdx){
-  return '';
-  var ri=_rotInfo(p,isPit); if(!ri) return '';
-  var who=isPit?'This starter':'The opposing starter';
-  if(ri.tier===2){
-    var tipM=who+' is a mid-rotation arm (SP'+ri.rank+') \u2014 no clean depth-chart edge here. Lean light.';
-    return '<span title="'+tipM+'" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#f59e0b;box-shadow:0 0 5px rgba(245,158,11,.75);margin-left:5px;vertical-align:middle"></span>';
+// Day+series combined verdict dot. Green = both lean this side, amber = mixed,
+// red = both lean against. Only shows when series_game is 1/2/3 AND both
+// signals are available. Same verdict logic as the Track Record matrix.
+function _matrixDot(p, side, isPit, catIdx){
+  var pos=p&&(p.series_game||0);
+  if(pos!==1&&pos!==2&&pos!==3) return '';
+  var wd=new Date().getDay();
+  var dLean=_mtxDayLean(wd,isPit,catIdx); if(!dLean) return '';
+  var sLean=_mtxSeriesLean(pos,isPit,catIdx); if(!sLean) return '';
+  var clr,glow,tip;
+  if(dLean!==sLean){
+    clr='#f59e0b'; glow='rgba(245,158,11,.75)';
+    tip='Day + series lean opposite \u2014 mixed signal, lean light.';
+  } else if(sLean===side){
+    clr='#22c55e'; glow='rgba(34,197,94,.75)';
+    tip='Day + series both lean this side \u2014 good spot.';
+  } else {
+    clr='#ef4444'; glow='rgba(239,68,68,.75)';
+    tip='Day + series both lean against this pick \u2014 chart says fade.';
   }
-  var pos=ri.tier===1?1:3;
-  var slots=window.__MPA_SLOTS__; if(!slots||!slots[pos]) return '';
-  var arr=isPit?slots[pos].pit:slots[pos].bat;
-  if(!arr||catIdx==null||arr[catIdx]==null) return '';
-  var sLean=arr[catIdx];
-  var sTxt=sLean==='O'?'Over':'Under';
-  var sideTxt=side==='O'?'Over':'Under';
-  var agree=(sLean===side);
-  var clr=agree?'#22c55e':'#ef4444';
-  var glow=agree?'rgba(34,197,94,.75)':'rgba(239,68,68,.75)';
-  var tierTxt=ri.tier===1?('ace (SP'+ri.rank+')')
-    :(((ri.rank!=null&&ri.rank>0)?('back-end arm (SP'+ri.rank+')'):'spot starter')+(ri.rookie?', rookie':''));
-  var lean=who+' is a '+tierTxt+', leaning '+sTxt+' on this market';
-  var tip=agree?(lean+' \u2014 matches this '+sideTxt+' pick. Good spot.')
-              :(lean+' \u2014 opposite this '+sideTxt+' pick. Chart says fade.');
   return '<span title="'+tip+'" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:'+clr+';box-shadow:0 0 5px '+glow+';margin-left:5px;vertical-align:middle"></span>';
 }
 // True when _slotDot would render a RED light (depth chart fades the pick).
@@ -5134,7 +5169,7 @@ function _gameNoChip(p){
   return '<span title="'+tip+'" style="font-size:.58rem;font-weight:800;padding:1px 5px;border-radius:4px;background:rgba(148,163,184,.16);color:#cbd5e1;letter-spacing:.04em;margin-right:4px">'+lbl+'</span>';
 }
 function _seriesTag(p, side, isPit, catIdx){
-  return _gameNoChip(p)+_seriesBadge(p,isPit)+_slotDot(p, side, isPit, catIdx);
+  return _gameNoChip(p)+_seriesBadge(p,isPit)+_matrixDot(p, side, isPit, catIdx);
 }
 // Muted "MLB · CAT" label (gray MLB + accent category). Empty cat => just "MLB".
 function _catLbl(cat, accent){
