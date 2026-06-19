@@ -1852,6 +1852,8 @@ def _settle_parlay_cached(parlay: dict, ns_cache: dict, af_cache: dict = None) -
     (PUSH). Recently-settled parlays are re-checked so a corrected leg flips the
     parlay too (e.g. a wrong WIN -> LOSS once a stat correction lands)."""
     legs = parlay.get("legs") or []
+    if parlay.get("manual"):
+        return False
     recent = any(_recent_bet(lg.get("date")) for lg in legs)
     if parlay.get("result") in ("WIN", "LOSS", "PUSH", "VOID") and not recent:
         return False
