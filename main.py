@@ -3455,7 +3455,7 @@ function showResults(result) {
     ? _moreWrap(_hitMore, function(p,r){ return _mlbCard(p, r, true); }, 11, 'More Hit Picks', '#f59e0b')
     : '';
 
-  const underPicks = view.under_picks || [];
+  const underPicks = (view.under_picks || []).filter(function(p){ return _oddsOk(p.under_odds); });
   if (underPicks.length > 0) {
     show('under-picks-card');
     document.getElementById('under-picks-body').innerHTML = underPicks.slice(0, 10).map((p,i) => _underCard(p, i+1)).join('');
@@ -3489,33 +3489,33 @@ function showResults(result) {
 
   window.__RBI_REG__={};
     const rbiPicks = view.rbi_picks || [];
-    const rbiOver = rbiPicks.filter(function(p){ return p.pick==='OVER'; });
-    const rbiUnder = rbiPicks.filter(function(p){ return p.pick==='UNDER'; });
+    const rbiOver = rbiPicks.filter(function(p){ return p.pick==='OVER' && _oddsOk(p.over_odds); });
+    const rbiUnder = rbiPicks.filter(function(p){ return p.pick==='UNDER' && _oddsOk(p.under_odds); });
     _fillCard('rbi-over-card','rbi-over-body','rbi-over-more',rbiOver,function(p,r){return _rbiCard(p,r,'rbo');},'RBI Over','#f59e0b');
     _fillCard('rbi-under-card','rbi-under-body','rbi-under-more',rbiUnder,function(p,r){return _rbiCard(p,r,'rbu');},'RBI Under','#ff8a65');
 
   window.__HR_REG__={};
     const hrPicks = view.hr_picks || [];
-    const hrOver = hrPicks.filter(function(p){ return p.pick==='OVER'; });
-    const hrUnder = hrPicks.filter(function(p){ return p.pick==='UNDER'; });
+    const hrOver = hrPicks.filter(function(p){ return p.pick==='OVER' && _oddsOk(p.over_odds); });
+    const hrUnder = hrPicks.filter(function(p){ return p.pick==='UNDER' && _oddsOk(p.under_odds); });
     _fillCard('hr-over-card','hr-over-body','hr-over-more',hrOver,function(p,r){return _hrCard(p,r,'hro');},'HR Over','#f43f5e');
     _fillCard('hr-under-card','hr-under-body','hr-under-more',hrUnder,function(p,r){return _hrCard(p,r,'hru');},'HR Under','#ff8a65');
 
   window.__RUNS_REG__={};
     const runsPicks = view.runs_picks || [];
-    const runsOver = runsPicks.filter(function(p){ return p.pick==='OVER'; });
-    const runsUnder = runsPicks.filter(function(p){ return p.pick==='UNDER'; });
+    const runsOver = runsPicks.filter(function(p){ return p.pick==='OVER' && _oddsOk(p.over_odds); });
+    const runsUnder = runsPicks.filter(function(p){ return p.pick==='UNDER' && _oddsOk(p.under_odds); });
     _fillCard('runs-over-card','runs-over-body','runs-over-more',runsOver,function(p,r){return _runsCard(p,r,'rno');},'Runs Over','#60a5fa');
     _fillCard('runs-under-card','runs-under-body','runs-under-more',runsUnder,function(p,r){return _runsCard(p,r,'rnu');},'Runs Under','#ff8a65');
 
   window.__WALKS_REG__={};
   const walksPicks = view.walks_picks || [];
-  const walksOver = walksPicks.filter(function(p){ return p.pick==='OVER'; });
-  const walksUnder = walksPicks.filter(function(p){ return p.pick==='UNDER'; });
+  const walksOver = walksPicks.filter(function(p){ return p.pick==='OVER' && _oddsOk(p.over_odds); });
+  const walksUnder = walksPicks.filter(function(p){ return p.pick==='UNDER' && _oddsOk(p.under_odds); });
   _fillCard('bwalk-over-card','bwalk-over-body','bwalk-over-more',walksOver,function(p,r){return _walksCard(p,r,'bwo');},'Walks Over','#34d399');
   _fillCard('bwalk-under-card','bwalk-under-body','bwalk-under-more',walksUnder,function(p,r){return _walksCard(p,r,'bwu');},'Walks Under','#ff8a65');
 
-  const tbPicks = view.tb_picks || [];
+  const tbPicks = (view.tb_picks || []).filter(function(p){ return _oddsOk(p.tb_under_odds); });
   if (tbPicks.length > 0) {
     show('tb-picks-card');
     window.__TB_REG__={};
@@ -3525,7 +3525,7 @@ function showResults(result) {
       : '';
   }
 
-  const tbOverPicks = view.tb_over_picks || [];
+  const tbOverPicks = (view.tb_over_picks || []).filter(function(p){ return _oddsOk(p.tb_over_odds); });
   if (tbOverPicks.length > 0) {
     show('tb-over-picks-card');
     window.__TBO_REG__={};
@@ -3537,8 +3537,8 @@ function showResults(result) {
 
   window.__HRR_REG__={};
     const hrrPicks = view.hrr_picks || [];
-    const hrrOver = hrrPicks.filter(function(p){ return p.pick!=='UNDER'; });
-    const hrrUnder = hrrPicks.filter(function(p){ return p.pick==='UNDER'; });
+    const hrrOver = hrrPicks.filter(function(p){ return p.pick!=='UNDER' && _oddsOk(p.hrr_over_odds); });
+    const hrrUnder = hrrPicks.filter(function(p){ return p.pick==='UNDER' && _oddsOk(p.hrr_under_odds); });
     _fillCard('hrr-over-card','hrr-over-body','hrr-over-more',hrrOver,function(p,r){return _hrrCard(p,r,'hro');},'HRR Over','#fb923c');
     _fillCard('hrr-under-card','hrr-under-body','hrr-under-more',hrrUnder,function(p,r){return _hrrCard(p,r,'hru');},'HRR Under','#ff8a65');
 
@@ -4670,6 +4670,29 @@ function _pickOdds(p){
 function _oddsMatchRange(p){
   var r=window.ODDS_RANGE; if(!r) return true;
   var o=_pickOdds(p); if(o==null) return false;
+  if(r==='le-500')      return o<=-500;
+  if(r==='-500to-450')  return o>-500  && o<=-450;
+  if(r==='-450to-400')  return o>-450  && o<=-400;
+  if(r==='-400to-350')  return o>-400  && o<=-350;
+  if(r==='-350to-300')  return o>-350  && o<=-300;
+  if(r==='-300to-250')  return o>-300  && o<=-250;
+  if(r==='-250to-200')  return o>-250  && o<=-200;
+  if(r==='-200to-150')  return o>-200  && o<=-150;
+  if(r==='-150to-100')  return o>-150  && o<=-100;
+  if(r==='+100to+150')  return o>=100  && o<=150;
+  if(r==='+150to+200')  return o>150   && o<=200;
+  if(r==='+200to+250')  return o>200   && o<=250;
+  if(r==='+250to+300')  return o>250   && o<=300;
+  if(r==='ge+300')      return o>=300;
+  return true;
+}
+// Direct-value odds checker — takes the raw numeric odds field, no pick-object guessing.
+// Use this at render time where you already know which field to check.
+function _oddsOk(v){
+  if(!window.ODDS_RANGE) return true;
+  if(v==null||v==='') return false;
+  var o=parseFloat(v); if(isNaN(o)) return false;
+  var r=window.ODDS_RANGE;
   if(r==='le-500')      return o<=-500;
   if(r==='-500to-450')  return o>-500  && o<=-450;
   if(r==='-450to-400')  return o>-450  && o<=-400;
