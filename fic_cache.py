@@ -23,8 +23,8 @@ MIN_STREAK = 5   # minimum current hit-streak length to qualify (Source 2)
 
 
 def _cache_path(run_date: str) -> str:
-    # v4: min AB lowered to 3
-    return os.path.join(CACHE_DIR, f"fic_step1_v4_{run_date.replace('-','')}.json")
+    # v5: added Source 4 (season split vs pitcher hand)
+    return os.path.join(CACHE_DIR, f"fic_step1_v5_{run_date.replace('-','')}.json")
 
 
 def _short_name(full_name: str) -> str:
@@ -368,6 +368,132 @@ def _get_recent_hot_hitters(run_date: str, emit=None) -> list:
     return results
 
 
+# ── SOURCE 4: Season split BA vs pitcher handedness ───────────────────
+# Fallback for batters with no career matchup vs today's pitcher.
+# Fetches current-season BA vs RHP/LHP (whichever the batter faces today).
+# Qualifies at S4_MIN_BA / S4_MIN_AB — tagged career_qualified so they
+# reach the hit list.
+
+S4_MIN_AB = 15
+S4_MIN_BA = 0.270
+
+
+def _get_pitcher_hands(pitcher_ids: list) -> dict:
+    """Batch-fetch pitch hand for a list of pitcher IDs. Returns {id: 'L'|'R'}."""
+    if not pitcher_ids:
+        return {}
+    try:
+        ids_str = ",".join(str(i) for i in pitcher_ids)
+        r = requests.get(f"{MLB_API}/people",
+            params={"personIds": ids_str}, timeout=12)
+        out = {}
+        for p in r.json().get("people", []):
+            out[p["id"]] = p.get("pitchHand", {}).get("code", "R")
+        return out
+    except Exception:
+        return {}
+
+
+def _check_hand_split(batter_id, batter_name, pos, pitcher_hand,
+                      pitcher_short, season, min_ab, min_ba,
+                      team_name="") -> dict | None:
+    """Check one batter's season split vs LHP or RHP. Returns player dict or None."""
+    sitcode = "vl" if pitcher_hand == "L" else "vr"
+    try:
+        r = requests.get(f"{MLB_API}/people/{batter_id}/stats",
+            params={"stats": "statSplits", "group": "hitting",
+                    "season": season, "sitCodes": sitcode}, timeout=8)
+        for sg in r.json().get("stats", []):
+            for sp in sg.get("splits", []):
+                s  = sp.get("stat", {})
+                ab = int(s.get("atBats", 0) or 0)
+                h  = int(s.get("hits", 0) or 0)
+                ba = _parse_avg(s.get("avg"))
+                if ab >= min_ab and ba >= min_ba:
+                    return {
+                        "batter":    _short_name(batter_name),
+                        "full_name": batter_name,
+                        "player_id": batter_id,
+                        "team_name": team_name,
+                        "pos":       pos,
+                        "pitcher":   pitcher_short,
+                        "ab": ab, "h": h, "hr": 0, "ba": ba,
+                        "source":    "mlb_hand_split",
+                    }
+    except Exception:
+        pass
+    return None
+
+
+def _get_hand_split_players(run_date: str, exclude_ids: set, emit=None) -> list:
+    """Source 4: season BA vs pitcher handedness for batters not already
+    career-qualified. Uses statSplits sitCodes=vl/vr."""
+    def log(msg):
+        if emit: emit({"type": "log", "msg": msg})
+
+    log(f"⬇️  Source 4: Season split BA vs pitcher hand (fallback, {S4_MIN_AB}+ AB, .{int(S4_MIN_BA*1000)}+)...")
+    season = run_date[:4]
+
+    # Each entry = {team_id, team_name, pitcher_id, pitcher_short}
+    matchups = _get_schedule_with_pitchers(run_date)
+    if not matchups:
+        log("   ⚠️ Source 4: no matchups found")
+        return []
+
+    # Batch-fetch pitcher handedness
+    pitcher_ids = list({m["pitcher_id"] for m in matchups if m.get("pitcher_id")})
+    hand_map    = _get_pitcher_hands(pitcher_ids)   # {pitcher_id: 'L'|'R'}
+
+    # Build tasks: batters not already in pool (exclude_ids = s1 player_id set)
+    tasks = []
+    seen  = set()
+    for m in matchups:
+        pid = m.get("pitcher_id")
+        if not pid:
+            continue   # TBD starter — skip
+        phand  = hand_map.get(pid, "R")
+        pshort = m.get("pitcher_short", "")
+        tid    = m["team_id"]
+        tname  = m.get("team_name", "")
+        try:
+            r = requests.get(f"{MLB_API}/teams/{tid}/roster",
+                params={"rosterType": "active"}, timeout=10)
+            for pl in r.json().get("roster", []):
+                if pl.get("position", {}).get("code") == "1":
+                    continue   # skip pitchers
+                bid = pl["person"]["id"]
+                if bid in seen or bid in exclude_ids:
+                    continue   # already career-qualified — don't duplicate
+                seen.add(bid)
+                tasks.append((
+                    bid,
+                    pl["person"]["fullName"],
+                    pl.get("position", {}).get("abbreviation", ""),
+                    phand, pshort, season, tname,
+                ))
+        except Exception:
+            pass
+
+    log(f"   Checking {len(tasks)} batters for season hand split (8 threads)...")
+    results = []
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futs = {
+            ex.submit(_check_hand_split, bid, name, pos, phand, pshort,
+                      season, S4_MIN_AB, S4_MIN_BA, tname): None
+            for bid, name, pos, phand, pshort, season, tname in tasks
+        }
+        for fut in as_completed(futs, timeout=120):
+            try:
+                res = fut.result()
+                if res:
+                    results.append(res)
+            except Exception:
+                pass
+
+    log(f"✅ Source 4: {len(results)} batters qualify via season hand split")
+    return results
+
+
 # ── MERGE ─────────────────────────────────────────────────────────────
 
 def _merge(*sources) -> list:
@@ -399,21 +525,31 @@ def get_step1_players_or_scrape(run_date=None, min_ab=3, min_ba=0.225, emit=None
     log("🔍 Building Step 1 player pool...")
 
     s1 = _get_mlb_api_players(run_date, min_ab, min_ba, emit)
+
+    # Source 4 runs on batters NOT already career-qualified (skip those already
+    # in s1). We pass s1 player IDs so they are excluded from the hand-split scan.
+    s1_ids = {p["player_id"] for p in s1 if p.get("player_id")}
+    s4 = _get_hand_split_players(run_date, exclude_ids=s1_ids, emit=emit)
+
     s2 = _get_streak_players(run_date, emit)
     s3 = _get_recent_hot_hitters(run_date, emit)
 
-    combined = _merge(s1, s2, s3)
-    # Tag Source-1 career-qualified (>= .250 career BA vs today's pitcher, min 4
-    # AB). The flag survives the merge even when a hotter streak/last-7 copy won
-    # the higher-BA tiebreak, so the hit list can be gated to it. Streak/hot-only
-    # batters stay in the pool (they still nudge ranking via the merged BA) but
-    # are flagged False so they can't reach the hit list unless they ALSO clear
-    # .250 vs the pitcher.
+    combined = _merge(s1, s4, s2, s3)
+    # Tag career_qualified:
+    #   Source 1 — career BA >= .225 vs today's specific pitcher (min 3 AB)
+    #   Source 4 — season BA >= .270 vs pitcher handedness (min 15 AB), used
+    #              as a fallback when there is no meaningful career matchup.
+    # Both paths earn a spot on the hit list. Streak/hot-only batters (S2/S3)
+    # stay in the pool to nudge ranking but are NOT career_qualified.
     _s1_names = {p["batter"] for p in s1}
+    _s4_names = {p["batter"] for p in s4}
     for _p in combined:
-        _p["career_qualified"] = _p["batter"] in _s1_names
+        _p["career_qualified"] = (
+            _p["batter"] in _s1_names or _p["batter"] in _s4_names
+        )
     log(f"✅ Step 1 pool: {len(combined)} players "
-        f"(career vs pitcher: {len(s1)} + streaks: {len(s2)} + last 7d hot: {len(s3)}, deduped)")
+        f"(career vs pitcher: {len(s1)} + hand split: {len(s4)} + "
+        f"streaks: {len(s2)} + last 7d hot: {len(s3)}, deduped)")
 
     # Don't freeze the pool while any starter is still TBD — let it rebuild so
     # a late-named starter gets picked up automatically on the next run.
