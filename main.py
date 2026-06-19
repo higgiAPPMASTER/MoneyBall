@@ -4643,14 +4643,27 @@ function toggleEvOnly(){
 
 // ── Odds-range filter ──────────────────────────────────────────────────────
 window.ODDS_RANGE='';
-// Extract the primary odds value from any pick object regardless of category
+// Extract the PRIMARY odds for the pick's direction (not the opposing side).
+// Checks p.pick direction first so UNDER picks don't accidentally return
+// the OVER side's odds (which could fall in a different range entirely).
 function _pickOdds(p){
   if(!p) return null;
-  var fields=['odds','hit_odds','over_odds','under_odds','tb_under_odds',
-              'tb_over_odds','hrr_over_odds','hrr_under_odds'];
+  function _num(v){ return (v!=null && v!=='' && !isNaN(parseFloat(v)))?parseFloat(v):null; }
+  var dir=(p.pick||'').toUpperCase();
+  var n;
+  if(dir==='UNDER'){
+    n=_num(p.under_odds)||_num(p.hrr_under_odds)||_num(p.tb_under_odds);
+    if(n!=null) return n;
+  } else if(dir==='OVER'){
+    n=_num(p.over_odds)||_num(p.hrr_over_odds)||_num(p.tb_over_odds);
+    if(n!=null) return n;
+  }
+  // No direction or fallback: try these in order (hit_odds / raw odds first)
+  var fields=['hit_odds','odds','tb_over_odds','tb_under_odds',
+              'hrr_over_odds','hrr_under_odds','over_odds','under_odds'];
   for(var i=0;i<fields.length;i++){
-    var v=p[fields[i]];
-    if(v!=null && v!=='' && !isNaN(parseFloat(v))) return parseFloat(v);
+    n=_num(p[fields[i]]);
+    if(n!=null) return n;
   }
   return null;
 }
