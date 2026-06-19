@@ -1339,9 +1339,9 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         # Penalty for no direct career matchup vs today's pitcher.
         # career_vsp=True = real career AB (Source 1, min 3 AB / .225 BA).
         # Everyone else (hand-split S4, streak S2, hot-hitter S3) gets docked
-        # 150 pts — equivalent to ~.150 BA worth of signal — so players who
+        # 300 pts — equivalent to ~.300 BA worth of signal — so players who
         # have never faced this pitcher don't outrank those who have.
-        NO_VSP_PENALTY = 150
+        NO_VSP_PENALTY = 300
         _vsp_penalty = 0 if p.get("career_vsp") else NO_VSP_PENALTY
         total = max(0, round(p["ba"] * 1000) + s2s + s3s - _vsp_penalty) if not dq else 0
 
