@@ -2240,6 +2240,27 @@ async def lock_picks_endpoint(request: Request, token: str = "", admin: str = ""
     return {"ok": False, "msg": "Save failed — check Supabase connection"}
 
 
+@app.delete("/api/unlock-picks")
+async def unlock_picks_endpoint(request: Request, token: str = "", admin: str = "", date: str = ""):
+    """Admin only. Remove the manual lock for a date so re-runs update Track Record again."""
+    tok = token or request.headers.get("Authorization", "").replace("Bearer ", "").strip()
+    is_ok = _is_admin_token(tok) or (
+        bool(admin) and admin == os.environ.get("INTERNAL_API_TOKEN", "__none__"))
+    if not is_ok:
+        raise HTTPException(status_code=403, detail="Admin only")
+    date_str = date or _dt.date.today().isoformat()
+    existing = _load_locked_picks(date_str)
+    if not existing:
+        return {"ok": False, "msg": f"No lock found for {date_str}"}
+    ok = _sb_delete("mpa_track_ledger", {
+        "app": "eq.mlb", "date": f"eq.{date_str}",
+        "category": f"eq.{_LOCKED_CAT}", "side": "eq.ALL"})
+    if ok:
+        print(f"[unlock_picks] unlocked {date_str}")
+        return {"ok": True, "msg": f"Lock removed for {date_str}"}
+    return {"ok": False, "msg": "Delete failed — check Supabase connection"}
+
+
 @app.get("/api/lock-status")
 async def lock_status_endpoint(request: Request, token: str = "", admin: str = "", date: str = ""):
     """Return whether picks are locked for a given date."""
@@ -2887,6 +2908,7 @@ _HTML = """
         <button class="btn-primary admin-only admin-run-only" id="run-btn" onclick="startRun()">Run Picks</button>
         <button class="btn-primary admin-only admin-run-only" id="force-btn" onclick="startRun(true)" style="background:#dc2626;color:#fff" title="Bypass cache and rebuild today's picks from scratch">Force Refresh</button>
         <button class="btn-primary admin-only admin-run-only" id="lock-btn" onclick="lockPicks()" style="background:#7c3aed;color:#fff" title="Lock these picks into the Track Record. Re-runs after locking won\'t affect grading.">&#128274; Lock Picks</button>
+        <button class="btn-primary admin-only" id="unlock-btn" onclick="unlockPicks()" style="background:#b45309;color:#fff;display:none" title="Remove lock — re-runs will update Track Record again.">&#128275; Unlock Picks</button>
         <span id="lock-status-badge" style="font-size:.75rem;font-weight:700;padding:4px 10px;border-radius:9999px;display:none"></span>
       </div>
       <div id="run-spinner" class="hidden" style="margin-top:12px;color:#6b7280;font-size:13px">
@@ -3284,18 +3306,43 @@ async function checkLockStatus() {
     const d = await r.json();
     const badge = document.getElementById('lock-status-badge');
     const btn = document.getElementById('lock-btn');
+    const ubtn = document.getElementById('unlock-btn');
     if (!badge) return;
     badge.style.display = 'inline-block';
     if (d.locked) {
       badge.textContent = '🔒 Picks Locked';
       badge.style.background = '#16a34a'; badge.style.color = '#fff';
       if (btn) { btn.disabled = true; btn.style.opacity = '0.5'; btn.title = 'Already locked for this date'; }
+      if (ubtn) ubtn.style.display = 'inline-block';
     } else {
       badge.textContent = '🔓 Not Locked';
       badge.style.background = '#374151'; badge.style.color = '#9ca3af';
       if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
+      if (ubtn) ubtn.style.display = 'none';
     }
   } catch(e) {}
+}
+async function unlockPicks() {
+  if (!window.IS_ADMIN) return;
+  const dateStr = document.getElementById('date-picker').value;
+  if (!dateStr) { alert('Select a date first.'); return; }
+  if (!confirm('Remove the lock for ' + dateStr + '? Re-runs will update Track Record again.')) return;
+  const ubtn = document.getElementById('unlock-btn');
+  if (ubtn) { ubtn.disabled = true; ubtn.textContent = 'Unlocking...'; }
+  try {
+    const r = await fetch(`/api/unlock-picks?date=${dateStr}&token=${encodeURIComponent(token)}`, { method: 'DELETE' });
+    const d = await r.json();
+    if (d.ok) {
+      alert('Unlocked! ' + dateStr + ' picks are no longer locked.');
+      checkLockStatus();
+    } else {
+      alert(d.msg || 'Unlock failed.');
+      if (ubtn) { ubtn.disabled = false; ubtn.textContent = '🔓 Unlock Picks'; }
+    }
+  } catch(e) {
+    alert('Unlock request failed: ' + e.message);
+    if (ubtn) { ubtn.disabled = false; ubtn.textContent = '🔓 Unlock Picks'; }
+  }
 }
 async function lockPicks() {
   if (!window.IS_ADMIN) return;
