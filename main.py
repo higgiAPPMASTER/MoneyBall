@@ -4696,9 +4696,9 @@ function runPlayerSearch(raw){
       if(kind==='HITTER-DQ' && p.dq_reason){
         html+='<div style="margin-top:8px;color:#fca5a5;font-size:.82rem"><strong>Why DQ&#39;d:</strong> '+p.dq_reason+'</div>';
       } else if(h.bucket==='Top Picks'){
-        html+='<div style="margin-top:8px;color:#cbd5e1;font-size:.82rem">Cleared every filter and ranks in the top 9 by total score.</div>';
+        html+='<div style="margin-top:8px;color:#cbd5e1;font-size:.82rem">Cleared every filter and ranks in the top 10 by total score.</div>';
       } else if(h.bucket==='Money Ball Picks'){
-        html+='<div style="margin-top:8px;color:#cbd5e1;font-size:.82rem">Passed all 5 filters — solid play just outside the Top 9.</div>';
+        html+='<div style="margin-top:8px;color:#cbd5e1;font-size:.82rem">Passed all 5 filters — solid play just outside the Top 10.</div>';
       } else if(h.bucket==='Under Picks'){
         html+='<div style="margin-top:8px;color:#cbd5e1;font-size:.82rem">Cold bat vs today&#39;s pitcher \u2014 model likes the UNDER.</div>';
       }
