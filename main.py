@@ -2833,6 +2833,12 @@ _HTML = """
           <button class="btn-primary" id="parlay-unders-btn" onclick="toggleParlayUnders()" style="background:#1f2937;color:#fff">&#11015; Unders Only</button>
           <button class="btn-primary" id="parlay-minus-btn" onclick="toggleParlayMinus()" style="background:#1f2937;color:#fff">&minus; Odds Only</button>
           <button class="btn-primary" id="parlay-plus-btn" onclick="toggleParlayPlus()" style="background:#1f2937;color:#fff">&plus; Odds Only</button>
+          <select id="parlayOddsRange" onchange="_parlayOddsRangeChange()" style="background:#0f0f0f;border:1px solid #262626;border-radius:8px;color:#fff;padding:8px 10px;font-size:.8rem">
+            <option value="all">All Odds</option>
+            <option value="p100">+100 to +149</option>
+            <option value="p150">+150 to +299</option>
+            <option value="p300">+300+</option>
+          </select>
           <div style="position:relative;display:inline-block">
             <button class="btn-primary" id="parlay-cats-btn" onclick="toggleCatMenu(event)" style="background:#1f2937;color:#fff">&#9776; Categories (13/13) &#9662;</button>
             <div id="parlay-cats-menu" style="display:none;position:absolute;z-index:60;top:calc(100% + 6px);left:0;background:#0e0e0e;border:1px solid #2a2a2a;border-radius:10px;padding:10px 12px;min-width:190px;box-shadow:0 12px 34px rgba(0,0,0,.55)">
@@ -4127,6 +4133,17 @@ function _mlbPool(){
   // or plus-money (> 0). Independent of Overs/Unders; mutually exclusive with each other.
   if(window.PARLAY_MINUS){ cands=cands.filter(function(c){ return Number(c.odds)<0; }); }
   if(window.PARLAY_PLUS){ cands=cands.filter(function(c){ return Number(c.odds)>0; }); }
+  // Parlay-builder odds-range filter — restricts to a specific American-odds window.
+  if(window.PARLAY_ODDS_RANGE && window.PARLAY_ODDS_RANGE!=='all'){
+    var _or=window.PARLAY_ODDS_RANGE;
+    cands=cands.filter(function(c){
+      var o=Number(c.odds);
+      if(_or==='p100') return o>=100 && o<=149;
+      if(_or==='p150') return o>=150 && o<=299;
+      if(_or==='p300') return o>=300;
+      return true;
+    });
+  }
   // Parlay-builder category checkboxes — keep only legs whose category is checked.
   if(window.PARLAY_CATS){ cands=cands.filter(function(c){ return window.PARLAY_CATS[_legCat(c)]!==false; }); }
   // Parlay-builder game checkboxes — keep only legs whose game is checked. Uses the same
@@ -4250,6 +4267,7 @@ window.PARLAY_UNDERS = false;
 window.PARLAY_OVERS = false;
 window.PARLAY_MINUS = false;
 window.PARLAY_PLUS = false;
+window.PARLAY_ODDS_RANGE = 'all';
 // Parlay category checkboxes — which pick categories feed the parlay pool (all on by default).
 window.PARLAY_CATS = {HIT_O:true,HIT_U:true,TB_O:true,TB_U:true,RUN_O:true,RUN_U:true,RBI_O:true,RBI_U:true,HR_O:true,HR_U:true,HRR_O:true,HRR_U:true,BWALK_O:true,BWALK_U:true,K_O:true,K_U:true,PHA_O:true,PHA_U:true,POUT_O:true,POUT_U:true,PER_O:true,PER_U:true,PWK_O:true,PWK_U:true};
 // Parlay game filter — which games feed the parlay pool. Empty = all games allowed; a
@@ -4304,6 +4322,14 @@ function toggleParlayPlus(){
   window.PARLAY_PLUS = !window.PARLAY_PLUS;
   if(window.PARLAY_PLUS) window.PARLAY_MINUS = false;
   _paintParlayDirBtns();
+  if((document.getElementById('parlayResult').innerHTML||'').trim()) buildParlay();
+}
+
+// Parlay-builder odds-range select — restricts pool to a specific American-odds window.
+// Selecting any range implicitly requires positive odds, so it is compatible with "+ Odds Only".
+function _parlayOddsRangeChange(){
+  var sel=document.getElementById('parlayOddsRange');
+  window.PARLAY_ODDS_RANGE = sel ? sel.value : 'all';
   if((document.getElementById('parlayResult').innerHTML||'').trim()) buildParlay();
 }
 
