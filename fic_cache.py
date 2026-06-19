@@ -23,8 +23,8 @@ MIN_STREAK = 5   # minimum current hit-streak length to qualify (Source 2)
 
 
 def _cache_path(run_date: str) -> str:
-    # v3: threshold lowered to .225
-    return os.path.join(CACHE_DIR, f"fic_step1_v3_{run_date.replace('-','')}.json")
+    # v4: min AB lowered to 3
+    return os.path.join(CACHE_DIR, f"fic_step1_v4_{run_date.replace('-','')}.json")
 
 
 def _short_name(full_name: str) -> str:
@@ -382,7 +382,7 @@ def _merge(*sources) -> list:
 
 # ── PUBLIC API ────────────────────────────────────────────────────────
 
-def get_step1_players_or_scrape(run_date=None, min_ab=4, min_ba=0.225, emit=None):
+def get_step1_players_or_scrape(run_date=None, min_ab=3, min_ba=0.225, emit=None):
     if run_date is None:
         run_date = _date.today().strftime("%Y-%m-%d")
 
