@@ -2342,33 +2342,8 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     top9     = _hit_pool[:10]
     also_ran = _hit_pool[10:]
 
-    # ── Max-juice gate for top-10 hit list ────────────────────────────────
-    # Players whose hit odds are more expensive than HIT_TOP10_MAX_JUICE
-    # are moved to also_ran — model may like them but the price has no value.
-    # Always backfill to exactly 10 players: first from clean also_ran, then
-    # from the least-juiced remainder so the list is never shorter than 10.
-    HIT_TOP10_MAX_JUICE = -150   # odds worse than this are dropped from top 10
-    def _is_juiced(p):
-        _ho = p.get("hit_odds")
-        return (_ho is not None) and (float(_ho) < HIT_TOP10_MAX_JUICE)
-    _t10_pass = [p for p in top9    if not _is_juiced(p)]
-    _t10_fail = [p for p in top9    if     _is_juiced(p)]
-    _ar_pass  = [p for p in also_ran if not _is_juiced(p)]
-    _ar_fail  = [p for p in also_ran if     _is_juiced(p)]
-    _need     = 10 - len(_t10_pass)
-    _promoted = _ar_pass[:_need]
-    _still_need = _need - len(_promoted)
-    # If clean replacements ran out, backfill with least-juiced failures
-    # so the hit list always stays at 10 (sorted by hit_odds descending = least bad)
-    _fallback = sorted(_t10_fail + _ar_fail,
-                       key=lambda p: float(p.get("hit_odds") or -9999),
-                       reverse=True)[:_still_need]
-    top9     = _t10_pass + _promoted + _fallback
-    also_ran = _ar_pass[_need:] + [p for p in _t10_fail if p not in _fallback] + \
-               [p for p in _ar_fail  if p not in _fallback]
-    emit({"type": "log", "msg": f"  Hit juice gate ({HIT_TOP10_MAX_JUICE}): "
-          f"{len(_t10_fail)} dropped, {len(_promoted)} promoted, "
-          f"{len(_fallback)} fallback backfill → top10 = {len(top9)}"})
+    # Top-10 hit list ("Top Plays to Record a Hit") = model's best 10 by score,
+    # ANY odds. No max-juice / price gate here by design (user requirement).
 
     # Under 1.5 hits (all UNDER): under_score lower=colder=better.
     # Good BvP (high pitch_adj) or high lineup spot = more PAs = worse under
