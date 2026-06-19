@@ -547,6 +547,11 @@ def get_step1_players_or_scrape(run_date=None, min_ab=3, min_ba=0.225, emit=None
         _p["career_qualified"] = (
             _p["batter"] in _s1_names or _p["batter"] in _s4_names
         )
+        # career_vsp = True ONLY for Source 1 players who have real career AB
+        # vs TODAY's specific pitcher (min 3 AB, .225+ BA). Source 4 (season
+        # hand-split fallback) and streak/hot-only batters get False — the
+        # pipeline applies a score penalty for no direct pitcher history.
+        _p["career_vsp"] = _p["batter"] in _s1_names
     log(f"✅ Step 1 pool: {len(combined)} players "
         f"(career vs pitcher: {len(s1)} + hand split: {len(s4)} + "
         f"streaks: {len(s2)} + last 7d hot: {len(s3)}, deduped)")
