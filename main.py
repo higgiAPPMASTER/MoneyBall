@@ -5875,6 +5875,8 @@ function _tbOverForm(key){
       +'<th style="text-align:right;padding:4px 10px;font-size:.7rem;color:#64748b;font-weight:600;border-bottom:1px solid #1e293b">Hits</th>'
       +'<th style="text-align:right;padding:4px 10px;font-size:.7rem;color:#64748b;font-weight:600;border-bottom:1px solid #1e293b">TB</th>'
     +'</tr></thead><tbody>'+rows+'</tbody></table>'
+    +_vsPitBlock(p)
+    +_oppPitBlock(p,'pitcher_hits_allowed','Hits Allowed','H')
     +_ssBlock(p)
     +_matrixWriteup(p,'O',1,false,'total bases','Over 1.5 total bases')
     +'</div></div>';
