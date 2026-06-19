@@ -2865,6 +2865,23 @@ _HTML = """
       <div style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-bottom:12px">
         <button class="btn-primary" id="get-btn" onclick="getPicks()">🎯 Get Picks</button>
         <button class="btn-primary" id="ev-btn" onclick="toggleEvOnly()" style="background:#1f2937;color:#fff" title="Show only hit picks where our matchup model (your hitter vs this pitcher) beats the sportsbook price. Default off — all picks shown, ranked by value.">&#10003; +EV Only</button>
+        <select id="odds-range-sel" onchange="onOddsRangeChange()" style="background:#1f2937;color:#fff;border:1px solid #374151;border-radius:10px;padding:9px 14px;font-size:.82rem;font-weight:700;cursor:pointer;min-width:150px;outline:none" title="Filter all picks to a specific odds range">
+          <option value="">All Odds</option>
+          <option value="le-500">&#8804; &#x2212;500</option>
+          <option value="-500to-450">&#x2212;500 to &#x2212;450</option>
+          <option value="-450to-400">&#x2212;450 to &#x2212;400</option>
+          <option value="-400to-350">&#x2212;400 to &#x2212;350</option>
+          <option value="-350to-300">&#x2212;350 to &#x2212;300</option>
+          <option value="-300to-250">&#x2212;300 to &#x2212;250</option>
+          <option value="-250to-200">&#x2212;250 to &#x2212;200</option>
+          <option value="-200to-150">&#x2212;200 to &#x2212;150</option>
+          <option value="-150to-100">&#x2212;150 to &#x2212;100</option>
+          <option value="+100to+150">+100 to +150</option>
+          <option value="+150to+200">+150 to +200</option>
+          <option value="+200to+250">+200 to +250</option>
+          <option value="+250to+300">+250 to +300</option>
+          <option value="ge+300">&#8805; +300</option>
+        </select>
         <button class="btn-primary admin-only admin-run-only" id="run-btn" onclick="startRun()">Run Picks</button>
         <button class="btn-primary admin-only admin-run-only" id="force-btn" onclick="startRun(true)" style="background:#dc2626;color:#fff" title="Bypass cache and rebuild today's picks from scratch">Force Refresh</button>
         <button class="btn-primary admin-only admin-run-only" id="lock-btn" onclick="lockPicks()" style="background:#7c3aed;color:#fff" title="Lock these picks into the Track Record. Re-runs after locking won\'t affect grading.">&#128274; Lock Picks</button>
@@ -3394,8 +3411,9 @@ function showResults(result) {
         })(),
       })
     : result;
-  // "+EV Only": filter EVERY category to ev>0 (render copy only; _lastResult stays full).
-  const view = window.EV_ONLY ? _evFilterView(_vBase) : _vBase;
+  // "+EV Only" + odds-range: filter render copy only; _lastResult stays full.
+  var view = window.EV_ONLY ? _evFilterView(_vBase) : _vBase;
+  if(window.ODDS_RANGE) view = _oddsFilterView(view);
   const { top9, stats, pitcher_k } = view;
   ['top10-plays-card','under-picks-card','tb-picks-card','tb-over-picks-card','hrr-over-card','hrr-under-card','rbi-over-card','rbi-under-card','hr-over-card','hr-under-card','runs-over-card','runs-under-card','bwalk-over-card','bwalk-under-card','pitch-day-card','pitcher-all-card','k-over-card','k-under-card','prop-ha-over-card','prop-ha-under-card','prop-outs-over-card','prop-outs-under-card','prop-er-over-card','prop-er-under-card','prop-bb-over-card','prop-bb-under-card'].forEach(hide);
 
@@ -4619,6 +4637,67 @@ function toggleEvOnly(){
   if(b){
     if(window.EV_ONLY){ b.style.background='#22c55e'; b.style.color='#06240f'; b.innerHTML='\u2713 +EV Only: ON'; }
     else { b.style.background='#1f2937'; b.style.color='#fff'; b.innerHTML='\u2713 +EV Only'; }
+  }
+  if(window._lastResult) showResults(window._lastResult);
+}
+
+// ── Odds-range filter ──────────────────────────────────────────────────────
+window.ODDS_RANGE='';
+// Extract the primary odds value from any pick object regardless of category
+function _pickOdds(p){
+  if(!p) return null;
+  var fields=['odds','hit_odds','over_odds','under_odds','tb_under_odds',
+              'tb_over_odds','hrr_over_odds','hrr_under_odds'];
+  for(var i=0;i<fields.length;i++){
+    var v=p[fields[i]];
+    if(v!=null && v!=='' && !isNaN(parseFloat(v))) return parseFloat(v);
+  }
+  return null;
+}
+function _oddsMatchRange(p){
+  var r=window.ODDS_RANGE; if(!r) return true;
+  var o=_pickOdds(p); if(o==null) return false;
+  if(r==='le-500')      return o<=-500;
+  if(r==='-500to-450')  return o>-500  && o<=-450;
+  if(r==='-450to-400')  return o>-450  && o<=-400;
+  if(r==='-400to-350')  return o>-400  && o<=-350;
+  if(r==='-350to-300')  return o>-350  && o<=-300;
+  if(r==='-300to-250')  return o>-300  && o<=-250;
+  if(r==='-250to-200')  return o>-250  && o<=-200;
+  if(r==='-200to-150')  return o>-200  && o<=-150;
+  if(r==='-150to-100')  return o>-150  && o<=-100;
+  if(r==='+100to+150')  return o>=100  && o<=150;
+  if(r==='+150to+200')  return o>150   && o<=200;
+  if(r==='+200to+250')  return o>200   && o<=250;
+  if(r==='+250to+300')  return o>250   && o<=300;
+  if(r==='ge+300')      return o>=300;
+  return true;
+}
+function _oddsFilterView(v){
+  var f=function(arr){ return (arr||[]).filter(_oddsMatchRange); };
+  var pk=v.pitcher_k, pp=v.pitcher_props||{};
+  return Object.assign({},v,{
+    top9:f(v.top9), also_ran:f(v.also_ran),
+    under_picks:f(v.under_picks), tb_picks:f(v.tb_picks),
+    tb_over_picks:f(v.tb_over_picks), hrr_picks:f(v.hrr_picks),
+    rbi_picks:f(v.rbi_picks), hr_picks:f(v.hr_picks),
+    walks_picks:f(v.walks_picks), runs_picks:f(v.runs_picks),
+    pitcher_k:pk?Object.assign({},pk,{picks:f(pk.picks),all:f(pk.all)}):pk,
+    pitcher_props:(function(){
+      var o={}; Object.keys(pp).forEach(function(m){
+        var b=pp[m]||{};
+        o[m]={picks:f(b.picks),all:f(b.all)};
+      }); return o;
+    })()
+  });
+}
+function onOddsRangeChange(){
+  var sel=document.getElementById('odds-range-sel');
+  window.ODDS_RANGE=sel?sel.value:'';
+  // Highlight the select when a filter is active
+  if(sel){
+    sel.style.background=window.ODDS_RANGE?'#0369a1':'#1f2937';
+    sel.style.color='#fff';
   }
   if(window._lastResult) showResults(window._lastResult);
 }
