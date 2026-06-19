@@ -6467,7 +6467,7 @@ function _ovfFlatten(g){ var out=[]; if(!g||g==='LOADING'||g.__error__) return o
 // reused table/CSV helpers resolve their labels; ordering lives in __OVF_ORDER__.
 function _trkBuildCfg(){
   var CAT_CFG={
-    'Top 10 Batter|OVER':        {lbl:'Top 10 Hitter Plays (Over)',  icon:'⭐', abbr:'T10B+'},
+    'Top 10 Batter|OVER':        {lbl:'Top 10 Hitter Plays',  icon:'⭐', abbr:'T10B+'},
     'Top 10 Batter|UNDER':       {lbl:'Top 10 Hitter Plays (Under)', icon:'⭐', abbr:'T10B-'},
     'Top 10 Pitcher|OVER':       {lbl:'Top 10 Pitcher Props (Over)', icon:'🎯', abbr:'T10P+'},
     'Top 10 Pitcher|UNDER':      {lbl:'Top 10 Pitcher Props (Under)',icon:'🎯', abbr:'T10P-'},
