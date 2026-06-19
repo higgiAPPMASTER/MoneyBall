@@ -536,17 +536,14 @@ def get_step1_players_or_scrape(run_date=None, min_ab=3, min_ba=0.225, emit=None
 
     combined = _merge(s1, s4, s2, s3)
     # Tag career_qualified:
-    #   Source 1 — career BA >= .225 vs today's specific pitcher (min 3 AB)
-    #   Source 4 — season BA >= .270 vs pitcher handedness (min 15 AB), used
-    #              as a fallback when there is no meaningful career matchup.
-    # Both paths earn a spot on the hit list. Streak/hot-only batters (S2/S3)
-    # stay in the pool to nudge ranking but are NOT career_qualified.
+    #   Source 1 — career BA >= .225 vs today's specific pitcher (min 3 AB).
+    #   This is the ONLY path onto the hit list. Source 4 (hand-split fallback),
+    #   streak (S2), and hot-hitter (S3) players stay in the full pool so they
+    #   still feed Runs/RBI/HRR/TB/Unders, but do NOT reach the top-10 hits list.
     _s1_names = {p["batter"] for p in s1}
     _s4_names = {p["batter"] for p in s4}
     for _p in combined:
-        _p["career_qualified"] = (
-            _p["batter"] in _s1_names or _p["batter"] in _s4_names
-        )
+        _p["career_qualified"] = _p["batter"] in _s1_names
         # career_vsp = True ONLY for Source 1 players who have real career AB
         # vs TODAY's specific pitcher (min 3 AB, .225+ BA). Source 4 (season
         # hand-split fallback) and streak/hot-only batters get False — the
