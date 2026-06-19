@@ -1229,14 +1229,10 @@ def _grade_date(date_str: str, picks: dict) -> dict:
                  f"{pd} {ln} {stat_label}", p.get("over_odds") if pd == "OVER" else p.get("under_odds"),
                  ln, actual, stat_label, st)
 
-    # Top 10 Batter — combine batter categories (NO Under-1.5-Hits, mirroring the live
-    # _buildTop10 card builder), rank by EV, take top 10
+    # Top 10 Batter — combine batter categories (NO single Hits — it has its own Top 10
+    # Hits list; NO Under-1.5-Hits, mirroring the live _buildTop10 card builder), rank by
+    # EV, take top 10
     _bat_cands = []
-    for p in (picks.get("top9") or []):
-        _bat_cands.append({"name": p.get("full_name") or p.get("name",""), "team": p.get("team",""),
-            "side":"OVER","stat_key":"hits","stat_label":"Hits","line":0.5,
-            "odds":p.get("hit_odds"),"ev":p.get("ev") or 0,
-            "pid":p.get("player_id"),"fname":p.get("full_name") or p.get("name")})
     for p in (picks.get("tb_over_picks") or []):
         _bat_cands.append({"name":p.get("name",""),"team":p.get("team",""),
             "side":"OVER","stat_key":"total_bases","stat_label":"Total Bases","line":1.5,
@@ -6097,7 +6093,8 @@ function _buildTop10(view) {
       plays.push(Object.assign({}, p, {_t10kind:kind, _t10ev:ev}));
     });
   }
-  _add(view.top9,          'HITTER');
+  // Single Hits (OVER 0.5) is EXCLUDED here — it has its own dedicated Top 10 Hits
+  // list, so it must not also appear in this combined "plays of the day" card.
   _add(view.tb_over_picks, 'TB OVER');
   _add(view.hrr_picks,     'HRR');
   _add(view.rbi_picks,     'RBI');
