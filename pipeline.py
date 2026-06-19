@@ -1240,7 +1240,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     top30 = [p for p in step1 if p.get("career_qualified")]
     pitcher_map = {p["batter"]: p["pitcher"] for p in top30}
     emit({"type": "step1_done",
-          "msg": f"✅ {len(top30)} hitters clear .250 vs pitcher (min 4 AB) — "
+          "msg": f"✅ {len(top30)} hitters clear .225 vs pitcher (min 4 AB) — "
                  f"from pool of {len(step1)}",
           "count": len(top30)})
 
