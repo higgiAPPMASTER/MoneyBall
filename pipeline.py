@@ -2333,6 +2333,29 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     top9     = _hit_pool[:10]
     also_ran = _hit_pool[10:]
 
+    # ── Max-juice gate for top-10 hit list ────────────────────────────────
+    # Players whose hit odds are more expensive than HIT_TOP10_MAX_JUICE
+    # (e.g. -210) are moved to also_ran — model may like them but the price
+    # has no value. Backfill top9 from also_ran until we have 10 (or run out).
+    HIT_TOP10_MAX_JUICE = -150   # odds worse than this are excluded from top 10
+    _t10_pass, _t10_fail = [], []
+    for _p in top9:
+        _ho = _p.get("hit_odds")
+        _juiced = (_ho is not None) and (float(_ho) < HIT_TOP10_MAX_JUICE)
+        (_t10_fail if _juiced else _t10_pass).append(_p)
+    # Backfill from also_ran (in order): only pull players that PASS the gate
+    _ar_pass, _ar_fail = [], []
+    for _p in also_ran:
+        _ho = _p.get("hit_odds")
+        _juiced = (_ho is not None) and (float(_ho) < HIT_TOP10_MAX_JUICE)
+        (_ar_fail if _juiced else _ar_pass).append(_p)
+    _need = 10 - len(_t10_pass)
+    _promoted = _ar_pass[:_need]
+    top9     = _t10_pass + _promoted
+    # also_ran = remaining ar_pass (not promoted) + juiced-out from top9 + juiced ar
+    also_ran = _ar_pass[_need:] + _t10_fail + _ar_fail
+    emit({"type": "log", "msg": f"  Hit juice gate ({HIT_TOP10_MAX_JUICE}): {len(_t10_fail)} dropped from top10, {len(_promoted)} promoted from Money Ball"})
+
     # Under 1.5 hits (all UNDER): under_score lower=colder=better.
     # Good BvP (high pitch_adj) or high lineup spot = more PAs = worse under
     # → ADD adj to push those picks DOWN the board.
