@@ -4137,12 +4137,25 @@ function _oppPitBlock(p, market, statLabel, unit){
 function _popSig(p, rateLbl, oddsLbl, oddsVal, isOver){
   var chips=(_envChip(p)||'')+(_umpChip(p)||'')+(_bpChip(p)||'')+(_platoonChip(p)||'');
   var chipRow=chips?('<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">'+chips+'</div>'):'';
-  var rate=(rateLbl&&p.rate_disp)?('<div style="display:flex;align-items:center;justify-content:space-between;margin-top:2px"><span style="font-size:.8rem;color:#94a3b8">'+rateLbl+'</span><span style="font-family:monospace;font-weight:700;color:#86efac">'+p.rate_disp+' <span style="color:#64748b;font-size:.68rem">'+(p.basis||'')+'</span></span></div>'):'';
+  var rate=(rateLbl&&p.rate_disp)?('<div style="margin-top:2px;font-size:.8rem"><span style="color:#94a3b8">'+rateLbl+'</span> <span style="font-family:monospace;font-weight:700;color:#86efac">'+p.rate_disp+'</span> <span style="color:#64748b;font-size:.68rem">'+(p.basis||'')+'</span></div>'):'';
   var conv=p.conv_flag?'<div style="font-size:.7rem;color:#4ade80;font-weight:600;margin-top:3px">&#10003; Converged &middot; L10 '+(p.recent_l10||'N/A')+' L5 '+(p.recent_l5||'N/A')+'</div>':(p.cold_flag?'<div style="font-size:.7rem;color:#fb923c;font-weight:600;margin-top:3px">&#9888; Recent diverges &middot; L5 '+(p.recent_l5||'N/A')+'</div>':((p.recent_l10||p.recent_l5)?'<div style="font-size:.7rem;color:#64748b;margin-top:3px">L10 '+(p.recent_l10||'N/A')+' &middot; L5 '+(p.recent_l5||'N/A')+'</div>':''));
   var hot=(isOver&&p.hot_disp)?'<div style="font-size:.7rem;color:#fbbf24;font-weight:700;margin-top:3px">&#128293; Hot hand &middot; '+p.hot_disp+' (+'+p.hot_bonus+')</div>':'';
   var odStr=(oddsVal!=null)?((oddsVal>0?'+':'')+oddsVal):'\u2014';
-  var odds='<div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;padding-top:8px;border-top:1px solid #1f2937"><span style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">'+(oddsLbl||'Odds')+'</span><span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.98rem">'+odStr+_bookTag(p)+'</span></div>';
+  var odds='<div style="margin-top:8px;padding-top:8px;border-top:1px solid #1f2937"><span style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">'+(oddsLbl||'Odds')+'</span> <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.98rem">'+odStr+_bookTag(p)+'</span></div>';
   return chipRow+rate+conv+hot+odds;
+}
+
+// ── Two even boxes: matchup signals (left) + series splits & last games (right) ──
+function _twoBox(p, rateLbl, oddsLbl, oddsVal, isOver, lastLabel, rowsHtml){
+  var sig=_popSig(p, rateLbl, oddsLbl, oddsVal, isOver);
+  var ssIn=_ssInner(p);
+  var bx='background:#0b1220;border:1px solid #1e293b;border-radius:10px;padding:12px';
+  var lbl='font-size:.62rem;letter-spacing:.06em;color:#64748b;text-transform:uppercase';
+  var last='<div style="'+lbl+';margin:'+(ssIn?'12px':'0')+' 0 6px">'+(lastLabel||'')+'</div>'
+    +'<table style="width:100%;border-collapse:collapse;font-size:.78rem"><tbody>'+rowsHtml+'</tbody></table>';
+  var left='<div style="flex:1 1 240px;min-width:0;'+bx+'"><div style="'+lbl+';margin-bottom:8px">Matchup Signals</div>'+sig+'</div>';
+  var right='<div style="flex:1 1 240px;min-width:0;'+bx+'">'+ssIn+last+'</div>';
+  return '<div style="display:flex;gap:12px;align-items:stretch;flex-wrap:wrap;margin-bottom:4px">'+left+right+'</div>';
 }
 
 // ── Hitter recent-form popup (last 5 games) — mirrors _pkForm ───────────
@@ -4174,7 +4187,6 @@ function _hitForm(key){
   }).join(''):'<tr><td colspan="4" style="padding:14px;color:#64748b;text-align:center">No recent games on record</td></tr>';
   var name=p.full_name||p.name||'';
   var pickClr=isUnder?'#ff8a65':'#63cab7';
-  var ssHtml=_ssBlock(p);
   var wu=_matrixWriteup(p,(isUnder?'U':'O'),0,false,'hits',(isUnder?'under 1.5 hits':'to record a hit'));
   ov.innerHTML=`<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:820px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">
     <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid #1e293b">
@@ -4185,11 +4197,8 @@ function _hitForm(key){
       <button onclick="document.getElementById('hit-modal').style.display='none'" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem">&#x2715;</button>
     </div>
     <div style="padding:14px 18px">
-      ${_popSig(p,(isUnder?'':'Hit Rate vs Opp'),(isUnder?'Under 1.5 Hits':'Hit Odds'),(isUnder?p.under_odds:p.hit_odds),!isUnder)}
+      ${_twoBox(p,(isUnder?'':'Hit Rate vs Opp'),(isUnder?'Under 1.5 Hits':'Hit Odds'),(isUnder?p.under_odds:p.hit_odds),!isUnder,'Last '+(log.length||0)+' Games',rows)}
       ${_oppPitBlock(p,'pitcher_hits_allowed','Hits Allowed',  'H')}
-      ${ssHtml}
-      <div style="margin-top:14px;border-top:1px solid #1e293b;padding-top:10px;font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase">Last ${log.length||0} Games</div>
-      <table style="width:100%;border-collapse:collapse;font-size:.85rem;margin-top:6px"><tbody>${rows}</tbody></table>
       ${wu}
       <div style="margin-top:12px;border-top:1px solid #1e293b;padding-top:10px;color:${pickClr};font-weight:800;font-size:.85rem">Pick: ${goal}</div>
     </div>
@@ -4236,11 +4245,8 @@ function _runsForm(key){
       <button onclick="document.getElementById('runs-modal').style.display='none'" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem">✕</button>
     </div>
     <div style="padding:14px 18px">
-      ${_popSig(p,'Runs Rate vs Opp','Runs Odds',(isOver?p.over_odds:p.under_odds),isOver)}
+      ${_twoBox(p,'Runs Rate vs Opp','Runs Odds',(isOver?p.over_odds:p.under_odds),isOver,'Last '+(log.length||0)+' Games',rows)}
       ${_oppPitBlock(p,'pitcher_earned_runs','Earned Runs','ER')}
-      ${_ssBlock(p)}
-      <div style="margin-top:14px;border-top:1px solid #1e293b;padding-top:10px;font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase">Runs Rate ${p.rate_disp||''} · Last ${log.length||0} Games</div>
-      <table style="width:100%;border-collapse:collapse;font-size:.85rem;margin-top:6px"><tbody>${rows}</tbody></table>
       ${_matrixWriteup(p,(isOver?'O':'U'),3,false,'runs',goal)}
       <div style="margin-top:12px;border-top:1px solid #1e293b;padding-top:10px;color:${pickClr};font-weight:800;font-size:.85rem">Pick: ${goal}</div>
     </div>
@@ -5209,7 +5215,7 @@ function _bpChip(p){
   }
   return out;
 }
-function _ssBlock(p){
+function _ssInner(p){
   var ss=p.series_splits||{}; var sp=ss.today_pos||1;
   if(!ss.g1_ab&&!ss.g2_ab&&!ss.g3_ab) return '';
   var slots=[{lbl:'Game 1',ba:ss.g1_ba,ab:ss.g1_ab||0,pos:1},{lbl:'Game 2',ba:ss.g2_ba,ab:ss.g2_ab||0,pos:2},{lbl:'Game 3+',ba:ss.g3_ba,ab:ss.g3_ab||0,pos:3}];
@@ -5227,9 +5233,12 @@ function _ssBlock(p){
       +'</div>';
   }).join('');
   var haLbl=ss.ha?(' \u00b7 '+ss.ha):'';
-  return '<div style="margin-top:14px;border-top:1px solid #1e293b;padding-top:12px">'
-    +'<div style="font-size:.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Series Splits \u00b7 This Season'+haLbl+'</div>'
-    +'<div style="display:flex;gap:8px">'+cols+'</div></div>';
+  return '<div style="font-size:.62rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Series Splits \u00b7 This Season'+haLbl+'</div>'
+    +'<div style="display:flex;gap:8px">'+cols+'</div>';
+}
+function _ssBlock(p){
+  var inner=_ssInner(p); if(!inner) return '';
+  return '<div style="margin-top:14px;border-top:1px solid #1e293b;padding-top:12px">'+inner+'</div>';
 }
 function _seriesChip(p){
   var ss=p.series_splits; if(!ss) return '';
@@ -5750,11 +5759,8 @@ function _rbiForm(key){
       <button onclick="document.getElementById('rbi-modal').style.display='none'" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem">✕</button>
     </div>
     <div style="padding:14px 18px">
-      ${_popSig(p,'RBI Rate vs Opp','RBI Odds',(isOver?p.over_odds:p.under_odds),isOver)}
+      ${_twoBox(p,'RBI Rate vs Opp','RBI Odds',(isOver?p.over_odds:p.under_odds),isOver,'Last '+(log.length||0)+' Games',rows)}
       ${_oppPitBlock(p,'pitcher_earned_runs','Earned Runs','ER')}
-      ${_ssBlock(p)}
-      <div style="margin-top:14px;border-top:1px solid #1e293b;padding-top:10px;font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase">Last ${log.length||0} Games</div>
-      <table style="width:100%;border-collapse:collapse;font-size:.85rem;margin-top:6px"><tbody>${rows}</tbody></table>
       ${_matrixWriteup(p,(isOver?'O':'U'),4,false,'RBIs',goal)}
       <div style="margin-top:12px;border-top:1px solid #1e293b;padding-top:10px;color:${pickClr};font-weight:800;font-size:.85rem">Pick: ${goal}</div>
     </div>
@@ -5848,11 +5854,8 @@ function _hrForm(key){
       <button onclick="document.getElementById('hr-modal').style.display='none'" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem">✕</button>
     </div>
     <div style="padding:14px 18px">
-      ${_popSig(p,'HR Rate vs Opp','HR Odds',(isOver?p.over_odds:p.under_odds),isOver)}
+      ${_twoBox(p,'HR Rate vs Opp','HR Odds',(isOver?p.over_odds:p.under_odds),isOver,'Last '+(log.length||0)+' Games',rows)}
       ${_oppPitBlock(p,'pitcher_earned_runs','Earned Runs','ER')}
-      ${_ssBlock(p)}
-      <div style="margin-top:14px;border-top:1px solid #1e293b;padding-top:10px;font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase">Last ${log.length||0} Games</div>
-      <table style="width:100%;border-collapse:collapse;font-size:.85rem;margin-top:6px"><tbody>${rows}</tbody></table>
       ${_matrixWriteup(p,(isOver?'O':'U'),2,false,'HRs',goal)}
       <div style="margin-top:12px;border-top:1px solid #1e293b;padding-top:10px;color:${pickClr};font-weight:800;font-size:.85rem">Pick: ${goal}</div>
     </div>
@@ -5945,11 +5948,8 @@ function _walksForm(key){
       <button onclick="document.getElementById('walks-modal').style.display='none'" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem">✕</button>
     </div>
     <div style="padding:14px 18px">
-      ${_popSig(p,'Walk Rate vs Opp','Walk Odds',(isOver?p.over_odds:p.under_odds),isOver)}
+      ${_twoBox(p,'Walk Rate vs Opp','Walk Odds',(isOver?p.over_odds:p.under_odds),isOver,'Last '+(log.length||0)+' Games',rows)}
       ${_oppPitBlock(p,'pitcher_walks','Walks Allowed','BB')}
-      ${_ssBlock(p)}
-      <div style="margin-top:14px;border-top:1px solid #1e293b;padding-top:10px;font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase">Last ${log.length||0} Games</div>
-      <table style="width:100%;border-collapse:collapse;font-size:.85rem;margin-top:6px"><tbody>${rows}</tbody></table>
       ${_matrixWriteup(p,(isOver?'O':'U'),5,false,'walks',goal)}
       <div style="margin-top:12px;border-top:1px solid #1e293b;padding-top:10px;color:${pickClr};font-weight:800;font-size:.85rem">Pick: ${goal}</div>
     </div>
@@ -6079,17 +6079,8 @@ function _tbOverForm(key){
       +'<button onclick="document.getElementById(&#39;tb-over-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem">\u2715</button>'
     +'</div>'
     +'<div style="padding:16px 18px">'
-    +_popSig(p,'TB Over Rate','TB Over Odds',p.tb_over_odds,true)
+    +_twoBox(p,'TB Over Rate','TB Over Odds',p.tb_over_odds,true,'Last '+log.length+' Games',rows)
     +_oppPitBlock(p,'pitcher_hits_allowed','Hits Allowed','H')
-    +_ssBlock(p)
-    +'<div style="margin-top:14px;border-top:1px solid #1e293b;padding-top:10px;font-size:.7rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase;margin-bottom:6px">Last '+log.length+' Games</div>'
-    +'<table style="width:100%;border-collapse:collapse">'
-    +'<thead><tr>'
-      +'<th style="text-align:left;padding:4px 10px;font-size:.7rem;color:#64748b;font-weight:600;border-bottom:1px solid #1e293b">Date</th>'
-      +'<th style="text-align:left;padding:4px 10px;font-size:.7rem;color:#64748b;font-weight:600;border-bottom:1px solid #1e293b">Opp</th>'
-      +'<th style="text-align:right;padding:4px 10px;font-size:.7rem;color:#64748b;font-weight:600;border-bottom:1px solid #1e293b">Hits</th>'
-      +'<th style="text-align:right;padding:4px 10px;font-size:.7rem;color:#64748b;font-weight:600;border-bottom:1px solid #1e293b">TB</th>'
-    +'</tr></thead><tbody>'+rows+'</tbody></table>'
     +_matrixWriteup(p,'O',1,false,'total bases','Over 1.5 total bases')
     +'</div></div>';
   ov.style.display='flex';
@@ -6366,17 +6357,8 @@ function _hrrForm(key){
       +'<button onclick="document.getElementById(&#39;hrr-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem">\u2715</button>'
     +'</div>'
     +'<div style="padding:16px 18px">'
-    +_popSig(p,'HRR Rate','HRR Odds',(isUnder?p.hrr_under_odds:p.hrr_over_odds),!isUnder)
+    +_twoBox(p,'HRR Rate','HRR Odds',(isUnder?p.hrr_under_odds:p.hrr_over_odds),!isUnder,(isUnder?'H+R+RBI \u2264 1 = UNDER':'H+R+RBI \u2265 2 = OVER')+' \u00b7 Last '+log.length+' Games',rows)
     +_oppPitBlock(p,'pitcher_hits_allowed','Hits Allowed','H')
-    +_ssBlock(p)
-    +'<div style="margin-top:14px;border-top:1px solid #1e293b;padding-top:10px;font-size:.72rem;color:#fb923c;font-weight:700;margin-bottom:6px">'+(isUnder?'H+R+RBI \u2264 1 = UNDER':'H+R+RBI \u2265 2 = OVER')+' \u00b7 Last '+log.length+' Games</div>'
-    +'<table style="width:100%;border-collapse:collapse">'
-    +'<thead><tr>'
-      +'<th style="text-align:left;padding:4px 10px;font-size:.7rem;color:#64748b;font-weight:600;border-bottom:1px solid #1e293b">Date</th>'
-      +'<th style="text-align:left;padding:4px 10px;font-size:.7rem;color:#64748b;font-weight:600;border-bottom:1px solid #1e293b">Opp</th>'
-      +'<th style="text-align:right;padding:4px 10px;font-size:.7rem;color:#64748b;font-weight:600;border-bottom:1px solid #1e293b">Breakdown</th>'
-      +'<th style="text-align:right;padding:4px 10px;font-size:.7rem;color:#64748b;font-weight:600;border-bottom:1px solid #1e293b">HRR</th>'
-    +'</tr></thead><tbody>'+rows+'</tbody></table>'
     +_matrixWriteup(p,(isUnder?'U':'O'),2,false,'HRR (hits+runs+RBI)',(isUnder?'Under 1.5 H+R+RBI':'Over 1.5 H+R+RBI'))
     +'</div></div>';
   ov.style.display='flex';
@@ -6412,11 +6394,8 @@ function _tbForm(key){
       +'<button onclick="document.getElementById(&#39;tb-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem">\u2715</button>'
     +'</div>'
     +'<div style="padding:14px 18px">'
-      +_popSig(p,'TB Under Rate','TB Under Odds',p.tb_under_odds,false)
+      +_twoBox(p,'TB Under Rate','TB Under Odds',p.tb_under_odds,false,'Last '+log.length+' Games',rows)
       +_oppPitBlock(p,'pitcher_hits_allowed','Hits Allowed','H')
-      +_ssBlock(p)
-      +'<div style="margin-top:14px;border-top:1px solid #1e293b;padding-top:10px;font-size:.72rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase;margin-bottom:6px">Last '+log.length+' Games</div>'
-      +'<table style="width:100%;border-collapse:collapse;font-size:.85rem"><tbody>'+rows+'</tbody></table>'
       +_matrixWriteup(p,'U',1,false,'total bases','Under 1.5 total bases')
       +'<div style="margin-top:12px;border-top:1px solid #1e293b;padding-top:10px;color:#a78bfa;font-weight:800;font-size:.85rem">Pick: Under 1.5 Total Bases</div>'
     +'</div>'
