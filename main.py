@@ -4067,13 +4067,13 @@ function _oppPitBlock(p, market, statLabel, unit){
   // ── ALL 5 MARKETS (line / model proj / pick + odds) ───────────────────
   function _mRow(lbl,ln,proj,pk,od){
     var pc=pk==='OVER'?'#63cab7':(pk==='UNDER'?'#ff8a65':'#64748b');
-    var odStr=od!=null?((od>0?'+':'')+od):'';
-    var pickStr=pk?(pk+(odStr?(' '+odStr):'')):'\u2014';
+    var odStr=od!=null?((od>0?'+':'')+od):'\u2014';
     return '<tr>'
       +'<td style="padding:4px 8px;color:#e2e8f0;font-weight:600;font-size:.76rem">'+lbl+'</td>'
       +'<td style="padding:4px 8px;font-family:monospace;color:#fff;font-size:.76rem">'+(ln!=null?ln:'\u2014')+'</td>'
       +'<td style="padding:4px 8px;font-family:monospace;color:#7dd3fc;font-size:.76rem">'+(proj!=null?proj:'\u2014')+'</td>'
-      +'<td style="padding:4px 8px;text-align:right;font-weight:800;font-size:.76rem;color:'+pc+'">'+pickStr+'</td>'
+      +'<td style="padding:4px 8px;font-weight:800;font-size:.76rem;color:'+pc+'">'+(pk||'\u2014')+'</td>'
+      +'<td style="padding:4px 8px;text-align:right;font-family:monospace;font-size:.76rem;color:#94a3b8">'+odStr+'</td>'
     +'</tr>';
   }
   var mkBody='';
@@ -4092,12 +4092,13 @@ function _oppPitBlock(p, market, statLabel, unit){
     } else { mkBody+=_mRow(mm[1],null,null,null,null); }
   });
   var mkTable='<div style="font-size:.62rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase;margin-bottom:5px">All 5 Markets</div>'
-    +'<table style="width:100%;border-collapse:collapse;margin-bottom:12px;border-bottom:1px solid #16242f">'
+    +'<table style="width:100%;border-collapse:collapse">'
     +'<thead><tr>'
       +'<th style="text-align:left;padding:3px 8px;color:#64748b;font-size:.6rem;font-weight:600">Market</th>'
       +'<th style="text-align:left;padding:3px 8px;color:#64748b;font-size:.6rem;font-weight:600">Line</th>'
       +'<th style="text-align:left;padding:3px 8px;color:#64748b;font-size:.6rem;font-weight:600">Proj</th>'
-      +'<th style="text-align:right;padding:3px 8px;color:#64748b;font-size:.6rem;font-weight:600">Pick</th>'
+      +'<th style="text-align:left;padding:3px 8px;color:#64748b;font-size:.6rem;font-weight:600">Pick</th>'
+      +'<th style="text-align:right;padding:3px 8px;color:#64748b;font-size:.6rem;font-weight:600">Odds</th>'
     +'</tr></thead><tbody>'+mkBody+'</tbody></table>';
   // ── LAST 5 STARTS for THIS hitter category&#39;s market ───────────────────
   var o=_oppPitObj(pit, market);
@@ -4123,7 +4124,11 @@ function _oppPitBlock(p, market, statLabel, unit){
   } else {
     last5='<div style="font-size:.74rem;color:#64748b">No '+statLabel+' line posted for this starter</div>';
   }
-  return vsb+head+mkTable+last5+'</div>';
+  return vsb+head
+    +'<div style="display:flex;gap:18px;flex-wrap:wrap;align-items:flex-start">'
+      +'<div style="flex:1;min-width:300px">'+mkTable+'</div>'
+      +'<div style="flex:1;min-width:240px">'+last5+'</div>'
+    +'</div></div>';
 }
 
 // ── Hitter recent-form popup (last 5 games) — mirrors _pkForm ───────────
@@ -4157,7 +4162,7 @@ function _hitForm(key){
   var pickClr=isUnder?'#ff8a65':'#63cab7';
   var ssHtml=_ssBlock(p);
   var wu=_matrixWriteup(p,(isUnder?'U':'O'),0,false,'hits',(isUnder?'under 1.5 hits':'to record a hit'));
-  ov.innerHTML=`<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:440px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">
+  ov.innerHTML=`<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:820px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">
     <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid #1e293b">
       <div>
         <div style="font-weight:800;font-size:1.05rem;color:#fff">${name}</div>
@@ -4207,7 +4212,7 @@ function _runsForm(key){
   }).join(''):'<tr><td colspan="4" style="padding:14px;color:#64748b;text-align:center">No recent games on record</td></tr>';
   var name=p.full_name||p.name||'';
   var pickClr=isOver?'#63cab7':'#ff8a65';
-  ov.innerHTML=`<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:440px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">
+  ov.innerHTML=`<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:820px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">
     <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid #1e293b">
       <div>
         <div style="font-weight:800;font-size:1.05rem;color:#fff">${name}</div>
@@ -5721,7 +5726,7 @@ function _rbiForm(key){
   }).join(''):'<tr><td colspan="4" style="padding:14px;color:#64748b;text-align:center">No recent games on record</td></tr>';
   var name=p.full_name||p.name||'';
   var pickClr=isOver?'#63cab7':'#ff8a65';
-  ov.innerHTML=`<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:440px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">
+  ov.innerHTML=`<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:820px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">
     <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid #1e293b">
       <div>
         <div style="font-weight:800;font-size:1.05rem;color:#fff">${name}</div>
@@ -5819,7 +5824,7 @@ function _hrForm(key){
   }).join(''):'<tr><td colspan="4" style="padding:14px;color:#64748b;text-align:center">No recent games on record</td></tr>';
   var name=p.full_name||p.name||'';
   var pickClr=isOver?'#63cab7':'#ff8a65';
-  ov.innerHTML=`<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:440px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">
+  ov.innerHTML=`<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:820px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">
     <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid #1e293b">
       <div>
         <div style="font-weight:800;font-size:1.05rem;color:#fff">${name}</div>
@@ -5916,7 +5921,7 @@ function _walksForm(key){
   }).join(''):'<tr><td colspan="4" style="padding:14px;color:#64748b;text-align:center">No recent games on record</td></tr>';
   var name=p.full_name||p.name||'';
   var pickClr=isOver?'#63cab7':'#ff8a65';
-  ov.innerHTML=`<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:440px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">
+  ov.innerHTML=`<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:820px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">
     <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid #1e293b">
       <div>
         <div style="font-weight:800;font-size:1.05rem;color:#fff">${name}</div>
@@ -6051,7 +6056,7 @@ function _tbOverForm(key){
     +'</tr>';
   }).join(''):'<tr><td colspan="4" style="padding:14px;color:#64748b;text-align:center">No recent games on record</td></tr>';
   var name=p.name||'';
-  ov.innerHTML='<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:440px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">'
+  ov.innerHTML='<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:820px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">'
     +'<div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid #1e293b">'
       +'<div><div style="font-weight:800;font-size:1.05rem;color:#fff">'+name+'</div>'
       +'<div style="color:#94a3b8;font-size:.78rem">'+(p.side||'')+' vs '+(p.opp||'')+' \u00b7 Over 1.5 Total Bases</div></div>'
@@ -6337,7 +6342,7 @@ function _hrrForm(key){
     +'</tr>';
   }).join(''):'<tr><td colspan="4" style="padding:14px;color:#64748b;text-align:center">No recent games on record</td></tr>';
   var name=p.name||'';
-  ov.innerHTML='<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:460px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">'
+  ov.innerHTML='<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:820px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">'
     +'<div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid #1e293b">'
       +'<div><div style="font-weight:800;font-size:1.05rem;color:#fff">'+name+'</div>'
       +'<div style="color:#94a3b8;font-size:.78rem">'+(p.side||'')+' vs '+(p.opp||'')+' \u00b7 '+(isUnder?'Under':'Over')+' 1.5 H+R+RBI</div></div>'
@@ -6383,7 +6388,7 @@ function _tbForm(key){
     +'</tr>';
   }).join(''):'<tr><td colspan="4" style="padding:14px;color:#64748b;text-align:center">No recent games on record</td></tr>';
   var name=p.name||'';
-  ov.innerHTML='<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:440px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">'
+  ov.innerHTML='<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:820px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">'
     +'<div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid #1e293b">'
       +'<div><div style="font-weight:800;font-size:1.05rem;color:#fff">'+name+'</div>'
       +'<div style="color:#94a3b8;font-size:.78rem">'+(p.side||'')+' vs '+(p.opp||'')+' \u00b7 Under 1.5 Total Bases</div></div>'
