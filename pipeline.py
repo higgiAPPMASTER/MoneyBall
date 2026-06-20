@@ -1671,6 +1671,45 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     except Exception as _exc:
         emit({"type": "log", "msg": f"⚠️ Hit odds enrichment skipped: {_exc}"})
 
+    # ── Record-a-Hit: merge career backbone (pool A) with the OVER engine ──
+    # Pool A above is the career-vs-pitcher model. Here we (1) layer the shared
+    # Over signals (3-window hit-rate convergence + hot-hand) onto every career
+    # pick as display + a small hot nudge — career picks are NEVER dropped — and
+    # (2) add pool B: hot hitters with a posted 0.5 hit line but NO career
+    # history vs today's pitcher, qualified by the same Over engine at a 60% cut.
+    # Pool B is appended to also_ran, so every downstream pass (EV, env, bullpen,
+    # final reorder) covers it automatically with one record schema.
+    try:
+        from under_picks import run_hit_picks, hit_over_signals
+        _pool_a_ids = {p.get("player_id") for p in (top9 + also_ran) if p.get("player_id")}
+        for _hp in top9 + also_ran:
+            _sig = hit_over_signals(_hp.get("player_id"), _hp.get("side", ""), _hp.get("opp", ""))
+            _hp["rate_disp"]  = _sig["rate_disp"]
+            _hp["basis"]      = _sig["basis"]
+            _hp["recent_l10"] = _sig["recent_l10"]
+            _hp["recent_l5"]  = _sig["recent_l5"]
+            _hp["conv_flag"]  = _sig["conv_flag"]
+            _hp["cold_flag"]  = _sig["cold_flag"]
+            _hp["hot_disp"]   = _sig["hot_disp"]
+            _hp["hot_bonus"]  = _sig["hot_bonus"]
+            _hp["over_score"] = _sig["over_score"]
+            _hp["total"]      = (_hp.get("total") or 0) + _sig["hot_bonus"]
+        _pool_b = run_hit_picks(run_date, team_schedule, exclude_ids=_pool_a_ids, emit=emit)
+        for _pb in _pool_b:
+            _pb["player_id"]    = _pb.get("batter_id")
+            _pb["full_name"]    = _pb.get("name")
+            _pb["pos"]          = ""
+            _pb["over_sourced"] = True
+            _pb["dq"]           = False
+            _pb["total"]        = round((_pb.get("score") or 0) * 10)   # 0-1000, ranks vs pool A
+            _pb["recent_hit_log"] = _recent_hit_log(_pb.get("player_id"))
+            _pb["series_splits"]  = fetch_series_splits(
+                _pb.get("player_id"), _pb.get("opp", ""), run_date, _pb.get("side", ""))
+        also_ran.extend(_pool_b)
+        emit({"type": "log", "msg": f"  ✅ Record-a-Hit pool B added: {len(_pool_b)} hot hitters (no career vs pitcher)"})
+    except Exception as _exc:
+        emit({"type": "log", "msg": f"⚠️ Record-a-Hit pool B skipped: {_exc}"})
+
     # ── Matchup-value (Log5 + EV) enrichment for hit picks ──────────────
     # Adds matchup_prob / season_ba / proj_baa / impl_prob / ev / edge to every
     # hit pick. Frontend re-ranks by ev (default keeps ALL plays) + shows a green
