@@ -65,6 +65,10 @@ HIT_ODDS: dict = {}
 # Parallel to HIT_ODDS: normalized name -> source book key for the displayed
 # (best-among-MY_BOOKS) 0.5-hit Over price. Read by pipeline.py to stamp pick["book"].
 HIT_ODDS_BOOK: dict = {}
+# Parallel to HIT_ODDS: normalized name -> {name, home_team, away_team} for EVERY
+# hitter with a posted 0.5 "to record a hit" line. Lets run_hit_picks build the
+# broadened pool-B candidate set (hot hitters with no career-vs-pitcher history).
+HIT_TEAMS: dict = {}
 # Populated by _fetch_hits_lines: normalized name -> {name, line, home_team,
 # away_team, over, under} for the batter_runs_scored (Over/Under ~0.5) market.
 # Read by run_runs_picks. Parallel to HIT_ODDS; first game seen per name wins.
@@ -696,6 +700,10 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
         # adds ZERO Odds API calls — both lines come from the per-game odds
         # already fetched above; only the (free) MLB Stats scan grows.
         candidates = list(seen.values())
+        # Export the full 0.5-hit-line set (with team info) so run_hit_picks can
+        # build pool B. Refreshed each call to match this run's slate.
+        HIT_TEAMS.clear()
+        HIT_TEAMS.update(hit05)
         for nk, info in hit05.items():
             if nk in seen: continue
             candidates.append({"name": info["name"], "line": 1.5,
@@ -1979,6 +1987,50 @@ def _tb_consistency_over(player_id, side: str, opp_name: str = "",
         return {"tb_games": 0, "games": 0, "display": "ERR", "score": 0}
 
 
+def _hit_consistency(player_id, side: str, opp_name: str = "",
+                     max_games: int = 10, ignore_ha: bool = False) -> dict:
+    """Last max_games career H/A games vs opp; count games with 1+ hit (record-a-hit
+       OVER). ignore_ha=True drops the H/A filter (true recent form, any side).
+       Mirrors _tb_consistency_over so the hit list reuses the same Over engine."""
+    if not player_id:
+        return {"hit_games": 0, "games": 0, "display": "N/A", "score": 0}
+    try:
+        from mlb_stats_splits import _get_game_logs, _team_name_match
+        from datetime import date as _dt
+        cy = _dt.today().year
+        seasons = list(range(cy, cy - 5, -1))
+        matching = []
+        for season in seasons:
+            splits = _get_game_logs(player_id, season)
+            for sp in reversed(splits):
+                is_home = sp.get("isHome", False)
+                if not ignore_ha and (side.upper() == "HOME") != is_home:
+                    continue
+                if opp_name:
+                    opp = sp.get("opponent", {}).get("name", "")
+                    if not _team_name_match(opp, opp_name):
+                        continue
+                stat = sp.get("stat", {})
+                ab = int(stat.get("atBats", 0) or 0)
+                if ab < 1:
+                    continue
+                h = int(stat.get("hits", 0) or 0)
+                matching.append(1 if h >= 1 else 0)
+                if len(matching) >= max_games:
+                    break
+            if len(matching) >= max_games:
+                break
+        games = len(matching)
+        hit_games = sum(matching)
+        if games == 0:
+            return {"hit_games": 0, "games": 0, "display": "N/A", "score": 0}
+        return {"hit_games": hit_games, "games": games,
+                "display": f"{hit_games}/{games}",
+                "score": round(hit_games / games * 100)}
+    except Exception:
+        return {"hit_games": 0, "games": 0, "display": "ERR", "score": 0}
+
+
 def _hrr_consistency_over(player_id, side: str, opp_name: str = "",
                           max_games: int = 10, ignore_ha: bool = False) -> dict:
     """Last max_games career H/A games vs opp; count games where H+R+RBI >= 2 (OVER 1.5).
@@ -2315,6 +2367,149 @@ def run_tb_over_picks(run_date: str, team_schedule: dict, emit=None) -> list:
     picks.sort(key=lambda p: (-p["score"], -p["games"]))
     picks = picks[:TB_OVER_TOP_N]
     _log(emit, f"✅ TB Over Picks: {len(picks)} qualifying")
+    return picks
+
+
+# ── "Top Plays to Record a Hit" as an OVER category (pool B) ───────────
+# The hit list KEEPS its career-vs-pitcher backbone (pool A, built in
+# pipeline.py). These add pool B: hot hitters with a posted 0.5 hit line but
+# NO career history vs today's pitcher, qualified by the SAME Over engine the
+# TB-Over / Runs / RBI / HRR overs use (vs-opp anchor OR L10 H/A fallback,
+# 3-window convergence blend + hot-hand, HIT_OVER_CUT gate).
+HIT_OVER_CUT     = 60   # >= this % recent hit-rate to qualify a non-career hot hitter
+HIT_OVER_MIN_VS  = 2    # vs-opp H/A games to use the head-to-head anchor
+HIT_OVER_MIN_ANY = 5    # else fall back to L10 H/A any-opp with >= this many games
+HIT_OVER_TOP_N   = 30   # cap on pool-B additions
+
+
+def hit_over_signals(batter_id, side: str, opp_name: str = "") -> dict:
+    """Shared 3-window record-a-hit Over signal used by BOTH pools:
+       - pool A (career picks in pipeline.py) layer these on as display + a hot
+         nudge to the career total (never dropped),
+       - pool B (run_hit_picks) qualify off over_score vs HIT_OVER_CUT.
+       Returns blend, over_score, convergence flags, Wilson LB and hot-hand."""
+    _vsop = _hit_consistency(batter_id, side, opp_name, 10)
+    if _vsop["games"] >= HIT_OVER_MIN_VS:
+        vs = _vsop; vs["basis"] = "vs opp"
+    else:
+        vs = _hit_consistency(batter_id, side, "", 10)
+        vs["basis"] = "L10 H/A"
+    # 3-window convergence blend: vs-opp 35%, L10 any-opp 40%, L5 any-opp 25%
+    r10 = _hit_consistency(batter_id, side, "", 10, ignore_ha=True)
+    r5  = _hit_consistency(batter_id, side, "", 5,  ignore_ha=True)
+    comps = [(0.35, vs["score"] / 100.0)]
+    if r10["games"] > 0: comps.append((0.40, r10["score"] / 100.0))
+    if r5["games"]  > 0: comps.append((0.25, r5["score"]  / 100.0))
+    wsum = sum(w for w, _ in comps) or 1.0
+    blend_score = round(sum(w * v for w, v in comps) / wsum * 100)
+    # OVERS only: hot hand (recent power + active hit streak) nudges over the cut.
+    hot = _hitter_hot_hand(batter_id)
+    over_score = min(blend_score + hot["bonus"], 100)
+    l5_s = r5["score"] if r5["games"] > 0 else None
+    conv_flag = all(v >= HIT_OVER_CUT
+                    for v in [vs["score"], r10["score"] if r10["games"] > 0 else None, l5_s]
+                    if v is not None)
+    cold_flag = (l5_s is not None and l5_s < HIT_OVER_CUT - 15)
+    return {"blend": blend_score, "over_score": over_score,
+            "vs_games": vs["games"], "basis": vs.get("basis", ""),
+            "rate_disp": vs["display"], "opp_score": vs["score"],
+            "recent_l10": r10["display"], "recent_l5": r5["display"],
+            "conv_flag": conv_flag, "cold_flag": cold_flag,
+            "wilson_hit": round(_wilson_lb(vs["hit_games"], vs["games"]), 4) if vs["games"] > 0 else 0,
+            "hot_bonus": hot["bonus"], "hot_disp": hot["disp"]}
+
+
+def run_hit_picks(run_date: str, team_schedule: dict,
+                  exclude_ids=None, emit=None) -> list:
+    """Pool B for the Record-a-Hit list: every hitter with a posted 0.5 hit line
+       who is NOT already on the career-model list (exclude_ids) and clears
+       HIT_OVER_CUT via the shared Over engine. Returns hit-card-shaped dicts so
+       pipeline.py can fold them straight into top9/also_ran."""
+    _log(emit, "", "log")
+    _log(emit, "▸ Hit Over Picks — broadened pool (hot hitters, no career vs pitcher)", "section")
+    season = int(run_date[:4])
+    exclude_ids = set(exclude_ids or [])
+
+    if not HIT_TEAMS:
+        _fetch_hits_lines(run_date, emit)
+    candidates = list(HIT_TEAMS.values())
+    if not candidates:
+        _log(emit, "  No 0.5 hit lines posted today.")
+        return []
+    _log(emit, f"  {len(candidates)} players with a 0.5 hit line")
+
+    _build_player_map(season)
+    id_map: dict = {}
+    for c in candidates:
+        pid = _resolve_id(c["name"])
+        if pid and pid not in exclude_ids:   # skip career-model players (pool A)
+            id_map[c["name"]] = pid
+    team_map = _get_teams_batch(list(id_map.values()))
+    pitchers = _get_probable_pitchers(run_date)
+
+    def _eval(c):
+        name = c["name"]
+        batter_id = id_map.get(name)
+        player_team = team_map.get(batter_id, "") if batter_id else ""
+        if not batter_id or not player_team:
+            return None
+        if _team_match(player_team, c["home_team"]):
+            side, opp_name = "HOME", c["away_team"]
+        elif _team_match(player_team, c["away_team"]):
+            side, opp_name = "AWAY", c["home_team"]
+        else:
+            return None
+        pitcher_name, pitcher_id = "TBD", None
+        for pteam, pinfo in pitchers.items():
+            if _team_match(pteam, opp_name):
+                pitcher_name = pinfo["name"]
+                pitcher_id   = pinfo.get("id")
+                break
+        s1_pit = _get_s1_vs_pitcher(batter_id, pitcher_id)
+        sig = hit_over_signals(batter_id, side, opp_name)
+        if sig["over_score"] < HIT_OVER_CUT:
+            return None
+        nk = _norm_name(name)
+        return {"name": name, "team": player_team, "side": side, "opp": opp_name,
+                "pick": "OVER", "line": 0.5,
+                "rate_disp": sig["rate_disp"], "score": sig["over_score"],
+                "base_score": sig["blend"], "opp_score": sig["opp_score"],
+                "recent_l10": sig["recent_l10"], "recent_l5": sig["recent_l5"],
+                "games": sig["vs_games"], "basis": sig["basis"],
+                "conv_flag": sig["conv_flag"], "cold_flag": sig["cold_flag"],
+                "wilson": sig["wilson_hit"],
+                "hot_bonus": sig["hot_bonus"], "hot_disp": sig["hot_disp"],
+                "hit_odds": HIT_ODDS.get(nk),
+                "book": _book_label(HIT_ODDS_BOOK.get(nk)),
+                "batter_id": batter_id,
+                "pitcher": pitcher_name, **_s1_ha_fields(batter_id, pitcher_id, side, s1_pit)}
+
+    _pw_pairs = []
+    for _c in candidates:
+        _bid = id_map.get(_c["name"])
+        _pt  = team_map.get(_bid, "") if _bid else ""
+        if not _bid or not _pt: continue
+        if _team_match(_pt, _c["home_team"]):   _opp = _c["away_team"]
+        elif _team_match(_pt, _c["away_team"]): _opp = _c["home_team"]
+        else: continue
+        _pid = next((pi.get("id") for pt, pi in pitchers.items() if _team_match(pt, _opp)), None)
+        _pw_pairs.append((_bid, _pid))
+    _prewarm_s1_ha_cache(_pw_pairs)
+
+    picks = []
+    with ThreadPoolExecutor(max_workers=8) as _ex:
+        _futs = {_ex.submit(_eval, c): c for c in candidates}
+        for _fut in as_completed(_futs):
+            try:
+                pk = _fut.result()
+            except Exception:
+                pk = None
+            if pk:
+                picks.append(pk)
+
+    picks.sort(key=lambda p: (-p["score"], -p["games"]))
+    picks = picks[:HIT_OVER_TOP_N]
+    _log(emit, f"✅ Hit Over Picks (pool B): {len(picks)} qualifying")
     return picks
 
 
