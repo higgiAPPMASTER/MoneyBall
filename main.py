@@ -1284,9 +1284,20 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "odds": c["odds"], "line": c["line"], "actual": actual, "stat": c["stat_label"],
             "result": _grade(c["side"], c["line"], actual, (st or {}).get("final", False)),
             "game_status": (st or {}).get("status", "—"),
-            "ev": p.get("ev"),
-            "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
+            "ev": c.get("ev"),
+            "ev_prob": (c.get("ev_prob") if c.get("ev_prob") is not None else c.get("matchup_prob")),
         })
+
+    # Top 10 Batter overflow (ranks 11-20 of the same combined EV ranking) → banked
+    # in the Overflow Tracker as "Top 10 Batter (OVF)". Mirrors the live "More Hitter
+    # Plays" pulldown. Like the main Top 10 Batter, it intentionally overlaps the
+    # per-category rows (curated best-of-the-rest), so it's excluded from cross-cat sums.
+    for c in _bat_cands[10:20]:
+        st = _lookup(c.get("pid"), c.get("fname") or c["name"])
+        actual = st[c["stat_key"]] if (st and c["stat_key"] in st) else None
+        _ovf(c, c.get("name", ""), c.get("team", ""), "Top 10 Batter (OVF)", c["side"],
+             f"{c['side']} {c['line']} {c['stat_label']}", c.get("odds"),
+             c.get("line"), actual, c.get("stat_label"), st)
 
     # Top 10 Pitcher — combine Ks + all pitcher props, rank by EV (mirrors the live
     # _buildPitchDay card builder), take top 10
@@ -1330,8 +1341,8 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "odds": c["odds"], "line": c["line"], "actual": actual, "stat": c["stat_label"],
             "result": _grade(c["side"], c["line"], actual, (st or {}).get("final", False)),
             "game_status": (st or {}).get("status", "—"),
-            "ev": p.get("ev"),
-            "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
+            "ev": c.get("ev"),
+            "ev_prob": (c.get("ev_prob") if c.get("ev_prob") is not None else c.get("matchup_prob")),
         })
 
     result = {
@@ -3023,6 +3034,7 @@ _HTML = """
           <div class="section-hdr" style="color:#facc15">⭐ Top 10 Hitter Plays of the Day</div>
           <p class="text-xs text-slate-400 mb-3" style="margin-top:-4px">Best hitter plays across all categories ranked by Expected Value (Wilson edge × odds). Click any card for recent history. Track Bet logs it to My Bets.</p>
           <div id="top10-plays-body" class="mlb-picks-grid"></div>
+          <div id="top10-more-wrap"></div>
         </div>
         <div class="card p-6" id="top-picks-card">
           <div class="section-hdr">🏆 Top 10 Plays to Record a Hit</div>
@@ -3518,11 +3530,16 @@ function showResults(result) {
       statCard('⏱️','Time (s)',stats.elapsed),
     ].join('');
 
-  const t10Plays = _buildTop10(view);
+  const t10All = _buildTop10All(view);
+  const t10Plays = t10All.slice(0, 10);
   if (t10Plays.length > 0 && !(window.UNDERS_ONLY && (window.IS_ADMIN||window.IS_TESTER))) {
     show('top10-plays-card');
     window.__T10_REG__={};
     document.getElementById('top10-plays-body').innerHTML = t10Plays.map(function(p,i){ return _top10Card(p, i+1); }).join('');
+    var t10More = t10All.slice(10, 20);
+    document.getElementById('top10-more-wrap').innerHTML = t10More.length > 0
+      ? _moreWrap(t10More, function(p,r){ return _top10Card(p, r); }, 11, 'Hitter Plays', '#facc15')
+      : '';
   }
 
   if (window.UNDERS_ONLY && (window.IS_ADMIN||window.IS_TESTER)) { hide('top-picks-card'); hide('top10-plays-card'); } else { show('top-picks-card'); }
@@ -6089,7 +6106,7 @@ function _buildPitchDay(view){
   });
   return dayList;
 }
-function _buildTop10(view) {
+function _buildTop10All(view) {
   var plays = [];
   function _add(arr, kind) {
     (arr||[]).forEach(function(p){
@@ -6111,7 +6128,12 @@ function _buildTop10(view) {
   var _t10seen={};
   plays=plays.filter(function(p){ var k=(p.name||p.full_name||'').trim().toLowerCase(); if(_t10seen[k]) return false; _t10seen[k]=true; return true; });
   plays=plays.filter(function(p){ return !_t10DotIsRed(p,'O',false,0); });  // green/amber lights only
-  return plays.slice(0, 10);
+  return plays;
+}
+// Top 10 (ranks 1-10). Ranks 11-20 render in the "More Hitter Plays" pulldown via
+// _buildTop10All(view).slice(10,20) and are tracked under "Top 10 Batter (OVF)".
+function _buildTop10(view) {
+  return _buildTop10All(view).slice(0, 10);
 }
 function _top10BetBtn(p, kind) {
   switch(kind) {
@@ -6724,6 +6746,8 @@ function _trkBuildCfg(){
     'Pitcher Earned Runs (OVF)|UNDER': {lbl:'Earned Runs Overflow (Under)', icon:'🔥'},
     'Pitcher Walks (OVF)|OVER':  {lbl:'Walks Allowed Overflow (Over)',  icon:'🚶'},
     'Pitcher Walks (OVF)|UNDER': {lbl:'Walks Allowed Overflow (Under)', icon:'🚶'},
+    'Top 10 Batter (OVF)|OVER':  {lbl:'Top 10 Hitter Plays (OVF)',      icon:'⭐'},
+    'Top 10 Batter (OVF)|UNDER': {lbl:'Top 10 Hitter Plays (OVF Under)', icon:'⭐'},
   };
   var CAT_ORDER=['Top 10 Batter|OVER','Top 10 Batter|UNDER','Top 10 Pitcher|OVER','Top 10 Pitcher|UNDER',
     'Hitter Hits|OVER','Hitter Hits|UNDER','Runs|OVER','Runs|UNDER',
@@ -6731,7 +6755,7 @@ function _trkBuildCfg(){
     'Pitcher Ks|OVER','Pitcher Ks|UNDER','Pitcher Hits Allowed|OVER','Pitcher Hits Allowed|UNDER',
     'Pitcher Outs|OVER','Pitcher Outs|UNDER','Pitcher Earned Runs|OVER','Pitcher Earned Runs|UNDER',
     'Pitcher Walks|OVER','Pitcher Walks|UNDER'];
-  var OVF_ORDER=['Hitter Hits (More)|OVER','Hitter Hits (More)|UNDER','Runs (OVF)|OVER','Runs (OVF)|UNDER',
+  var OVF_ORDER=['Top 10 Batter (OVF)|OVER','Top 10 Batter (OVF)|UNDER','Hitter Hits (More)|OVER','Hitter Hits (More)|UNDER','Runs (OVF)|OVER','Runs (OVF)|UNDER',
     'TB Under (OVF)|UNDER','TB Over (OVF)|OVER','RBI (OVF)|OVER','RBI (OVF)|UNDER',
     'Batter Walks (OVF)|OVER','Batter Walks (OVF)|UNDER','HRR (OVF)|OVER','HRR (OVF)|UNDER',
     'Pitcher Ks (OVF)|OVER','Pitcher Ks (OVF)|UNDER','Pitcher Hits Allowed (OVF)|OVER','Pitcher Hits Allowed (OVF)|UNDER',
