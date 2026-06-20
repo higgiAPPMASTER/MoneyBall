@@ -3567,6 +3567,12 @@ function showResults(result) {
   const pkData=view.pitcher_k||{}, pkAll=pkData.all||[];
     window.__TEAM_K_RANKS__=(pkData.team_k_ranks||[]);
     window.__PK_REG__={};
+    window.__PK_BY_NAME__={};
+    (pkAll||[]).forEach(function(_p){
+      var _nm=String(_p.name||'').toLowerCase().trim(); if(!_nm) return;
+      var _ex=window.__PK_BY_NAME__[_nm];
+      if(!_ex||(!_ex.pick&&_p.pick)) window.__PK_BY_NAME__[_nm]=_p;
+    });
     if (pkAll.length > 0) {
       const pkSorted = pkAll.filter(p=>p.pick && (p.starts||0)>0).sort((a,b)=>{
         const ga=Math.abs((a.blended_avg_k!=null?a.blended_avg_k:(a.avg_k||0))-(a.line||0))*_umpKMul(a);
@@ -4027,40 +4033,97 @@ function _vsPitBlock(p){
     +'<div style="font-size:.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">'+lbl+' &middot; <span style="color:#cbd5e1">'+_esc(pit)+'</span></div>'
     +'<div style="font-size:.9rem">'+inner+'</div></div>';
 }
+// Full facing-starter block shown in EVERY hitter popup. Renders: the batter&#39;s
+// career H2H vs this starter (via _vsPitBlock), the starter name/team/hand/ERA,
+// ALL 5 pitcher prop markets (Strikeouts + Hits Allowed/Outs/Earned Runs/Walks
+// with line + model PROJ + side + odds), and that starter&#39;s LAST 5 STARTS for
+// the market matching THIS hitter&#39;s category (passed as market/statLabel/unit).
 function _oppPitBlock(p, market, statLabel, unit){
   var pit=(p.pitcher&&p.pitcher!=='TBD')?p.pitcher:'';
   if(!pit) return '';
   var vsb=_vsPitBlock(p);
+  var nmFull=String(pit).toLowerCase().trim();
+  function _byName(idx){
+    if(!idx) return null;
+    var r=idx[nmFull];
+    if(!r){ var last=nmFull.split(/ +/).pop(); for(var k in idx){ if(k.split(/ +/).pop()===last){ r=idx[k]; break; } } }
+    return r||null;
+  }
+  var ppRec=_byName(window.__PP_BY_NAME__||{})||{};
+  var kObj=_byName(window.__PK_BY_NAME__||{});
+  // header meta: team / hand / ERA (omit any piece we do not have)
+  var hand=((p.platoon||{}).pit_hand)||'';
+  var handTxt=hand==='R'?'RHP':(hand==='L'?'LHP':'');
+  var era=(kObj&&kObj.era!=null)?kObj.era:null;
+  var team=(kObj&&kObj.team)?kObj.team:'';
+  if(!team){ for(var mk in ppRec){ if(ppRec[mk]&&ppRec[mk].obj&&ppRec[mk].obj.team){ team=ppRec[mk].obj.team; break; } } }
+  var metaBits=[];
+  if(team) metaBits.push(_esc(team));
+  if(handTxt) metaBits.push(handTxt);
+  if(era!=null) metaBits.push(_esc(era)+' ERA');
+  var headMeta=metaBits.length?(' <span style="color:#64748b;font-weight:600">\u00b7 '+metaBits.join(' \u00b7 ')+'</span>'):'';
   var head='<div style="margin-top:12px;padding:10px 12px;background:#0c1622;border-radius:8px;border:1px solid #1e2f3a">'
-    +'<div style="font-size:.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Facing &middot; <span style="color:#cbd5e1">'+_esc(pit)+'</span></div>';
-  var o=_oppPitObj(pit, market);
-  if(!o) return vsb+head+'<div style="font-size:.78rem;color:#64748b">No '+statLabel+' line posted for this starter</div></div>';
-  var line=o.line;
-  var log=(o.recent_log||[]).slice(0,5);
-  var rows=log.length?log.map(function(g){
-    var v=g.v;
-    var clr=(line!=null&&v!=null)?(v>line?'#63cab7':'#ff8a65'):'#e2e8f0';
-    var oppTxt=g.opp?('vs '+g.opp):'';
+    +'<div style="font-size:.66rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Facing Starter \u00b7 <span style="color:#63cab7;font-weight:800">'+_esc(pit)+'</span>'+headMeta+'</div>';
+  // ── ALL 5 MARKETS (line / model proj / pick + odds) ───────────────────
+  function _mRow(lbl,ln,proj,pk,od){
+    var pc=pk==='OVER'?'#63cab7':(pk==='UNDER'?'#ff8a65':'#64748b');
+    var odStr=od!=null?((od>0?'+':'')+od):'';
+    var pickStr=pk?(pk+(odStr?(' '+odStr):'')):'\u2014';
     return '<tr>'
-      +'<td style="padding:4px 8px;color:#94a3b8;font-family:monospace;font-size:.74rem">'+(g.d||'\u2014')+'</td>'
-      +'<td style="padding:4px 8px;color:#cbd5e1;font-size:.74rem">'+oppTxt+'</td>'
-      +'<td style="padding:4px 8px;text-align:right;font-family:monospace;font-weight:800;color:'+clr+'">'+(v!=null?(v+' '+unit):'\u2014')+'</td>'
+      +'<td style="padding:4px 8px;color:#e2e8f0;font-weight:600;font-size:.76rem">'+lbl+'</td>'
+      +'<td style="padding:4px 8px;font-family:monospace;color:#fff;font-size:.76rem">'+(ln!=null?ln:'\u2014')+'</td>'
+      +'<td style="padding:4px 8px;font-family:monospace;color:#7dd3fc;font-size:.76rem">'+(proj!=null?proj:'\u2014')+'</td>'
+      +'<td style="padding:4px 8px;text-align:right;font-weight:800;font-size:.76rem;color:'+pc+'">'+pickStr+'</td>'
     +'</tr>';
-  }).join(''):'<tr><td colspan="3" style="padding:8px;color:#64748b;text-align:center;font-size:.74rem">No recent starts on record</td></tr>';
-  var meta=[];
-  if(line!=null) meta.push('Line '+line+' '+unit);
-  var shownAvg=null;
-  if(log.length){ var shownSum=0, shownCount=0; for(var i=0;i<log.length;i++){ var vv=log[i].v; if(vv!=null){ shownSum+=Number(vv); shownCount++; } } if(shownCount) shownAvg=(shownSum/shownCount).toFixed(1); }
-  if(shownAvg!=null) meta.push('Last 5 avg '+shownAvg+' '+unit);
-  var voLog=(o.vs_opp_log||[]).slice(0,5);
-  var voAvg=null;
-  if(voLog.length){ var voSum=0, voCount=0; for(var i=0;i<voLog.length;i++){ var vv=voLog[i].v; if(vv!=null){ voSum+=Number(vv); voCount++; } } if(voCount) voAvg=(voSum/voCount).toFixed(1); }
-  if(voAvg!=null) meta.push('vs '+_esc(o.opp||'')+' avg '+voAvg+' '+unit+' ('+voLog.length+')');
-  if(o.pick) meta.push('<span style="color:'+(o.pick==='OVER'?'#63cab7':'#ff8a65')+';font-weight:800">'+o.pick+'</span>');
-  return vsb+head
-    +'<div style="font-size:.72rem;color:#94a3b8;margin-bottom:6px">'+statLabel+' &middot; last '+log.length+(meta.length?(' &middot; '+meta.join(' &middot; ')):'')+'</div>'
-    +'<table style="width:100%;border-collapse:collapse"><tbody>'+rows+'</tbody></table>'
-    +'</div>';
+  }
+  var mkBody='';
+  if(kObj){
+    var kHasSugg=kObj.sugg_line!=null;
+    var kLine=kHasSugg?kObj.sugg_line:kObj.line;
+    var kPick=kHasSugg?'OVER':kObj.pick;
+    var kOd=kHasSugg?kObj.sugg_odds:(kObj.pick==='OVER'?kObj.over_odds:(kObj.pick==='UNDER'?kObj.under_odds:null));
+    var kProj=(kObj.blended_avg_k!=null?kObj.blended_avg_k:kObj.avg_k);
+    mkBody+=_mRow('Strikeouts',kLine,kProj,kPick,kOd);
+  } else { mkBody+=_mRow('Strikeouts',null,null,null,null); }
+  [['pitcher_hits_allowed','Hits Allowed'],['pitcher_outs','Outs'],['pitcher_earned_runs','Earned Runs'],['pitcher_walks','Walks']].forEach(function(mm){
+    var e=ppRec[mm[0]];
+    if(e&&e.obj){ var o2=e.obj; var od=o2.pick==='OVER'?o2.over_odds:(o2.pick==='UNDER'?o2.under_odds:null);
+      mkBody+=_mRow(mm[1],o2.line,o2.blended,o2.pick,od);
+    } else { mkBody+=_mRow(mm[1],null,null,null,null); }
+  });
+  var mkTable='<div style="font-size:.62rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase;margin-bottom:5px">All 5 Markets</div>'
+    +'<table style="width:100%;border-collapse:collapse;margin-bottom:12px;border-bottom:1px solid #16242f">'
+    +'<thead><tr>'
+      +'<th style="text-align:left;padding:3px 8px;color:#64748b;font-size:.6rem;font-weight:600">Market</th>'
+      +'<th style="text-align:left;padding:3px 8px;color:#64748b;font-size:.6rem;font-weight:600">Line</th>'
+      +'<th style="text-align:left;padding:3px 8px;color:#64748b;font-size:.6rem;font-weight:600">Proj</th>'
+      +'<th style="text-align:right;padding:3px 8px;color:#64748b;font-size:.6rem;font-weight:600">Pick</th>'
+    +'</tr></thead><tbody>'+mkBody+'</tbody></table>';
+  // ── LAST 5 STARTS for THIS hitter category&#39;s market ───────────────────
+  var o=_oppPitObj(pit, market);
+  var last5;
+  if(o){
+    var line=o.line;
+    var log=(o.recent_log||[]).slice(0,5);
+    var rows=log.length?log.map(function(g){
+      var v=g.v;
+      var clr=(line!=null&&v!=null)?(v>line?'#63cab7':'#ff8a65'):'#e2e8f0';
+      var oppTxt=g.opp?('vs '+g.opp):'';
+      return '<tr>'
+        +'<td style="padding:4px 8px;color:#94a3b8;font-family:monospace;font-size:.74rem">'+(g.d||'\u2014')+'</td>'
+        +'<td style="padding:4px 8px;color:#cbd5e1;font-size:.74rem">'+oppTxt+'</td>'
+        +'<td style="padding:4px 8px;text-align:right;font-family:monospace;font-weight:800;color:'+clr+'">'+(v!=null?(v+' '+unit):'\u2014')+'</td>'
+      +'</tr>';
+    }).join(''):'<tr><td colspan="3" style="padding:8px;color:#64748b;text-align:center;font-size:.74rem">No recent starts on record</td></tr>';
+    var shownAvg=null;
+    if(log.length){ var s=0,c=0; for(var i=0;i<log.length;i++){ var vv=log[i].v; if(vv!=null){ s+=Number(vv); c++; } } if(c) shownAvg=(s/c).toFixed(1); }
+    var avgTxt=(shownAvg!=null)?(' \u00b7 avg '+shownAvg+' '+unit):'';
+    last5='<div style="font-size:.62rem;letter-spacing:.05em;color:#64748b;text-transform:uppercase;margin-bottom:5px">Last '+log.length+' Starts \u00b7 '+statLabel+(line!=null?(' (line '+line+' '+unit+')'):'')+avgTxt+'</div>'
+      +'<table style="width:100%;border-collapse:collapse"><tbody>'+rows+'</tbody></table>';
+  } else {
+    last5='<div style="font-size:.74rem;color:#64748b">No '+statLabel+' line posted for this starter</div>';
+  }
+  return vsb+head+mkTable+last5+'</div>';
 }
 
 // ── Hitter recent-form popup (last 5 games) — mirrors _pkForm ───────────
