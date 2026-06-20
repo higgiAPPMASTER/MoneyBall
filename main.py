@@ -5422,6 +5422,13 @@ function _mlbCard(p, rank, dim) {
         <span style="font-size:.78rem;color:#64748b">${p.pitcher?'vs '+p.pitcher:''}</span>
         ${lineupBadge(p.lineup_status)}
       </div>
+      ${p.rate_disp?`<div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
+        <span style="font-size:.78rem;color:#94a3b8">Hit Rate vs Opp</span>
+        <span style="font-family:monospace;font-weight:700;color:#86efac">${p.rate_disp} <span style="color:#64748b;font-size:.68rem">${p.basis||''}</span></span>
+      </div>`:''}
+      ${p.conv_flag?'<div style="font-size:.67rem;color:#4ade80;font-weight:600;margin-top:2px">&#10003; Converged &middot; L10 '+(p.recent_l10||'N/A')+' L5 '+(p.recent_l5||'N/A')+'</div>':(p.cold_flag?'<div style="font-size:.67rem;color:#fb923c;font-weight:600;margin-top:2px">&#9888; Recent diverges &middot; L5 '+(p.recent_l5||'N/A')+'</div>':((p.recent_l10||p.recent_l5)?'<div style="font-size:.67rem;color:#64748b;margin-top:2px">L10 '+(p.recent_l10||'N/A')+' &middot; L5 '+(p.recent_l5||'N/A')+'</div>':''))}
+      ${p.hot_disp?'<div style="font-size:.67rem;color:#fbbf24;font-weight:700;margin-top:2px">&#128293; Hot hand &middot; '+p.hot_disp+' (+'+p.hot_bonus+')</div>':''}
+      ${p.over_sourced?'<div style="font-size:.62rem;color:#a78bfa;font-weight:600;margin-top:2px">+ Hot-hitter add (no career vs pitcher)</div>':''}
       ${p.facing_top_era?`<div style="margin-top:6px;font-size:.7rem;color:#fbbf24;background:rgba(245,158,11,.10);border:1px solid rgba(245,158,11,.35);border-radius:6px;padding:3px 7px">⚾ vs top-30 ERA: ${p.facing_top_era}${p.top_era_val!=null?' · '+(+p.top_era_val).toFixed(2)+' ERA':''}</div>`:''}
       ${(p.blurb||s5Suffix) ? `<div style="margin-top:5px;font-size:.72rem;color:#94a3b8;line-height:1.5;font-style:italic">${p.blurb||''}${s5Suffix}</div>` : ''}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
