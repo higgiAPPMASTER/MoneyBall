@@ -4033,6 +4033,37 @@ function _vsPitBlock(p){
     +'<div style="font-size:.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">'+lbl+' &middot; <span style="color:#cbd5e1">'+_esc(pit)+'</span></div>'
     +'<div style="font-size:.9rem">'+inner+'</div></div>';
 }
+// Compact career-vs-starter LINE for the top-left of the left popup box
+// (replaces the old full-width banner). Same data as _vsPitBlock, one tight line.
+function _vsPitLine(p){
+  var pit=(p.pitcher&&p.pitcher!=='TBD')?p.pitcher:'';
+  if(!pit) return '';
+  var vp=p&&p.vs_pit;
+  var inner, lbl;
+  if(p.s1_tag&&(p.s1_ab||0)>0){
+    lbl=(p.s1_tag||'Career')+' vs';
+    inner='<span style="font-family:monospace;font-weight:800;color:#e2e8f0;font-size:1rem">'+_esc(p.s1_disp||'')+'</span>';
+    if(vp&&(vp.ab||0)>0){
+      var hr=vp.hr||0;
+      inner+='<span style="color:#64748b;font-size:.66rem;margin-left:8px">'+_esc(vp.display||'')+' career'+(hr?(' \u00b7 '+hr+' HR'):'')+'</span>';
+    }
+  } else if(vp){
+    lbl='Career vs';
+    var ab=vp.ab||0;
+    if(ab>0){
+      var hr=vp.hr||0;
+      inner='<span style="font-family:monospace;font-weight:800;color:#e2e8f0;font-size:1rem">'+_esc(vp.display||'')+'</span>'
+        +(hr>0?('<span style="color:#fbbf24;font-weight:800;margin-left:8px;font-size:.82rem">'+hr+' HR</span>'):'');
+    } else {
+      inner='<span style="font-size:.72rem;color:#64748b">No prior at-bats vs this starter</span>';
+    }
+  } else {
+    return '';
+  }
+  return '<div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #1f2937">'
+    +'<div style="font-size:.62rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">'+lbl+' &middot; <span style="color:#cbd5e1">'+_esc(pit)+'</span></div>'
+    +'<div>'+inner+'</div></div>';
+}
 // Full facing-starter block shown in EVERY hitter popup. Renders: the batter&#39;s
 // career H2H vs this starter (via _vsPitBlock), the starter name/team/hand/ERA,
 // ALL 5 pitcher prop markets (Strikeouts + Hits Allowed/Outs/Earned Runs/Walks
@@ -4041,7 +4072,6 @@ function _vsPitBlock(p){
 function _oppPitBlock(p, market, statLabel, unit){
   var pit=(p.pitcher&&p.pitcher!=='TBD')?p.pitcher:'';
   if(!pit) return '';
-  var vsb=_vsPitBlock(p);
   var nmFull=String(pit).toLowerCase().trim();
   function _byName(idx){
     if(!idx) return null;
@@ -4124,7 +4154,7 @@ function _oppPitBlock(p, market, statLabel, unit){
   } else {
     last5='<div style="font-size:.74rem;color:#64748b">No '+statLabel+' line posted for this starter</div>';
   }
-  return vsb+head
+  return head
     +'<div style="display:flex;gap:18px;flex-wrap:wrap;align-items:flex-start">'
       +'<div style="flex:1;min-width:300px">'+mkTable+'</div>'
       +'<div style="flex:1;min-width:240px">'+last5+'</div>'
@@ -4137,11 +4167,11 @@ function _oppPitBlock(p, market, statLabel, unit){
 function _popSig(p, rateLbl, oddsLbl, oddsVal, isOver){
   var chips=(_envChip(p)||'')+(_umpChip(p)||'')+(_bpChip(p)||'')+(_platoonChip(p)||'');
   var chipRow=chips?('<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">'+chips+'</div>'):'';
-  var rate=(rateLbl&&p.rate_disp)?('<div style="margin-top:2px;font-size:.8rem"><span style="color:#94a3b8">'+rateLbl+'</span> <span style="font-family:monospace;font-weight:700;color:#86efac">'+p.rate_disp+'</span> <span style="color:#64748b;font-size:.68rem">'+(p.basis||'')+'</span></div>'):'';
-  var conv=p.conv_flag?'<div style="font-size:.7rem;color:#4ade80;font-weight:600;margin-top:3px">&#10003; Converged &middot; L10 '+(p.recent_l10||'N/A')+' L5 '+(p.recent_l5||'N/A')+'</div>':(p.cold_flag?'<div style="font-size:.7rem;color:#fb923c;font-weight:600;margin-top:3px">&#9888; Recent diverges &middot; L5 '+(p.recent_l5||'N/A')+'</div>':((p.recent_l10||p.recent_l5)?'<div style="font-size:.7rem;color:#64748b;margin-top:3px">L10 '+(p.recent_l10||'N/A')+' &middot; L5 '+(p.recent_l5||'N/A')+'</div>':''));
-  var hot=(isOver&&p.hot_disp)?'<div style="font-size:.7rem;color:#fbbf24;font-weight:700;margin-top:3px">&#128293; Hot hand &middot; '+p.hot_disp+' (+'+p.hot_bonus+')</div>':'';
+  var rate=(rateLbl&&p.rate_disp)?('<div style="margin-top:2px;font-size:.82rem"><span style="color:#94a3b8">'+rateLbl+'</span> <span style="font-family:monospace;font-weight:700;color:#86efac;font-size:1rem">'+p.rate_disp+'</span> <span style="color:#64748b;font-size:.66rem">'+(p.basis||'')+'</span></div>'):'';
+  var conv=p.conv_flag?'<div style="font-size:.82rem;color:#4ade80;font-weight:600;margin-top:3px">&#10003; Converged &middot; L10 '+(p.recent_l10||'N/A')+' L5 '+(p.recent_l5||'N/A')+'</div>':(p.cold_flag?'<div style="font-size:.82rem;color:#fb923c;font-weight:600;margin-top:3px">&#9888; Recent diverges &middot; L5 '+(p.recent_l5||'N/A')+'</div>':((p.recent_l10||p.recent_l5)?'<div style="font-size:.82rem;color:#64748b;margin-top:3px">L10 '+(p.recent_l10||'N/A')+' &middot; L5 '+(p.recent_l5||'N/A')+'</div>':''));
+  var hot=(isOver&&p.hot_disp)?'<div style="font-size:.82rem;color:#fbbf24;font-weight:700;margin-top:3px">&#128293; Hot hand &middot; '+p.hot_disp+' (+'+p.hot_bonus+')</div>':'';
   var odStr=(oddsVal!=null)?((oddsVal>0?'+':'')+oddsVal):'\u2014';
-  var odds='<div style="margin-top:8px;padding-top:8px;border-top:1px solid #1f2937"><span style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">'+(oddsLbl||'Odds')+'</span> <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.98rem">'+odStr+_bookTag(p)+'</span></div>';
+  var odds='<div style="margin-top:8px;padding-top:8px;border-top:1px solid #1f2937"><span style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">'+(oddsLbl||'Odds')+'</span> <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:1rem">'+odStr+_bookTag(p)+'</span></div>';
   return chipRow+rate+conv+hot+odds;
 }
 
@@ -4152,8 +4182,8 @@ function _twoBox(p, rateLbl, oddsLbl, oddsVal, isOver, lastLabel, rowsHtml){
   var bx='background:#0b1220;border:1px solid #1e293b;border-radius:10px;padding:12px';
   var lbl='font-size:.62rem;letter-spacing:.06em;color:#64748b;text-transform:uppercase';
   var last='<div style="'+lbl+';margin:'+(ssIn?'12px':'0')+' 0 6px">'+(lastLabel||'')+'</div>'
-    +'<table style="width:100%;border-collapse:collapse;font-size:.78rem"><tbody>'+rowsHtml+'</tbody></table>';
-  var left='<div style="flex:1 1 240px;min-width:0;'+bx+'"><div style="'+lbl+';margin-bottom:8px">Matchup Signals</div>'+sig+'</div>';
+    +'<table style="width:100%;border-collapse:collapse;font-size:.82rem"><tbody>'+rowsHtml+'</tbody></table>';
+  var left='<div style="flex:1 1 240px;min-width:0;'+bx+'">'+_vsPitLine(p)+'<div style="'+lbl+';margin-bottom:8px">Matchup Signals</div>'+sig+'</div>';
   var right='<div style="flex:1 1 240px;min-width:0;'+bx+'">'+ssIn+last+'</div>';
   return '<div style="display:flex;gap:12px;align-items:stretch;flex-wrap:wrap;margin-bottom:4px">'+left+right+'</div>';
 }
@@ -5229,7 +5259,7 @@ function _ssInner(p){
     return '<div style="flex:1;text-align:center;padding:8px 4px;border-radius:8px;'+bdr+'">'
       +'<div style="font-size:.62rem;color:'+lclr+';font-weight:'+(isNow?'800':'600')+';margin-bottom:4px">'+s.lbl+(isNow?' &#9654; TODAY':'')+'</div>'
       +'<div style="font-size:1rem;font-weight:900;color:'+vclr+';font-family:monospace">'+_sba(s.ba)+'</div>'
-      +'<div style="font-size:.6rem;color:#475569;margin-top:2px">'+s.ab+' AB</div>'
+      +'<div style="font-size:.66rem;color:#475569;margin-top:2px">'+s.ab+' AB</div>'
       +'</div>';
   }).join('');
   var haLbl=ss.ha?(' \u00b7 '+ss.ha):'';
