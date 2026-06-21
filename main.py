@@ -810,10 +810,9 @@ def _mlb_box_lookup(date_str: str):
 # ── Top 10 Batter selection — MUST mirror the live page's _buildTop10All ────
 # The "Top 10 Hitter Plays" cards on the page are built client-side by
 # _buildTop10All: ranked by Wilson-EV (_t10Score), green/amber only (ace-faced
-# batters dropped), and each pick keyed to its SIDE's posted odds. RBI picks
-# carry over_odds/under_odds (not over/under), and the client reads over/under
-# for RBI — so RBI silently drops out of the page list. We replicate ALL of
-# that here so the Track Record's Top 10 == the cards the user actually saw.
+# batters dropped), each pick keyed to its SIDE's posted odds, and ONE pick per
+# team (the best by Wilson-EV). We replicate ALL of that here so the Track
+# Record's Top 10 == the cards the user actually saw.
 def _t10_dec(o):
     if not o:
         return None
@@ -830,7 +829,7 @@ def _t10_odds_for(p, kind):
     if kind == "HRR":
         return p.get("hrr_under_odds") if pk == "UNDER" else p.get("hrr_over_odds")
     if kind == "RBI":
-        return p.get("over") if pk == "OVER" else p.get("under")
+        return p.get("over_odds") if pk == "OVER" else p.get("under_odds")
     if kind in ("RUNS", "BWALK"):
         return p.get("over_odds") if pk == "OVER" else p.get("under_odds")
     return None
@@ -1300,10 +1299,9 @@ def _grade_date(date_str: str, picks: dict) -> dict:
     #   • same categories + insertion order: TB Over, HRR, RBI, Runs, Walks
     #     (NO single Hits, NO Under-1.5-Hits, NO HR — those have their own lists)
     #   • ranked by Wilson-EV (_t10_score), NOT raw pipeline ev
-    #   • each pick keyed to its SIDE's posted odds; drop if no price (RBI dicts
-    #     carry over_odds/under_odds but the client reads over/under, so RBI
-    #     drops out of the page list — we drop it here too to stay in lockstep)
+    #   • each pick keyed to its SIDE's posted odds; drop if no price
     #   • green/amber only: batters facing a tier-1 ace are filtered out
+    #   • ONE pick per team — best by Wilson-EV (mirrors the page)
     _T10_SPECS = [
         ("tb_over_picks", "TB OVER", "total_bases", "Total Bases", 1.5),
         ("hrr_picks",     "HRR",     "hrr",         "H+R+RBI",     1.5),
@@ -1339,6 +1337,18 @@ def _grade_date(date_str: str, picks: dict) -> dict:
         _bat_seen.add(_bk); _bat_dedup.append(_bc)
     # green/amber only — drop ace-faced batters AFTER dedup (client order)
     _bat_cands = [c for c in _bat_dedup if not c.get("_red")]
+    # one pick per team — keep only the best (highest Wilson-EV) play per club,
+    # mirroring the page so teammates never crowd the Top 10 / overflow
+    _bat_team_seen = set()
+    _bat_one_per = []
+    for c in _bat_cands:
+        _t = (c.get("team") or "").strip().upper()
+        if _t and _t in _bat_team_seen:
+            continue
+        if _t:
+            _bat_team_seen.add(_t)
+        _bat_one_per.append(c)
+    _bat_cands = _bat_one_per
     top10_batter = []
     for c in _bat_cands[:10]:
         st = _lookup(c.get("pid"), c.get("fname") or c["name"])
@@ -6470,7 +6480,7 @@ function _t10Odds(p, kind) {
     case 'HITTER':  return p.hit_odds;
     case 'TB OVER': return p.tb_over_odds;
     case 'HRR':     return p.pick==='UNDER'?p.hrr_under_odds:p.hrr_over_odds;
-    case 'RBI':     return p.pick==='OVER'?p.over:p.under;
+    case 'RBI':     return p.pick==='OVER'?p.over_odds:p.under_odds;
     case 'HR':      return p.pick==='OVER'?p.over_odds:p.under_odds;
     case 'RUNS':    return p.pick==='OVER'?p.over_odds:p.under_odds;
     case 'BWALK':   return p.pick==='OVER'?p.over_odds:p.under_odds;
@@ -6562,6 +6572,10 @@ function _buildTop10All(view) {
   var _t10seen={};
   plays=plays.filter(function(p){ var k=(p.name||p.full_name||'').trim().toLowerCase(); if(_t10seen[k]) return false; _t10seen[k]=true; return true; });
   plays=plays.filter(function(p){ return !_t10DotIsRed(p,'O',false,0); });  // green/amber lights only
+  // One pick per team — keep only the best (highest Wilson-EV) play per club so
+  // teammates don't crowd the Top 10. plays is already sorted by _t10ev desc.
+  var _t10teams={};
+  plays=plays.filter(function(p){ var t=((p.team||'')+'').trim().toUpperCase(); if(!t) return true; if(_t10teams[t]) return false; _t10teams[t]=true; return true; });
   return plays;
 }
 // Top 10 (ranks 1-10). Ranks 11-20 render in the "More Hitter Plays" pulldown via
