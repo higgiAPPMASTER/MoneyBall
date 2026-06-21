@@ -7114,6 +7114,7 @@ function renderTrackRecord(d){
   _trkBuildCfg();
   if(!window.__TRK_TAB__) window.__TRK_TAB__='daily';
   if(!window.__TRK_MONTH__) window.__TRK_MONTH__=_trkTodayISO().slice(0,7);
+  var _today=_trkTodayISO(); if(window.__TRK_DAILY_DATE__&&window.__TRK_DAILY_DATE__<_today) window.__TRK_DAILY_DATE__=_today;
   var bet=(window.__TRK_BET__!=null?window.__TRK_BET__:20);
   var hdr='<div style="display:flex;flex-wrap:wrap;gap:14px;align-items:center;background:#0a1f14;border:1px solid #16432c;border-radius:12px;padding:14px 18px;margin-bottom:14px">'
     +'<span style="font-weight:800;color:#6ee7b7;font-size:1rem">💰 Bet amount $</span>'
@@ -7124,6 +7125,7 @@ function renderTrackRecord(d){
   var _edgeOn=window.__TRK_EDGE_ONLY__;
   var tabs='<div style="display:flex;gap:8px;margin-bottom:4px;flex-wrap:wrap">'+_trkTabBtn('daily','Daily')+_trkTabBtn('weekly','Weekly')+_trkTabBtn('monthly','Monthly')+_trkTabBtn('custom','Custom')
     +'<button onclick="_trkToggleEdge()" id="trk-edge-btn" title="Show only bets where our edge was 5%+ at the time of tracking" style="margin-left:auto;background:'+(_edgeOn?'#065f46':'#1e293b')+';color:'+(_edgeOn?'#4ade80':'#94a3b8')+';border:1px solid '+(_edgeOn?'#16a34a':'#334155')+';border-radius:8px;padding:8px 16px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">&#9733; Edge Plays Only'+(_edgeOn?' \u2713':'')+'</button>'
+    +'<button onclick="_openEdgeStats()" title="W/L record and ROI for all bets tracked when our EV edge was 5%+" style="background:#065f46;color:#6ee7b7;border:1px solid #16a34a;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">&#9733; Edge Record</button>'
     +'</div>';
   var sc=_matrixScorecard(d);
   var he=document.getElementById('track-head'); if(he) he.innerHTML=hdr+sc+tabs;
@@ -7422,6 +7424,56 @@ function _trkTabBtn(id,label){ var active=window.__TRK_TAB__===id; return '<butt
 function _trkTab(t){ window.__TRK_BET__=_trkStake(); window.__TRK_TAB__=t; renderTrackRecord(window.__TRACK__); }
 function _trkBetInput(){ window.__TRK_BET__=_trkStake(); _trkRenderActive(); }
 function _trkToggleEdge(){ window.__TRK_BET__=_trkStake(); window.__TRK_EDGE_ONLY__=!window.__TRK_EDGE_ONLY__; renderTrackRecord(window.__TRACK__); }
+function _openEdgeStats(){
+  var d=window.__TRACK__; if(!d){ alert('Open Track Record first.'); return; }
+  var stake=_trkStake();
+  var pool=[];
+  (d.detail||[]).forEach(function(r){ if((r.edge||0)>=0.05&&(r.result==='WIN'||r.result==='LOSS')) pool.push(r); });
+  var cache=window.__TRK_GRADE_CACHE__||{};
+  Object.keys(cache).forEach(function(dt){ _trkFlatten(cache[dt]).forEach(function(r){ if((r.edge||0)>=0.05&&(r.result==='WIN'||r.result==='LOSS')) pool.push(r); }); });
+  var ov={w:0,l:0,net:0,counted:0}, cats={};
+  pool.forEach(function(r){
+    if(_trkSkipMeta(r)) return;
+    var win=r.result==='WIN', od=_effOdds(r);
+    var pl=_amProfit(od,stake,win); if(pl===null) return;
+    if(win) ov.w++; else ov.l++; ov.net+=pl; ov.counted++;
+    var k=(r.category||'?')+'|'+(r.side||'OVER');
+    var c=cats[k]=cats[k]||{w:0,l:0,net:0,counted:0,lbl:(r.category||'?')+' '+(r.side||'OVER')};
+    if(win) c.w++; else c.l++;
+    var cp=_amProfit(od,stake,win); if(cp!==null){ c.net+=cp; c.counted++; }
+  });
+  var roiClr=ov.net>=0?'#4ade80':'#f87171';
+  var roiStr=ov.counted?(((ov.net/(ov.counted*stake))*100).toFixed(1)+'%'):'&#x2014;';
+  var netStr='$'+(ov.net>=0?'+':'')+ov.net.toFixed(2);
+  var rows=Object.keys(cats).map(function(k){ return cats[k]; }).sort(function(a,b){ return b.net-a.net; });
+  var body='<div style="padding:14px 16px">';
+  body+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px">';
+  body+='<div style="background:#0c1622;border-radius:8px;padding:11px;text-align:center"><div style="font-size:.63rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">Record</div><div style="font-weight:900;color:#e2e8f0;font-size:1.1rem">'+ov.w+'-'+ov.l+'</div></div>';
+  body+='<div style="background:#0c1622;border-radius:8px;padding:11px;text-align:center"><div style="font-size:.63rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">ROI</div><div style="font-weight:900;color:'+roiClr+';font-size:1.1rem">'+roiStr+'</div></div>';
+  body+='<div style="background:#0c1622;border-radius:8px;padding:11px;text-align:center"><div style="font-size:.63rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">Net @ $'+stake+'</div><div style="font-weight:900;color:'+roiClr+';font-size:1.05rem">'+netStr+'</div></div>';
+  body+='</div>';
+  if(rows.length){
+    body+='<div style="font-size:.62rem;color:#475569;font-weight:800;letter-spacing:.06em;display:grid;grid-template-columns:1fr 56px 48px 72px;gap:0;padding:4px 8px;border-bottom:1px solid #1e293b"><span>MARKET</span><span style="text-align:right">W-L</span><span style="text-align:right">BETS</span><span style="text-align:right">NET</span></div>';
+    rows.forEach(function(c,i){
+      var cn=c.net>=0?'#4ade80':'#f87171';
+      body+='<div style="display:grid;grid-template-columns:1fr 56px 48px 72px;gap:0;padding:7px 8px;border-bottom:1px solid #0f172a;background:'+(i%2?'#070e1b':'#050c18')+'"><span style="color:#cbd5e1;font-size:.77rem;font-weight:600">'+_esc(c.lbl)+'</span><span style="text-align:right;color:#e2e8f0;font-size:.77rem">'+c.w+'-'+c.l+'</span><span style="text-align:right;color:#64748b;font-size:.75rem">'+c.counted+'</span><span style="text-align:right;font-size:.77rem;font-weight:800;color:'+cn+'">$'+(c.net>=0?'+':'')+c.net.toFixed(2)+'</span></div>';
+    });
+  } else {
+    body+='<div style="color:#64748b;padding:20px;text-align:center">No tracked edge plays yet.<br><span style="font-size:.74rem">Use Track Bet on any row in the &#9733; Edge Plays modal.</span></div>';
+  }
+  body+='</div>';
+  var ov2=document.getElementById('edge-stats-modal');
+  if(!ov2){ ov2=document.createElement('div'); ov2.id='edge-stats-modal'; ov2.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.85);z-index:10001;display:flex;align-items:center;justify-content:center;padding:16px'; ov2.onclick=function(e){ if(e.target===ov2) ov2.style.display='none'; }; document.body.appendChild(ov2); }
+  ov2.innerHTML='<div style="background:#080f1e;border:1px solid #16432c;border-radius:18px;width:100%;max-width:460px;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 24px 80px rgba(0,0,0,.7)" onclick="event.stopPropagation()">'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #1e293b;flex-shrink:0">'
+    +'<div><div style="font-weight:900;color:#4ade80;font-size:1rem">&#9733; Edge Plays Record</div>'
+    +'<div style="color:#64748b;font-size:.71rem;margin-top:2px">bets tracked when EV edge was 5%+ &#xB7; by category</div></div>'
+    +'<button onclick="document.getElementById(&#39;edge-stats-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem;flex-shrink:0">&#215;</button>'
+    +'</div>'
+    +'<div style="overflow-y:auto;flex:1">'+body+'</div>'
+    +'</div>';
+  ov2.style.display='flex';
+}
 function _trkRenderActive(){ var be=document.getElementById('track-body'); if(!be) return; var stake=_trkStake(); var t=window.__TRK_TAB__||'daily'; if(t==='daily') _trkRenderDailyTab(be,stake); else _trkRenderRangeTab(be,stake,t); }
 function _trkFlatten(g){ var out=[]; if(!g||g==='LOADING'||g.__error__) return out; _TRK_KEYS.forEach(function(k){ (g[k]||[]).forEach(function(r){ out.push(r); }); }); return out; }
 function _trkRangePool(from,to){ var d=window.__TRACK__||{}; var pool=[]; var have={}; (d.detail||[]).forEach(function(r){ if(r.date>=from&&r.date<=to){ have[r.date]=true; if(_isOvfCat(r.category)||_isHrCat(r.category)) return; pool.push(r); } }); var cache=window.__TRK_GRADE_CACHE__||{}; var cur=from; while(cur<=to){ if(!have[cur]){ _trkFlatten(cache[cur]).forEach(function(r){ if(r.result==='WIN'||r.result==='LOSS'){ var c={}; for(var kk in r) c[kk]=r[kk]; c.date=cur; pool.push(c); } }); } cur=_isoShift(cur,1); } return pool; }
