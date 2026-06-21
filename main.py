@@ -2225,10 +2225,12 @@ async def grade_picks(date_str: str, request: Request, token: str = "", admin: s
         bool(admin) and admin == os.environ.get("INTERNAL_API_TOKEN", "__none__"))
     if not is_ok:
         raise HTTPException(status_code=401, detail="Subscription required")
-    if date_str not in _cache:
-        disk = _load_pick_cache(date_str)
-        if disk is not None:
-            _cache[date_str] = disk
+    import datetime as _dt2
+    _is_today = (date_str == _dt2.date.today().isoformat())
+    if _is_today or date_str not in _cache:
+        fresh = _load_grading_picks(date_str)
+        if fresh is not None:
+            _cache[date_str] = fresh
     picks = _cache.get(date_str)
     if not picks:
         raise HTTPException(status_code=404, detail="No picks for this date")
