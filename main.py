@@ -5246,7 +5246,7 @@ function _bpChip(p){
   return out;
 }
 function _ssInner(p){
-  var ss=p.series_splits||{}; var sp=ss.today_pos||1;
+  var ss=p.series_splits||{}; var sp=p.series_game||ss.today_pos||1;
   if(!ss.g1_ab&&!ss.g2_ab&&!ss.g3_ab) return '';
   var slots=[{lbl:'Game 1',ba:ss.g1_ba,ab:ss.g1_ab||0,pos:1},{lbl:'Game 2',ba:ss.g2_ba,ab:ss.g2_ab||0,pos:2},{lbl:'Game 3+',ba:ss.g3_ba,ab:ss.g3_ab||0,pos:3}];
   function _sba(ba){ return ba!=null?ba.toFixed(3).replace('0.','.'):'\u2014'; }
@@ -5272,7 +5272,7 @@ function _ssBlock(p){
 }
 function _seriesChip(p){
   var ss=p.series_splits; if(!ss) return '';
-  var pos=ss.today_pos||1;
+  var pos=p.series_game||ss.today_pos||1;
   var slots=[{lbl:'G1',ba:ss.g1_ba,ab:ss.g1_ab},{lbl:'G2',ba:ss.g2_ba,ab:ss.g2_ab},{lbl:'G3+',ba:ss.g3_ba,ab:ss.g3_ab}];
   var parts=slots.map(function(s,i){
     var isToday=(i+1)===pos;
