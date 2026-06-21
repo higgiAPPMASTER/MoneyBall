@@ -2675,7 +2675,7 @@ _HTML = """
       <button class="admin-only" id="ovf-btn" onclick="openOverflow()" title="Every pick beyond each category's top 10 — graded and banked in its own permanent record" style="background:#b45309;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">⭐ Overflow</button>
       <button class="admin-only" id="hrtrk-btn" onclick="openHRTracker()" title="Home Run Over/Under picks — their own permanent record, kept out of the main Track Record and Overflow" style="background:#be123c;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">💣 HR Tracker</button>
       <button class="admin-only" id="dow-btn" onclick="openDowReport()" title="Which weekdays actually produce winners, and whether the matrix lean matches reality" style="background:#0e7490;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">📅 By Day</button>
-      <button class="admin-only" id="edge-btn" onclick="_openEdgePlays()" title="All picks where our model has at least 5% edge over the book — sorted by edge, best first" style="background:#065f46;color:#6ee7b7;border:1px solid #16a34a;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">&#9733; Edge Plays</button>
+      <button class="admin-only" id="edge-btn" onclick="_openEdgePlays()" title="All picks where our model has at least 5% edge over the book price — sorted by edge, with Track Bet on each row" style="background:#065f46;color:#6ee7b7;border:1px solid #16a34a;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">&#9733; Edge Plays</button>
     </div>
   </nav>
   <main class="flex-1 px-4 py-6 max-w-7xl mx-auto w-full space-y-6">
@@ -2897,6 +2897,7 @@ _HTML = """
       <div style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-bottom:12px">
         <button class="btn-primary" id="get-btn" onclick="getPicks()">🎯 Get Picks</button>
         <button class="btn-primary" id="ev-btn" onclick="toggleEvOnly()" style="background:#1f2937;color:#fff" title="Show only hit picks where our matchup model (your hitter vs this pitcher) beats the sportsbook price. Default off — all picks shown, ranked by value.">&#10003; +EV Only</button>
+        <button class="btn-primary" id="stat-edge-btn" onclick="toggleStatEdge()" style="background:#1f2937;color:#fff" title="Show only pitcher K and prop picks where our projected stat count beats the book line (e.g. proj 4.2 walks vs line 2.5). All qualifying picks shown, no cap.">&#9733; Proj Edge</button>
         <select id="odds-range-sel" onchange="onOddsRangeChange()" style="background:#1f2937;color:#fff;border:1px solid #374151;border-radius:10px;padding:9px 14px;font-size:.82rem;font-weight:700;cursor:pointer;min-width:150px;outline:none" title="Filter all picks to a specific odds range">
           <option value="">All Odds</option>
           <option value="le-500">&#8804; &#x2212;500</option>
@@ -3510,8 +3511,9 @@ function showResults(result) {
         })(),
       })
     : _renderSrc;
-  // "+EV Only" filter on top; odds filter already applied above.
+  // "+EV Only" and "Proj Edge" filters on top; odds filter already applied above.
   var view = window.EV_ONLY ? _evFilterView(_vBase) : _vBase;
+  if(window.STAT_EDGE_ONLY) view=_statEdgeFilterView(view);
   const { top9, stats, pitcher_k } = view;
 
   document.getElementById('stats-row').innerHTML = [
@@ -4974,6 +4976,61 @@ function _openEdgePlays(){
     +'<div style="overflow-y:auto;flex:1">'+inner+'</div>'
     +'</div>';
   ov.style.display='flex';
+}
+
+// ── Proj Edge toggle ────────────────────────────────────────────────────────
+// Shows only picks where our model's projection beats the book line.
+// Pitcher K/props: count projection vs line (e.g. proj 4.2 walks vs line 2.5).
+// All other categories: ev_prob > 0.5 (model says the pick hits >50% of the time).
+window.STAT_EDGE_ONLY=false;
+function _statEdgePos(p){
+  var side=(p.pick||'').toUpperCase();
+  if(!side) return false;
+  // Count projection categories (pitcher K, pitcher props, HR)
+  var proj=p.proj_k!=null?p.proj_k:(p.proj!=null?p.proj:(p.blended_avg_k!=null?p.blended_avg_k:(p.blended!=null?p.blended:null)));
+  var line=p.line!=null?p.line:null;
+  if(proj!=null&&line!=null){
+    if(side==='OVER') return proj>line;
+    if(side==='UNDER') return proj<line;
+    return false;
+  }
+  // Rate/probability categories — ev_prob is our model's win probability
+  if(p.ev_prob!=null) return p.ev_prob>0.5;
+  return false;
+}
+function _statEdgeFilterView(v){
+  var pk=v.pitcher_k, pp=v.pitcher_props||{};
+  return Object.assign({},v,{
+    top9:(v.top9||[]).filter(_statEdgePos),
+    also_ran:(v.also_ran||[]).filter(_statEdgePos),
+    under_picks:(v.under_picks||[]).filter(_statEdgePos),
+    tb_picks:(v.tb_picks||[]).filter(_statEdgePos),
+    tb_over_picks:(v.tb_over_picks||[]).filter(_statEdgePos),
+    hrr_picks:(v.hrr_picks||[]).filter(_statEdgePos),
+    rbi_picks:(v.rbi_picks||[]).filter(_statEdgePos),
+    hr_picks:(v.hr_picks||[]).filter(_statEdgePos),
+    walks_picks:(v.walks_picks||[]).filter(_statEdgePos),
+    runs_picks:(v.runs_picks||[]).filter(_statEdgePos),
+    pitcher_k:pk?Object.assign({},pk,{
+      picks:(pk.picks||[]).filter(_statEdgePos),
+      all:(pk.all||[]).filter(_statEdgePos)
+    }):pk,
+    pitcher_props:(function(){
+      var o={}; Object.keys(pp).forEach(function(m){
+        var b2=pp[m]||{};
+        o[m]={picks:(b2.picks||[]).filter(_statEdgePos),all:(b2.all||[]).filter(_statEdgePos)};
+      }); return o;
+    })()
+  });
+}
+function toggleStatEdge(){
+  window.STAT_EDGE_ONLY=!window.STAT_EDGE_ONLY;
+  var b=document.getElementById('stat-edge-btn');
+  if(b){
+    if(window.STAT_EDGE_ONLY){b.style.background='#065f46';b.style.color='#4ade80';b.innerHTML='&#9733; Proj Edge: ON';}
+    else{b.style.background='#1f2937';b.style.color='#fff';b.innerHTML='&#9733; Proj Edge';}
+  }
+  if(window._lastResult) showResults(window._lastResult);
 }
 
 // ── Odds-range filter ──────────────────────────────────────────────────────
