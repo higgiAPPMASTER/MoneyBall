@@ -2109,6 +2109,7 @@ async def add_bet(request: Request, token: str = "", admin: str = ""):
         "stat_label": (body.get("stat_label") or "").strip(),
         "line": line,
         "odds": odds,
+        "edge": round(float(body.get("edge") or 0), 4),
         "stake": stake,
         "placed_at": (body.get("placed_at") or date.today().isoformat()),
         "result": "pending",
@@ -2674,6 +2675,7 @@ _HTML = """
       <button class="admin-only" id="ovf-btn" onclick="openOverflow()" title="Every pick beyond each category's top 10 — graded and banked in its own permanent record" style="background:#b45309;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">⭐ Overflow</button>
       <button class="admin-only" id="hrtrk-btn" onclick="openHRTracker()" title="Home Run Over/Under picks — their own permanent record, kept out of the main Track Record and Overflow" style="background:#be123c;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">💣 HR Tracker</button>
       <button class="admin-only" id="dow-btn" onclick="openDowReport()" title="Which weekdays actually produce winners, and whether the matrix lean matches reality" style="background:#0e7490;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">📅 By Day</button>
+      <button class="admin-only" id="edge-btn" onclick="_openEdgePlays()" title="All picks where our model has at least 5% edge over the book — sorted by edge, best first" style="background:#065f46;color:#6ee7b7;border:1px solid #16a34a;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">&#9733; Edge Plays</button>
     </div>
   </nav>
   <main class="flex-1 px-4 py-6 max-w-7xl mx-auto w-full space-y-6">
@@ -4860,6 +4862,120 @@ function toggleEvOnly(){
   if(window._lastResult) showResults(window._lastResult);
 }
 
+// ── Edge Plays ─────────────────────────────────────────────────────────────
+// Collect all picks from _lastResult with edge >= minEdge (0.05 = 5%).
+// Returns up to 10 items sorted by edge descending, each carrying the bet params
+// needed to call _betBtn so Track Bet / + Parlay work exactly as on any card.
+function _edgeAllPicks(r, minEdge){
+  if(!r) return [];
+  minEdge = minEdge||0.05;
+  var out=[];
+  function add(arr,cat,side,sk,sl,lineFn,odsFn){
+    (arr||[]).forEach(function(p){
+      if(!(p.edge>=minEdge)) return;
+      var ln=lineFn?lineFn(p):(p.line!=null?p.line:0.5);
+      var od=odsFn?odsFn(p):null;
+      var sd=side||p.pick||'OVER';
+      if(ln==null||!sd||!sk) return;
+      out.push({p:p,cat:cat,side:sd,sk:sk,sl:sl,line:ln,ods:od});
+    });
+  }
+  // Hitter categories
+  add(r.top9,         'Hitter Hits','OVER',  'hits',        'Hits',        function(){ return 0.5; }, function(p){ return p.hit_odds; });
+  add(r.also_ran,     'Hitter Hits','OVER',  'hits',        'Hits',        function(){ return 0.5; }, function(p){ return p.hit_odds; });
+  add(r.under_picks,  'Hitter Hits','UNDER', 'hits',        'Hits',        function(){ return 1.5; }, function(p){ return p.under_odds; });
+  add(r.tb_picks,     'TB Under',   'UNDER', 'total_bases', 'Total Bases', function(){ return 1.5; }, function(p){ return p.tb_under_odds; });
+  add(r.tb_over_picks,'TB Over',    'OVER',  'total_bases', 'Total Bases', function(){ return 1.5; }, function(p){ return p.tb_over_odds; });
+  add(r.hrr_picks,    'HRR',        null,    'hrr',         'H+R+RBI',     function(){ return 1.5; }, function(p){ return p.pick==='UNDER'?p.hrr_under_odds:p.hrr_over_odds; });
+  add(r.rbi_picks,    'RBI',        null,    'rbi',         'RBI',         function(p){ return p.line||0.5; }, function(p){ return p.pick==='OVER'?p.over_odds:p.under_odds; });
+  add(r.hr_picks,     'HR',         null,    'homeRuns',    'HR',          function(p){ return p.line||0.5; }, function(p){ return p.pick==='OVER'?p.over_odds:p.under_odds; });
+  add(r.walks_picks,  'Batter Walks',null,   'walks_bat',   'Walks',       function(p){ return p.line||0.5; }, function(p){ return p.pick==='OVER'?p.over_odds:p.under_odds; });
+  add(r.runs_picks,   'Runs',       null,    'runs',        'Runs',        function(p){ return p.line||0.5; }, function(p){ return p.pick==='OVER'?p.over_odds:p.under_odds; });
+  // Pitcher Ks
+  var pk=(r.pitcher_k||{}); (pk.picks||[]).forEach(function(p){
+    if(!(p.edge>=minEdge)) return;
+    var ln=p.line!=null?p.line:(p.k_line!=null?p.k_line:5.5);
+    var od=p.pick==='UNDER'?p.under_odds:p.over_odds;
+    var sd=p.pick||'OVER';
+    if(ln==null||!sd) return;
+    out.push({p:p,cat:'Pitcher Ks',side:sd,sk:'strikeOuts',sl:'Strikeouts',line:ln,ods:od});
+  });
+  // Pitcher props
+  var pp=(r.pitcher_props||{});
+  var _pmap={'hits_allowed':{sk:'hits_allowed',sl:'Hits Allowed',cat:'Pitcher Hits Allowed'},
+             'outs':{sk:'outs',sl:'Outs',cat:'Pitcher Outs'},
+             'earned_runs':{sk:'earnedRuns',sl:'Earned Runs',cat:'Pitcher Earned Runs'},
+             'walks_allowed':{sk:'walks',sl:'Walks Allowed',cat:'Pitcher Walks'}};
+  Object.keys(pp).forEach(function(m){
+    var cfg=_pmap[m]; if(!cfg) return;
+    ((pp[m]||{}).picks||[]).forEach(function(p){
+      if(!(p.edge>=minEdge)) return;
+      var ln=p.line; var sd=p.pick||'OVER'; var od=p.pick==='UNDER'?p.under_odds:p.over_odds;
+      if(ln==null||!sd) return;
+      out.push({p:p,cat:cfg.cat,side:sd,sk:cfg.sk,sl:cfg.sl,line:ln,ods:od});
+    });
+  });
+  out.sort(function(a,b){ return (b.p.edge||0)-(a.p.edge||0); });
+  return out.slice(0,10);
+}
+
+function _edgePlayerForm(i){
+  var ep=(window.__EDGE_PLAYS__||[])[i]; if(!ep) return;
+  _playerForm(ep.p.full_name||ep.p.name||'');
+}
+function _openEdgePlays(){
+  var r=window._lastResult;
+  if(!r){ alert('Run picks first, then click Edge Plays.'); return; }
+  var items=_edgeAllPicks(r,0.05);
+  window.__EDGE_PLAYS__=items;
+  var inner='';
+  if(!items.length){
+    inner='<div style="color:#94a3b8;padding:24px 16px;text-align:center">No picks with 5%+ edge today.</div>';
+  } else {
+    inner='<div style="font-size:.65rem;color:#475569;font-weight:800;letter-spacing:.06em;display:grid;grid-template-columns:1fr 80px 56px 56px 56px;gap:0;padding:6px 16px 4px;border-bottom:1px solid #1e293b">'
+      +'<span>PLAYER / MARKET</span><span style="text-align:right">PICK</span>'
+      +'<span style="text-align:right">OUR%</span><span style="text-align:right">BK%</span><span style="text-align:right">EDGE</span></div>';
+    items.forEach(function(item,i){
+      var p=item.p;
+      var nm=p.full_name||p.name||'';
+      var catLbl=item.cat;
+      var pickLbl=(item.side||'')+(item.line!=null?' '+item.line:'')+(item.sl?' '+item.sl:'');
+      var edgePct=((p.edge||0)*100).toFixed(1)+'%';
+      var ourPct=p.ev_prob!=null?((p.ev_prob)*100).toFixed(0)+'%':'&#x2014;';
+      var od=item.ods; var bkPct='&#x2014;';
+      if(od!=null){ var bp=(od>0?(100/(100+od)):(Math.abs(od)/(Math.abs(od)+100))); bkPct=(bp*100).toFixed(0)+'%'; }
+      var bb=_betBtn(p,item.cat,item.side,item.sk,item.sl,item.line,item.ods);
+      inner+='<div onclick="event.stopPropagation()" style="border-bottom:1px solid #111c2e;background:'+(i%2?'#070e1b':'#050c18')+'">'
+        +'<div style="display:grid;grid-template-columns:1fr 80px 56px 56px 56px;gap:0;padding:9px 16px;cursor:default;align-items:center">'
+        +'<div><div style="color:#e2e8f0;font-weight:800;font-size:.82rem;cursor:pointer;text-decoration:underline;text-decoration-color:#334155" onclick="event.stopPropagation();_edgePlayerForm('+i+')">'
+        +_esc(nm)+'</div><div style="color:#64748b;font-size:.66rem;margin-top:1px">'+_esc(catLbl)+'</div></div>'
+        +'<div style="text-align:right;font-size:.76rem;font-weight:700;color:#93c5fd">'+_esc(pickLbl)+'</div>'
+        +'<div style="text-align:right;font-size:.76rem;font-weight:700;color:#4ade80">'+ourPct+'</div>'
+        +'<div style="text-align:right;font-size:.76rem;color:#94a3b8">'+bkPct+'</div>'
+        +'<div style="text-align:right"><span style="background:#052e16;color:#4ade80;font-weight:800;font-size:.78rem;border-radius:6px;padding:2px 7px">+'+edgePct+'</span></div>'
+        +'</div>'
+        +bb
+        +'</div>';
+    });
+  }
+  var ov=document.getElementById('edge-modal');
+  if(!ov){
+    ov=document.createElement('div'); ov.id='edge-modal';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.85);z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; };
+    document.body.appendChild(ov);
+  }
+  ov.innerHTML='<div style="background:#080f1e;border:1px solid #16432c;border-radius:18px;width:100%;max-width:560px;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 24px 80px rgba(0,0,0,.7)" onclick="event.stopPropagation()">'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid #1e293b;flex-shrink:0">'
+    +'<div><div style="font-weight:900;color:#4ade80;font-size:1.05rem">&#9733; Biggest Edge Plays</div>'
+    +'<div style="color:#64748b;font-size:.72rem;margin-top:2px">edge &#x2265;5% &#xB7; sorted by edge &#xB7; top 10 &#xB7; click name for popup &#xB7; Track Bet or Parlay any row</div></div>'
+    +'<button onclick="document.getElementById(&#39;edge-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:1.1rem;flex-shrink:0">&#215;</button>'
+    +'</div>'
+    +'<div style="overflow-y:auto;flex:1">'+inner+'</div>'
+    +'</div>';
+  ov.style.display='flex';
+}
+
 // ── Odds-range filter ──────────────────────────────────────────────────────
 window.ODDS_RANGE='';
 // Extract the PRIMARY odds for the pick's direction (not the opposing side).
@@ -6863,7 +6979,10 @@ function renderTrackRecord(d){
     +'<span style="color:#94a3b8;font-size:.8rem">flat on every pick \u2014 drives every $ below</span>'
     +'<button onclick="_trkPrintReport()" style="margin-left:auto;background:#dc2626;color:#fff;border:none;border-radius:8px;padding:9px 16px;font-size:.84rem;font-weight:800;cursor:pointer">📄 PDF Report</button>'
     +'</div>';
-  var tabs='<div style="display:flex;gap:8px;margin-bottom:4px;flex-wrap:wrap">'+_trkTabBtn('daily','Daily')+_trkTabBtn('weekly','Weekly')+_trkTabBtn('monthly','Monthly')+_trkTabBtn('custom','Custom')+'</div>';
+  var _edgeOn=window.__TRK_EDGE_ONLY__;
+  var tabs='<div style="display:flex;gap:8px;margin-bottom:4px;flex-wrap:wrap">'+_trkTabBtn('daily','Daily')+_trkTabBtn('weekly','Weekly')+_trkTabBtn('monthly','Monthly')+_trkTabBtn('custom','Custom')
+    +'<button onclick="_trkToggleEdge()" id="trk-edge-btn" title="Show only bets where our edge was 5%+ at the time of tracking" style="margin-left:auto;background:'+(_edgeOn?'#065f46':'#1e293b')+';color:'+(_edgeOn?'#4ade80':'#94a3b8')+';border:1px solid '+(_edgeOn?'#16a34a':'#334155')+';border-radius:8px;padding:8px 16px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">&#9733; Edge Plays Only'+(_edgeOn?' \u2713':'')+'</button>'
+    +'</div>';
   var sc=_matrixScorecard(d);
   var he=document.getElementById('track-head'); if(he) he.innerHTML=hdr+sc+tabs;
   var be=document.getElementById('track-body'); if(be) be.innerHTML='';
@@ -7160,6 +7279,7 @@ function _trkBar(pct,clr){ return '<div style="height:8px;border-radius:4px;back
 function _trkTabBtn(id,label){ var active=window.__TRK_TAB__===id; return '<button onclick="_trkTab(&#39;'+id+'&#39;)" style="background:'+(active?'#7c3aed':'#1e293b')+';color:'+(active?'#fff':'#cbd5e1')+';border:none;border-radius:8px;padding:8px 20px;font-size:.86rem;font-weight:800;cursor:pointer">'+label+'</button>'; }
 function _trkTab(t){ window.__TRK_BET__=_trkStake(); window.__TRK_TAB__=t; renderTrackRecord(window.__TRACK__); }
 function _trkBetInput(){ window.__TRK_BET__=_trkStake(); _trkRenderActive(); }
+function _trkToggleEdge(){ window.__TRK_BET__=_trkStake(); window.__TRK_EDGE_ONLY__=!window.__TRK_EDGE_ONLY__; renderTrackRecord(window.__TRACK__); }
 function _trkRenderActive(){ var be=document.getElementById('track-body'); if(!be) return; var stake=_trkStake(); var t=window.__TRK_TAB__||'daily'; if(t==='daily') _trkRenderDailyTab(be,stake); else _trkRenderRangeTab(be,stake,t); }
 function _trkFlatten(g){ var out=[]; if(!g||g==='LOADING'||g.__error__) return out; _TRK_KEYS.forEach(function(k){ (g[k]||[]).forEach(function(r){ out.push(r); }); }); return out; }
 function _trkRangePool(from,to){ var d=window.__TRACK__||{}; var pool=[]; var have={}; (d.detail||[]).forEach(function(r){ if(r.date>=from&&r.date<=to){ have[r.date]=true; if(_isOvfCat(r.category)||_isHrCat(r.category)) return; pool.push(r); } }); var cache=window.__TRK_GRADE_CACHE__||{}; var cur=from; while(cur<=to){ if(!have[cur]){ _trkFlatten(cache[cur]).forEach(function(r){ if(r.result==='WIN'||r.result==='LOSS'){ var c={}; for(var kk in r) c[kk]=r[kk]; c.date=cur; pool.push(c); } }); } cur=_isoShift(cur,1); } return pool; }
@@ -7536,7 +7656,8 @@ function _trkRenderDailyTab(be,stake){
   if(g==='LOADING'){ be.innerHTML=datesel+'<p style="color:#94a3b8;padding:12px">Loading\u2026</p>'; return; }
   if(g&&g.__error__){ be.innerHTML=datesel+'<p style="color:#94a3b8;padding:12px">'+(g.__error__)+'</p>'; return; }
   var rows=_trkFlatten(g);
-  if(!rows.length){ be.innerHTML=datesel+'<p style="color:#94a3b8;padding:12px">No picks recorded for '+date+'.</p>'; return; }
+  if(window.__TRK_EDGE_ONLY__) rows=rows.filter(function(r){ return (r.edge||0)>=0.05; });
+  if(!rows.length){ be.innerHTML=datesel+'<p style="color:#94a3b8;padding:12px">'+(window.__TRK_EDGE_ONLY__?'No edge plays (5%+) recorded for '+date+'.':'No picks recorded for '+date+'.')+'</p>'; return; }
   if(view==='odds'){
     var opool=rows.map(function(r){ var c={}; for(var ck in r) c[ck]=r[ck]; c.date=date; return c; });
     window.__ODDS_CTX__={pool:opool,label:'Daily \u00b7 '+_weekdayName(date)+' '+date,stake:stake};
@@ -7603,7 +7724,9 @@ function _trkRenderRangeTab(be,stake,which){
     be.innerHTML=rhead+rpdf+_oddsReport(rpool,stake);
     return;
   }
-  var ct=_trkCatTable(_trkRangePool(from,to),stake,null,true);
+  var _rp=_trkRangePool(from,to);
+  if(window.__TRK_EDGE_ONLY__) _rp=_rp.filter(function(r){ return (r.edge||0)>=0.05; });
+  var ct=_trkCatTable(_rp,stake,null,true);
   var o=ct.overall, on=o.w+o.l, orisk=o.counted*stake, oroi=orisk?o.net/orisk*100:0, oclr=o.net>=0?'#4ade80':'#f87171', owclr=_trkRC(o.w,on);
   var summary='<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;background:#0a1f14;border:1px solid #16432c;border-radius:12px;padding:12px 16px;margin-bottom:12px"><div style="font-weight:800;color:#6ee7b7;display:flex;align-items:center">'+label+nav+'</div><div style="margin-left:auto;text-align:right"><div style="font-weight:800;font-size:.92rem"><span style="color:'+owclr+'">'+o.w+'/'+on+'</span> <span style="color:#94a3b8;font-size:.8rem">('+(on?(o.w/on*100).toFixed(1):'0.0')+'%)</span></div><div style="font-size:.82rem">Net <span style="color:'+oclr+';font-weight:900">'+(o.net>=0?'+$':'\u2212$')+Math.abs(o.net).toFixed(0)+'</span> <span style="color:#64748b">\u00b7 ROI '+(oroi>=0?'+':'\u2212')+Math.abs(oroi).toFixed(1)+'% on $'+orisk.toFixed(0)+'</span></div></div></div>';
   var csvBtn='<div style="display:flex;margin-top:10px"><button onclick="downloadTrkRangeCSV(&#39;'+which+'&#39;)" style="margin-left:auto;background:#16a34a;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:.78rem;font-weight:700;cursor:pointer">\u2b07 CSV</button></div>';
@@ -8421,7 +8544,7 @@ function _betBtn(p,cat,side,statKey,statLabel,line,odds){
   var k='bs'+window.__BET_N__;
   window.__BET_SRC__[k]={name:(p.full_name||p.name||''),team:(p.team||''),opp:(p.opp||''),
     category:cat,side:side,stat_key:statKey,stat_label:statLabel,line:line,
-    odds:(odds!=null?odds:null),date:((window._lastResult&&window._lastResult.date)||'')};
+    odds:(odds!=null?odds:null),edge:(p.edge!=null?p.edge:0),date:((window._lastResult&&window._lastResult.date)||'')};
   return `<div style="display:flex;flex-direction:row;align-items:stretch;border-top:1px solid #1e293b;flex-shrink:0;width:100%;box-sizing:border-box">
     <button onclick="event.stopPropagation();_betForm('${k}')" style="width:50%;box-sizing:border-box;background:#1a1740;color:#a5b4fc;border:none;border-right:1px solid #1e293b;padding:5px 0;font-size:.72rem;font-weight:800;cursor:pointer;white-space:nowrap;text-align:center">Track Bet</button>
     <button onclick="event.stopPropagation();_addToCart('${k}')" style="width:50%;box-sizing:border-box;background:#0d2318;color:#6ee7b7;border:none;padding:5px 0;font-size:.72rem;font-weight:800;cursor:pointer;white-space:nowrap;text-align:center">+ Parlay</button>
