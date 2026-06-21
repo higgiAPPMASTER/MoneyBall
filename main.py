@@ -2894,10 +2894,14 @@ _HTML = """
         <label>Date</label>
         <input type="date" id="date-picker" max="" onchange="checkLockStatus()"/>
       </div>
-      <div style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-bottom:12px">
+      <div style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-bottom:8px">
         <button class="btn-primary" id="get-btn" onclick="getPicks()">🎯 Get Picks</button>
+        <button class="btn-primary admin-only admin-run-only" id="run-btn" onclick="startRun()">Run Picks</button>
+        <button class="btn-primary admin-only admin-run-only" id="force-btn" onclick="startRun(true)" style="background:#dc2626;color:#fff" title="Bypass cache and rebuild today's picks from scratch">Force Refresh</button>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-bottom:8px">
         <button class="btn-primary" id="ev-btn" onclick="toggleEvOnly()" style="background:#1f2937;color:#fff" title="Show only hit picks where our matchup model (your hitter vs this pitcher) beats the sportsbook price. Default off — all picks shown, ranked by value.">&#10003; +EV Only</button>
-        <button class="btn-primary" id="stat-edge-btn" onclick="toggleStatEdge()" style="background:#1f2937;color:#fff" title="Show only pitcher K and prop picks where our projected stat count beats the book line (e.g. proj 4.2 walks vs line 2.5). All qualifying picks shown, no cap.">&#9733; Proj Edge</button>
+        <button class="btn-primary" id="proj-edge-btn" onclick="_openProjEdge()" style="background:#1f2937;color:#38bdf8;border:1px solid #1e3a5f" title="All picks where our model projection beats the book line. Pitchers: count proj vs line. Hitters: win probability vs 50%. All plays shown.">&#9650; Proj Edge</button>
         <select id="odds-range-sel" onchange="onOddsRangeChange()" style="background:#1f2937;color:#fff;border:1px solid #374151;border-radius:10px;padding:9px 14px;font-size:.82rem;font-weight:700;cursor:pointer;min-width:150px;outline:none" title="Filter all picks to a specific odds range">
           <option value="">All Odds</option>
           <option value="le-500">&#8804; &#x2212;500</option>
@@ -2915,8 +2919,8 @@ _HTML = """
           <option value="+250to+300">+250 to +300</option>
           <option value="ge+300">&#8805; +300</option>
         </select>
-        <button class="btn-primary admin-only admin-run-only" id="run-btn" onclick="startRun()">Run Picks</button>
-        <button class="btn-primary admin-only admin-run-only" id="force-btn" onclick="startRun(true)" style="background:#dc2626;color:#fff" title="Bypass cache and rebuild today's picks from scratch">Force Refresh</button>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-bottom:12px">
         <button class="btn-primary admin-only admin-run-only" id="lock-btn" onclick="lockPicks()" style="background:#7c3aed;color:#fff" title="Lock these picks into the Track Record. Re-runs after locking won\'t affect grading.">&#128274; Lock Picks</button>
         <button class="btn-primary admin-only" id="unlock-btn" onclick="unlockPicks()" style="background:#b45309;color:#fff;display:none" title="Remove lock — re-runs will update Track Record again.">&#128275; Unlock Picks</button>
         <span id="lock-status-badge" style="font-size:.75rem;font-weight:700;padding:4px 10px;border-radius:9999px;display:none"></span>
@@ -3511,9 +3515,8 @@ function showResults(result) {
         })(),
       })
     : _renderSrc;
-  // "+EV Only" and "Proj Edge" filters on top; odds filter already applied above.
+  // "+EV Only" filter on top; odds filter already applied above.
   var view = window.EV_ONLY ? _evFilterView(_vBase) : _vBase;
-  if(window.STAT_EDGE_ONLY) view=_statEdgeFilterView(view);
   const { top9, stats, pitcher_k } = view;
 
   document.getElementById('stats-row').innerHTML = [
@@ -4918,7 +4921,7 @@ function _edgeAllPicks(r, minEdge){
     });
   });
   out.sort(function(a,b){ return (b.p.edge||0)-(a.p.edge||0); });
-  return out.slice(0,10);
+  return out.slice(0,20);
 }
 
 function _edgePlayerForm(i){
@@ -4978,59 +4981,138 @@ function _openEdgePlays(){
   ov.style.display='flex';
 }
 
-// ── Proj Edge toggle ────────────────────────────────────────────────────────
-// Shows only picks where our model's projection beats the book line.
-// Pitcher K/props: count projection vs line (e.g. proj 4.2 walks vs line 2.5).
-// All other categories: ev_prob > 0.5 (model says the pick hits >50% of the time).
-window.STAT_EDGE_ONLY=false;
-function _statEdgePos(p){
-  var side=(p.pick||'').toUpperCase();
-  if(!side) return false;
-  // Count projection categories (pitcher K, pitcher props, HR)
-  var proj=p.proj_k!=null?p.proj_k:(p.proj!=null?p.proj:(p.blended_avg_k!=null?p.blended_avg_k:(p.blended!=null?p.blended:null)));
-  var line=p.line!=null?p.line:null;
-  if(proj!=null&&line!=null){
-    if(side==='OVER') return proj>line;
-    if(side==='UNDER') return proj<line;
-    return false;
-  }
-  // Rate/probability categories — ev_prob is our model's win probability
-  if(p.ev_prob!=null) return p.ev_prob>0.5;
-  return false;
-}
-function _statEdgeFilterView(v){
-  var pk=v.pitcher_k, pp=v.pitcher_props||{};
-  return Object.assign({},v,{
-    top9:(v.top9||[]).filter(_statEdgePos),
-    also_ran:(v.also_ran||[]).filter(_statEdgePos),
-    under_picks:(v.under_picks||[]).filter(_statEdgePos),
-    tb_picks:(v.tb_picks||[]).filter(_statEdgePos),
-    tb_over_picks:(v.tb_over_picks||[]).filter(_statEdgePos),
-    hrr_picks:(v.hrr_picks||[]).filter(_statEdgePos),
-    rbi_picks:(v.rbi_picks||[]).filter(_statEdgePos),
-    hr_picks:(v.hr_picks||[]).filter(_statEdgePos),
-    walks_picks:(v.walks_picks||[]).filter(_statEdgePos),
-    runs_picks:(v.runs_picks||[]).filter(_statEdgePos),
-    pitcher_k:pk?Object.assign({},pk,{
-      picks:(pk.picks||[]).filter(_statEdgePos),
-      all:(pk.all||[]).filter(_statEdgePos)
-    }):pk,
-    pitcher_props:(function(){
-      var o={}; Object.keys(pp).forEach(function(m){
-        var b2=pp[m]||{};
-        o[m]={picks:(b2.picks||[]).filter(_statEdgePos),all:(b2.all||[]).filter(_statEdgePos)};
-      }); return o;
-    })()
+// ── Proj Edge popup ─────────────────────────────────────────────────────────
+// Pitchers: count projection vs line (real stat counts).
+// Hitters: ev_prob vs 0.5 (model win probability vs 50/50 baseline).
+// All qualifying picks shown, no cap.
+function _projEdgePicks(r){
+  if(!r) return [];
+  var all=[];
+  var _pmap={
+    'hits_allowed':{sk:'hits_allowed',sl:'Hits Allowed',cat:'Pitcher Hits Allowed'},
+    'outs':{sk:'outs',sl:'Outs',cat:'Pitcher Outs'},
+    'earned_runs':{sk:'earnedRuns',sl:'Earned Runs',cat:'Pitcher Earned Runs'},
+    'walks_allowed':{sk:'walks',sl:'Walks Allowed',cat:'Pitcher Walks'}
+  };
+  // Pitcher Ks
+  var pk=(r.pitcher_k||{}); ((pk.all||[]).length?(pk.all):(pk.picks||[])).forEach(function(p){
+    var proj=p.proj_k!=null?p.proj_k:(p.blended_avg_k!=null?p.blended_avg_k:null);
+    var ln=p.line!=null?p.line:(p.k_line!=null?p.k_line:null);
+    if(proj==null||ln==null) return;
+    var sd=(p.pick||'OVER').toUpperCase();
+    var gap=sd==='OVER'?proj-ln:ln-proj; if(gap<=0) return;
+    var od=sd==='UNDER'?p.under_odds:p.over_odds;
+    all.push({p:p,cat:'Pitcher Ks',side:sd,sk:'strikeOuts',sl:'Strikeouts',line:ln,ods:od,proj:proj,gap:gap,unit:'K',isProb:false});
   });
-}
-function toggleStatEdge(){
-  window.STAT_EDGE_ONLY=!window.STAT_EDGE_ONLY;
-  var b=document.getElementById('stat-edge-btn');
-  if(b){
-    if(window.STAT_EDGE_ONLY){b.style.background='#065f46';b.style.color='#4ade80';b.innerHTML='&#9733; Proj Edge: ON';}
-    else{b.style.background='#1f2937';b.style.color='#fff';b.innerHTML='&#9733; Proj Edge';}
+  // Pitcher props
+  var pp=(r.pitcher_props||{});
+  Object.keys(pp).forEach(function(m){
+    var cfg=_pmap[m]; if(!cfg) return;
+    var bucket=pp[m]||{}; ((bucket.all||[]).length?(bucket.all):(bucket.picks||[])).forEach(function(p){
+      var proj=p.proj!=null?p.proj:(p.blended!=null?p.blended:null);
+      var ln=p.line; if(proj==null||ln==null) return;
+      var sd=(p.pick||'OVER').toUpperCase();
+      var gap=sd==='OVER'?proj-ln:ln-proj; if(gap<=0) return;
+      var od=sd==='UNDER'?p.under_odds:p.over_odds;
+      all.push({p:p,cat:cfg.cat,side:sd,sk:cfg.sk,sl:cfg.sl,line:ln,ods:od,proj:proj,gap:gap,unit:(p.unit||''),isProb:false});
+    });
+  });
+  // Hitter categories — ev_prob is our model win probability; gap = ev_prob - 0.5
+  function addH(arr,cat,sk,sl,lineFn,odsFn){
+    (arr||[]).forEach(function(p){
+      if(p.ev_prob==null) return;
+      var gap=p.ev_prob-0.5; if(gap<=0) return;
+      var sd=(p.pick||'OVER').toUpperCase();
+      var ln=lineFn?lineFn(p):(p.line!=null?p.line:0.5);
+      var od=odsFn?odsFn(p):null;
+      all.push({p:p,cat:cat,side:sd,sk:sk,sl:sl,line:ln,ods:od,proj:p.ev_prob,gap:gap,unit:'',isProb:true});
+    });
   }
-  if(window._lastResult) showResults(window._lastResult);
+  addH(r.top9,         'Hitter Hits', 'hits',        'Hits',        function(){return 0.5;}, function(p){return p.hit_odds;});
+  addH(r.also_ran,     'Hitter Hits', 'hits',        'Hits',        function(){return 0.5;}, function(p){return p.hit_odds;});
+  addH(r.under_picks,  'U1.5 Hits',  'hits',        'Hits',        function(){return 1.5;}, function(p){return p.under_odds;});
+  addH(r.tb_over_picks,'TB Over',    'total_bases', 'Total Bases', function(){return 1.5;}, function(p){return p.tb_over_odds;});
+  addH(r.tb_picks,     'TB Under',   'total_bases', 'Total Bases', function(){return 1.5;}, function(p){return p.tb_under_odds;});
+  addH(r.hrr_picks,    'HRR',        'hrr',         'H+R+RBI',     function(){return 1.5;}, function(p){return p.pick==='UNDER'?p.hrr_under_odds:p.hrr_over_odds;});
+  addH(r.rbi_picks,    'RBI',        'rbi',         'RBI',         function(p){return p.line||0.5;}, function(p){return p.pick==='OVER'?p.over_odds:p.under_odds;});
+  addH(r.hr_picks,     'HR',         'homeRuns',    'HR',          function(p){return p.line||0.5;}, function(p){return p.pick==='OVER'?p.over_odds:p.under_odds;});
+  addH(r.walks_picks,  'Batter Walks','walks_bat',  'Walks',       function(p){return p.line||0.5;}, function(p){return p.pick==='OVER'?p.over_odds:p.under_odds;});
+  addH(r.runs_picks,   'Runs',       'runs',        'Runs',        function(p){return p.line||0.5;}, function(p){return p.pick==='OVER'?p.over_odds:p.under_odds;});
+  // Sort pitchers by count gap desc; hitters by prob gap desc; pitchers listed first
+  var pitchers=all.filter(function(x){return !x.isProb;}).sort(function(a,b){return b.gap-a.gap;});
+  var hitters=all.filter(function(x){return x.isProb;}).sort(function(a,b){return b.gap-a.gap;});
+  window.__PROJ_EDGE__=pitchers.concat(hitters);
+  return {pitchers:pitchers,hitters:hitters};
+}
+function _projEdgeForm(i){
+  var ep=(window.__PROJ_EDGE__||[])[i]; if(!ep) return;
+  _playerForm(ep.p.full_name||ep.p.name||'');
+}
+function _openProjEdge(){
+  var r=window._lastResult;
+  if(!r){ alert('Run picks first, then click Proj Edge.'); return; }
+  var data=_projEdgePicks(r);
+  var pAll=window.__PROJ_EDGE__||[];
+  function renderRow(item,globalIdx){
+    var p=item.p, nm=p.full_name||p.name||'';
+    var pickLbl=(item.side||'')+(item.line!=null?' '+item.line:'')+(item.unit?' '+item.unit:'');
+    var od=item.ods, odsTxt=od!=null?((od>0?'+':'')+od):'&#x2014;';
+    var projTxt,lineTxt,gapTxt,gapColor;
+    if(!item.isProb){
+      projTxt=(+item.proj.toFixed(2))+(item.unit?' '+item.unit:'');
+      lineTxt=item.line+(item.unit?' '+item.unit:'');
+      gapTxt='+'+(+item.gap.toFixed(2))+(item.unit?' '+item.unit:'');
+      gapColor='#4ade80';
+    } else {
+      projTxt=Math.round(item.proj*100)+'%';
+      lineTxt='50%';
+      gapTxt='+'+(item.gap*100).toFixed(1)+'%';
+      gapColor='#93c5fd';
+    }
+    var bb=_betBtn(p,item.cat,item.side,item.sk,item.sl,item.line,item.ods);
+    return '<div onclick="event.stopPropagation()" style="border-bottom:1px solid #111c2e;background:'+(globalIdx%2?'#070e1b':'#050c18')+'">'
+      +'<div style="display:grid;grid-template-columns:1fr 96px 56px 48px 62px;gap:0;padding:9px 14px;align-items:center">'
+      +'<div><div style="color:#e2e8f0;font-weight:800;font-size:.82rem;cursor:pointer;text-decoration:underline;text-decoration-color:#334155" onclick="event.stopPropagation();_projEdgeForm('+globalIdx+')">'+_esc(nm)+'</div>'
+      +'<div style="color:#64748b;font-size:.66rem;margin-top:1px">'+_esc(item.cat)+'</div></div>'
+      +'<div style="text-align:right;font-size:.76rem;font-weight:700;color:#93c5fd">'+_esc(pickLbl)+'</div>'
+      +'<div style="text-align:right;font-size:.75rem;color:#e2e8f0;font-weight:700">'+projTxt+'<br><span style="font-size:.6rem;color:#475569;font-weight:400">vs '+lineTxt+'</span></div>'
+      +'<div style="text-align:right;font-size:.74rem;color:#64748b">'+odsTxt+'</div>'
+      +'<div style="text-align:right"><span style="background:#052e16;color:'+gapColor+';font-weight:800;font-size:.78rem;border-radius:6px;padding:2px 7px">'+gapTxt+'</span></div>'
+      +'</div>'+bb+'</div>';
+  }
+  var inner='';
+  if(!data.pitchers.length&&!data.hitters.length){
+    inner='<div style="color:#94a3b8;padding:24px 16px;text-align:center">No projection edges found today.</div>';
+  } else {
+    inner='<div style="font-size:.62rem;color:#475569;font-weight:800;letter-spacing:.06em;display:grid;grid-template-columns:1fr 96px 56px 48px 62px;gap:0;padding:6px 14px 4px;border-bottom:1px solid #1e293b">'
+      +'<span>PLAYER / MARKET</span><span style="text-align:right">PICK</span>'
+      +'<span style="text-align:right">PROJ/LINE</span><span style="text-align:right">ODDS</span><span style="text-align:right">EDGE</span></div>';
+    var gi=0;
+    if(data.pitchers.length){
+      inner+='<div style="padding:5px 14px 3px;font-size:.62rem;font-weight:900;letter-spacing:.08em;color:#f59e0b;border-bottom:1px solid #1e293b;background:#0a0f1e">PITCHER COUNT PROJECTIONS ('+data.pitchers.length+')</div>';
+      data.pitchers.forEach(function(item){ inner+=renderRow(item,gi); gi++; });
+    }
+    if(data.hitters.length){
+      inner+='<div style="padding:5px 14px 3px;font-size:.62rem;font-weight:900;letter-spacing:.08em;color:#38bdf8;border-bottom:1px solid #1e293b;background:#0a0f1e">HITTER WIN PROBABILITY vs 50% ('+data.hitters.length+')</div>';
+      data.hitters.forEach(function(item){ inner+=renderRow(item,gi); gi++; });
+    }
+  }
+  var ov=document.getElementById('proj-edge-modal');
+  if(!ov){
+    ov=document.createElement('div'); ov.id='proj-edge-modal';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.85);z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; };
+    document.body.appendChild(ov);
+  }
+  ov.innerHTML='<div style="background:#080f1e;border:1px solid #1e3a5f;border-radius:18px;width:100%;max-width:600px;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 24px 80px rgba(0,0,0,.7)" onclick="event.stopPropagation()">'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid #1e293b;flex-shrink:0">'
+    +'<div><div style="font-weight:900;color:#38bdf8;font-size:1.05rem">&#9650; Proj Edge Plays</div>'
+    +'<div style="color:#64748b;font-size:.72rem;margin-top:2px">picks where our model beats the line &#xB7; all plays &#xB7; pitchers: count proj &#xB7; hitters: win prob &#xB7; Track Bet any row</div></div>'
+    +'<button onclick="document.getElementById(&#39;proj-edge-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:1.1rem;flex-shrink:0">&#215;</button>'
+    +'</div>'
+    +'<div style="overflow-y:auto;flex:1">'+inner+'</div>'
+    +'</div>';
+  ov.style.display='flex';
 }
 
 // ── Odds-range filter ──────────────────────────────────────────────────────
@@ -5740,7 +5822,10 @@ function _mlbCard(p, rank, dim) {
       </div>`:''}
       ${p.conv_flag?'<div style="font-size:.67rem;color:#4ade80;font-weight:600;margin-top:2px">&#10003; Converged &middot; L10 '+(p.recent_l10||'N/A')+' L5 '+(p.recent_l5||'N/A')+'</div>':(p.cold_flag?'<div style="font-size:.67rem;color:#fb923c;font-weight:600;margin-top:2px">&#9888; Recent diverges &middot; L5 '+(p.recent_l5||'N/A')+'</div>':((p.recent_l10||p.recent_l5)?'<div style="font-size:.67rem;color:#64748b;margin-top:2px">L10 '+(p.recent_l10||'N/A')+' &middot; L5 '+(p.recent_l5||'N/A')+'</div>':''))}
       ${p.hot_disp?'<div style="font-size:.67rem;color:#fbbf24;font-weight:700;margin-top:2px">&#128293; Hot hand &middot; '+p.hot_disp+' (+'+p.hot_bonus+')</div>':''}
-      ${p.over_sourced?'<div style="font-size:.62rem;color:#a78bfa;font-weight:600;margin-top:2px">+ Hot-hitter add ('+(p.vs_pit&&(p.vs_pit.ab||0)>0?((p.vs_pit.display||'')+' vs pitcher, below gate'):'no career vs pitcher')+')</div>':''}
+      ${p.over_sourced?'<div style="font-size:.62rem;color:#a78bfa;font-weight:600;margin-top:2px">+ Hot-hitter add ('+(
+        (p.vs_pit&&(p.vs_pit.ab||0)>0)?((p.vs_pit.display||'')+' vs pitcher, below gate')
+        :((p.s1_ab||0)>0&&p.s1_disp)?(p.s1_disp+(p.s1_tag?' '+p.s1_tag.toLowerCase():'')+' vs pitcher, below gate')
+        :'no career vs pitcher')+')</div>':''}
       ${p.facing_top_era?`<div style="margin-top:6px;font-size:.7rem;color:#fbbf24;background:rgba(245,158,11,.10);border:1px solid rgba(245,158,11,.35);border-radius:6px;padding:3px 7px">⚾ vs top-30 ERA: ${p.facing_top_era}${p.top_era_val!=null?' · '+(+p.top_era_val).toFixed(2)+' ERA':''}</div>`:''}
       ${(p.blurb||s5Suffix) ? `<div style="margin-top:5px;font-size:.72rem;color:#94a3b8;line-height:1.5;font-style:italic">${p.blurb||''}${s5Suffix}</div>` : ''}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
