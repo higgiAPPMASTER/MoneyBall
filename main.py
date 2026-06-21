@@ -853,6 +853,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "game_status": (st or {}).get("status", "—"),
             "ev": p.get("ev"),
             "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
+            "edge": p.get("edge"),
         })
 
     # Overflow / also_ran hits (positions 11-20) — tracked as "Hitter Hits (More)"
@@ -873,6 +874,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "game_status": (st or {}).get("status", "—"),
             "ev": p.get("ev"),
             "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
+            "edge": p.get("edge"),
         })
 
     # Under 1.5 Hits — top 10 for Track Record
@@ -894,6 +896,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "game_status": (st or {}).get("status", "—"),
             "ev": p.get("ev"),
             "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
+            "edge": p.get("edge"),
         })
 
     # Runs OVER/UNDER 0.5 — top 10 per side for Track Record
@@ -918,6 +921,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "game_status": (st or {}).get("status", "—"),
             "ev": p.get("ev"),
             "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
+            "edge": p.get("edge"),
         })
 
     # TB Under 1.5 — top 10 for Track Record
@@ -938,6 +942,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "game_status": (st or {}).get("status", "—"),
             "ev": p.get("ev"),
             "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
+            "edge": p.get("edge"),
         })
 
     # TB Over 1.5 — top 10 for Track Record
@@ -958,6 +963,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "game_status": (st or {}).get("status", "—"),
             "ev": p.get("ev"),
             "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
+            "edge": p.get("edge"),
         })
 
     # RBI OVER/UNDER — top 10 per side for Track Record
@@ -983,6 +989,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "game_status": (st or {}).get("status", "—"),
             "ev": p.get("ev"),
             "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
+            "edge": p.get("edge"),
         })
 
     # HR OVER/UNDER — top 10 per side for Track Record
@@ -1008,6 +1015,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "game_status": (st or {}).get("status", "—"),
             "ev": p.get("ev"),
             "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
+            "edge": p.get("edge"),
         })
 
     # Batter Walks OVER/UNDER 0.5 — top 10 per side for Track Record
@@ -1033,6 +1041,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "game_status": (st or {}).get("status", "—"),
             "ev": p.get("ev"),
             "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
+            "edge": p.get("edge"),
         })
 
     # HRR (Hits+Runs+RBI) OVER/UNDER 1.5 — top 10 per side for Track Record
@@ -1057,6 +1066,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "game_status": (st or {}).get("status", "—"),
             "ev": p.get("ev"),
             "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
+            "edge": p.get("edge"),
         })
 
     # Pitcher Ks — top 10 PER SIDE for Track Record (Over and Under each get
@@ -1087,6 +1097,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "game_status": (st or {}).get("status", "—"),
             "ev": p.get("ev"),
             "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
+            "edge": p.get("edge"),
         })
 
     # Pitcher Props (Hits Allowed / Outs / Earned Runs)
@@ -1142,6 +1153,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "game_status": (st or {}).get("status", "—"),
             "ev": p.get("ev"),
             "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
+            "edge": p.get("edge"),
         })
     for p in (picks.get("under_picks") or [])[10:20]:
         st = _lookup(p.get("batter_id"), p.get("name"))
@@ -1237,7 +1249,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
         _bat_cands.append({"name":p.get("name",""),"team":p.get("team",""),
             "side":"OVER","stat_key":"total_bases","stat_label":"Total Bases","line":1.5,
             "odds":p.get("tb_over_odds"),"ev":p.get("ev") or 0,
-            "pid":p.get("batter_id"),"fname":p.get("name")})
+            "pid":p.get("batter_id"),"fname":p.get("name"),"edge":p.get("edge")})
     for p in (picks.get("runs_picks") or []):
         pd = p.get("pick","OVER")
         _bat_cands.append({"name":p.get("name",""),"team":p.get("team",""),
@@ -1286,6 +1298,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "game_status": (st or {}).get("status", "—"),
             "ev": c.get("ev"),
             "ev_prob": (c.get("ev_prob") if c.get("ev_prob") is not None else c.get("matchup_prob")),
+            "edge": c.get("edge"),
         })
 
     # Top 10 Batter overflow (ranks 11-20 of the same combined EV ranking) → banked
@@ -1311,7 +1324,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
         gap = abs(bl - ln) if (bl is not None) else 0
         _pit_cands.append({"name":p.get("name",""),"team":p.get("team",""),
             "side":pd,"stat_key":"strikeOuts","stat_label":"Ks","line":ln,
-            "odds":p.get("over_odds") if pd=="OVER" else p.get("under_odds"),"gap":gap,"ev":p.get("ev") or 0})
+            "odds":p.get("over_odds") if pd=="OVER" else p.get("under_odds"),"gap":gap,"ev":p.get("ev") or 0,"edge":p.get("edge")})
     for mkt, mdata in (picks.get("pitcher_props") or {}).items():
         sk, sl = PROP_STAT_MAP.get(mkt, (None, None))
         if not sk: continue
@@ -1321,7 +1334,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             gap = abs(bl - ln) if (bl is not None) else 0
             _pit_cands.append({"name":p.get("name",""),"team":p.get("team",""),
                 "side":pd,"stat_key":sk,"stat_label":sl,"line":ln,
-                "odds":p.get("over_odds") if pd=="OVER" else p.get("under_odds"),"gap":gap,"ev":p.get("ev") or 0})
+                "odds":p.get("over_odds") if pd=="OVER" else p.get("under_odds"),"gap":gap,"ev":p.get("ev") or 0,"edge":p.get("edge")})
     _pit_cands.sort(key=lambda x: -(x.get("ev") or 0))
     _pit_seen = set()
     _pit_dedup = []
@@ -1343,6 +1356,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "game_status": (st or {}).get("status", "—"),
             "ev": c.get("ev"),
             "ev_prob": (c.get("ev_prob") if c.get("ev_prob") is not None else c.get("matchup_prob")),
+            "edge": c.get("edge"),
         })
 
     result = {
@@ -7115,6 +7129,7 @@ function renderTrackRecord(d){
   if(!window.__TRK_TAB__) window.__TRK_TAB__='daily';
   if(!window.__TRK_MONTH__) window.__TRK_MONTH__=_trkTodayISO().slice(0,7);
   var _today=_trkTodayISO(); if(window.__TRK_DAILY_DATE__&&window.__TRK_DAILY_DATE__<_today) window.__TRK_DAILY_DATE__=_today;
+  if(window.__TRK_GRADE_CACHE__) delete window.__TRK_GRADE_CACHE__[_today];
   var bet=(window.__TRK_BET__!=null?window.__TRK_BET__:20);
   var hdr='<div style="display:flex;flex-wrap:wrap;gap:14px;align-items:center;background:#0a1f14;border:1px solid #16432c;border-radius:12px;padding:14px 18px;margin-bottom:14px">'
     +'<span style="font-weight:800;color:#6ee7b7;font-size:1rem">💰 Bet amount $</span>'
