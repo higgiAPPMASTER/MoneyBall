@@ -807,6 +807,60 @@ def _mlb_box_lookup(date_str: str):
     return player_stats, name_stats, any_game, all_final
 
 
+# ── Top 10 Batter selection — MUST mirror the live page's _buildTop10All ────
+# The "Top 10 Hitter Plays" cards on the page are built client-side by
+# _buildTop10All: ranked by Wilson-EV (_t10Score), green/amber only (ace-faced
+# batters dropped), and each pick keyed to its SIDE's posted odds. RBI picks
+# carry over_odds/under_odds (not over/under), and the client reads over/under
+# for RBI — so RBI silently drops out of the page list. We replicate ALL of
+# that here so the Track Record's Top 10 == the cards the user actually saw.
+def _t10_dec(o):
+    if not o:
+        return None
+    try:
+        o = float(o)
+    except Exception:
+        return None
+    return 1 + o / 100.0 if o > 0 else 1 + 100.0 / abs(o)
+
+def _t10_odds_for(p, kind):
+    pk = p.get("pick")
+    if kind == "TB OVER":
+        return p.get("tb_over_odds")
+    if kind == "HRR":
+        return p.get("hrr_under_odds") if pk == "UNDER" else p.get("hrr_over_odds")
+    if kind == "RBI":
+        return p.get("over") if pk == "OVER" else p.get("under")
+    if kind in ("RUNS", "BWALK"):
+        return p.get("over_odds") if pk == "OVER" else p.get("under_odds")
+    return None
+
+def _t10_score(p, kind):
+    w = p.get("wilson") or 0
+    dec = _t10_dec(_t10_odds_for(p, kind))
+    if not dec:
+        return -999.0
+    return w * (dec - 1) - (1 - w)
+
+def _t10_batter_red(p):
+    """Mirror the client _t10DotIsRed(p,'O',false,0): a batter is RED (and so
+    excluded from the Top 10) iff the opposing starter is a tier-1 ace."""
+    rank = p.get("opp_rot_rank")
+    rookie = p.get("opp_rot_rookie")
+    tovr = p.get("opp_rot_tier")
+    if (rank is None or rank == 0) and not rookie and not (tovr and tovr > 0):
+        return False
+    if tovr and tovr > 0:
+        tier = tovr
+    elif rank is not None and rank > 0:
+        tier = 1 if rank <= 2 else (2 if rank <= 4 else 3)
+    elif rookie:
+        tier = 3
+    else:
+        return False
+    return tier == 1
+
+
 def _grade_date(date_str: str, picks: dict) -> dict:
     """Grade every pick category for a date against actual box scores.
     Each row carries category + side so the Track Record ledger can tally O/U splits."""
@@ -1241,50 +1295,50 @@ def _grade_date(date_str: str, picks: dict) -> dict:
                  f"{pd} {ln} {stat_label}", p.get("over_odds") if pd == "OVER" else p.get("under_odds"),
                  ln, actual, stat_label, st)
 
-    # Top 10 Batter — combine batter categories (NO single Hits — it has its own Top 10
-    # Hits list; NO Under-1.5-Hits, mirroring the live _buildTop10 card builder), rank by
-    # EV, take top 10
+    # Top 10 Batter — MIRROR the live page's _buildTop10All EXACTLY so this list
+    # equals the "Top 10 Hitter Plays" cards the user actually sees:
+    #   • same categories + insertion order: TB Over, HRR, RBI, Runs, Walks
+    #     (NO single Hits, NO Under-1.5-Hits, NO HR — those have their own lists)
+    #   • ranked by Wilson-EV (_t10_score), NOT raw pipeline ev
+    #   • each pick keyed to its SIDE's posted odds; drop if no price (RBI dicts
+    #     carry over_odds/under_odds but the client reads over/under, so RBI
+    #     drops out of the page list — we drop it here too to stay in lockstep)
+    #   • green/amber only: batters facing a tier-1 ace are filtered out
+    _T10_SPECS = [
+        ("tb_over_picks", "TB OVER", "total_bases", "Total Bases", 1.5),
+        ("hrr_picks",     "HRR",     "hrr",         "H+R+RBI",     1.5),
+        ("rbi_picks",     "RBI",     "rbi",         "RBI",         0.5),
+        ("runs_picks",    "RUNS",    "runs",        "Runs",        0.5),
+        ("walks_picks",   "BWALK",   "walks_bat",   "Walks",       0.5),
+    ]
     _bat_cands = []
-    for p in (picks.get("tb_over_picks") or []):
-        _bat_cands.append({"name":p.get("name",""),"team":p.get("team",""),
-            "side":"OVER","stat_key":"total_bases","stat_label":"Total Bases","line":1.5,
-            "odds":p.get("tb_over_odds"),"ev":p.get("ev") or 0,
-            "pid":p.get("batter_id"),"fname":p.get("name"),"edge":p.get("edge")})
-    for p in (picks.get("runs_picks") or []):
-        pd = p.get("pick","OVER")
-        _bat_cands.append({"name":p.get("name",""),"team":p.get("team",""),
-            "side":pd,"stat_key":"runs","stat_label":"Runs","line":0.5,
-            "odds":p.get("over_odds") if pd=="OVER" else p.get("under_odds"),
-            "ev":p.get("ev") or 0,"pid":p.get("batter_id"),"fname":p.get("name")})
-    for p in (picks.get("rbi_picks") or []):
-        pd = p.get("pick","OVER"); ln = p.get("line") if p.get("line") is not None else 0.5
-        _bat_cands.append({"name":p.get("name",""),"team":p.get("team",""),
-            "side":pd,"stat_key":"rbi","stat_label":"RBI","line":ln,
-            "odds":p.get("over_odds") if pd=="OVER" else p.get("under_odds"),
-            "ev":p.get("ev") or 0,"pid":p.get("batter_id"),"fname":p.get("name")})
-    for p in (picks.get("walks_picks") or []):
-        pd = p.get("pick","OVER"); ln = p.get("line") if p.get("line") is not None else 0.5
-        _bat_cands.append({"name":p.get("name",""),"team":p.get("team",""),
-            "side":pd,"stat_key":"walks_bat","stat_label":"Walks","line":ln,
-            "odds":p.get("over_odds") if pd=="OVER" else p.get("under_odds"),
-            "ev":p.get("ev") or 0,"pid":p.get("batter_id"),"fname":p.get("name")})
-    for p in (picks.get("hrr_picks") or []):
-        pd = p.get("pick","OVER")
-        _bat_cands.append({"name":p.get("name",""),"team":p.get("team",""),
-            "side":pd,"stat_key":"hrr","stat_label":"H+R+RBI","line":1.5,
-            "odds":p.get("hrr_over_odds") if pd=="OVER" else p.get("hrr_under_odds"),
-            "ev":p.get("ev") or 0,"pid":p.get("batter_id"),"fname":p.get("name")})
-    # HR is intentionally EXCLUDED from Top 10 Batter — it has its own category +
-    # tracker, and longshot HR overs were polluting the best-plays list. This mirrors
-    # the live-card builder (_buildTop10), which never adds HR.
-    _bat_cands.sort(key=lambda x: -(x.get("ev") or 0))
+    for _src, _kind, _sk, _sl, _dln in _T10_SPECS:
+        for p in (picks.get(_src) or []):
+            _od = _t10_odds_for(p, _kind)
+            if _od is None:
+                continue
+            _sc = _t10_score(p, _kind)
+            if _sc <= -999:
+                continue
+            _side = "OVER" if _kind == "TB OVER" else (p.get("pick") or "OVER")
+            _ln = p.get("line") if (_kind in ("RBI", "BWALK") and p.get("line") is not None) else _dln
+            _bat_cands.append({"name":p.get("name",""),"team":p.get("team",""),
+                "side":_side,"stat_key":_sk,"stat_label":_sl,"line":_ln,
+                "odds":_od,"ev":p.get("ev"),"ev_prob":p.get("ev_prob"),
+                "matchup_prob":p.get("matchup_prob"),"edge":p.get("edge"),
+                "pid":p.get("batter_id"),"fname":p.get("name"),
+                "_t10sc":_sc,"_red":_t10_batter_red(p)})
+    # Wilson-EV ranking (highest edge first), then dedup by name — matches the
+    # client's stable sort + _dedup order before the red-light filter is applied.
+    _bat_cands.sort(key=lambda x: -(x.get("_t10sc") or -999.0))
     _bat_seen = set()
     _bat_dedup = []
     for _bc in _bat_cands:
         _bk = (_bc.get("name") or "").strip().lower()
         if _bk in _bat_seen: continue
         _bat_seen.add(_bk); _bat_dedup.append(_bc)
-    _bat_cands = _bat_dedup
+    # green/amber only — drop ace-faced batters AFTER dedup (client order)
+    _bat_cands = [c for c in _bat_dedup if not c.get("_red")]
     top10_batter = []
     for c in _bat_cands[:10]:
         st = _lookup(c.get("pid"), c.get("fname") or c["name"])
@@ -7433,7 +7487,7 @@ function _trkRenderDaily(stake){
 }
 // ===== Track Record tabs: Daily / Weekly (last 7 days) / Monthly =====
 var _TRK_KEYS=['top10_batter','top10_pitcher','hitter_overs','hitter_unders','runs','tb_under','tb_over','rbi','batter_walks','hrr','pitcher_ks','pitcher_props'];
-function _trkTodayISO(){ var dp=document.getElementById('date-picker'); if(dp&&dp.value) return dp.value; var d=new Date(); var z=d.getTimezoneOffset()*60000; return new Date(d.getTime()-z).toISOString().slice(0,10); }
+function _trkTodayISO(){ var d=new Date(); var z=d.getTimezoneOffset()*60000; return new Date(d.getTime()-z).toISOString().slice(0,10); }
 function _isoShift(iso,days){ var d=new Date(iso+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()+days); return d.toISOString().slice(0,10); }
 function _trkRC(w,n){ if(!n) return '#64748b'; var p=w/n; return p>=0.70?'#4ade80':(p>=0.55?'#facc15':'#f87171'); }
 function _trkBar(pct,clr){ return '<div style="height:8px;border-radius:4px;background:#1e293b;overflow:hidden;width:80px;display:inline-block;vertical-align:middle"><div style="height:100%;width:'+pct+'%;background:'+clr+';border-radius:4px"></div></div>'; }
