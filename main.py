@@ -4987,10 +4987,10 @@ function _edgeAllPicks(r, minEdge){
   });
   // Pitcher props
   var pp=(r.pitcher_props||{});
-  var _pmap={'hits_allowed':{sk:'hits_allowed',sl:'Hits Allowed',cat:'Pitcher Hits Allowed'},
-             'outs':{sk:'outs',sl:'Outs',cat:'Pitcher Outs'},
-             'earned_runs':{sk:'earnedRuns',sl:'Earned Runs',cat:'Pitcher Earned Runs'},
-             'walks_allowed':{sk:'walks',sl:'Walks Allowed',cat:'Pitcher Walks'}};
+  var _pmap={'pitcher_hits_allowed':{sk:'hits_allowed',sl:'Hits Allowed',cat:'Pitcher Hits Allowed'},
+             'pitcher_outs':{sk:'outs',sl:'Outs',cat:'Pitcher Outs'},
+             'pitcher_earned_runs':{sk:'earnedRuns',sl:'Earned Runs',cat:'Pitcher Earned Runs'},
+             'pitcher_walks':{sk:'walks',sl:'Walks Allowed',cat:'Pitcher Walks'}};
   Object.keys(pp).forEach(function(m){
     var cfg=_pmap[m]; if(!cfg) return;
     ((pp[m]||{}).picks||[]).forEach(function(p){
@@ -5069,10 +5069,10 @@ function _projEdgePicks(r){
   if(!r) return [];
   var all=[];
   var _pmap={
-    'hits_allowed':{sk:'hits_allowed',sl:'Hits Allowed',cat:'Pitcher Hits Allowed'},
-    'outs':{sk:'outs',sl:'Outs',cat:'Pitcher Outs'},
-    'earned_runs':{sk:'earnedRuns',sl:'Earned Runs',cat:'Pitcher Earned Runs'},
-    'walks_allowed':{sk:'walks',sl:'Walks Allowed',cat:'Pitcher Walks'}
+    'pitcher_hits_allowed':{sk:'hits_allowed',sl:'Hits Allowed',cat:'Pitcher Hits Allowed'},
+    'pitcher_outs':{sk:'outs',sl:'Outs',cat:'Pitcher Outs'},
+    'pitcher_earned_runs':{sk:'earnedRuns',sl:'Earned Runs',cat:'Pitcher Earned Runs'},
+    'pitcher_walks':{sk:'walks',sl:'Walks Allowed',cat:'Pitcher Walks'}
   };
   // Pitcher Ks
   var pk=(r.pitcher_k||{}); ((pk.all||[]).length?(pk.all):(pk.picks||[])).forEach(function(p){
@@ -5097,15 +5097,17 @@ function _projEdgePicks(r){
       all.push({p:p,cat:cfg.cat,side:sd,sk:cfg.sk,sl:cfg.sl,line:ln,ods:od,proj:proj,gap:gap,unit:(p.unit||''),isProb:false});
     });
   });
-  // Hitter categories — ev_prob is our model win probability; gap = ev_prob - 0.5
+  // Hitter categories — rank by our model EDGE (side-aware win prob minus the
+  // book&#39;s implied prob). ANY positive edge qualifies, however small, so every
+  // category surfaces its top 5; ev_prob drives the displayed win%.
   function addH(arr,cat,sk,sl,lineFn,odsFn){
     (arr||[]).forEach(function(p){
-      if(p.ev_prob==null) return;
-      var gap=p.ev_prob-0.5; if(gap<=0) return;
+      if(p.edge==null||p.ev_prob==null) return;
+      if(p.edge<=0) return;
       var sd=(p.pick||'OVER').toUpperCase();
       var ln=lineFn?lineFn(p):(p.line!=null?p.line:0.5);
       var od=odsFn?odsFn(p):null;
-      all.push({p:p,cat:cat,side:sd,sk:sk,sl:sl,line:ln,ods:od,proj:p.ev_prob,gap:gap,unit:'',isProb:true});
+      all.push({p:p,cat:cat,side:sd,sk:sk,sl:sl,line:ln,ods:od,proj:p.ev_prob,gap:p.edge,unit:'',isProb:true});
     });
   }
   addH(r.top9,         'Hitter Hits', 'hits',        'Hits',        function(){return 0.5;}, function(p){return p.hit_odds;});
@@ -5156,8 +5158,8 @@ function _openProjEdge(){
       gapTxt='+'+(+item.gap.toFixed(2))+(item.unit?' '+item.unit:'');
       gapColor='#4ade80';
     } else {
-      projTxt=Math.round(item.proj*100)+'%';
-      lineTxt='50%';
+      projTxt=(item.proj!=null?Math.round(item.proj*100)+'%':'&#x2014;');
+      lineTxt=(item.proj!=null?Math.round((item.proj-item.gap)*100)+'%':'mkt');
       gapTxt='+'+(item.gap*100).toFixed(1)+'%';
       gapColor='#93c5fd';
     }
@@ -5206,7 +5208,7 @@ function _openProjEdge(){
   } else {
     inner='<div style="font-size:.62rem;color:#475569;font-weight:800;letter-spacing:.06em;display:grid;grid-template-columns:1fr 96px 56px 48px 62px;gap:0;padding:6px 14px 4px;border-bottom:1px solid #1e293b">'
       +'<span>PLAYER / MARKET</span><span style="text-align:right">PICK</span>'
-      +'<span style="text-align:right">PROJ/LINE</span><span style="text-align:right">ODDS</span><span style="text-align:right">EDGE</span></div>'+inner;
+      +'<span style="text-align:right">MODEL/MKT</span><span style="text-align:right">ODDS</span><span style="text-align:right">EDGE</span></div>'+inner;
   }
   var ov=document.getElementById('proj-edge-modal');
   if(!ov){
@@ -5218,7 +5220,7 @@ function _openProjEdge(){
   ov.innerHTML='<div style="background:#080f1e;border:1px solid #1e3a5f;border-radius:18px;width:100%;max-width:600px;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 24px 80px rgba(0,0,0,.7)" onclick="event.stopPropagation()">'
     +'<div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid #1e293b;flex-shrink:0">'
     +'<div><div style="font-weight:900;color:#38bdf8;font-size:1.05rem">&#9650; Proj Edge Plays</div>'
-    +'<div style="color:#64748b;font-size:.72rem;margin-top:2px">top 5 per category &#xB7; pitchers: count proj &#xB7; hitters: win prob &#xB7; click any name for recent form &#xB7; Track Bet any row</div></div>'
+    +'<div style="color:#64748b;font-size:.72rem;margin-top:2px">top 5 per category by edge &#xB7; pitchers: proj vs line &#xB7; hitters: win% vs book &#xB7; click any name for recent form &#xB7; Track Bet any row</div></div>'
     +'<button onclick="document.getElementById(&#39;proj-edge-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:1.1rem;flex-shrink:0">&#215;</button>'
     +'</div>'
     +'<div style="overflow-y:auto;flex:1">'+inner+'</div>'
