@@ -662,10 +662,10 @@ def fetch_series_splits(player_id, today_opp: str, run_date: str, side: str = ""
             today_d = _dt.fromisoformat(run_date[:10])
         except Exception:
             today_d = _dt.today()
-        opp_norm = set((today_opp or "").lower().split()) - {"the", "at", "vs"}
+        from under_picks import _team_match as _tm
         def _match(opp_str):
-            if not opp_norm: return False
-            return bool(opp_norm & (set((opp_str or "").lower().split()) - {"the", "at", "vs"}))
+            if not (today_opp or "").strip(): return False
+            return _tm(opp_str, today_opp)
         recent = [g for g in reversed(all_games)
                   if _match(g["opp"]) and 0 < (today_d - g["date"]).days <= 5]
         streak = 0; prev_d = today_d
@@ -1412,12 +1412,10 @@ def run_pipeline(run_date: str, emit=None) -> dict:
             pitcher_raw = r.get("pitcher", "")
             # Fallback: if FIC has no pitcher, look up from MLB schedule by opponent team
             if not pitcher_raw or pitcher_raw.strip().lower() in ("", "tbd", "unknown"):
-                opp = r.get("opp", "").lower()
-                stop = {"the", "of", "los", "san", "new", "de"}
-                o_words = set(opp.split()) - stop
+                from under_picks import _team_match as _tm
+                opp = r.get("opp", "")
                 for t, pinfo in mlb_probable.items():
-                    t_words = set(t.lower().split()) - stop
-                    if t_words & o_words:
+                    if _tm(t, opp):
                         pitcher_raw = pinfo.get("name", "")
                         r["pitcher"] = pitcher_raw
                         break
@@ -1499,14 +1497,10 @@ def run_pipeline(run_date: str, emit=None) -> dict:
             list(_ex.map(_get_batter_platoon, _pltn_bids))
         with _TPEx(max_workers=8) as _ex:
             list(_ex.map(_get_pitcher_hand, _pltn_pids))
-        _stop_w = {"the", "of", "los", "san", "new", "de"}
+        from under_picks import _team_match as _tm
         def _match_opp(opp):
-            opp_l = opp.lower()
             for tn, pid in pit_id_map.items():
-                if tn.lower() == opp_l: return pid
-            for tn, pid in pit_id_map.items():
-                if (set(tn.lower().split()) - _stop_w) & (set(opp_l.split()) - _stop_w):
-                    return pid
+                if _tm(tn, opp): return pid
             return None
         enriched = 0
         for r in lineup_qualified:
@@ -1718,17 +1712,13 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         _SEASON_YR = str(run_date)[:4]
         _LG_BA = 0.244
         _pid_map = {tn: pi.get("id") for tn, pi in mlb_probable.items() if pi.get("id")}
-        _stopw = {"the", "of", "los", "san", "new", "de"}
+        from under_picks import _team_match as _tm
 
         def _opp_pid(opp):
-            ol = (opp or "").lower()
-            if not ol:
+            if not opp:
                 return None
             for tn, pid in _pid_map.items():
-                if tn.lower() == ol:
-                    return pid
-            for tn, pid in _pid_map.items():
-                if (set(tn.lower().split()) - _stopw) & (set(ol.split()) - _stopw):
+                if _tm(tn, opp):
                     return pid
             return None
 
