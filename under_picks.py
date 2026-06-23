@@ -152,11 +152,22 @@ def _log(emit, msg, type_="log"):
 
 
 def _team_match(a: str, b: str) -> bool:
-    a, b = a.lower().strip(), b.lower().strip()
+    a, b = (a or "").lower().strip(), (b or "").lower().strip()
+    if not a or not b: return False
     if a == b: return True
-    al = a.split()[-1] if a else ""
-    bl = b.split()[-1] if b else ""
-    if al and al == bl: return True
+    aw, bw = a.split(), b.split()
+    al = aw[-1] if aw else ""
+    bl = bw[-1] if bw else ""
+    if al and al == bl:
+        # Shared-nickname guard: "Boston Red Sox" and "Chicago White Sox" BOTH end
+        # in "sox", so a bare last-word tie is NOT a team match — it would hand a
+        # hitter the wrong starter. Require the qualifier word (the one before the
+        # nickname) to match too.
+        if al in ("sox",):
+            a2 = aw[-2] if len(aw) >= 2 else ""
+            b2 = bw[-2] if len(bw) >= 2 else ""
+            return bool(a2) and a2 == b2
+        return True
     return (a in b) or (b in a)
 
 
