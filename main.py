@@ -3749,7 +3749,7 @@ function _pkForm(key){
   if(!ov){
     ov=document.createElement('div');
     ov.id='pk-modal';
-    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:10050;display:flex;align-items:center;justify-content:center;padding:16px';
     ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; };
     document.body.appendChild(ov);
   }
@@ -4001,7 +4001,7 @@ function _ppForm(key){
   var ov=document.getElementById('pp-modal');
   if(!ov){
     ov=document.createElement('div'); ov.id='pp-modal';
-    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:10050;display:flex;align-items:center;justify-content:center;padding:16px';
     ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; };
     document.body.appendChild(ov);
   }
@@ -4284,7 +4284,7 @@ function _hitForm(key){
   if(!ov){
     ov=document.createElement('div');
     ov.id='hit-modal';
-    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:10050;display:flex;align-items:center;justify-content:center;padding:16px';
     ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; };
     document.body.appendChild(ov);
   }
@@ -4332,7 +4332,7 @@ function _runsForm(key){
   if(!ov){
     ov=document.createElement('div');
     ov.id='runs-modal';
-    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:10050;display:flex;align-items:center;justify-content:center;padding:16px';
     ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; };
     document.body.appendChild(ov);
   }
@@ -5006,7 +5006,7 @@ function _edgeAllPicks(r, minEdge){
 
 function _edgePlayerForm(i){
   var ep=(window.__EDGE_PLAYS__||[])[i]; if(!ep) return;
-  _playerForm(ep.p.full_name||ep.p.name||'');
+  _edgeRouteForm(ep.p,ep.cat);
 }
 function _openEdgePlays(){
   var r=window._lastResult;
@@ -5053,7 +5053,7 @@ function _openEdgePlays(){
   ov.innerHTML='<div style="background:#080f1e;border:1px solid #16432c;border-radius:18px;width:100%;max-width:560px;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 24px 80px rgba(0,0,0,.7)" onclick="event.stopPropagation()">'
     +'<div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid #1e293b;flex-shrink:0">'
     +'<div><div style="font-weight:900;color:#4ade80;font-size:1.05rem">&#9733; Biggest Edge Plays</div>'
-    +'<div style="color:#64748b;font-size:.72rem;margin-top:2px">edge &#x2265;5% &#xB7; sorted by edge &#xB7; top 10 &#xB7; click name for popup &#xB7; Track Bet or Parlay any row</div></div>'
+    +'<div style="color:#64748b;font-size:.72rem;margin-top:2px">edge &#x2265;5% &#xB7; sorted by edge &#xB7; top 20 &#xB7; click name for popup &#xB7; Track Bet or Parlay any row</div></div>'
     +'<button onclick="document.getElementById(&#39;edge-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:1.1rem;flex-shrink:0">&#215;</button>'
     +'</div>'
     +'<div style="overflow-y:auto;flex:1">'+inner+'</div>'
@@ -5118,22 +5118,34 @@ function _projEdgePicks(r){
   addH(r.hr_picks,     'HR',         'homeRuns',    'HR',          function(p){return p.line||0.5;}, function(p){return p.pick==='OVER'?p.over_odds:p.under_odds;});
   addH(r.walks_picks,  'Batter Walks','walks_bat',  'Walks',       function(p){return p.line||0.5;}, function(p){return p.pick==='OVER'?p.over_odds:p.under_odds;});
   addH(r.runs_picks,   'Runs',       'runs',        'Runs',        function(p){return p.line||0.5;}, function(p){return p.pick==='OVER'?p.over_odds:p.under_odds;});
-  // Sort pitchers by count gap desc; hitters by prob gap desc; pitchers listed first
-  var pitchers=all.filter(function(x){return !x.isProb;}).sort(function(a,b){return b.gap-a.gap;});
-  var hitters=all.filter(function(x){return x.isProb;}).sort(function(a,b){return b.gap-a.gap;});
-  window.__PROJ_EDGE__=pitchers.concat(hitters);
-  return {pitchers:pitchers,hitters:hitters};
+  window.__PROJ_EDGE__=all;
+  return all;
+}
+// Open the recent-form popup for an edge-popup row, routed by its category so it
+// shows exactly what a click on that player in his own category would show.
+function _edgeRouteForm(p,cat){
+  if(!p) return;
+  cat=cat||'';
+  if(cat==='Pitcher Ks'){ _pkForm(p); return; }
+  if(cat.indexOf('Pitcher ')===0){ _ppForm(p); return; }
+  if(cat==='TB Over'){ _tbOverForm(p); return; }
+  if(cat==='TB Under'){ _tbForm(p); return; }
+  if(cat==='HRR'){ _hrrForm(p); return; }
+  if(cat==='RBI'){ _rbiForm(p); return; }
+  if(cat==='HR'){ _hrForm(p); return; }
+  if(cat==='Batter Walks'){ _walksForm(p); return; }
+  if(cat==='Runs'){ _runsForm(p); return; }
+  _hitForm(p);
 }
 function _projEdgeForm(i){
   var ep=(window.__PROJ_EDGE__||[])[i]; if(!ep) return;
-  _playerForm(ep.p.full_name||ep.p.name||'');
+  _edgeRouteForm(ep.p,ep.cat);
 }
 function _openProjEdge(){
   var r=window._lastResult;
   if(!r){ alert('Run picks first, then click Proj Edge.'); return; }
-  var data=_projEdgePicks(r);
-  var pAll=window.__PROJ_EDGE__||[];
-  function renderRow(item,globalIdx){
+  var all=_projEdgePicks(r);
+  function renderRow(item,globalIdx,rowIdx){
     var p=item.p, nm=p.full_name||p.name||'';
     var pickLbl=(item.side||'')+(item.line!=null?' '+item.line:'')+(item.unit?' '+item.unit:'');
     var od=item.ods, odsTxt=od!=null?((od>0?'+':'')+od):'&#x2014;';
@@ -5150,7 +5162,7 @@ function _openProjEdge(){
       gapColor='#93c5fd';
     }
     var bb=_betBtn(p,item.cat,item.side,item.sk,item.sl,item.line,item.ods);
-    return '<div onclick="event.stopPropagation()" style="border-bottom:1px solid #111c2e;background:'+(globalIdx%2?'#070e1b':'#050c18')+'">'
+    return '<div onclick="event.stopPropagation()" style="border-bottom:1px solid #111c2e;background:'+(rowIdx%2?'#070e1b':'#050c18')+'">'
       +'<div style="display:grid;grid-template-columns:1fr 96px 56px 48px 62px;gap:0;padding:9px 14px;align-items:center">'
       +'<div><div style="color:#e2e8f0;font-weight:800;font-size:.82rem;cursor:pointer;text-decoration:underline;text-decoration-color:#334155" onclick="event.stopPropagation();_projEdgeForm('+globalIdx+')">'+_esc(nm)+'</div>'
       +'<div style="color:#64748b;font-size:.66rem;margin-top:1px">'+_esc(item.cat)+'</div></div>'
@@ -5160,22 +5172,41 @@ function _openProjEdge(){
       +'<div style="text-align:right"><span style="background:#052e16;color:'+gapColor+';font-weight:800;font-size:.78rem;border-radius:6px;padding:2px 7px">'+gapTxt+'</span></div>'
       +'</div>'+bb+'</div>';
   }
-  var inner='';
-  if(!data.pitchers.length&&!data.hitters.length){
+  // Group every play by category, keep each item's index in __PROJ_EDGE__ (for the
+  // form lookup), then render the top 5 per category in a fixed pitching->hitting order.
+  var byCat={};
+  all.forEach(function(it,gi){ (byCat[it.cat]=byCat[it.cat]||[]).push({it:it,gi:gi}); });
+  var CAT_ORDER=[
+    ['Pitcher Ks','Pitcher \u2014 Strikeouts','#f59e0b'],
+    ['Pitcher Hits Allowed','Pitcher \u2014 Hits Allowed','#f59e0b'],
+    ['Pitcher Outs','Pitcher \u2014 Outs','#f59e0b'],
+    ['Pitcher Earned Runs','Pitcher \u2014 Earned Runs','#f59e0b'],
+    ['Pitcher Walks','Pitcher \u2014 Walks Allowed','#f59e0b'],
+    ['Hitter Hits','Hitting \u2014 To Record a Hit','#38bdf8'],
+    ['U1.5 Hits','Hitting \u2014 Under 1.5 Hits','#38bdf8'],
+    ['TB Over','Hitting \u2014 Total Bases Over','#38bdf8'],
+    ['TB Under','Hitting \u2014 Total Bases Under','#38bdf8'],
+    ['HRR','Hitting \u2014 H+R+RBI','#38bdf8'],
+    ['RBI','Hitting \u2014 RBI','#38bdf8'],
+    ['HR','Hitting \u2014 Home Runs','#38bdf8'],
+    ['Batter Walks','Hitting \u2014 Batter Walks','#38bdf8'],
+    ['Runs','Hitting \u2014 Runs','#38bdf8']
+  ];
+  var inner='', any=false, di=0;
+  CAT_ORDER.forEach(function(co){
+    var bucket=byCat[co[0]]; if(!bucket||!bucket.length) return;
+    bucket.sort(function(a,b){ return b.it.gap-a.it.gap; });
+    bucket=bucket.slice(0,5);
+    any=true;
+    inner+='<div style="padding:6px 14px 4px;font-size:.62rem;font-weight:900;letter-spacing:.08em;color:'+co[2]+';border-bottom:1px solid #1e293b;background:#0a0f1e">'+co[1].toUpperCase()+' ('+bucket.length+')</div>';
+    bucket.forEach(function(x){ inner+=renderRow(x.it,x.gi,di); di++; });
+  });
+  if(!any){
     inner='<div style="color:#94a3b8;padding:24px 16px;text-align:center">No projection edges found today.</div>';
   } else {
     inner='<div style="font-size:.62rem;color:#475569;font-weight:800;letter-spacing:.06em;display:grid;grid-template-columns:1fr 96px 56px 48px 62px;gap:0;padding:6px 14px 4px;border-bottom:1px solid #1e293b">'
       +'<span>PLAYER / MARKET</span><span style="text-align:right">PICK</span>'
-      +'<span style="text-align:right">PROJ/LINE</span><span style="text-align:right">ODDS</span><span style="text-align:right">EDGE</span></div>';
-    var gi=0;
-    if(data.pitchers.length){
-      inner+='<div style="padding:5px 14px 3px;font-size:.62rem;font-weight:900;letter-spacing:.08em;color:#f59e0b;border-bottom:1px solid #1e293b;background:#0a0f1e">PITCHER COUNT PROJECTIONS ('+data.pitchers.length+')</div>';
-      data.pitchers.forEach(function(item){ inner+=renderRow(item,gi); gi++; });
-    }
-    if(data.hitters.length){
-      inner+='<div style="padding:5px 14px 3px;font-size:.62rem;font-weight:900;letter-spacing:.08em;color:#38bdf8;border-bottom:1px solid #1e293b;background:#0a0f1e">HITTER WIN PROBABILITY vs 50% ('+data.hitters.length+')</div>';
-      data.hitters.forEach(function(item){ inner+=renderRow(item,gi); gi++; });
-    }
+      +'<span style="text-align:right">PROJ/LINE</span><span style="text-align:right">ODDS</span><span style="text-align:right">EDGE</span></div>'+inner;
   }
   var ov=document.getElementById('proj-edge-modal');
   if(!ov){
@@ -5187,7 +5218,7 @@ function _openProjEdge(){
   ov.innerHTML='<div style="background:#080f1e;border:1px solid #1e3a5f;border-radius:18px;width:100%;max-width:600px;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 24px 80px rgba(0,0,0,.7)" onclick="event.stopPropagation()">'
     +'<div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid #1e293b;flex-shrink:0">'
     +'<div><div style="font-weight:900;color:#38bdf8;font-size:1.05rem">&#9650; Proj Edge Plays</div>'
-    +'<div style="color:#64748b;font-size:.72rem;margin-top:2px">picks where our model beats the line &#xB7; all plays &#xB7; pitchers: count proj &#xB7; hitters: win prob &#xB7; Track Bet any row</div></div>'
+    +'<div style="color:#64748b;font-size:.72rem;margin-top:2px">top 5 per category &#xB7; pitchers: count proj &#xB7; hitters: win prob &#xB7; click any name for recent form &#xB7; Track Bet any row</div></div>'
     +'<button onclick="document.getElementById(&#39;proj-edge-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:1.1rem;flex-shrink:0">&#215;</button>'
     +'</div>'
     +'<div style="overflow-y:auto;flex:1">'+inner+'</div>'
@@ -6097,7 +6128,7 @@ function _rbiForm(key){
   if(!ov){
     ov=document.createElement('div');
     ov.id='rbi-modal';
-    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:10050;display:flex;align-items:center;justify-content:center;padding:16px';
     ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; };
     document.body.appendChild(ov);
   }
@@ -6192,7 +6223,7 @@ function _hrForm(key){
   if(!ov){
     ov=document.createElement('div');
     ov.id='hr-modal';
-    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:10050;display:flex;align-items:center;justify-content:center;padding:16px';
     ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; };
     document.body.appendChild(ov);
   }
@@ -6286,7 +6317,7 @@ function _walksForm(key){
   if(!ov){
     ov=document.createElement('div');
     ov.id='walks-modal';
-    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:10050;display:flex;align-items:center;justify-content:center;padding:16px';
     ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; };
     document.body.appendChild(ov);
   }
@@ -6423,7 +6454,7 @@ function _tbOverForm(key){
   if(!ov){
     ov=document.createElement('div');
     ov.id='tb-over-modal';
-    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:10050;display:flex;align-items:center;justify-content:center;padding:16px';
     ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; };
     document.body.appendChild(ov);
   }
@@ -6704,7 +6735,7 @@ function _hrrForm(key){
   if(!ov){
     ov=document.createElement('div');
     ov.id='hrr-modal';
-    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:10050;display:flex;align-items:center;justify-content:center;padding:16px';
     ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; };
     document.body.appendChild(ov);
   }
@@ -6742,7 +6773,7 @@ function _tbForm(key){
   if(!ov){
     ov=document.createElement('div');
     ov.id='tb-modal';
-    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:10050;display:flex;align-items:center;justify-content:center;padding:16px';
     ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; };
     document.body.appendChild(ov);
   }
@@ -7544,7 +7575,7 @@ function _openEdgeStats(){
       body+='<div style="display:grid;grid-template-columns:1fr 56px 48px 72px;gap:0;padding:7px 8px;border-bottom:1px solid #0f172a;background:'+(i%2?'#070e1b':'#050c18')+'"><span style="color:#cbd5e1;font-size:.77rem;font-weight:600">'+_esc(c.lbl)+'</span><span style="text-align:right;color:#e2e8f0;font-size:.77rem">'+c.w+'-'+c.l+'</span><span style="text-align:right;color:#64748b;font-size:.75rem">'+c.counted+'</span><span style="text-align:right;font-size:.77rem;font-weight:800;color:'+cn+'">$'+(c.net>=0?'+':'')+c.net.toFixed(2)+'</span></div>';
     });
   } else {
-    body+='<div style="color:#64748b;padding:20px;text-align:center">No tracked edge plays yet.<br><span style="font-size:.74rem">Use Track Bet on any row in the &#9733; Edge Plays modal.</span></div>';
+    body+='<div style="color:#64748b;padding:20px;text-align:center">No 5%+ edge plays graded yet.<br><span style="font-size:.74rem">This fills in automatically as each day&#39;s 5%+ edge picks go Final &#x2014; no manual tracking needed.</span></div>';
   }
   body+='</div>';
   var ov2=document.getElementById('edge-stats-modal');
@@ -7629,7 +7660,7 @@ function _catVerdictPopup(tok){
   if(!tot(G)&&!tot(A)&&!tot(D)){ noteClr='#94a3b8'; noteTxt='No green / amber / red picks in this range yet. The verdict needs the series-position stamp (G1/G2/G3) plus the day-of-week signal \u2014 it fills in as new slates are graded.'+(unrated?(' '+unrated+' graded pick'+(unrated>1?'s':'')+' here had no signal stamp.'):''); }
   else { noteClr='#94a3b8'; noteTxt='Experimental day-of-week + series lean, shown for tracking only \u2014 not a betting recommendation while we gather results.'; }
   var ov=document.getElementById('catv-modal');
-  if(!ov){ ov=document.createElement('div'); ov.id='catv-modal'; ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px'; ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; }; document.body.appendChild(ov); }
+  if(!ov){ ov=document.createElement('div'); ov.id='catv-modal'; ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:10050;display:flex;align-items:center;justify-content:center;padding:16px'; ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; }; document.body.appendChild(ov); }
   var allN=tot(All), allRoi=roi(All), allClr=allRoi>=0?'#4ade80':'#f87171';
   var hdrSub=(cfg.lbl||key)+' \u00b7 '+allN+' graded \u00b7 '+(allN?(All.w/allN*100).toFixed(0):'0')+'% \u00b7 ROI <span style="color:'+allClr+';font-weight:800">'+(allRoi>=0?'+':'\u2212')+Math.abs(allRoi).toFixed(0)+'%</span>';
   ov.innerHTML='<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:460px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">'
