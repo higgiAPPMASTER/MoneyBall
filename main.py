@@ -7243,7 +7243,7 @@ function renderTrackRecord(d){
   var _edgeOn=window.__TRK_EDGE_ONLY__;
   var tabs='<div style="display:flex;gap:8px;margin-bottom:4px;flex-wrap:wrap">'+_trkTabBtn('daily','Daily')+_trkTabBtn('weekly','Weekly')+_trkTabBtn('monthly','Monthly')+_trkTabBtn('custom','Custom')
     +'<button onclick="_trkToggleEdge()" id="trk-edge-btn" title="Show only bets where our edge was 5%+ at the time of tracking" style="margin-left:auto;background:'+(_edgeOn?'#065f46':'#1e293b')+';color:'+(_edgeOn?'#4ade80':'#94a3b8')+';border:1px solid '+(_edgeOn?'#16a34a':'#334155')+';border-radius:8px;padding:8px 16px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">&#9733; Edge Plays Only'+(_edgeOn?' \u2713':'')+'</button>'
-    +'<button onclick="_openEdgeStats()" title="W/L record and ROI for all bets tracked when our EV edge was 5%+" style="background:#065f46;color:#6ee7b7;border:1px solid #16a34a;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">&#9733; Edge Record</button>'
+    +'<button onclick="_openEdgeStats()" title="W/L record and ROI for the top 20 biggest-edge plays tracked each day" style="background:#065f46;color:#6ee7b7;border:1px solid #16a34a;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">&#9733; Edge Record</button>'
     +'</div>';
   var sc=_matrixScorecard(d);
   var he=document.getElementById('track-head'); if(he) he.innerHTML=hdr+sc+tabs;
@@ -7564,19 +7564,31 @@ async function _edgeLoadDay(date){
   try{ var res=await fetch('/api/grade/'+date+'?token='+encodeURIComponent(tok)+(adm?('&admin='+encodeURIComponent(adm)):'')); if(!res.ok){ var t=await res.text(); window.__TRK_GRADE_CACHE__[date]={__error__:(t||'No picks for this date')}; } else { window.__TRK_GRADE_CACHE__[date]=await res.json(); } }catch(e){ window.__TRK_GRADE_CACHE__[date]={__error__:String((e&&e.message)||e)}; }
   _edgeStatsRender();
 }
-function _edgeDayPool(date){
-  var d=window.__TRACK__||{}; var pool=[]; var have=false;
-  (d.detail||[]).forEach(function(r){ if(r.date===date){ have=true; if((r.edge||0)>=0.05&&(r.result==='WIN'||r.result==='LOSS')) pool.push(r); } });
-  if(!have){ var cache=window.__TRK_GRADE_CACHE__||{}; _trkFlatten(cache[date]).forEach(function(r){ if((r.edge||0)>=0.05&&(r.result==='WIN'||r.result==='LOSS')) pool.push(r); }); }
-  return pool;
+// Top-20-by-edge tracked set for ONE date (edge>=5%, graded W/L). Detail-first
+// (locked ledger), else the on-demand grade cache. Mirrors the live "Biggest
+// Edge Plays" top-20 so the record tracks exactly those plays each day.
+function _edgeRowsForDate(date){
+  var d=window.__TRACK__||{}; var rows=[]; var have=false;
+  (d.detail||[]).forEach(function(r){ if(r.date===date){ have=true; if((r.edge||0)>=0.05&&(r.result==='WIN'||r.result==='LOSS')&&!_trkSkipMeta(r)) rows.push(r); } });
+  if(!have){ var cache=window.__TRK_GRADE_CACHE__||{}; _trkFlatten(cache[date]).forEach(function(r){ if((r.edge||0)>=0.05&&(r.result==='WIN'||r.result==='LOSS')&&!_trkSkipMeta(r)) rows.push(r); }); }
+  rows.sort(function(a,b){ return (b.edge||0)-(a.edge||0); });
+  return rows.slice(0,20);
+}
+// Every date that has tracked data (locked ledger + on-demand grade cache).
+function _edgeAllDates(){
+  var d=window.__TRACK__||{}, set={};
+  (d.detail||[]).forEach(function(r){ if(r.date) set[r.date]=true; });
+  var cache=window.__TRK_GRADE_CACHE__||{};
+  Object.keys(cache).forEach(function(dt){ if(cache[dt]&&cache[dt]!=='LOADING'&&!cache[dt].__error__) set[dt]=true; });
+  return Object.keys(set);
 }
 function _edgeStatsWrap(bodyHtml){
   var ov2=document.getElementById('edge-stats-modal'); if(!ov2) return;
   var dateMode=!!window.__EDGE_DATE__, date=window.__EDGE_DATE__||'';
-  var sub=dateMode?('5%+ edge plays &#xB7; '+_weekdayName(date)+' '+date):'bets tracked when EV edge was 5%+ &#xB7; tap a day for that slate&#39;s plays';
+  var sub=dateMode?('top 20 biggest-edge plays &#xB7; '+_weekdayName(date)+' '+date):'top 20 biggest-edge plays tracked each day &#xB7; tap a day for that slate&#39;s plays';
   ov2.innerHTML='<div style="background:#080f1e;border:1px solid #16432c;border-radius:18px;width:100%;max-width:460px;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 24px 80px rgba(0,0,0,.7)" onclick="event.stopPropagation()">'
     +'<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #1e293b;flex-shrink:0">'
-    +'<div><div style="font-weight:900;color:#4ade80;font-size:1rem">&#9733; Edge Plays Record</div>'
+    +'<div><div style="font-weight:900;color:#4ade80;font-size:1rem">&#9733; Top 20 Edge Record</div>'
     +'<div style="color:#64748b;font-size:.71rem;margin-top:2px">'+sub+'</div></div>'
     +'<button onclick="document.getElementById(&#39;edge-stats-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem;flex-shrink:0">&#215;</button>'
     +'</div>'
@@ -7595,12 +7607,9 @@ function _edgeStatsRender(){
     var g=cache[date];
     if(!inDetail && (g===undefined||g==='LOADING')) loadingMsg='Loading\u2026';
     else if(!inDetail && g&&g.__error__) loadingMsg=g.__error__||'No picks for this date.';
-    else pool=_edgeDayPool(date);
+    else pool=_edgeRowsForDate(date);
   } else {
-    (d.detail||[]).forEach(function(r){ if((r.edge||0)>=0.05&&(r.result==='WIN'||r.result==='LOSS')) pool.push(r); });
-    var c2=window.__TRK_GRADE_CACHE__||{}, seen={};
-    (d.detail||[]).forEach(function(r){ if(r.date) seen[r.date]=true; });
-    Object.keys(c2).forEach(function(dt){ if(seen[dt]) return; _trkFlatten(c2[dt]).forEach(function(r){ if((r.edge||0)>=0.05&&(r.result==='WIN'||r.result==='LOSS')) pool.push(r); }); });
+    _edgeAllDates().forEach(function(dt){ var t=_edgeRowsForDate(dt); for(var i=0;i<t.length;i++) pool.push(t[i]); });
   }
   var ov={w:0,l:0,net:0,counted:0}, cats={};
   pool.forEach(function(r){
@@ -7642,7 +7651,7 @@ function _edgeStatsRender(){
         body+='<div style="display:grid;grid-template-columns:1fr 38px 58px 52px;gap:0;padding:7px 8px;border-bottom:1px solid #0f172a;background:'+(i%2?'#070e1b':'#050c18')+'"><div style="min-width:0"><div style="color:#e2e8f0;font-size:.78rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+_esc(r.name||'?')+'</div><div style="color:#64748b;font-size:.67rem">'+_esc((r.category||'?')+' '+(r.side||'OVER'))+'</div></div><span style="text-align:right;align-self:center;font-weight:800;color:'+rc+';font-size:.78rem">'+(win?'W':'L')+'</span><span style="text-align:right;align-self:center;color:#cbd5e1;font-size:.74rem;font-family:monospace">'+odStr+'</span><span style="text-align:right;align-self:center;color:#38bdf8;font-size:.74rem;font-weight:700">'+ep+'</span></div>';
       });
     } else {
-      body+='<div style="color:#64748b;padding:20px;text-align:center">No 5%+ edge plays graded on this date.</div>';
+      body+='<div style="color:#64748b;padding:20px;text-align:center">No top-20 edge plays graded on this date.</div>';
     }
   } else {
     var rows=Object.keys(cats).map(function(k){ return cats[k]; }).sort(function(a,b){ return b.net-a.net; });
@@ -7653,7 +7662,7 @@ function _edgeStatsRender(){
         body+='<div style="display:grid;grid-template-columns:1fr 56px 48px 72px;gap:0;padding:7px 8px;border-bottom:1px solid #0f172a;background:'+(i%2?'#070e1b':'#050c18')+'"><span style="color:#cbd5e1;font-size:.77rem;font-weight:600">'+_esc(c.lbl)+'</span><span style="text-align:right;color:#e2e8f0;font-size:.77rem">'+c.w+'-'+c.l+'</span><span style="text-align:right;color:#64748b;font-size:.75rem">'+c.counted+'</span><span style="text-align:right;font-size:.77rem;font-weight:800;color:'+cn+'">$'+(c.net>=0?'+':'')+c.net.toFixed(2)+'</span></div>';
       });
     } else {
-      body+='<div style="color:#64748b;padding:20px;text-align:center">No 5%+ edge plays graded yet.<br><span style="font-size:.74rem">This fills in automatically as each day&#39;s 5%+ edge picks go Final &#x2014; no manual tracking needed.</span></div>';
+      body+='<div style="color:#64748b;padding:20px;text-align:center">No top-20 edge plays graded yet.<br><span style="font-size:.74rem">This fills in automatically as each day&#39;s top 20 biggest-edge picks go Final &#x2014; no manual tracking needed.</span></div>';
     }
   }
   body+='</div>';
