@@ -860,10 +860,12 @@ def _t10_batter_red(p):
     return tier == 1
 
 
-def _t10_rank(cands):
+def _t10_rank(cands, drop_red=True):
     """Rank hitter candidates the way the live _buildTop10All does: sort by
     Wilson-EV (highest edge first), dedup by name, drop ace-faced (RED) plays,
-    then one pick per team. Top 10 = [:10], overflow = [10:20]."""
+    then one pick per team. Top 10 = [:10], overflow = [10:20].
+    drop_red=False keeps ace-faced plays — the NEW challenger list passes this so
+    it mirrors the approved example (which surfaced Joe Mack / Goldschmidt etc.)."""
     cs = sorted(cands, key=lambda x: -(x.get("_t10sc") or -999.0))
     _seen = set(); _dd = []
     for c in cs:
@@ -871,7 +873,8 @@ def _t10_rank(cands):
         if k in _seen:
             continue
         _seen.add(k); _dd.append(c)
-    _dd = [c for c in _dd if not c.get("_red")]
+    if drop_red:
+        _dd = [c for c in _dd if not c.get("_red")]
     _tseen = set(); _out = []
     for c in _dd:
         t = (c.get("team") or "").strip().upper()
@@ -1383,15 +1386,16 @@ def _grade_date(date_str: str, picks: dict) -> dict:
              c.get("line"), actual, c.get("stat_label"), st)
 
     # ── Top 10 Batter (NEW) — A/B challenger rule ───────────────────────────
-    # Identical base pipeline to Current (Wilson-EV rank, dedup, drop ace-faced,
-    # one per team) but with the NEW filter layered on: PLUS-money only AND
-    # (hot hand OR positive Wilson-EV edge). Banked beside Current so the Track
-    # Record can show both records side by side. Kept OUT of the combined grand
-    # total (it is a parallel experiment, not extra real picks).
+    # Base pipeline like Current (Wilson-EV rank, dedup, one per team) but with
+    # the NEW filter layered on: PLUS-money only AND (hot hand OR positive
+    # Wilson-EV edge). UNLIKE Current it does NOT drop ace-faced (red) plays —
+    # this mirrors the approved example (surfaces Joe Mack / Goldschmidt etc.).
+    # Banked beside Current so the Track Record can show both records side by
+    # side. Kept OUT of the combined grand total (a parallel experiment).
     _new_cands = [c for c in _bat_raw
                   if c.get("odds") is not None and c.get("odds") > 0
                   and ((c.get("hot") or 0) > 0 or (c.get("_t10sc") or -999.0) > 0)]
-    _new_cands = _t10_rank(_new_cands)
+    _new_cands = _t10_rank(_new_cands, drop_red=False)
     top10_batter_new = []
     for c in _new_cands[:10]:
         st = _lookup(c.get("pid"), c.get("fname") or c["name"])
@@ -6653,7 +6657,9 @@ function _buildTop10All(view, newRule) {
   plays.sort(function(a,b){ return b._t10ev - a._t10ev; });
   var _t10seen={};
   plays=plays.filter(function(p){ var k=(p.name||p.full_name||'').trim().toLowerCase(); if(_t10seen[k]) return false; _t10seen[k]=true; return true; });
-  plays=plays.filter(function(p){ return !_t10DotIsRed(p,'O',false,0); });  // green/amber lights only
+  // Current: green/amber lights only (drop ace-faced). NEW: keep ace-faced so it
+  // mirrors the approved example (surfaces Joe Mack / Goldschmidt etc.).
+  if(!newRule){ plays=plays.filter(function(p){ return !_t10DotIsRed(p,'O',false,0); }); }
   // One pick per team — keep only the best (highest Wilson-EV) play per club so
   // teammates don't crowd the Top 10. plays is already sorted by _t10ev desc.
   var _t10teams={};
@@ -7613,7 +7619,7 @@ function _trkRenderDaily(stake){
   de.innerHTML=daily.length?'<details open style="margin-top:0"><summary style="cursor:pointer;font-weight:700;color:#a78bfa;padding:10px 0;border-bottom:1px solid #1f2937">📅 Daily \u2014 every pick by category ('+daily.length+' day'+(daily.length===1?'':'s')+')</summary><div style="margin-top:6px">'+dayBlocks+'</div></details>':'';
 }
 // ===== Track Record tabs: Daily / Weekly (last 7 days) / Monthly =====
-var _TRK_KEYS=['top10_batter','top10_pitcher','hitter_overs','hitter_unders','runs','tb_under','tb_over','rbi','batter_walks','hrr','pitcher_ks','pitcher_props'];
+var _TRK_KEYS=['top10_batter','top10_batter_new','top10_pitcher','hitter_overs','hitter_unders','runs','tb_under','tb_over','rbi','batter_walks','hrr','pitcher_ks','pitcher_props'];
 function _trkTodayISO(){ var d=new Date(); var z=d.getTimezoneOffset()*60000; return new Date(d.getTime()-z).toISOString().slice(0,10); }
 function _isoShift(iso,days){ var d=new Date(iso+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()+days); return d.toISOString().slice(0,10); }
 function _trkRC(w,n){ if(!n) return '#64748b'; var p=w/n; return p>=0.70?'#4ade80':(p>=0.55?'#facc15':'#f87171'); }
