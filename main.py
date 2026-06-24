@@ -860,6 +860,29 @@ def _t10_batter_red(p):
     return tier == 1
 
 
+def _t10_rank(cands):
+    """Rank hitter candidates the way the live _buildTop10All does: sort by
+    Wilson-EV (highest edge first), dedup by name, drop ace-faced (RED) plays,
+    then one pick per team. Top 10 = [:10], overflow = [10:20]."""
+    cs = sorted(cands, key=lambda x: -(x.get("_t10sc") or -999.0))
+    _seen = set(); _dd = []
+    for c in cs:
+        k = (c.get("name") or "").strip().lower()
+        if k in _seen:
+            continue
+        _seen.add(k); _dd.append(c)
+    _dd = [c for c in _dd if not c.get("_red")]
+    _tseen = set(); _out = []
+    for c in _dd:
+        t = (c.get("team") or "").strip().upper()
+        if t and t in _tseen:
+            continue
+        if t:
+            _tseen.add(t)
+        _out.append(c)
+    return _out
+
+
 def _grade_date(date_str: str, picks: dict) -> dict:
     """Grade every pick category for a date against actual box scores.
     Each row carries category + side so the Track Record ledger can tally O/U splits."""
@@ -1324,31 +1347,14 @@ def _grade_date(date_str: str, picks: dict) -> dict:
                 "side":_side,"stat_key":_sk,"stat_label":_sl,"line":_ln,
                 "odds":_od,"ev":p.get("ev"),"ev_prob":p.get("ev_prob"),
                 "matchup_prob":p.get("matchup_prob"),"edge":p.get("edge"),
+                "hot":p.get("hot_bonus"),
                 "pid":p.get("batter_id"),"fname":p.get("name"),
                 "_t10sc":_sc,"_red":_t10_batter_red(p)})
-    # Wilson-EV ranking (highest edge first), then dedup by name — matches the
-    # client's stable sort + _dedup order before the red-light filter is applied.
-    _bat_cands.sort(key=lambda x: -(x.get("_t10sc") or -999.0))
-    _bat_seen = set()
-    _bat_dedup = []
-    for _bc in _bat_cands:
-        _bk = (_bc.get("name") or "").strip().lower()
-        if _bk in _bat_seen: continue
-        _bat_seen.add(_bk); _bat_dedup.append(_bc)
-    # green/amber only — drop ace-faced batters AFTER dedup (client order)
-    _bat_cands = [c for c in _bat_dedup if not c.get("_red")]
-    # one pick per team — keep only the best (highest Wilson-EV) play per club,
-    # mirroring the page so teammates never crowd the Top 10 / overflow
-    _bat_team_seen = set()
-    _bat_one_per = []
-    for c in _bat_cands:
-        _t = (c.get("team") or "").strip().upper()
-        if _t and _t in _bat_team_seen:
-            continue
-        if _t:
-            _bat_team_seen.add(_t)
-        _bat_one_per.append(c)
-    _bat_cands = _bat_one_per
+    # Snapshot the raw candidates BEFORE ranking so the NEW challenger rule can
+    # re-rank its own filtered subset (A/B test — see below).
+    _bat_raw = list(_bat_cands)
+    # Current rule: rank by Wilson-EV, dedup by name, drop ace-faced, one per team.
+    _bat_cands = _t10_rank(_bat_cands)
     top10_batter = []
     for c in _bat_cands[:10]:
         st = _lookup(c.get("pid"), c.get("fname") or c["name"])
@@ -1373,6 +1379,38 @@ def _grade_date(date_str: str, picks: dict) -> dict:
         st = _lookup(c.get("pid"), c.get("fname") or c["name"])
         actual = st[c["stat_key"]] if (st and c["stat_key"] in st) else None
         _ovf(c, c.get("name", ""), c.get("team", ""), "Top 10 Batter (OVF)", c["side"],
+             f"{c['side']} {c['line']} {c['stat_label']}", c.get("odds"),
+             c.get("line"), actual, c.get("stat_label"), st)
+
+    # ── Top 10 Batter (NEW) — A/B challenger rule ───────────────────────────
+    # Identical base pipeline to Current (Wilson-EV rank, dedup, drop ace-faced,
+    # one per team) but with the NEW filter layered on: PLUS-money only AND
+    # (hot hand OR positive Wilson-EV edge). Banked beside Current so the Track
+    # Record can show both records side by side. Kept OUT of the combined grand
+    # total (it is a parallel experiment, not extra real picks).
+    _new_cands = [c for c in _bat_raw
+                  if c.get("odds") is not None and c.get("odds") > 0
+                  and ((c.get("hot") or 0) > 0 or (c.get("_t10sc") or -999.0) > 0)]
+    _new_cands = _t10_rank(_new_cands)
+    top10_batter_new = []
+    for c in _new_cands[:10]:
+        st = _lookup(c.get("pid"), c.get("fname") or c["name"])
+        actual = st[c["stat_key"]] if (st and c["stat_key"] in st) else None
+        top10_batter_new.append({
+            "name": c["name"], "team": c["team"],
+            "category": "Top 10 Batter (NEW)", "side": c["side"],
+            "pick": f"{c['side']} {c['line']} {c['stat_label']}",
+            "odds": c["odds"], "line": c["line"], "actual": actual, "stat": c["stat_label"],
+            "result": _grade(c["side"], c["line"], actual, (st or {}).get("final", False)),
+            "game_status": (st or {}).get("status", "—"),
+            "ev": c.get("ev"),
+            "ev_prob": (c.get("ev_prob") if c.get("ev_prob") is not None else c.get("matchup_prob")),
+            "edge": c.get("edge"),
+        })
+    for c in _new_cands[10:20]:
+        st = _lookup(c.get("pid"), c.get("fname") or c["name"])
+        actual = st[c["stat_key"]] if (st and c["stat_key"] in st) else None
+        _ovf(c, c.get("name", ""), c.get("team", ""), "Top 10 Batter NEW (OVF)", c["side"],
              f"{c['side']} {c['line']} {c['stat_label']}", c.get("odds"),
              c.get("line"), actual, c.get("stat_label"), st)
 
@@ -1438,6 +1476,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
         "pitcher_ks":    pitcher_ks,
         "pitcher_props": pitcher_props,
         "top10_batter":  top10_batter,
+        "top10_batter_new": top10_batter_new,
         "top10_pitcher": top10_pitcher,
         "overflow":      overflow,
         "any_game":      any_game,
@@ -1461,7 +1500,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
     _harvest_pos(picks)
     for _key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over",
                  "rbi", "hr", "batter_walks", "hrr", "pitcher_ks", "pitcher_props",
-                 "top10_batter", "top10_pitcher", "overflow"):
+                 "top10_batter", "top10_batter_new", "top10_pitcher", "overflow"):
         for _r in (result.get(_key) or []):
             if isinstance(_r, dict):
                 _r["series_pos"] = _pos_by_name.get(
@@ -1472,7 +1511,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
 # ── Track Record: permanent W/L ledger across all graded days ────────────
 _TRACK_LEDGER_PATH = os.path.join(_CACHE_DIR, "_track_record.json")
 _TRACK_CAT_ORDER = [
-    "Top 10 Batter", "Top 10 Pitcher",
+    "Top 10 Batter", "Top 10 Batter (NEW)", "Top 10 Pitcher",
     "Hitter Hits", "Hitter Hits (More)", "Runs", "TB Under", "TB Over", "RBI", "HR", "Batter Walks", "HRR", "Pitcher Ks",
     "Pitcher Hits Allowed", "Pitcher Outs", "Pitcher Earned Runs", "Pitcher Walks",
 ]
@@ -1572,7 +1611,7 @@ def _aggregate_graded(graded: dict) -> dict:
     """Collapse a graded day into {category: {side: [W, L]}} counting only decided picks
     that had odds posted — no-odds picks are excluded from the record."""
     agg: dict = {}
-    for key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "hr", "batter_walks", "hrr", "pitcher_ks", "pitcher_props", "top10_batter", "top10_pitcher", "overflow"):
+    for key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "hr", "batter_walks", "hrr", "pitcher_ks", "pitcher_props", "top10_batter", "top10_batter_new", "top10_pitcher", "overflow"):
         for r in graded.get(key, []):
             res = r.get("result")
             if res not in ("WIN", "LOSS"):
@@ -1597,7 +1636,7 @@ def _detail_graded(graded: dict) -> list:
     fields an earnings sheet needs: player, team, category, side, pick, odds,
     line, result. No-odds picks are excluded — they don't count in the record."""
     out = []
-    for key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "hr", "batter_walks", "hrr", "pitcher_ks", "pitcher_props", "top10_batter", "top10_pitcher", "overflow"):
+    for key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "hr", "batter_walks", "hrr", "pitcher_ks", "pitcher_props", "top10_batter", "top10_batter_new", "top10_pitcher", "overflow"):
         for r in graded.get(key, []):
             res = r.get("result")
             if res not in ("WIN", "LOSS"):
@@ -2392,10 +2431,12 @@ async def track_record(request: Request, token: str = "", admin: str = ""):
         for cat, sides in (led[ds] or {}).items():
             if cat == "__ovf_v1__" or _is_ovf_cat(cat) or _is_hr_cat(cat):
                 continue   # overflow, HR, + version sentinel never count toward the main record
+            _chal = (cat == "Top 10 Batter (NEW)")   # A/B challenger: own row, NOT in grand total
             for side, wl in sides.items():
                 rec = alltime.setdefault(cat, {}).setdefault(side, [0, 0])
                 rec[0] += wl[0]; rec[1] += wl[1]
-                day_w += wl[0]; day_l += wl[1]
+                if not _chal:
+                    day_w += wl[0]; day_l += wl[1]
         daily.append({"date": ds, "wins": day_w, "losses": day_l, "cats": led[ds]})
 
     cats = [c for c in _TRACK_CAT_ORDER if c in alltime] + \
@@ -3118,8 +3159,14 @@ _HTML = """
       <!-- SECTION 1: HITTERS -->
         <div class="section-hdr" style="color:#facc15;font-size:1.05rem;margin-top:8px">⚾ HITTERS</div>
         <div class="card p-6 hidden" id="top10-plays-card" style="border-color:rgba(250,204,21,.35)">
-          <div class="section-hdr" style="color:#facc15">⭐ Top 10 Hitter Plays of the Day</div>
-          <p class="text-xs text-slate-400 mb-3" style="margin-top:-4px">Best hitter plays across all categories ranked by Expected Value (Wilson edge × odds). Click any card for recent history. Track Bet logs it to My Bets.</p>
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+            <div class="section-hdr" style="color:#facc15;margin:0">⭐ Top 10 Hitter Plays of the Day</div>
+            <div style="display:inline-flex;border:1px solid #3a3a1a;border-radius:9px;overflow:hidden;flex:0 0 auto">
+              <button id="t10-tog-cur" onclick="_setT10View(&#39;current&#39;)" style="border:none;padding:6px 16px;font-size:.8rem;font-weight:800;cursor:pointer;background:#facc15;color:#000">Current <span id="t10-cur-cnt"></span></button>
+              <button id="t10-tog-new" onclick="_setT10View(&#39;new&#39;)" style="border:none;padding:6px 16px;font-size:.8rem;font-weight:800;cursor:pointer;background:#1e1e1e;color:#facc15">New <span id="t10-new-cnt"></span></button>
+            </div>
+          </div>
+          <p class="text-xs text-slate-400 mb-3" style="margin-top:6px">A/B test &middot; <b style="color:#facc15">Current</b> = all categories ranked by Expected Value (Wilson edge × odds). <b style="color:#facc15">New</b> = plus-money only, must be hot OR carry a value edge. Both are recorded daily in Track Record. Click any card for recent history.</p>
           <div id="top10-plays-body" class="mlb-picks-grid"></div>
           <div id="top10-more-wrap"></div>
         </div>
@@ -3617,16 +3664,16 @@ function showResults(result) {
       statCard('⏱️','Time (s)',stats.elapsed),
     ].join('');
 
-  const t10All = _buildTop10All(view);
-  const t10Plays = t10All.slice(0, 10);
-  if (t10Plays.length > 0 && !(window.UNDERS_ONLY && (window.IS_ADMIN||window.IS_TESTER))) {
+  // A/B test: build BOTH the Current ranking and the NEW challenger ranking,
+  // stash them, then paint whichever the toggle is set to. Both are recorded
+  // server-side in Track Record so the two records can be compared.
+  window.__T10_CUR__ = _buildTop10All(view);
+  window.__T10_NEW__ = _buildTop10All(view, true);
+  if (window.__T10_VIEW__ !== 'new') window.__T10_VIEW__ = 'current';
+  var _t10Has = ((window.__T10_CUR__||[]).length > 0 || (window.__T10_NEW__||[]).length > 0);
+  if (_t10Has && !(window.UNDERS_ONLY && (window.IS_ADMIN||window.IS_TESTER))) {
     show('top10-plays-card');
-    window.__T10_REG__={};
-    document.getElementById('top10-plays-body').innerHTML = t10Plays.map(function(p,i){ return _top10Card(p, i+1); }).join('');
-    var t10More = t10All.slice(10, 20);
-    document.getElementById('top10-more-wrap').innerHTML = t10More.length > 0
-      ? _moreWrap(t10More, function(p,r){ return _top10Card(p, r); }, 11, 'Hitter Plays', '#facc15')
-      : '';
+    _renderT10Section();
   }
 
   if (window.UNDERS_ONLY && (window.IS_ADMIN||window.IS_TESTER)) { hide('top-picks-card'); hide('top10-plays-card'); } else { show('top-picks-card'); }
@@ -6583,7 +6630,7 @@ function _buildPitchDay(view){
   });
   return dayList;
 }
-function _buildTop10All(view) {
+function _buildTop10All(view, newRule) {
   var plays = [];
   function _add(arr, kind) {
     (arr||[]).forEach(function(p){
@@ -6591,6 +6638,8 @@ function _buildTop10All(view) {
       if(od==null) return;
       var ev = _t10Score(p, kind);
       if(ev<=-999) return;
+      // NEW challenger rule: plus-money only AND (hot hand OR positive edge).
+      if(newRule && !(od>0 && (((p.hot_bonus||0)>0) || ev>0))) return;
       plays.push(Object.assign({}, p, {_t10kind:kind, _t10ev:ev}));
     });
   }
@@ -6616,6 +6665,33 @@ function _buildTop10All(view) {
 function _buildTop10(view) {
   return _buildTop10All(view).slice(0, 10);
 }
+var _T10_TOG_BASE='border:none;padding:6px 16px;font-size:.8rem;font-weight:800;cursor:pointer;';
+// A/B toggle between the Current ranking and the NEW challenger rule. Repaints
+// just the Top 10 body + overflow + toggle chrome; the underlying lists are
+// built once per render() into __T10_CUR__ / __T10_NEW__.
+function _renderT10Section(){
+  var isNew=window.__T10_VIEW__==='new';
+  var v=isNew?(window.__T10_NEW__||[]):(window.__T10_CUR__||[]);
+  var plays=v.slice(0,10), more=v.slice(10,20);
+  window.__T10_REG__={};
+  var body=document.getElementById('top10-plays-body'); if(!body) return;
+  body.innerHTML = plays.length
+    ? plays.map(function(p,i){ return _top10Card(p, i+1); }).join('')
+    : '<p class="text-slate-500 text-center" style="padding:16px">No '+(isNew?'NEW-rule ':'')+'plays today</p>';
+  var mw=document.getElementById('top10-more-wrap');
+  if(mw) mw.innerHTML = more.length>0
+    ? _moreWrap(more, function(p,r){ return _top10Card(p, r); }, 11, (isNew?'NEW ':'')+'Hitter Plays', '#facc15')
+    : '';
+  var tc=document.getElementById('t10-tog-cur'), tn=document.getElementById('t10-tog-new');
+  if(tc&&tn){
+    tc.style.cssText=_T10_TOG_BASE+(isNew?'background:#1e1e1e;color:#facc15':'background:#facc15;color:#000');
+    tn.style.cssText=_T10_TOG_BASE+(isNew?'background:#facc15;color:#000':'background:#1e1e1e;color:#facc15');
+  }
+  var cc=document.getElementById('t10-cur-cnt'), nc=document.getElementById('t10-new-cnt');
+  if(cc) cc.textContent=(window.__T10_CUR__||[]).slice(0,10).length;
+  if(nc) nc.textContent=(window.__T10_NEW__||[]).slice(0,10).length;
+}
+function _setT10View(v){ window.__T10_VIEW__=v; _renderT10Section(); }
 function _top10BetBtn(p, kind) {
   switch(kind) {
     case 'HITTER':  return _betBtn(p,'Top 10 Batter','OVER','hits','Hits',0.5,p.hit_odds);
@@ -7156,6 +7232,8 @@ function _trkBuildCfg(){
   var CAT_CFG={
     'Top 10 Batter|OVER':        {lbl:'Top 10 Hitter Plays',  icon:'⭐', abbr:'T10B+'},
     'Top 10 Batter|UNDER':       {lbl:'Top 10 Hitter Plays (Under)', icon:'⭐', abbr:'T10B-'},
+    'Top 10 Batter (NEW)|OVER':  {lbl:'Top 10 Hitter Plays (NEW)',       icon:'🆕', abbr:'T10N+'},
+    'Top 10 Batter (NEW)|UNDER': {lbl:'Top 10 Hitter Plays (NEW Under)', icon:'🆕', abbr:'T10N-'},
     'Top 10 Pitcher|OVER':       {lbl:'Top 10 Pitcher Props (Over)', icon:'🎯', abbr:'T10P+'},
     'Top 10 Pitcher|UNDER':      {lbl:'Top 10 Pitcher Props (Under)',icon:'🎯', abbr:'T10P-'},
     'Hitter Hits|OVER':          {lbl:'Top Picks (Over 0.5 Hits)', icon:'🎯', abbr:'Hits'},
@@ -7208,14 +7286,16 @@ function _trkBuildCfg(){
     'Pitcher Walks (OVF)|UNDER': {lbl:'Walks Allowed Overflow (Under)', icon:'🚶'},
     'Top 10 Batter (OVF)|OVER':  {lbl:'Top 10 Hitter Plays (OVF)',      icon:'⭐'},
     'Top 10 Batter (OVF)|UNDER': {lbl:'Top 10 Hitter Plays (OVF Under)', icon:'⭐'},
+    'Top 10 Batter NEW (OVF)|OVER':  {lbl:'Top 10 Hitter Plays NEW (OVF)',       icon:'🆕'},
+    'Top 10 Batter NEW (OVF)|UNDER': {lbl:'Top 10 Hitter Plays NEW (OVF Under)', icon:'🆕'},
   };
-  var CAT_ORDER=['Top 10 Batter|OVER','Top 10 Batter|UNDER','Top 10 Pitcher|OVER','Top 10 Pitcher|UNDER',
+  var CAT_ORDER=['Top 10 Batter|OVER','Top 10 Batter|UNDER','Top 10 Batter (NEW)|OVER','Top 10 Batter (NEW)|UNDER','Top 10 Pitcher|OVER','Top 10 Pitcher|UNDER',
     'Hitter Hits|OVER','Hitter Hits|UNDER','Runs|OVER','Runs|UNDER',
     'TB Under|UNDER','TB Over|OVER','RBI|OVER','RBI|UNDER','HR|OVER','HR|UNDER','Batter Walks|OVER','Batter Walks|UNDER','HRR|OVER','HRR|UNDER',
     'Pitcher Ks|OVER','Pitcher Ks|UNDER','Pitcher Hits Allowed|OVER','Pitcher Hits Allowed|UNDER',
     'Pitcher Outs|OVER','Pitcher Outs|UNDER','Pitcher Earned Runs|OVER','Pitcher Earned Runs|UNDER',
     'Pitcher Walks|OVER','Pitcher Walks|UNDER'];
-  var OVF_ORDER=['Top 10 Batter (OVF)|OVER','Top 10 Batter (OVF)|UNDER','Hitter Hits (More)|OVER','Hitter Hits (More)|UNDER','Runs (OVF)|OVER','Runs (OVF)|UNDER',
+  var OVF_ORDER=['Top 10 Batter (OVF)|OVER','Top 10 Batter (OVF)|UNDER','Top 10 Batter NEW (OVF)|OVER','Top 10 Batter NEW (OVF)|UNDER','Hitter Hits (More)|OVER','Hitter Hits (More)|UNDER','Runs (OVF)|OVER','Runs (OVF)|UNDER',
     'TB Under (OVF)|UNDER','TB Over (OVF)|OVER','RBI (OVF)|OVER','RBI (OVF)|UNDER',
     'Batter Walks (OVF)|OVER','Batter Walks (OVF)|UNDER','HRR (OVF)|OVER','HRR (OVF)|UNDER',
     'Pitcher Ks (OVF)|OVER','Pitcher Ks (OVF)|UNDER','Pitcher Hits Allowed (OVF)|OVER','Pitcher Hits Allowed (OVF)|UNDER',
@@ -8512,7 +8592,7 @@ function renderHRTracker(d){
 function _amDec(o){ if(o==null||o==='') return null; o=Number(o); if(!isFinite(o)||o===0) return null; return o>0?(1+o/100):(1+100/Math.abs(o)); }
 // Meta-ranking buckets duplicate the per-category picks — exclude them so CLV
 // and calibration never double-count the same bet.
-function _trkSkipMeta(r){ return r.category==='Top 10 Batter'||r.category==='Top 10 Pitcher'; }
+function _trkSkipMeta(r){ return r.category==='Top 10 Batter'||r.category==='Top 10 Batter (NEW)'||r.category==='Top 10 Pitcher'; }
 function _trkAmOdds(o){ o=Number(o); return (o>0?'+':'')+o; }
 
 // CLOSING LINE VALUE — did you get a better price than the market settled at?
