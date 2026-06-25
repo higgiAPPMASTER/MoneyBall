@@ -1647,14 +1647,14 @@ def run_hr_picks(run_date: str, team_schedule: dict, emit=None) -> list:
 
 # ── Batter Walks Picks (Batter Walks, Over/Under 0.5) ──────────────────────
 # Mirrors RBI exactly but counts games with 1+ walk (baseOnBalls) instead of
-# RBI. OVER when batter walks at ≥60% of games, UNDER when ≤40% (same 60%
-# confidence either way). Uses vs-opp
+# RBI. OVER when batter walks at ≥55% of games, UNDER when ≤40% of games.
+# Uses vs-opp
 # H/A rate (min 3 games) when available, else falls back to overall last-15
 # recent form so thin vs-opp samples still qualify. Odds from WALKS_ODDS
 # (batter_walks market), zero extra Odds API calls. Distinct from PITCHER walks.
 
-WALKS_OVER_CUT  = 60   # >= this % → likely to draw a walk
-WALKS_UNDER_CUT = 40   # <= this % → likely NOT to draw a walk (mirrors OVER 60% confidence)
+WALKS_OVER_CUT  = 55   # >= this % → likely to draw a walk (lowered from 60 to widen the OVER pool)
+WALKS_UNDER_CUT = 40   # <= this % → likely NOT to draw a walk (UNDER side unchanged)
 WALKS_MIN_GAMES = 3    # minimum head-to-head games vs THIS opponent to qualify
 WALKS_TOP_N     = 20   # cap per side
 
