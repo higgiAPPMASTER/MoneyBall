@@ -912,6 +912,24 @@ def _set_ev(p, p_win, am):
         p["edge"] = round(float(p_win) - imp, 4)
 
 
+# v1 probability calibration -- deflate the families the EV audit flagged as
+# overconfident so the displayed win% / EV badge / ledger match reality.
+# 14-day audit (Jun 2026): score-derived (RBI/Runs/HRR/Walks/TB) + Poisson
+# pitcher markets ran HOT -- overs ~ predicted 72% / actual 46%; unders ~
+# predicted 85% / actual 67%. A per-side affine map (monotonic, so it never
+# reorders a list) pulls the model prob toward reality. Log5 hits, the binomial
+# under-1.5-hits, and HR were already well-calibrated and are NOT passed through.
+_PROB_CAL = {"OVER": (0.70, -0.044), "UNDER": (0.70, 0.075)}
+
+
+def _cal_prob(pw, side):
+    """Calibrate a raw model win-prob for `side` ('OVER'/'UNDER'). Clamped."""
+    if pw is None:
+        return None
+    _a, _b = _PROB_CAL.get((side or "OVER").upper(), _PROB_CAL["OVER"])
+    return max(0.05, min(0.95, _a * float(pw) + _b))
+
+
 def _pois_cdf(k, mean):
     """P(X <= k) for X ~ Poisson(mean). Small means only (cheap loop). Used to
     turn a pitcher count projection into an over/under win probability."""
@@ -1975,41 +1993,43 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     try:
         _SY = str(run_date)[:4]
 
-        def _ev_ou(p, p_over, over_am, under_am):
-            """Two-sided market: P(OVER)=p_over, attach for the picked side."""
+        def _ev_ou(p, p_over, over_am, under_am, cal=False):
+            """Two-sided market: P(OVER)=p_over, attach for the picked side.
+            cal=True routes the win-prob through _cal_prob (overconfident cats)."""
             if p.get("pick") == "UNDER":
-                _set_ev(p, (1.0 - p_over) if p_over is not None else None, under_am)
+                _pw = (1.0 - p_over) if p_over is not None else None
+                _set_ev(p, _cal_prob(_pw, "UNDER") if cal else _pw, under_am)
             else:
-                _set_ev(p, p_over, over_am)
+                _pw = _cal_prob(p_over, "OVER") if cal else p_over
+                _set_ev(p, _pw, over_am)
 
         for _p in rbi_picks_list:
             _s = _p.get("score")
             _ev_ou(_p, (_s / 100.0) if _s is not None else None,
-                   _p.get("over_odds"), _p.get("under_odds"))
+                   _p.get("over_odds"), _p.get("under_odds"), cal=True)
         for _p in walks_picks_list:
             _s = _p.get("score")
             _ev_ou(_p, (_s / 100.0) if _s is not None else None,
-                   _p.get("over_odds"), _p.get("under_odds"))
+                   _p.get("over_odds"), _p.get("under_odds"), cal=True)
         for _p in runs_picks_list:
             _s = _p.get("score")
             _ev_ou(_p, (_s / 100.0) if _s is not None else None,
-                   _p.get("over_odds"), _p.get("under_odds"))
+                   _p.get("over_odds"), _p.get("under_odds"), cal=True)
         for _p in hrr_picks_list:
             _s = _p.get("score")
             _ev_ou(_p, (_s / 100.0) if _s is not None else None,
-                   _p.get("hrr_over_odds"), _p.get("hrr_under_odds"))
+                   _p.get("hrr_over_odds"), _p.get("hrr_under_odds"), cal=True)
         for _p in hr_picks_list:
             _s = _p.get("score")
             _ev_ou(_p, (_s / 100.0) if _s is not None else None,
                    _p.get("over_odds"), _p.get("under_odds"))
         for _p in tb_over_picks_list:                 # OVER only
             _s = _p.get("score")
-            _set_ev(_p, (_s / 100.0) if _s is not None else None,
+            _set_ev(_p, _cal_prob((_s / 100.0) if _s is not None else None, "OVER"),
                     _p.get("tb_over_odds"))
-        for _p in tb_picks_list:                      # TB UNDER (score = % OVER)
+        for _p in tb_picks_list:                      # TB UNDER (score = % UNDER = P(win))
             _s = _p.get("score")
-            _po = (_s / 100.0) if _s is not None else None
-            _set_ev(_p, (1.0 - _po) if _po is not None else None,
+            _set_ev(_p, _cal_prob((_s / 100.0) if _s is not None else None, "UNDER"),
                     _p.get("tb_under_odds"))
 
         # Under-1.5-hits: P(<=1 hit) = binomial(0)+binomial(1) off season BA.
@@ -2031,16 +2051,18 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                 return
             if p.get("pick") == "UNDER":
                 _cdf = _pois_cdf(int(_math.floor(ln)), mean)
-                _set_ev(p, _cdf, p.get("under_odds"))
+                _set_ev(p, _cal_prob(_cdf, "UNDER"), p.get("under_odds"))
             else:
                 _alt = p.get("sugg_line")
                 if _alt is not None and p.get("pick") == "OVER":
                     _c = _pois_cdf(int(_math.floor(_alt)), mean)
-                    _set_ev(p, (1.0 - _c) if _c is not None else None,
+                    _pw = (1.0 - _c) if _c is not None else None
+                    _set_ev(p, _cal_prob(_pw, "OVER"),
                             p.get("sugg_odds") or p.get("over_odds"))
                 else:
                     _c = _pois_cdf(int(_math.floor(ln)), mean)
-                    _set_ev(p, (1.0 - _c) if _c is not None else None,
+                    _pw = (1.0 - _c) if _c is not None else None
+                    _set_ev(p, _cal_prob(_pw, "OVER"),
                             p.get("over_odds"))
 
         for _pk in (pitcher_k_result.get("picks", [])
