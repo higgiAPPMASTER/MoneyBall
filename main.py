@@ -7656,7 +7656,14 @@ async function _edgeLoadDay(date){
 function _edgeRowsForDate(date){
   var d=window.__TRACK__||{}; var rows=[]; var have=false;
   (d.detail||[]).forEach(function(r){ if(r.date===date){ have=true; if((r.edge||0)>=0.05&&(r.result==='WIN'||r.result==='LOSS')&&!_trkSkipMeta(r)) rows.push(r); } });
-  if(!have){ var cache=window.__TRK_GRADE_CACHE__||{}; _trkFlatten(cache[date]).forEach(function(r){ if((r.edge||0)>=0.05&&(r.result==='WIN'||r.result==='LOSS')&&!_trkSkipMeta(r)) rows.push(r); }); }
+  if(!have){
+    var g=(window.__TRK_GRADE_CACHE__||{})[date];
+    // Only count a day once its WHOLE slate is Final. A partial slate would
+    // build the top-20 from just the games done so far, so the record shifts
+    // as more games finalize. Locked-ledger days (have=true) are always final.
+    if(!g||g==='LOADING'||g.__error__||!g.all_final) return [];
+    _trkFlatten(g).forEach(function(r){ if((r.edge||0)>=0.05&&(r.result==='WIN'||r.result==='LOSS')&&!_trkSkipMeta(r)) rows.push(r); });
+  }
   rows.sort(function(a,b){ return (b.edge||0)-(a.edge||0); });
   return rows.slice(0,20);
 }
@@ -7693,6 +7700,7 @@ function _edgeStatsRender(){
     var g=cache[date];
     if(!inDetail && (g===undefined||g==='LOADING')) loadingMsg='Loading\u2026';
     else if(!inDetail && g&&g.__error__) loadingMsg=g.__error__||'No picks for this date.';
+    else if(!inDetail && g && !g.all_final) loadingMsg='This slate is not final yet. The Edge Record fills in once every game on '+date+' goes Final.';
     else pool=_edgeRowsForDate(date);
   } else {
     _edgeAllDates().forEach(function(dt){ var t=_edgeRowsForDate(dt); for(var i=0;i<t.length;i++) pool.push(t[i]); });
