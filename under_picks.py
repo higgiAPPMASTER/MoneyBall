@@ -1242,6 +1242,9 @@ def run_runs_picks(run_date: str, team_schedule: dict, emit=None) -> list:
             if rate["games"] < RUNS_MIN_ANY:
                 return None
             rate["basis"] = "L10 H/A"
+        # Card shows BOTH: head-to-head (vs this opp, H/A) AND last-10 H/A any-opp.
+        _HH = _vsop
+        _L10D = rate["display"] if rate.get("basis") == "L10 H/A" else _runs_consistency(batter_id, side, "", 10)["display"]
         # 3-window convergence blend: vs-opp 35%, L10 any-opp 40%, L5 any-opp 25%
         r10 = _runs_consistency(batter_id, side, "", 10, ignore_ha=True)
         r5  = _runs_consistency(batter_id, side, "", 5, ignore_ha=True)
@@ -1273,6 +1276,7 @@ def run_runs_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 "pick": pick, "line": c.get("line", 0.5),
                 "rate_disp": rate["display"], "score": final_score, "base_score": blend_score,
                 "opp_score": rate["score"], "recent_l10": r10["display"], "recent_l5": r5["display"],
+                "h2h_disp": _HH["display"], "h2h_games": _HH["games"], "l10_disp": _L10D,
                 "games": rate["games"], "basis": rate.get("basis", ""),
                 "conv_flag": conv_flag, "cold_flag": cold_flag,
                 "wilson": round(_wilson_lb(rate["runs_games"], rate["games"]), 4),
@@ -1532,6 +1536,9 @@ def run_rbi_picks(run_date: str, team_schedule: dict, emit=None) -> list:
             if rate["games"] < RBI_MIN_ANY:
                 return None
             rate["basis"] = "L10 H/A"
+        # Card shows BOTH: head-to-head (vs this opp, H/A) AND last-10 H/A any-opp.
+        _HH = _vsop
+        _L10D = rate["display"] if rate.get("basis") == "L10 H/A" else _rbi_consistency(batter_id, side, "", 10)["display"]
         # 3-window convergence blend: vs-opp 35%, L10 any-opp 40%, L5 any-opp 25%
         r10 = _rbi_consistency(batter_id, side, "", 10, ignore_ha=True)
         r5  = _rbi_consistency(batter_id, side, "", 5, ignore_ha=True)
@@ -1564,6 +1571,7 @@ def run_rbi_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 "pick": pick, "line": c.get("line", 0.5),
                 "rate_disp": rate["display"], "score": final_score, "base_score": blend_score,
                 "opp_score": rate["score"], "recent_l10": r10["display"], "recent_l5": r5["display"],
+                "h2h_disp": _HH["display"], "h2h_games": _HH["games"], "l10_disp": _L10D,
                 "games": rate["games"], "basis": rate.get("basis", ""),
                 "conv_flag": conv_flag, "cold_flag": cold_flag,
                 "wilson": round(_wilson_lb(rate["rbi_games"], rate["games"]), 4),
@@ -2461,6 +2469,9 @@ def run_hrr_picks(run_date: str, team_schedule: dict, emit=None) -> list:
             if vs["games"] < HRR_MIN_ANY:
                 return None
             vs["basis"] = "L10 H/A"
+        # Card shows BOTH: head-to-head (vs this opp, H/A) AND last-10 H/A any-opp.
+        _HH = _vsop
+        _L10D = vs["display"] if vs.get("basis") == "L10 H/A" else _hrr_consistency_over(batter_id, side, "", 10)["display"]
         # 3-window convergence blend: vs-opp 35%, L10 any-opp 40%, L5 any-opp 25%
         r10 = _hrr_consistency_over(batter_id, side, "", 10, ignore_ha=True)
         r5  = _hrr_consistency_over(batter_id, side, "", 5, ignore_ha=True)
@@ -2492,6 +2503,7 @@ def run_hrr_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 "pick": pick, "line": 1.5,
                 "rate_disp": vs["display"], "score": final_score, "base_score": blend_score,
                 "opp_score": vs["score"], "recent_l10": r10["display"], "recent_l5": r5["display"],
+                "h2h_disp": _HH["display"], "h2h_games": _HH["games"], "l10_disp": _L10D,
                 "games": vs["games"], "basis": vs.get("basis", ""),
                 "conv_flag": conv_flag, "cold_flag": cold_flag,
                 "wilson": round(_wilson_lb(vs["hrr_games"], vs["games"]), 4),
@@ -2596,6 +2608,9 @@ def run_tb_over_picks(run_date: str, team_schedule: dict, emit=None) -> list:
             if vs["games"] < TB_OVER_MIN_ANY:
                 return None
             vs["basis"] = "L10 H/A"
+        # Card shows BOTH: head-to-head (vs this opp, H/A) AND last-10 H/A any-opp.
+        _HH = _vsop
+        _L10D = vs["display"] if vs.get("basis") == "L10 H/A" else _tb_consistency_over(batter_id, side, "", 10)["display"]
         # 3-window convergence blend: vs-opp 35%, L10 any-opp 40%, L5 any-opp 25%
         r10 = _tb_consistency_over(batter_id, side, "", 10, ignore_ha=True)
         r5  = _tb_consistency_over(batter_id, side, "", 5, ignore_ha=True)
@@ -2620,6 +2635,7 @@ def run_tb_over_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 "pick": "OVER", "line": 1.5,
                 "rate_disp": vs["display"], "score": final_score, "base_score": blend_score,
                 "opp_score": vs["score"], "recent_l10": r10["display"], "recent_l5": r5["display"],
+                "h2h_disp": _HH["display"], "h2h_games": _HH["games"], "l10_disp": _L10D,
                 "games": vs["games"], "basis": vs.get("basis", ""),
                 "conv_flag": conv_flag, "cold_flag": cold_flag,
                 "wilson": round(_wilson_lb(vs["tb_games"], vs["games"]), 4),
@@ -2852,6 +2868,9 @@ def run_tb_under_picks(run_date: str, team_schedule: dict, emit=None) -> list:
             if any_opp["games"] < TB_MIN_ANY:
                 return None
             rate = any_opp; rate["basis"] = "L10 H/A"
+        # Card shows BOTH: head-to-head (vs this opp, H/A) AND last-10 H/A any-opp.
+        _HH = vs
+        _L10D = rate["display"] if rate.get("basis") == "L10 H/A" else _tb_consistency(batter_id, side, "", 10)["display"]
         # 3-window convergence blend: primary anchor 35%, L10 any-opp 40%, L5 any-opp 25%
         r10 = _tb_consistency(batter_id, side, "", 10, ignore_ha=True)
         r5  = _tb_consistency(batter_id, side, "", 5, ignore_ha=True)
@@ -2871,6 +2890,7 @@ def run_tb_under_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 "pick": "UNDER", "line": 1.5,
                 "rate_disp": rate["display"], "score": blend_score,
                 "opp_score": rate["score"], "recent_l10": r10["display"], "recent_l5": r5["display"],
+                "h2h_disp": _HH["display"], "h2h_games": _HH["games"], "l10_disp": _L10D,
                 "games": rate["games"], "basis": rate.get("basis", ""),
                 "conv_flag": conv_flag, "cold_flag": cold_flag,
                 "wilson": round(_wilson_lb(rate["tb_games"], rate["games"]), 4),
