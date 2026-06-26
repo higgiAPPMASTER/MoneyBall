@@ -7008,7 +7008,7 @@ function _metaPill(icon,label,val,target){
 }
 function _catClose(){ document.querySelectorAll('.catmenu-panel').forEach(function(p){ p.style.display='none'; }); document.querySelectorAll('.catmenu-chev').forEach(function(c){ c.style.transform='none'; }); }
 function _catMenuTog(id){ const p=document.getElementById(id); if(!p) return; const willOpen=p.style.display!=='block'; _catClose(); if(willOpen){ p.style.display='block'; const c=document.getElementById(id+'-chev'); if(c) c.style.transform='rotate(180deg)'; } }
-function _catJump(t){ _catClose(); _jumpTo(t); }
+function _catJump(t){ _catClose(); var ids=String(t).split(','); for(var i=0;i<ids.length;i++){ var el=document.getElementById(ids[i]); if(el && !el.classList.contains('hidden')){ _jumpTo(ids[i]); return; } } _jumpTo(ids[0]); }
 function _renderCatBar(view){
   const top9=view.top9||[], stats=view.stats||{}, pk=(view.pitcher_k||{}), pp=(view.pitcher_props||{});
   function pc(m){ return (((pp[m]||{}).picks)||[]).length; }
@@ -7025,13 +7025,13 @@ function _renderCatBar(view){
     {icon:'🚶',label:'Walks',count:(view.walks_picks||[]).length,target:'bwalk-over-card'},
   ];
   const PIT=[
-    {icon:'⚾',label:'Strikeouts (K)',count:((pk.picks)||[]).length,target:'pitch-day-card'},
-    {icon:'🔢',label:'Outs',count:pc('pitcher_outs'),target:'pitch-day-card'},
-    {icon:'🛡️',label:'Earned Runs',count:pc('pitcher_earned_runs'),target:'pitch-day-card'},
-    {icon:'🚶',label:'Walks Allowed',count:pc('pitcher_walks'),target:'pitch-day-card'},
-    {icon:'💧',label:'Hits Allowed',count:pc('pitcher_hits_allowed'),target:'pitch-day-card'},
+    {icon:'⚾',label:'Strikeouts (K)',count:((pk.picks)||[]).length,target:'k-over-card,k-under-card'},
+    {icon:'🔢',label:'Outs',count:pc('pitcher_outs'),target:'prop-outs-over-card,prop-outs-under-card'},
+    {icon:'🛡️',label:'Earned Runs',count:pc('pitcher_earned_runs'),target:'prop-er-over-card,prop-er-under-card'},
+    {icon:'🚶',label:'Walks Allowed',count:pc('pitcher_walks'),target:'prop-bb-over-card,prop-bb-under-card'},
+    {icon:'💧',label:'Hits Allowed',count:pc('pitcher_hits_allowed'),target:'prop-ha-over-card,prop-ha-under-card'},
   ];
-  const meta=_metaPill('⚾','Games',stats.games,'by-game-card')+_metaPill('🔍','Players',stats.step1_count)+_metaPill('⏱️','Sec',stats.elapsed);
+  const meta=_metaPill('⚾','Games',stats.games,'by-game-card');
   return `<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start">${_catMenuHTML('catmenu-hit','Hitters','#63cab7',HIT)}${_catMenuHTML('catmenu-pit','Pitchers','#a78bfa',PIT)}<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-left:auto">${meta}</div></div>`;
 }
 function lineupBadge(s) {
