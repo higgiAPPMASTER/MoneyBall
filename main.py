@@ -5985,10 +5985,7 @@ function _mlbCard(p, rank, dim) {
         <span style="font-size:.78rem;color:#64748b">${p.pitcher?'vs '+p.pitcher:''}</span>
         ${lineupBadge(p.lineup_status)}
       </div>
-      ${p.rate_disp?`<div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
-        <span style="font-size:.78rem;color:#94a3b8">Hit Rate vs Opp</span>
-        <span style="font-family:monospace;font-weight:700;color:#86efac">${p.rate_disp} <span style="color:#64748b;font-size:.68rem">${p.basis||''}</span></span>
-      </div>`:''}
+      ${(p.h2h_disp||p.l10_disp||p.rate_disp)?_rateRows(p,'#86efac'):''}
       ${p.conv_flag?'<div style="font-size:.67rem;color:#4ade80;font-weight:600;margin-top:2px">&#10003; Converged &middot; L10 '+(p.recent_l10||'N/A')+' L5 '+(p.recent_l5||'N/A')+'</div>':(p.cold_flag?'<div style="font-size:.67rem;color:#fb923c;font-weight:600;margin-top:2px">&#9888; Recent diverges &middot; L5 '+(p.recent_l5||'N/A')+'</div>':((p.recent_l10||p.recent_l5)?'<div style="font-size:.67rem;color:#64748b;margin-top:2px">L10 '+(p.recent_l10||'N/A')+' &middot; L5 '+(p.recent_l5||'N/A')+'</div>':''))}
       ${p.hot_disp?'<div style="font-size:.67rem;color:#fbbf24;font-weight:700;margin-top:2px">&#128293; Hot hand &middot; '+p.hot_disp+' (+'+p.hot_bonus+')</div>':''}
       ${p.over_sourced?'<div style="font-size:.62rem;color:#a78bfa;font-weight:600;margin-top:2px">+ Hot-hitter add ('+(
@@ -6350,10 +6347,7 @@ function _walksCard(p, rank, pfx) {
       ${_envChip(p)}
       ${_umpChip(p)}
       ${_bpChip(p)}
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
-        <span style="font-size:.78rem;color:#94a3b8">Walk Rate vr Opp</span>
-        <span style="font-family:monospace;font-weight:700;color:${scoreClr}">${p.rate_disp||'—'} <span style="color:#64748b;font-size:.68rem">${p.basis||''}</span></span>
-      </div>
+      ${_rateRows(p,scoreClr)}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
         <span style="font-size:.72rem;color:#64748b">Recent</span>
         <span style="font-size:.78rem;color:#cbd5e1">${log.length?recCnt+'/'+log.length:'—'}</span>
@@ -6577,7 +6571,19 @@ function _rateRows(p, clr){
   var DASH = '—';
   var h2h = (p.h2h_disp && p.h2h_disp!=='N/A' && p.h2h_disp!=='ERR') ? p.h2h_disp : DASH;
   var l10 = (p.l10_disp && p.l10_disp!=='N/A' && p.l10_disp!=='ERR') ? p.l10_disp : DASH;
-  var usedH2H = (p.basis==='vs opp');
+  function _prr(s){
+    if(!s || s===DASH) return null;
+    var i=s.indexOf('/');
+    if(i>=0){ var d=parseFloat(s.slice(i+1)); return d? parseFloat(s.slice(0,i))/d : null; }
+    if(s.indexOf('%')>=0){ var pc=parseFloat(s); return isNaN(pc)?null:pc/100; }
+    var n=parseFloat(s); return isNaN(n)?null:n;
+  }
+  var _isUnder = (p.pick==='UNDER');
+  var _rH=_prr(h2h), _rL=_prr(l10), usedH2H;
+  if(_rH!=null && _rL!=null){ usedH2H = _isUnder ? (_rH < _rL) : (_rH > _rL); }
+  else if(_rH!=null){ usedH2H = true; }
+  else if(_rL!=null){ usedH2H = false; }
+  else { usedH2H = (p.basis==='vs opp'); }
   function _rr(label, val, used, dim){
     var lblClr = dim ? '#64748b' : '#94a3b8';
     var valClr = dim ? '#94a3b8' : clr;
