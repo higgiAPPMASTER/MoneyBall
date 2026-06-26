@@ -2019,10 +2019,8 @@ def run_pipeline(run_date: str, emit=None) -> dict:
             _s = _p.get("score")
             _ev_ou(_p, (_s / 100.0) if _s is not None else None,
                    _p.get("hrr_over_odds"), _p.get("hrr_under_odds"), cal=True)
-        for _p in hr_picks_list:
-            _s = _p.get("score")
-            _ev_ou(_p, (_s / 100.0) if _s is not None else None,
-                   _p.get("over_odds"), _p.get("under_odds"))
+        # HR EV is computed AFTER the ballpark/weather (env) stamp below so the
+        # park factor folds into P(HR); see the dedicated HR EV block after Phase A1.
         for _p in tb_over_picks_list:                 # OVER only
             _s = _p.get("score")
             _set_ev(_p, _cal_prob((_s / 100.0) if _s is not None else None, "OVER"),
@@ -2102,9 +2100,9 @@ def run_pipeline(run_date: str, emit=None) -> dict:
             s = team_schedule.get(team_name)
             if s:
                 return team_name if s.get("side") == "HOME" else s.get("opponent", "")
-            tl = team_name.lower()
+            from under_picks import _team_match as _tm
             for _k, _v in team_schedule.items():
-                if tl in _k.lower() or _k.lower() in tl:
+                if _tm(team_name, _k):
                     return _k if _v.get("side") == "HOME" else _v.get("opponent", "")
             return ""
         _env_cache = {}
@@ -2124,6 +2122,32 @@ def run_pipeline(run_date: str, emit=None) -> dict:
             except Exception:
                 _pp["env"] = None
         emit({"type": "log", "msg": f"  ✅ Ballpark/weather env computed for {len(_env_cache)} stadium(s)"})
+
+    # ── HR EV — model prob (batter power x pitcher HR-allowed x platoon, carried
+    # on `wilson`) folded with the ballpark/weather factor (known only now, after
+    # the env stamp). HR is intentionally NOT routed through _cal_prob — it is a
+    # fresh model and will be recalibrated from the ledger once data accrues.
+    try:
+        for _p in hr_picks_list:
+            _pb = _p.get("wilson")
+            if _pb is None:
+                _s = _p.get("score")
+                _pb = (_s / 100.0) if _s is not None else None
+            if _pb is None:
+                _set_ev(_p, None, None)
+                continue
+            _env = _p.get("env") or {}
+            _pf = _env.get("factor")
+            if _pf:
+                _pb = _pb * max(0.80, min(1.35, 1.0 + (float(_pf) - 1.0) * 1.5))
+            _pb = max(0.01, min(0.85, _pb))
+            if _p.get("pick") == "UNDER":
+                _set_ev(_p, 1.0 - _pb, _p.get("under_odds"))
+            else:
+                _set_ev(_p, _pb, _p.get("over_odds"))
+        emit({"type": "log", "msg": "  ✅ HR EV computed (model prob x ballpark/weather)"})
+    except Exception as _exc:
+        emit({"type": "log", "msg": f"⚠️ HR EV skipped: {_exc}"})
 
     # ── Phase A2: home-plate umpire effect (per game) ──
     # Each game's HP umpire + how their games trend on K/BB/runs vs league
@@ -2213,19 +2237,15 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         """Return probable pitcher MLB id for opp team, or None."""
         if not opp_name:
             return None
+        from under_picks import _team_match as _tm
         ol = opp_name.lower()
-        sw = {"the", "of", "los", "san", "new", "de"}
         for tn, pi in mlb_probable.items():
-            if not pi.get("id"):
-                continue
-            if tn.lower() == ol:
+            if pi.get("id") and tn.lower() == ol:
                 return pi["id"]
+        # Nickname match ONLY (never a shared-city word) so a Mets opponent can
+        # never resolve to the Yankees' starter.
         for tn, pi in mlb_probable.items():
-            if not pi.get("id"):
-                continue
-            twords = set(tn.lower().split()) - sw
-            owords = set(ol.split()) - sw
-            if twords and owords and twords & owords:
+            if pi.get("id") and _tm(tn, opp_name):
                 return pi["id"]
         return None
 
@@ -2233,17 +2253,14 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         """Probable pitcher NAME for opp team (mirrors _opp_pit_id), or None."""
         if not opp_name:
             return None
+        from under_picks import _team_match as _tm
         ol = opp_name.lower()
-        sw = {"the", "of", "los", "san", "new", "de"}
         for tn, pi in mlb_probable.items():
             if pi.get("name") and tn.lower() == ol:
                 return pi["name"]
+        # Nickname match ONLY (never a shared-city word).
         for tn, pi in mlb_probable.items():
-            if not pi.get("name"):
-                continue
-            twords = set(tn.lower().split()) - sw
-            owords = set(ol.split()) - sw
-            if twords and owords and twords & owords:
+            if pi.get("name") and _tm(tn, opp_name):
                 return pi["name"]
         return None
 
