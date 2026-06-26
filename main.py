@@ -5868,14 +5868,19 @@ function _mlbHead(id) {
   if (!id) return '';
   return `<img src="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/${id}/headshot/67/current" alt="" style="width:24px;height:24px;border-radius:50%;object-fit:cover;object-position:center 18%;border:1px solid rgba(255,255,255,.12);flex-shrink:0" onerror="this.style.display='none'">`;
 }
+function _teamNickJS(s){
+  var w=String(s||'').toLowerCase().split('.').join('').split(/ +/).filter(Boolean);
+  if(!w.length) return '';
+  var n=w.length;
+  if(w[n-1]==='sox'&&n>=2) return w[n-2]+' sox';
+  return w[n-1];
+}
 function _teamMatchJS(a, b) {
   if (!a||!b) return false;
-  var n1=a.toLowerCase(), n2=b.toLowerCase();
-  if(n1===n2||n1.includes(n2)||n2.includes(n1)) return true;
-  var st=['of','the','los','las','san','new','de'];
-  var w1=n1.split(' ').filter(function(w){return st.indexOf(w)<0;});
-  var w2=n2.split(' ').filter(function(w){return st.indexOf(w)<0;});
-  return w1.some(function(w){return w2.indexOf(w)>=0;});
+  var n1=String(a).toLowerCase().trim(), n2=String(b).toLowerCase().trim();
+  if(n1===n2) return true;
+  var k1=_teamNickJS(n1), k2=_teamNickJS(n2);
+  return !!k1 && k1===k2;
 }
 function _umpKMul(p){
   var u=p&&p.ump; if(!u) return 1;
@@ -6251,6 +6256,12 @@ function _hrCard(p, rank, pfx) {
       ${_envChip(p)}
       ${_umpChip(p)}
       ${_bpChip(p)}
+      <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:5px">
+        ${p.pit_hr9_disp?'<span style="font-size:.62rem;font-weight:700;background:#2a0a12;color:#fda4af;padding:2px 7px;border-radius:7px">Pit '+p.pit_hr9_disp+'</span>':''}
+        ${p.pit_barrel_disp?'<span style="font-size:.62rem;font-weight:700;background:#2a0a12;color:#fb7185;padding:2px 7px;border-radius:7px">'+p.pit_barrel_disp+'</span>':''}
+        ${p.barrel_disp?'<span style="font-size:.62rem;font-weight:700;background:#10241e;color:#6ee7b7;padding:2px 7px;border-radius:7px">'+p.barrel_disp+'</span>':''}
+        ${p.platoon_disp?'<span style="font-size:.62rem;font-weight:700;background:#1c1830;color:#c4b5fd;padding:2px 7px;border-radius:7px">'+p.platoon_disp+'</span>':''}
+      </div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
         <span style="font-size:.78rem;color:#94a3b8">HR Likelihood</span>
         <span style="font-family:monospace;font-weight:700;color:${scoreClr}">${p.score!=null?p.score+'%':'—'} <span style="color:#64748b;font-size:.68rem">blend</span></span>
