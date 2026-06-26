@@ -1698,6 +1698,9 @@ def run_pipeline(run_date: str, emit=None) -> dict:
             _sig = hit_over_signals(_hp.get("player_id"), _hp.get("side", ""), _hp.get("opp", ""))
             _hp["rate_disp"]  = _sig["rate_disp"]
             _hp["basis"]      = _sig["basis"]
+            _hp["h2h_disp"]   = _sig["h2h_disp"]
+            _hp["h2h_games"]  = _sig["h2h_games"]
+            _hp["l10_disp"]   = _sig["l10_disp"]
             _hp["recent_l10"] = _sig["recent_l10"]
             _hp["recent_l5"]  = _sig["recent_l5"]
             _hp["conv_flag"]  = _sig["conv_flag"]
@@ -2478,6 +2481,20 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         else -(p.get("under_odds") if p.get("under_odds") is not None else -100000),
         -p.get("games", 0),
     ))
+
+    # Cap each side (OVER/UNDER) to at most HR_MAX_PER_TEAM picks per team so a
+    # single hitter-friendly matchup (e.g. a Coors-style blowup) can't flood the
+    # HR list with one club. Ranked order is preserved; the weakest extras drop.
+    HR_MAX_PER_TEAM = 3
+    _hr_team_seen, _hr_capped = {}, []
+    for _hp in hr_picks_list:
+        _k = (_hp.get("pick"), _hp.get("team"))
+        _n = _hr_team_seen.get(_k, 0)
+        if _n >= HR_MAX_PER_TEAM:
+            continue
+        _hr_team_seen[_k] = _n + 1
+        _hr_capped.append(_hp)
+    hr_picks_list = _hr_capped
 
     # TB Over 1.5 (all OVER): wilson × offense + adjs, best at top.
     tb_over_picks_list.sort(
