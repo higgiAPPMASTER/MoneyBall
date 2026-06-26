@@ -1398,6 +1398,18 @@ def _grade_date(date_str: str, picks: dict) -> dict:
                   if c.get("odds") is not None and c.get("odds") > 0
                   and ((c.get("hot") or 0) > 0 or (c.get("_t10sc") or -999.0) > 0)]
     _new_cands = _t10_rank(_new_cands, drop_red=False)
+    # Cap the NEW list to at most 3 picks of any one category (stat_key) so a
+    # single market (e.g. Walks) can't dominate the headline. Order is already
+    # Wilson-EV desc, so this keeps the 3 best of each. Mirrors the frontend
+    # _buildTop10All NEW per-category cap; feeds both the top 10 and its overflow.
+    _new_capped = []; _ncat = {}
+    for c in _new_cands:
+        _ck = c.get("stat_key") or "?"
+        if _ncat.get(_ck, 0) >= 3:
+            continue
+        _ncat[_ck] = _ncat.get(_ck, 0) + 1
+        _new_capped.append(c)
+    _new_cands = _new_capped
     top10_batter_new = []
     for c in _new_cands[:10]:
         st = _lookup(c.get("pid"), c.get("fname") or c["name"])
@@ -6762,6 +6774,10 @@ function _buildTop10All(view, newRule) {
   // teammates don't crowd the Top 10. plays is already sorted by _t10ev desc.
   var _t10teams={};
   plays=plays.filter(function(p){ var t=((p.team||'')+'').trim().toUpperCase(); if(!t) return true; if(_t10teams[t]) return false; _t10teams[t]=true; return true; });
+  // NEW only: cap at 3 picks of any one category so a single market (e.g. Walks)
+  // can't dominate. plays is Wilson-EV desc, so this keeps the best 3 of each.
+  // Mirrors the server top10_batter_new per-category cap.
+  if(newRule){ var _t10cat={}; plays=plays.filter(function(p){ var c=p._t10kind||'?'; if((_t10cat[c]||0)>=3) return false; _t10cat[c]=(_t10cat[c]||0)+1; return true; }); }
   return plays;
 }
 // Top 10 (ranks 1-10). Ranks 11-20 render in the "More Hitter Plays" pulldown via
