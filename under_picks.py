@@ -146,29 +146,246 @@ def _batter_sav_lookup_up(player_id) -> dict:
     return prev.get(pid, {})
 
 
+# ── HR model data — Statcast power (batter), HR-allowed (pitcher), platoon ──
+_BATTER_POWER_CACHE: dict = {}   # {year: {pid: {barrel_pct, xiso, xslg, hard_hit, ev}}}
+_PITCHER_POWER_CACHE: dict = {}  # {year: {pid: {barrel_pct, hard_hit, xslg}}}
+_PIT_HR9_CACHE: dict = {}        # {(pid, season): {season_hr9, recent_hr9, blended_hr9, disp}}
+_BAT_SIDE_CACHE: dict = {}       # {pid: 'L'/'R'/'S'}
+_PITCH_HAND_CACHE: dict = {}     # {pid: 'L'/'R'}
+LEAGUE_HR9    = 1.15             # MLB starter HR/9 baseline
+LEAGUE_BARREL = 7.5             # MLB barrel% baseline (batted-ball)
+
+
+def _fetch_batter_power(year: str) -> dict:
+    """Bulk Statcast power profile for hitters (barrel%, xISO, xSLG, hard-hit,
+    exit velo). Drives the HR model's batter power component. Cached per year;
+    Savant CSV carries a UTF-8 BOM so the first column is BOM-stripped."""
+    if _BATTER_POWER_CACHE.get(year):
+        return _BATTER_POWER_CACHE[year]
+    import csv, io
+    hdrs = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"}
+    out = {}
+    for _attempt in range(2):
+        try:
+            r = requests.get("https://baseballsavant.mlb.com/leaderboard/custom",
+                params={"year": str(year), "type": "batter", "filter": "", "min": "30",
+                        "selections": "barrel_batted_rate,xiso,xslg,hard_hit_percent,exit_velocity_avg",
+                        "csv": "true"},
+                headers=hdrs, timeout=15)
+            for row in csv.DictReader(io.StringIO(r.text.lstrip("\ufeff"))):
+                try:
+                    pid = int(row.get("player_id") or 0)
+                    if not pid:
+                        continue
+                    entry: dict = {}
+                    for src, dst in (("barrel_batted_rate", "barrel_pct"),
+                                     ("xiso", "xiso"), ("xslg", "xslg"),
+                                     ("hard_hit_percent", "hard_hit"),
+                                     ("exit_velocity_avg", "ev")):
+                        v = row.get(src)
+                        if v not in (None, ""):
+                            entry[dst] = float(v)
+                    if entry:
+                        out[pid] = entry
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        if out:
+            break
+        time.sleep(1.0)
+    if out:
+        _BATTER_POWER_CACHE[year] = out
+    return out
+
+
+def _batter_power_lookup(player_id) -> dict:
+    """{barrel_pct, xiso, xslg, hard_hit, ev} for a hitter — current season,
+    prior-year fallback. {} when no Statcast row (model degrades gracefully)."""
+    if not player_id:
+        return {}
+    from datetime import date as _d
+    yr = str(_d.today().year)
+    pid = int(player_id)
+    cur = _BATTER_POWER_CACHE.get(yr, {})
+    if pid in cur:
+        return cur[pid]
+    return _BATTER_POWER_CACHE.get(str(int(yr) - 1), {}).get(pid, {})
+
+
+def _fetch_pitcher_power(year: str) -> dict:
+    """Bulk Statcast contact-ALLOWED profile for pitchers (barrel% / hard-hit /
+    xSLG allowed). Drives the HR model's pitcher component. Cached per year."""
+    if _PITCHER_POWER_CACHE.get(year):
+        return _PITCHER_POWER_CACHE[year]
+    import csv, io
+    hdrs = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"}
+    out = {}
+    for _attempt in range(2):
+        try:
+            r = requests.get("https://baseballsavant.mlb.com/leaderboard/custom",
+                params={"year": str(year), "type": "pitcher", "filter": "", "min": "30",
+                        "selections": "barrel_batted_rate,hard_hit_percent,xslg",
+                        "csv": "true"},
+                headers=hdrs, timeout=15)
+            for row in csv.DictReader(io.StringIO(r.text.lstrip("\ufeff"))):
+                try:
+                    pid = int(row.get("player_id") or 0)
+                    if not pid:
+                        continue
+                    entry: dict = {}
+                    for src, dst in (("barrel_batted_rate", "barrel_pct"),
+                                     ("hard_hit_percent", "hard_hit"),
+                                     ("xslg", "xslg")):
+                        v = row.get(src)
+                        if v not in (None, ""):
+                            entry[dst] = float(v)
+                    if entry:
+                        out[pid] = entry
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        if out:
+            break
+        time.sleep(1.0)
+    if out:
+        _PITCHER_POWER_CACHE[year] = out
+    return out
+
+
+def _pitcher_power_lookup(player_id) -> dict:
+    if not player_id:
+        return {}
+    from datetime import date as _d
+    yr = str(_d.today().year)
+    pid = int(player_id)
+    cur = _PITCHER_POWER_CACHE.get(yr, {})
+    if pid in cur:
+        return cur[pid]
+    return _PITCHER_POWER_CACHE.get(str(int(yr) - 1), {}).get(pid, {})
+
+
+def _ip_outs(ip) -> int:
+    """MLB innings-pitched string ('5.2' = 5 and 2/3) -> total outs."""
+    try:
+        s = str(ip)
+        if "." in s:
+            w, f = s.split(".", 1)
+            return int(w) * 3 + int(f[0])
+        return int(s) * 3
+    except Exception:
+        return 0
+
+
+def _pitcher_hr9(pitcher_id, season) -> dict:
+    """Starter HR/9 = a season baseline (current + prior year) blended 60/40 with
+    last-5-start recent form. Returns {season_hr9, recent_hr9, blended_hr9, disp}
+    or None. Game logs come from the pitcher-K module (lazy import = no cycle)."""
+    if not pitcher_id:
+        return None
+    key = (int(pitcher_id), int(season))
+    if key in _PIT_HR9_CACHE:
+        return _PIT_HR9_CACHE[key]
+    out = None
+    try:
+        from pitcher_k import _get_pitching_logs
+        base_hr = 0
+        base_outs = 0
+        cur_starts = []
+        for _s in (int(season), int(season) - 1):
+            for sp in (_get_pitching_logs(int(pitcher_id), _s) or []):
+                st = sp.get("stat", {}) or {}
+                o  = _ip_outs(st.get("inningsPitched", "0"))
+                hr = int(st.get("homeRuns", 0) or 0)
+                base_hr  += hr
+                base_outs += o
+                if _s == int(season) and o >= 9:   # a real start (>=3 IP)
+                    cur_starts.append((hr, o))
+        season_hr9 = (base_hr * 27.0 / base_outs) if base_outs > 0 else None
+        rec = cur_starts[-5:]
+        r_hr   = sum(h for h, _ in rec)
+        r_outs = sum(o for _, o in rec)
+        recent_hr9 = (r_hr * 27.0 / r_outs) if r_outs > 0 else None
+        if season_hr9 is not None and recent_hr9 is not None:
+            blended = 0.6 * season_hr9 + 0.4 * recent_hr9
+        else:
+            blended = season_hr9 if season_hr9 is not None else recent_hr9
+        if blended is not None:
+            out = {"season_hr9": season_hr9, "recent_hr9": recent_hr9,
+                   "blended_hr9": blended, "disp": f"{blended:.2f} HR/9"}
+    except Exception:
+        out = None
+    _PIT_HR9_CACHE[key] = out
+    return out
+
+
+def _get_bat_sides_batch(player_ids: list) -> dict:
+    """Batched batSide ('L'/'R'/'S') for hitters via one /people call per 100 ids."""
+    ids = [int(x) for x in player_ids if x and int(x) not in _BAT_SIDE_CACHE]
+    for i in range(0, len(ids), 100):
+        chunk = ids[i:i + 100]
+        try:
+            r = requests.get("https://statsapi.mlb.com/api/v1/people",
+                params={"personIds": ",".join(str(x) for x in chunk)}, timeout=12)
+            for p in r.json().get("people", []):
+                pid = p.get("id")
+                code = ((p.get("batSide") or {}).get("code") or "").upper()
+                if pid and code in ("L", "R", "S"):
+                    _BAT_SIDE_CACHE[pid] = code
+        except Exception:
+            continue
+    return {int(pid): _BAT_SIDE_CACHE.get(int(pid)) for pid in player_ids if pid}
+
+
+def _pitch_hand(pitcher_id) -> str:
+    """Pitcher throwing hand 'L'/'R', cached. Lazy import of the K-module helper."""
+    if not pitcher_id:
+        return ""
+    pid = int(pitcher_id)
+    if pid in _PITCH_HAND_CACHE:
+        return _PITCH_HAND_CACHE[pid]
+    hand = ""
+    try:
+        from pitcher_k import _get_pitch_hand
+        hand = (_get_pitch_hand(pid) or "").upper()[:1]
+    except Exception:
+        hand = ""
+    _PITCH_HAND_CACHE[pid] = hand
+    return hand
+
+
 def _log(emit, msg, type_="log"):
     if emit:
         emit({"type": type_, "msg": msg})
+
+
+def _team_nick(s: str) -> str:
+    """Canonical team nickname — the unique mascot word that identifies the
+    franchise. Two clubs that share a CITY (New York Mets/Yankees, Chicago
+    Cubs/White Sox, Los Angeles Dodgers/Angels, San Francisco Giants/San Diego
+    Padres) must NEVER match on the shared city word; only the nickname is
+    decisive. The lone last-word collision is "sox" (Boston Red Sox vs Chicago
+    White Sox), disambiguated by the colour word right before it."""
+    w = (s or "").lower().replace(".", "").split()
+    if not w:
+        return ""
+    if w[-1] == "sox" and len(w) >= 2:
+        return w[-2] + " sox"
+    return w[-1]
 
 
 def _team_match(a: str, b: str) -> bool:
     a, b = (a or "").lower().strip(), (b or "").lower().strip()
     if not a or not b: return False
     if a == b: return True
-    aw, bw = a.split(), b.split()
-    al = aw[-1] if aw else ""
-    bl = bw[-1] if bw else ""
-    if al and al == bl:
-        # Shared-nickname guard: "Boston Red Sox" and "Chicago White Sox" BOTH end
-        # in "sox", so a bare last-word tie is NOT a team match — it would hand a
-        # hitter the wrong starter. Require the qualifier word (the one before the
-        # nickname) to match too.
-        if al in ("sox",):
-            a2 = aw[-2] if len(aw) >= 2 else ""
-            b2 = bw[-2] if len(bw) >= 2 else ""
-            return bool(a2) and a2 == b2
-        return True
-    return (a in b) or (b in a)
+    # Match on the canonical NICKNAME only. A bare city/substring overlap
+    # ("New York" sits inside BOTH NY clubs) must NOT count as a match — that
+    # was the bug that handed a Mets batter a Yankees starter (Will Warren).
+    na, nb = _team_nick(a), _team_nick(b)
+    return bool(na) and na == nb
 
 
 def _build_player_map(season: int):
@@ -1537,6 +1754,18 @@ def run_hr_picks(run_date: str, team_schedule: dict, emit=None) -> list:
     team_map = _get_teams_batch(list(id_map.values()))
     pitchers = _get_probable_pitchers(run_date)
 
+    # HR model inputs — fetched/cached ONCE per run: Statcast power (batter +
+    # pitcher contact-allowed) for this season + prior fallback, batter
+    # handedness (one batched call), and each probable starter's throwing hand.
+    _fetch_batter_power(str(season));  _fetch_batter_power(str(season - 1))
+    _fetch_pitcher_power(str(season)); _fetch_pitcher_power(str(season - 1))
+    bat_sides = _get_bat_sides_batch(list(id_map.values()))
+    pit_hand_map: dict = {}
+    for _pinfo in pitchers.values():
+        _ppid = _pinfo.get("id")
+        if _ppid and _ppid not in pit_hand_map:
+            pit_hand_map[_ppid] = _pitch_hand(_ppid)
+
     def _shrunk_pg(hr_games, games, k=4):
         if not games:
             return None
@@ -1576,15 +1805,63 @@ def run_hr_picks(run_date: str, team_schedule: dict, emit=None) -> list:
             p_pa  = (pit_hr + 15 * HR_LG_PA) / (pit_ab + 15)
             r_pit = 1.0 - (1.0 - p_pa) ** 4
 
+        # Statcast power component — a stable HR floor for true sluggers that is
+        # independent of recent-form variance (a cold slugger still rates high).
+        bp = _batter_power_lookup(batter_id)
+        p_pow = None
+        _xiso = bp.get("xiso")
+        if _xiso is not None:
+            p_pow = max(0.02, min(0.35, 0.05 + (_xiso - 0.060) * 0.9))
+        elif bp.get("barrel_pct") is not None:
+            p_pow = max(0.02, min(0.35, 0.02 + bp["barrel_pct"] / 100.0 * 1.6))
+
         comps = []
-        if r_recent is not None: comps.append((0.50, r_recent))
-        if r_pit    is not None: comps.append((0.30, r_pit))
-        if r_team   is not None: comps.append((0.20, r_team))
+        if r_recent is not None: comps.append((0.40, r_recent))
+        if r_pit    is not None: comps.append((0.20, r_pit))
+        if r_team   is not None: comps.append((0.15, r_team))
+        if p_pow    is not None: comps.append((0.25, p_pow))
         if not comps:
             return None
         wsum = sum(w for w, _ in comps)
         blended = sum(w * v for w, v in comps) / wsum
+
+        # Pitcher HR-allowed multiplier — blended HR/9 vs league, nudged by
+        # Statcast barrel-allowed. Homer-prone arms lift the over; stingy arms fade.
+        pit_mult = 1.0
+        pit_hr9_disp = ""
+        pit_barrel_disp = ""
+        _hr9 = _pitcher_hr9(pitcher_id, season) if pitcher_id else None
+        if _hr9 and _hr9.get("blended_hr9") is not None:
+            pit_mult = max(0.60, min(1.70, _hr9["blended_hr9"] / LEAGUE_HR9))
+            pit_hr9_disp = _hr9["disp"]
+        _pp = _pitcher_power_lookup(pitcher_id) if pitcher_id else {}
+        _pbrl = _pp.get("barrel_pct")
+        if _pbrl is not None:
+            _bm = max(0.85, min(1.20, 1.0 + (_pbrl - LEAGUE_BARREL) * 0.02))
+            pit_mult = max(0.55, min(1.90, pit_mult * _bm))
+            pit_barrel_disp = f"{_pbrl:.0f}% brl allowed"
+
+        # Platoon — generic handedness edge (batter side vs pitcher hand).
+        platoon_mult = 1.0
+        platoon_disp = ""
+        _bs = bat_sides.get(batter_id)
+        _ph = pit_hand_map.get(pitcher_id)
+        if _bs and _ph:
+            if _bs == "S":
+                platoon_mult = 1.0
+            elif _bs == _ph:
+                platoon_mult = 0.93
+                platoon_disp = f"vs {_ph}HP \u00b7 same side"
+            else:
+                platoon_mult = 1.07
+                platoon_disp = f"vs {_ph}HP \u00b7 platoon edge"
+
+        # Final pre-park P(>=1 HR). Park/weather folds in later (pipeline EV pass,
+        # where the env factor is known). `wilson` carries this prob for ranking.
+        blended = max(0.01, min(0.85, blended * pit_mult * platoon_mult))
         score = round(blended * 100)
+        barrel_disp = (f"{bp['barrel_pct']:.0f}% barrel"
+                       if bp.get("barrel_pct") is not None else "")
 
         over_odds  = c.get("over")
         under_odds = c.get("under")
@@ -1606,6 +1883,8 @@ def run_hr_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 "recent_disp": recent["display"], "team_disp": team["display"],
                 "pit_disp": pit_disp, "basis": "blend",
                 "wilson": round(blended, 4),
+                "pit_hr9_disp": pit_hr9_disp, "pit_barrel_disp": pit_barrel_disp,
+                "barrel_disp": barrel_disp, "platoon_disp": platoon_disp,
                 "over_odds": over_odds, "under_odds": under_odds,
                 "batter_id": batter_id,
                 "pitcher": pitcher_name,
