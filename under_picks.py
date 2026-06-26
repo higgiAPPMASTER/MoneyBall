@@ -2108,10 +2108,13 @@ def run_walks_picks(run_date: str, team_schedule: dict, emit=None) -> list:
             pick = "UNDER"
         else:
             return None
+        _HH = _walks_consistency(batter_id, side, opp_name, 10)
+        _L10D = _walks_consistency(batter_id, side, "", 10)["display"]
         return {"name": name, "team": player_team, "side": side, "opp": opp_name,
                 "pick": pick, "line": c.get("line", 0.5),
                 "rate_disp": rate["display"], "score": score,
                 "games": rate["games"], "basis": rate.get("basis", ""),
+                "h2h_disp": _HH["display"], "h2h_games": _HH["games"], "l10_disp": _L10D,
                 "wilson": round(_wilson_lb(rate["bb_games"], rate["games"]), 4),
                 "over_odds": c.get("over"), "under_odds": c.get("under"),
                 "book": _book_label(c.get("over_book") if pick == "OVER" else c.get("under_book")),
@@ -2716,9 +2719,12 @@ def hit_over_signals(batter_id, side: str, opp_name: str = "") -> dict:
                     for v in [vs["score"], r10["score"] if r10["games"] > 0 else None, l5_s]
                     if v is not None)
     cold_flag = (l5_s is not None and l5_s < HIT_OVER_CUT - 15)
+    _HH = _vsop
+    _L10D = vs["display"] if vs.get("basis") == "L10 H/A" else _hit_consistency(batter_id, side, "", 10)["display"]
     return {"blend": blend_score, "over_score": over_score,
             "vs_games": vs["games"], "basis": vs.get("basis", ""),
             "rate_disp": vs["display"], "opp_score": vs["score"],
+            "h2h_disp": _HH["display"], "h2h_games": _HH["games"], "l10_disp": _L10D,
             "recent_l10": r10["display"], "recent_l5": r5["display"],
             "conv_flag": conv_flag, "cold_flag": cold_flag,
             "wilson_hit": round(_wilson_lb(vs["hit_games"], vs["games"]), 4) if vs["games"] > 0 else 0,
@@ -2782,6 +2788,7 @@ def run_hit_picks(run_date: str, team_schedule: dict,
                 "base_score": sig["blend"], "opp_score": sig["opp_score"],
                 "recent_l10": sig["recent_l10"], "recent_l5": sig["recent_l5"],
                 "games": sig["vs_games"], "basis": sig["basis"],
+                "h2h_disp": sig["h2h_disp"], "h2h_games": sig["h2h_games"], "l10_disp": sig["l10_disp"],
                 "conv_flag": sig["conv_flag"], "cold_flag": sig["cold_flag"],
                 "wilson": sig["wilson_hit"],
                 "hot_bonus": sig["hot_bonus"], "hot_disp": sig["hot_disp"],
