@@ -1660,6 +1660,7 @@ def _detail_graded(graded: dict) -> list:
                 "result": res,
                 "ev": r.get("ev"),
                 "ev_prob": r.get("ev_prob"),
+                "edge": r.get("edge"),
                 "series_pos": r.get("series_pos"),
             })
     return out
@@ -7349,7 +7350,7 @@ function renderTrackRecord(d){
     +'</div>';
   var _edgeOn=window.__TRK_EDGE_ONLY__;
   var tabs='<div style="display:flex;gap:8px;margin-bottom:4px;flex-wrap:wrap">'+_trkTabBtn('daily','Daily')+_trkTabBtn('weekly','Weekly')+_trkTabBtn('monthly','Monthly')+_trkTabBtn('custom','Custom')
-    +'<button onclick="_trkToggleEdge()" id="trk-edge-btn" title="Show only bets where our edge was 5%+ at the time of tracking" style="margin-left:auto;background:'+(_edgeOn?'#065f46':'#1e293b')+';color:'+(_edgeOn?'#4ade80':'#94a3b8')+';border:1px solid '+(_edgeOn?'#16a34a':'#334155')+';border-radius:8px;padding:8px 16px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">&#9733; Edge Plays Only'+(_edgeOn?' \u2713':'')+'</button>'
+    +'<button onclick="_trkToggleEdge()" id="trk-edge-btn" title="Show only bets where our edge was 5%+ at the time of tracking" style="margin-left:auto;background:'+(_edgeOn?'#065f46':'#1e293b')+';color:'+(_edgeOn?'#4ade80':'#94a3b8')+';border:1px solid '+(_edgeOn?'#16a34a':'#334155')+';border-radius:8px;padding:8px 16px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">&#9733; High-Edge Only'+(_edgeOn?' \u2713':'')+'</button>'
     +'<button onclick="_openEdgeStats()" title="W/L record and ROI for the top 20 biggest-edge plays tracked each day" style="background:#065f46;color:#6ee7b7;border:1px solid #16a34a;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">&#9733; Edge Record</button>'
     +'</div>';
   var sc=_matrixScorecard(d);
