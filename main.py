@@ -6108,10 +6108,7 @@ function _runsCard(p, rank, pfx) {
       ${_envChip(p)}
       ${_umpChip(p)}
       ${_bpChip(p)}
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
-        <span style="font-size:.78rem;color:#94a3b8">Runs Rate vr Opp</span>
-        <span style="font-family:monospace;font-weight:700;color:${scoreClr}">${p.rate_disp||'—'} <span style="color:#64748b;font-size:.68rem">${p.basis||''}</span></span>
-      </div>
+      ${_rateRows(p, scoreClr)}
       ${p.conv_flag?'<div style="font-size:.67rem;color:#4ade80;font-weight:600;margin-top:2px">&#10003; Converged &middot; L10 '+(p.recent_l10||'N/A')+' L5 '+(p.recent_l5||'N/A')+'</div>':(p.cold_flag?'<div style="font-size:.67rem;color:#fb923c;font-weight:600;margin-top:2px">&#9888; Recent diverges &middot; L5 '+(p.recent_l5||'N/A')+'</div>':((p.recent_l10||p.recent_l5)?'<div style="font-size:.67rem;color:#64748b;margin-top:2px">L10 '+(p.recent_l10||'N/A')+' &middot; L5 '+(p.recent_l5||'N/A')+'</div>':''))}
       ${(isOver&&p.hot_disp)?'<div style="font-size:.67rem;color:#fbbf24;font-weight:700;margin-top:2px">&#128293; Hot hand &middot; '+p.hot_disp+' (+'+p.hot_bonus+')</div>':''}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
@@ -6159,10 +6156,7 @@ function _rbiCard(p, rank, pfx) {
       ${_envChip(p)}
       ${_umpChip(p)}
       ${_bpChip(p)}
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
-        <span style="font-size:.78rem;color:#94a3b8">RBI Rate vr Opp</span>
-        <span style="font-family:monospace;font-weight:700;color:${scoreClr}">${p.rate_disp||'—'} <span style="color:#64748b;font-size:.68rem">${p.basis||''}</span></span>
-      </div>
+      ${_rateRows(p, scoreClr)}
       ${p.conv_flag?'<div style="font-size:.67rem;color:#4ade80;font-weight:600;margin-top:2px">&#10003; Converged &middot; L10 '+(p.recent_l10||'N/A')+' L5 '+(p.recent_l5||'N/A')+'</div>':(p.cold_flag?'<div style="font-size:.67rem;color:#fb923c;font-weight:600;margin-top:2px">&#9888; Recent diverges &middot; L5 '+(p.recent_l5||'N/A')+'</div>':((p.recent_l10||p.recent_l5)?'<div style="font-size:.67rem;color:#64748b;margin-top:2px">L10 '+(p.recent_l10||'N/A')+' &middot; L5 '+(p.recent_l5||'N/A')+'</div>':''))}
       ${(isOver&&p.hot_disp)?'<div style="font-size:.67rem;color:#fbbf24;font-weight:700;margin-top:2px">&#128293; Hot hand &middot; '+p.hot_disp+' (+'+p.hot_bonus+')</div>':''}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
@@ -6446,10 +6440,7 @@ function _tbCard(p, rank) {
       ${_envChip(p)}
       ${_umpChip(p)}
       ${_bpChip(p)}
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
-        <span style="font-size:.78rem;color:#94a3b8">TB Under Rate <span style="color:#64748b;font-size:.68rem">${p.basis||''}</span></span>
-        <span style="font-family:monospace;font-weight:700;color:${scoreClr}">${p.rate_disp||'—'}</span>
-      </div>
+      ${_rateRows(p, scoreClr)}
       ${p.conv_flag?'<div style="font-size:.67rem;color:#4ade80;font-weight:600;margin-top:2px">&#10003; Converged &middot; L10 '+(p.recent_l10||'N/A')+' L5 '+(p.recent_l5||'N/A')+'</div>':(p.cold_flag?'<div style="font-size:.67rem;color:#fb923c;font-weight:600;margin-top:2px">&#9888; Recent diverges &middot; L5 '+(p.recent_l5||'N/A')+'</div>':((p.recent_l10||p.recent_l5)?'<div style="font-size:.67rem;color:#64748b;margin-top:2px">L10 '+(p.recent_l10||'N/A')+' &middot; L5 '+(p.recent_l5||'N/A')+'</div>':''))}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
         <span style="font-size:.72rem;color:#64748b">Recent</span>
@@ -6491,10 +6482,7 @@ function _tbOverCard(p, rank) {
       ${_envChip(p)}
       ${_umpChip(p)}
       ${_bpChip(p)}
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
-        <span style="font-size:.78rem;color:#94a3b8">TB Over Rate <span style="color:#64748b;font-size:.68rem">vs opp</span></span>
-        <span style="font-family:monospace;font-weight:700;color:${scoreClr}">${p.rate_disp||'—'}</span>
-      </div>
+      ${_rateRows(p, scoreClr)}
       ${p.conv_flag?'<div style="font-size:.67rem;color:#4ade80;font-weight:600;margin-top:2px">&#10003; Converged &middot; L10 '+(p.recent_l10||'N/A')+' L5 '+(p.recent_l5||'N/A')+'</div>':(p.cold_flag?'<div style="font-size:.67rem;color:#fb923c;font-weight:600;margin-top:2px">&#9888; Recent diverges &middot; L5 '+(p.recent_l5||'N/A')+'</div>':((p.recent_l10||p.recent_l5)?'<div style="font-size:.67rem;color:#64748b;margin-top:2px">L10 '+(p.recent_l10||'N/A')+' &middot; L5 '+(p.recent_l5||'N/A')+'</div>':''))}
       ${p.hot_disp?'<div style="font-size:.67rem;color:#fbbf24;font-weight:700;margin-top:2px">&#128293; Hot hand &middot; '+p.hot_disp+' (+'+p.hot_bonus+')</div>':''}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
@@ -6583,6 +6571,28 @@ function _t10Odds(p, kind) {
     default: return null;
   }
 }
+function _rateRows(p, clr){
+  clr = clr || '#facc15';
+  var oppAbbr = (typeof _mlbTeamAbbr==='function' ? _mlbTeamAbbr(p.opp) : '') || (p.opp||'opp');
+  var DASH = '—';
+  var h2h = (p.h2h_disp && p.h2h_disp!=='N/A' && p.h2h_disp!=='ERR') ? p.h2h_disp : DASH;
+  var l10 = (p.l10_disp && p.l10_disp!=='N/A' && p.l10_disp!=='ERR') ? p.l10_disp : DASH;
+  var usedH2H = (p.basis==='vs opp');
+  function _rr(label, val, used, dim){
+    var lblClr = dim ? '#64748b' : '#94a3b8';
+    var valClr = dim ? '#94a3b8' : clr;
+    var valSz  = dim ? '.78rem' : '.95rem';
+    var usedB = used ? ' <span style="font-size:.56rem;background:#06240f;color:#4ade80;padding:1px 4px;border-radius:3px;font-weight:800;vertical-align:middle">USED</span>' : '';
+    return '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:'+(dim?'2px':'6px')+'">'
+      +'<span style="font-size:.78rem;color:'+lblClr+'">'+label+'</span>'
+      +'<span style="font-family:monospace;font-weight:700;color:'+valClr+';font-size:'+valSz+'">'+val+usedB+'</span>'
+    +'</div>';
+  }
+  var hRow = _rr('vs '+oppAbbr, h2h, usedH2H, !usedH2H);
+  var lRow = _rr('Last 10 games', l10, !usedH2H, usedH2H);
+  return usedH2H ? (hRow+lRow) : (lRow+hRow);
+}
+
 function _t10RateDisp(p, kind) {
   if(kind==='HITTER'){ var s4=p.s4||{}; return s4.games>0?s4.hits_games+'/'+s4.games:(p.s4_display||'—'); }
   if(kind==='HR'){ return p.score!=null?p.score+'%':'—'; }
@@ -6758,10 +6768,7 @@ function _top10Card(p, rank) {
         +(p.side?'<span class="badge '+sideCls+'">'+(p.side)+'</span>':'')
       +'</div>'
       +_envChip(p)+_umpChip(p)+_bpChip(p)
-      +'<div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">'
-        +'<span style="font-size:.78rem;color:#94a3b8">Rate vs opp</span>'
-        +'<span style="font-family:monospace;font-weight:700;color:#facc15">'+rate+'</span>'
-      +'</div>'
+      +((p.h2h_disp||p.l10_disp)?_rateRows(p,'#facc15'):'<div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px"><span style="font-size:.78rem;color:#94a3b8">Rate vs opp</span><span style="font-family:monospace;font-weight:700;color:#facc15">'+rate+'</span></div>')
       +'<div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">'
         +'<span style="font-size:.8rem;color:'+kc+';font-weight:900">'+label+'</span>'
         +'<span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">'+odDisp+_bookTag(p)+'</span>'
@@ -6803,10 +6810,7 @@ function _hrrCard(p, rank, pfx) {
       ${_envChip(p)}
       ${_umpChip(p)}
       ${_bpChip(p)}
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
-        <span style="font-size:.78rem;color:#94a3b8">HRR Rate <span style="color:#64748b;font-size:.68rem">vs opp</span></span>
-        <span style="font-family:monospace;font-weight:700;color:${scoreClr}">${p.rate_disp||'—'}</span>
-      </div>
+      ${_rateRows(p, scoreClr)}
       ${p.conv_flag?'<div style="font-size:.67rem;color:#4ade80;font-weight:600;margin-top:2px">&#10003; Converged &middot; L10 '+(p.recent_l10||'N/A')+' L5 '+(p.recent_l5||'N/A')+'</div>':(p.cold_flag?'<div style="font-size:.67rem;color:#fb923c;font-weight:600;margin-top:2px">&#9888; Recent diverges &middot; L5 '+(p.recent_l5||'N/A')+'</div>':((p.recent_l10||p.recent_l5)?'<div style="font-size:.67rem;color:#64748b;margin-top:2px">L10 '+(p.recent_l10||'N/A')+' &middot; L5 '+(p.recent_l5||'N/A')+'</div>':''))}
       ${(isOver&&p.hot_disp)?'<div style="font-size:.67rem;color:#fbbf24;font-weight:700;margin-top:2px">&#128293; Hot hand &middot; '+p.hot_disp+' (+'+p.hot_bonus+')</div>':''}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
