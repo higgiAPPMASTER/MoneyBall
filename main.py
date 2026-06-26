@@ -7798,6 +7798,30 @@ function _edgeStatsWrap(bodyHtml){
     +'<div style="overflow-y:auto;flex:1">'+bodyHtml+'</div>'
     +'</div>';
 }
+// Shared record-modal renderers (Edge / Best Bets / Proj Edge all use these so
+// every view shows the same summary -> BY MARKET breakdown -> ALL PLAYS list).
+function _recSecHdr(t){ return '<div style="font-size:.6rem;color:#64748b;font-weight:800;letter-spacing:.07em;margin:12px 0 4px 2px">'+t+'</div>'; }
+function _recPlaySort(a,b){ var dc=(b.date||'').localeCompare(a.date||''); return dc!==0?dc:((b.edge||0)-(a.edge||0)); }
+function _recCatRows(crows){
+  if(!crows.length) return '';
+  var h='<div style="font-size:.62rem;color:#475569;font-weight:800;letter-spacing:.06em;display:grid;grid-template-columns:1fr 56px 48px 72px;gap:0;padding:4px 8px;border-bottom:1px solid #1e293b"><span>MARKET</span><span style="text-align:right">W-L</span><span style="text-align:right">BETS</span><span style="text-align:right">NET</span></div>';
+  crows.forEach(function(c,i){
+    var cn=c.net>=0?'#4ade80':'#f87171';
+    h+='<div style="display:grid;grid-template-columns:1fr 56px 48px 72px;gap:0;padding:7px 8px;border-bottom:1px solid #0f172a;background:'+(i%2?'#070e1b':'#050c18')+'"><span style="color:#cbd5e1;font-size:.77rem;font-weight:600">'+_esc(c.lbl)+'</span><span style="text-align:right;color:#e2e8f0;font-size:.77rem">'+c.w+'-'+c.l+'</span><span style="text-align:right;color:#64748b;font-size:.75rem">'+c.counted+'</span><span style="text-align:right;font-size:.77rem;font-weight:800;color:'+cn+'">$'+(c.net>=0?'+':'')+c.net.toFixed(2)+'</span></div>';
+  });
+  return h;
+}
+function _recPlaysRows(plays,lastHdr,lastClr,lastFn,catFn,showDate){
+  var h='<div style="font-size:.62rem;color:#475569;font-weight:800;letter-spacing:.06em;display:grid;grid-template-columns:1fr 38px 58px 52px;gap:0;padding:4px 8px;border-bottom:1px solid #1e293b"><span>PLAY</span><span style="text-align:right">W/L</span><span style="text-align:right">ODDS</span><span style="text-align:right">'+lastHdr+'</span></div>';
+  plays.forEach(function(r,i){
+    var win=r.result==='WIN', rc=win?'#4ade80':'#f87171';
+    var od=_effOdds(r), odStr=(od!=null&&isFinite(od))?((od>0?'+':'')+od):'\u2014';
+    var bc=catFn?catFn(r.category||'?'):(r.category||'?');
+    var sub=bc+' '+(r.side||'OVER')+((showDate&&r.date)?(' \u00b7 '+r.date):'');
+    h+='<div style="display:grid;grid-template-columns:1fr 38px 58px 52px;gap:0;padding:7px 8px;border-bottom:1px solid #0f172a;background:'+(i%2?'#070e1b':'#050c18')+'"><div style="min-width:0"><div style="color:#e2e8f0;font-size:.78rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+_esc(r.name||'?')+'</div><div style="color:#64748b;font-size:.67rem">'+_esc(sub)+'</div></div><span style="text-align:right;align-self:center;font-weight:800;color:'+rc+';font-size:.78rem">'+(win?'W':'L')+'</span><span style="text-align:right;align-self:center;color:#cbd5e1;font-size:.74rem;font-family:monospace">'+odStr+'</span><span style="text-align:right;align-self:center;color:'+lastClr+';font-size:.74rem;font-weight:700">'+lastFn(r)+'</span></div>';
+  });
+  return h;
+}
 function _edgeStatsRender(){
   var ov2=document.getElementById('edge-stats-modal'); if(!ov2) return;
   var d=window.__TRACK__||{}, stake=_trkStake();
@@ -7813,7 +7837,7 @@ function _edgeStatsRender(){
     else if(!inDetail && g && !g.all_final) loadingMsg='This slate is not final yet. The Edge Record fills in once every game on '+date+' goes Final.';
     else pool=_edgeRowsForDate(date);
   } else {
-    _edgeAllDates().forEach(function(dt){ var t=_edgeRowsForDate(dt); for(var i=0;i<t.length;i++) pool.push(t[i]); });
+    _edgeAllDates().forEach(function(dt){ var t=_edgeRowsForDate(dt); for(var i=0;i<t.length;i++){ var rr=t[i]; if(!rr.date){ var cc={}; for(var kk in rr) cc[kk]=rr[kk]; cc.date=dt; rr=cc; } pool.push(rr); } });
   }
   var ov={w:0,l:0,net:0,counted:0}, cats={};
   pool.forEach(function(r){
@@ -7844,31 +7868,12 @@ function _edgeStatsRender(){
   body+='<div style="background:#0c1622;border-radius:8px;padding:11px;text-align:center"><div style="font-size:.63rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">ROI</div><div style="font-weight:900;color:'+roiClr+';font-size:1.1rem">'+roiStr+'</div></div>';
   body+='<div style="background:#0c1622;border-radius:8px;padding:11px;text-align:center"><div style="font-size:.63rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">Net @ $'+stake+'</div><div style="font-weight:900;color:'+roiClr+';font-size:1.05rem">'+netStr+'</div></div>';
   body+='</div>';
-  if(dateMode){
-    var plays=pool.filter(function(r){ return !_trkSkipMeta(r); }).sort(function(a,b){ return (b.edge||0)-(a.edge||0); });
-    if(plays.length){
-      body+='<div style="font-size:.62rem;color:#475569;font-weight:800;letter-spacing:.06em;display:grid;grid-template-columns:1fr 38px 58px 52px;gap:0;padding:4px 8px;border-bottom:1px solid #1e293b"><span>PLAY</span><span style="text-align:right">W/L</span><span style="text-align:right">ODDS</span><span style="text-align:right">EDGE</span></div>';
-      plays.forEach(function(r,i){
-        var win=r.result==='WIN', rc=win?'#4ade80':'#f87171';
-        var od=_effOdds(r), odStr=(od!=null&&isFinite(od))?((od>0?'+':'')+od):'\u2014';
-        var ep=((r.edge||0)*100).toFixed(1)+'%';
-        body+='<div style="display:grid;grid-template-columns:1fr 38px 58px 52px;gap:0;padding:7px 8px;border-bottom:1px solid #0f172a;background:'+(i%2?'#070e1b':'#050c18')+'"><div style="min-width:0"><div style="color:#e2e8f0;font-size:.78rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+_esc(r.name||'?')+'</div><div style="color:#64748b;font-size:.67rem">'+_esc((r.category||'?')+' '+(r.side||'OVER'))+'</div></div><span style="text-align:right;align-self:center;font-weight:800;color:'+rc+';font-size:.78rem">'+(win?'W':'L')+'</span><span style="text-align:right;align-self:center;color:#cbd5e1;font-size:.74rem;font-family:monospace">'+odStr+'</span><span style="text-align:right;align-self:center;color:#38bdf8;font-size:.74rem;font-weight:700">'+ep+'</span></div>';
-      });
-    } else {
-      body+='<div style="color:#64748b;padding:20px;text-align:center">No top-20 edge plays graded on this date.</div>';
-    }
-  } else {
-    var rows=Object.keys(cats).map(function(k){ return cats[k]; }).sort(function(a,b){ return b.net-a.net; });
-    if(rows.length){
-      body+='<div style="font-size:.62rem;color:#475569;font-weight:800;letter-spacing:.06em;display:grid;grid-template-columns:1fr 56px 48px 72px;gap:0;padding:4px 8px;border-bottom:1px solid #1e293b"><span>MARKET</span><span style="text-align:right">W-L</span><span style="text-align:right">BETS</span><span style="text-align:right">NET</span></div>';
-      rows.forEach(function(c,i){
-        var cn=c.net>=0?'#4ade80':'#f87171';
-        body+='<div style="display:grid;grid-template-columns:1fr 56px 48px 72px;gap:0;padding:7px 8px;border-bottom:1px solid #0f172a;background:'+(i%2?'#070e1b':'#050c18')+'"><span style="color:#cbd5e1;font-size:.77rem;font-weight:600">'+_esc(c.lbl)+'</span><span style="text-align:right;color:#e2e8f0;font-size:.77rem">'+c.w+'-'+c.l+'</span><span style="text-align:right;color:#64748b;font-size:.75rem">'+c.counted+'</span><span style="text-align:right;font-size:.77rem;font-weight:800;color:'+cn+'">$'+(c.net>=0?'+':'')+c.net.toFixed(2)+'</span></div>';
-      });
-    } else {
-      body+='<div style="color:#64748b;padding:20px;text-align:center">No top-20 edge plays graded yet.<br><span style="font-size:.74rem">This fills in automatically as each day&#39;s top 20 biggest-edge picks go Final &#x2014; no manual tracking needed.</span></div>';
-    }
-  }
+  var _crows=Object.keys(cats).map(function(k){ return cats[k]; }).sort(function(a,b){ return b.net-a.net; });
+  var _cat=_recCatRows(_crows);
+  var _plays=pool.filter(function(r){ return !_trkSkipMeta(r); }).sort(_recPlaySort);
+  if(_cat) body+=_recSecHdr('BY MARKET')+_cat;
+  if(_plays.length) body+=_recSecHdr('ALL PLAYS &#xB7; '+_plays.length)+_recPlaysRows(_plays,'EDGE','#38bdf8',function(r){ return ((r.edge||0)*100).toFixed(1)+'%'; },null,!dateMode);
+  else if(!_cat) body+='<div style="color:#64748b;padding:20px;text-align:center">No top-20 edge plays graded'+(dateMode?' on this date.':' yet.<br><span style="font-size:.74rem">This fills in automatically as each day&#39;s top 20 biggest-edge picks go Final &#x2014; no manual tracking needed.</span>')+'</div>';
   body+='</div>';
   _edgeStatsWrap(body);
 }
@@ -7931,7 +7936,7 @@ function _bbStatsRender(){
     else if(!inDetail && g && !g.all_final) loadingMsg='This slate is not final yet. The Best Bets Record fills in once every game on '+date+' goes Final.';
     else pool=_bbRowsForDate(date);
   } else {
-    _edgeAllDates().forEach(function(dt){ var t=_bbRowsForDate(dt); for(var i=0;i<t.length;i++) pool.push(t[i]); });
+    _edgeAllDates().forEach(function(dt){ var t=_bbRowsForDate(dt); for(var i=0;i<t.length;i++){ var rr=t[i]; if(!rr.date){ var cc={}; for(var kk in rr) cc[kk]=rr[kk]; cc.date=dt; rr=cc; } pool.push(rr); } });
   }
   var ov={w:0,l:0,net:0,counted:0}, cats={};
   pool.forEach(function(r){
@@ -7962,31 +7967,12 @@ function _bbStatsRender(){
   body+='<div style="background:#0c1622;border-radius:8px;padding:11px;text-align:center"><div style="font-size:.63rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">ROI</div><div style="font-weight:900;color:'+roiClr+';font-size:1.1rem">'+roiStr+'</div></div>';
   body+='<div style="background:#0c1622;border-radius:8px;padding:11px;text-align:center"><div style="font-size:.63rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">Net @ $'+stake+'</div><div style="font-weight:900;color:'+roiClr+';font-size:1.05rem">'+netStr+'</div></div>';
   body+='</div>';
-  if(dateMode){
-    var plays=pool.filter(function(r){ return !_trkSkipMeta(r); }).sort(function(a,b){ return (b.edge||0)-(a.edge||0); });
-    if(plays.length){
-      body+='<div style="font-size:.62rem;color:#475569;font-weight:800;letter-spacing:.06em;display:grid;grid-template-columns:1fr 38px 58px 52px;gap:0;padding:4px 8px;border-bottom:1px solid #1e293b"><span>PLAY</span><span style="text-align:right">W/L</span><span style="text-align:right">ODDS</span><span style="text-align:right">EDGE</span></div>';
-      plays.forEach(function(r,i){
-        var win=r.result==='WIN', rc=win?'#4ade80':'#f87171';
-        var od=_effOdds(r), odStr=(od!=null&&isFinite(od))?((od>0?'+':'')+od):'\u2014';
-        var ep=((r.edge||0)*100).toFixed(1)+'%';
-        body+='<div style="display:grid;grid-template-columns:1fr 38px 58px 52px;gap:0;padding:7px 8px;border-bottom:1px solid #0f172a;background:'+(i%2?'#070e1b':'#050c18')+'"><div style="min-width:0"><div style="color:#e2e8f0;font-size:.78rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+_esc(r.name||'?')+'</div><div style="color:#64748b;font-size:.67rem">'+_esc((r.category||'?')+' '+(r.side||'OVER'))+'</div></div><span style="text-align:right;align-self:center;font-weight:800;color:'+rc+';font-size:.78rem">'+(win?'W':'L')+'</span><span style="text-align:right;align-self:center;color:#cbd5e1;font-size:.74rem;font-family:monospace">'+odStr+'</span><span style="text-align:right;align-self:center;color:#a78bfa;font-size:.74rem;font-weight:700">'+ep+'</span></div>';
-      });
-    } else {
-      body+='<div style="color:#64748b;padding:20px;text-align:center">No best bets graded on this date.</div>';
-    }
-  } else {
-    var rows=Object.keys(cats).map(function(k){ return cats[k]; }).sort(function(a,b){ return b.net-a.net; });
-    if(rows.length){
-      body+='<div style="font-size:.62rem;color:#475569;font-weight:800;letter-spacing:.06em;display:grid;grid-template-columns:1fr 56px 48px 72px;gap:0;padding:4px 8px;border-bottom:1px solid #1e293b"><span>MARKET</span><span style="text-align:right">W-L</span><span style="text-align:right">BETS</span><span style="text-align:right">NET</span></div>';
-      rows.forEach(function(c,i){
-        var cn=c.net>=0?'#4ade80':'#f87171';
-        body+='<div style="display:grid;grid-template-columns:1fr 56px 48px 72px;gap:0;padding:7px 8px;border-bottom:1px solid #0f172a;background:'+(i%2?'#070e1b':'#050c18')+'"><span style="color:#cbd5e1;font-size:.77rem;font-weight:600">'+_esc(c.lbl)+'</span><span style="text-align:right;color:#e2e8f0;font-size:.77rem">'+c.w+'-'+c.l+'</span><span style="text-align:right;color:#64748b;font-size:.75rem">'+c.counted+'</span><span style="text-align:right;font-size:.77rem;font-weight:800;color:'+cn+'">$'+(c.net>=0?'+':'')+c.net.toFixed(2)+'</span></div>';
-      });
-    } else {
-      body+='<div style="color:#64748b;padding:20px;text-align:center">No best bets graded yet.<br><span style="font-size:.74rem">This fills in automatically as each day&#39;s value plays (odds -200 or better) go Final &#x2014; no manual tracking needed.</span></div>';
-    }
-  }
+  var _crows=Object.keys(cats).map(function(k){ return cats[k]; }).sort(function(a,b){ return b.net-a.net; });
+  var _cat=_recCatRows(_crows);
+  var _plays=pool.filter(function(r){ return !_trkSkipMeta(r); }).sort(_recPlaySort);
+  if(_cat) body+=_recSecHdr('BY MARKET')+_cat;
+  if(_plays.length) body+=_recSecHdr('ALL PLAYS &#xB7; '+_plays.length)+_recPlaysRows(_plays,'EDGE','#a78bfa',function(r){ return ((r.edge||0)*100).toFixed(1)+'%'; },null,!dateMode);
+  else if(!_cat) body+='<div style="color:#64748b;padding:20px;text-align:center">No best bets graded'+(dateMode?' on this date.':' yet.<br><span style="font-size:.74rem">This fills in automatically as each day&#39;s value plays (odds -200 or better) go Final &#x2014; no manual tracking needed.</span>')+'</div>';
   body+='</div>';
   _bbStatsWrap(body);
 }
@@ -8086,7 +8072,7 @@ function _peStatsRender(){
     else if(!inDetail && g && !g.all_final) loadingMsg='This slate is not final yet. The Proj Edge Record fills in once every game on '+date+' goes Final.';
     else pool=_peRowsForDate(date);
   } else {
-    _edgeAllDates().forEach(function(dt){ var t=_peRowsForDate(dt); for(var i=0;i<t.length;i++) pool.push(t[i]); });
+    _edgeAllDates().forEach(function(dt){ var t=_peRowsForDate(dt); for(var i=0;i<t.length;i++){ var rr=t[i]; if(!rr.date){ var cc={}; for(var kk in rr) cc[kk]=rr[kk]; cc.date=dt; rr=cc; } pool.push(rr); } });
   }
   var ov={w:0,l:0,net:0,counted:0}, cats={};
   pool.forEach(function(r){
@@ -8116,30 +8102,12 @@ function _peStatsRender(){
   body+='<div style="background:#0c1622;border-radius:8px;padding:11px;text-align:center"><div style="font-size:.63rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">ROI</div><div style="font-weight:900;color:'+roiClr+';font-size:1.1rem">'+roiStr+'</div></div>';
   body+='<div style="background:#0c1622;border-radius:8px;padding:11px;text-align:center"><div style="font-size:.63rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">Net @ $'+stake+'</div><div style="font-weight:900;color:'+roiClr+';font-size:1.05rem">'+netStr+'</div></div>';
   body+='</div>';
-  if(dateMode){
-    var plays=pool.slice().sort(function(a,b){ return (b.edge||0)-(a.edge||0); });
-    if(plays.length){
-      body+='<div style="font-size:.62rem;color:#475569;font-weight:800;letter-spacing:.06em;display:grid;grid-template-columns:1fr 38px 58px 52px;gap:0;padding:4px 8px;border-bottom:1px solid #1e293b"><span>PLAY</span><span style="text-align:right">W/L</span><span style="text-align:right">ODDS</span><span style="text-align:right">VALUE</span></div>';
-      plays.forEach(function(r,i){
-        var win=r.result==='WIN', rc=win?'#4ade80':'#f87171';
-        var od=_effOdds(r), odStr=(od!=null&&isFinite(od))?((od>0?'+':'')+od):'\u2014';
-        body+='<div style="display:grid;grid-template-columns:1fr 38px 58px 52px;gap:0;padding:7px 8px;border-bottom:1px solid #0f172a;background:'+(i%2?'#070e1b':'#050c18')+'"><div style="min-width:0"><div style="color:#e2e8f0;font-size:.78rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+_esc(r.name||'?')+'</div><div style="color:#64748b;font-size:.67rem">'+_esc(_peBaseCat(r.category||'?')+' '+(r.side||'OVER'))+'</div></div><span style="text-align:right;align-self:center;font-weight:800;color:'+rc+';font-size:.78rem">'+(win?'W':'L')+'</span><span style="text-align:right;align-self:center;color:#cbd5e1;font-size:.74rem;font-family:monospace">'+odStr+'</span><span style="text-align:right;align-self:center;color:#38bdf8;font-size:.74rem;font-weight:700">'+_peVal(r)+'</span></div>';
-      });
-    } else {
-      body+='<div style="color:#64748b;padding:20px;text-align:center">No proj edge plays graded on this date.</div>';
-    }
-  } else {
-    var rows=Object.keys(cats).map(function(k){ return cats[k]; }).sort(function(a,b){ return b.net-a.net; });
-    if(rows.length){
-      body+='<div style="font-size:.62rem;color:#475569;font-weight:800;letter-spacing:.06em;display:grid;grid-template-columns:1fr 56px 48px 72px;gap:0;padding:4px 8px;border-bottom:1px solid #1e293b"><span>MARKET</span><span style="text-align:right">W-L</span><span style="text-align:right">BETS</span><span style="text-align:right">NET</span></div>';
-      rows.forEach(function(c,i){
-        var cn=c.net>=0?'#4ade80':'#f87171';
-        body+='<div style="display:grid;grid-template-columns:1fr 56px 48px 72px;gap:0;padding:7px 8px;border-bottom:1px solid #0f172a;background:'+(i%2?'#070e1b':'#050c18')+'"><span style="color:#cbd5e1;font-size:.77rem;font-weight:600">'+_esc(c.lbl)+'</span><span style="text-align:right;color:#e2e8f0;font-size:.77rem">'+c.w+'-'+c.l+'</span><span style="text-align:right;color:#64748b;font-size:.75rem">'+c.counted+'</span><span style="text-align:right;font-size:.77rem;font-weight:800;color:'+cn+'">$'+(c.net>=0?'+':'')+c.net.toFixed(2)+'</span></div>';
-      });
-    } else {
-      body+='<div style="color:#64748b;padding:20px;text-align:center">No proj edge plays graded yet.<br><span style="font-size:.74rem">This fills in automatically as each day&#39;s proj edge plays go Final &#x2014; pitcher rows start banking from this build forward.</span></div>';
-    }
-  }
+  var _crows=Object.keys(cats).map(function(k){ return cats[k]; }).sort(function(a,b){ return b.net-a.net; });
+  var _cat=_recCatRows(_crows);
+  var _plays=pool.slice().sort(_recPlaySort);
+  if(_cat) body+=_recSecHdr('BY MARKET')+_cat;
+  if(_plays.length) body+=_recSecHdr('ALL PLAYS &#xB7; '+_plays.length)+_recPlaysRows(_plays,'VALUE','#38bdf8',function(r){ return _peVal(r); },_peBaseCat,!dateMode);
+  else if(!_cat) body+='<div style="color:#64748b;padding:20px;text-align:center">No proj edge plays graded'+(dateMode?' on this date.':' yet.<br><span style="font-size:.74rem">This fills in automatically as each day&#39;s proj edge plays go Final &#x2014; pitcher rows start banking from this build forward.</span>')+'</div>';
   body+='</div>';
   _peStatsWrap(body);
 }
