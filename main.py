@@ -3195,6 +3195,12 @@ _HTML = """
           <div id="picks-body" class="mlb-picks-grid"></div>
           <div id="also-ran-wrap"></div>
         </div>
+        <div class="card p-6 hidden" id="value-plays-card" style="border-color:rgba(34,211,238,.35)">
+          <div class="section-hdr" style="color:#22d3ee">&#128142; Top 10 Value Plays of the Day</div>
+          <p class="text-xs text-slate-400 mb-3" style="margin-top:-4px">Each top hitter&#39;s plus-money (+odds) value markets &mdash; RBI &middot; Total Bases &middot; Runs &middot; Walks &middot; H+R+RBI. Ranked by 3 standards: hot recent form, career vs the pitcher, and rate vs the opponent. Scored on the data we have; &ldquo;never faced&rdquo; means no career at-bats vs today&#39;s starter. Click any card for recent history.</p>
+          <div id="value-plays-body" class="mlb-picks-grid"></div>
+          <div id="value-more-wrap"></div>
+        </div>
         <div class="card p-6 hidden" id="under-picks-card" style="border-color:rgba(255,107,107,.25)">
           <div class="section-hdr" style="color:#ff8a65">⬇️ Top 10 U1.5 Hits</div>
           <div id="under-picks-body" class="mlb-picks-grid"></div>
@@ -3597,7 +3603,7 @@ function showResults(result) {
   if(typeof _renderLeanBanner==='function') _renderLeanBanner();
   // Hide all section cards FIRST — before any filtering — so stale cards from a
   // previous render can never persist if the filter or any later code throws.
-  ['top10-plays-card','under-picks-card','tb-picks-card','tb-over-picks-card','hrr-over-card','hrr-under-card','rbi-over-card','rbi-under-card','hr-over-card','hr-under-card','runs-over-card','runs-under-card','bwalk-over-card','bwalk-under-card','pitch-day-card','pitcher-all-card','k-over-card','k-under-card','prop-ha-over-card','prop-ha-under-card','prop-outs-over-card','prop-outs-under-card','prop-er-over-card','prop-er-under-card','prop-bb-over-card','prop-bb-under-card'].forEach(hide);
+  ['top10-plays-card','value-plays-card','under-picks-card','tb-picks-card','tb-over-picks-card','hrr-over-card','hrr-under-card','rbi-over-card','rbi-under-card','hr-over-card','hr-under-card','runs-over-card','runs-under-card','bwalk-over-card','bwalk-under-card','pitch-day-card','pitcher-all-card','k-over-card','k-under-card','prop-ha-over-card','prop-ha-under-card','prop-outs-over-card','prop-outs-under-card','prop-er-over-card','prop-er-under-card','prop-bb-over-card','prop-bb-under-card'].forEach(hide);
   // Odds-range filter: self-contained, uses the EXACT field each card displays.
   // Applied directly to the source data before _vBase / EV-filter so every
   // category is covered and there is nothing to guess or chain.
@@ -3693,6 +3699,20 @@ function showResults(result) {
   document.getElementById('also-ran-wrap').innerHTML = _hitMore.length > 0
     ? _moreWrap(_hitMore, function(p,r){ return _mlbCard(p, r, true); }, 11, 'More Hit Picks', '#f59e0b')
     : '';
+
+  // SECTION 2 — Value Plays board: each top hitter's plus-money (+odds) value
+  // markets, ranked by the 3 partial standards (hot / vs pitcher / vs team).
+  // Built off the full slate so it is stable regardless of the +EV / odds-range
+  // toolbar. Hidden in admin "Unders Only" mode (the board is all overs).
+  var _valAll = _buildValuePlays(result);
+  if (_valAll.length && !(window.UNDERS_ONLY && (window.IS_ADMIN||window.IS_TESTER))) {
+    show('value-plays-card');
+    window.__VAL_REG__={};
+    document.getElementById('value-plays-body').innerHTML = _valAll.slice(0,10).map(function(p,i){ return _valueCard(p, i+1); }).join('');
+    document.getElementById('value-more-wrap').innerHTML = _valAll.length>10
+      ? _moreWrap(_valAll.slice(10,20), function(p,r){ return _valueCard(p, r); }, 11, 'Value Plays', '#22d3ee')
+      : '';
+  } else { hide('value-plays-card'); }
 
   const underPicks = (view.under_picks || []).filter(function(p){ return _oddsOk(p.under_odds); });
   if (underPicks.length > 0) {
@@ -5178,7 +5198,7 @@ function _projEdgePicks(r){
   addH(r.tb_picks,     'TB Under',   'total_bases', 'Total Bases', function(){return 1.5;}, function(p){return p.tb_under_odds;});
   addH(r.hrr_picks,    'HRR',        'hrr',         'H+R+RBI',     function(){return 1.5;}, function(p){return p.pick==='UNDER'?p.hrr_under_odds:p.hrr_over_odds;});
   addH(r.rbi_picks,    'RBI',        'rbi',         'RBI',         function(p){return p.line||0.5;}, function(p){return p.pick==='OVER'?p.over_odds:p.under_odds;});
-  addH(r.hr_picks,     'HR',         'homeRuns',    'HR',          function(p){return p.line||0.5;}, function(p){return p.pick==='OVER'?p.over_odds:p.under_odds;});
+  // HR intentionally NOT on the Proj Edge board (model uncalibrated). HR keeps its own separate tracker.
   addH(r.walks_picks,  'Batter Walks','walks_bat',  'Walks',       function(p){return p.line||0.5;}, function(p){return p.pick==='OVER'?p.over_odds:p.under_odds;});
   addH(r.runs_picks,   'Runs',       'runs',        'Runs',        function(p){return p.line||0.5;}, function(p){return p.pick==='OVER'?p.over_odds:p.under_odds;});
   window.__PROJ_EDGE__=all;
@@ -5251,7 +5271,6 @@ function _openProjEdge(){
     ['TB Under','Hitting \u2014 Total Bases Under','#38bdf8'],
     ['HRR','Hitting \u2014 H+R+RBI','#38bdf8'],
     ['RBI','Hitting \u2014 RBI','#38bdf8'],
-    ['HR','Hitting \u2014 Home Runs','#38bdf8'],
     ['Batter Walks','Hitting \u2014 Batter Walks','#38bdf8'],
     ['Runs','Hitting \u2014 Runs','#38bdf8']
   ];
@@ -6799,6 +6818,127 @@ function _top10Card(p, rank) {
     +'</div>';
 }
 
+// ── SECTION 2: Value Plays board ───────────────────────────────────────
+// Per hitter, collect every plus-money (+odds) OVER value market (RBI / Total
+// Bases / Runs / Walks / H+R+RBI) and rank by a 3-standard PARTIAL score that
+// mirrors the approved board: (1) HOT recent form, (2) career vs the PITCHER,
+// (3) rate vs the opponent TEAM. The composite is the geometric mean of only
+// the standards that have data, so a missing standard is "never faced", not a
+// zero. Built off the FULL slate (display only — these plays are already
+// tracked under their own native categories).
+function _valNum(s){
+  s=String(s||''); var i=s.indexOf('/'); if(i<0) return [null,null];
+  var a=parseInt(s.slice(0,i),10), b=parseInt(s.slice(i+1),10);
+  return [isNaN(a)?null:a, isNaN(b)?null:b];
+}
+function _valRate(s){ var a=_valNum(s); return (a[1]&&a[1]>0)?a[0]/a[1]:null; }
+function _valBA(disp){
+  disp=String(disp||''); var i=disp.indexOf('.'); if(i<0) return null;
+  var dd=''; for(var j=i+1;j<disp.length;j++){ var ch=disp.charAt(j); if(ch>='0'&&ch<='9') dd+=ch; else break; }
+  return dd?parseFloat('0.'+dd.slice(0,3)):null;
+}
+function _buildValuePlays(result){
+  if(!result) return [];
+  var MK=[['1+ RBI','rbi_picks','over_odds'],
+          ['2+ Total Bases','tb_over_picks','tb_over_odds'],
+          ['1+ Run','runs_picks','over_odds'],
+          ['1+ Walk','walks_picks','over_odds'],
+          ['2+ H+R+RBI','hrr_picks','hrr_over_odds']];
+  var byPid={};
+  MK.forEach(function(mk){
+    var label=mk[0], arr=result[mk[1]]||[], fld=mk[2];
+    arr.forEach(function(p){
+      var o=p[fld]; if(o==null||+o<=0) return;              // plus-money only
+      var pid=p.batter_id; if(pid==null) return;
+      var e=byPid[pid]||(byPid[pid]={plays:{},stat:null});
+      var vp=p.vs_pit||{};
+      if(!e.stat||(vp.ab&&!((e.stat.vs_pit||{}).ab))) e.stat=p;     // keep richest record
+      if(!(label in e.plays)||+o<e.plays[label]) e.plays[label]=+o; // one per market, safest +odds
+    });
+  });
+  var out=[];
+  Object.keys(byPid).forEach(function(pid){
+    var e=byPid[pid], s=e.stat||{};
+    var l10=_valRate(s.recent_l10), l5=_valRate(s.recent_l5); if(l5==null) l5=l10;
+    var streak=s.hot_bonus||0;
+    var hot=(l10!=null)?100*(0.55*(l10||0)+0.30*(l5||0)+0.15*Math.min(streak/13,1)):null;
+    var vp=s.vs_pit||{}, vpab=vp.ab||0, ba=_valBA(vp.display), vsP=null;
+    if(vpab&&ba!=null){ var shr=(ba*vpab+0.25*5)/(vpab+5); vsP=Math.max(0,Math.min(100,(shr-0.15)/0.30*100)); }
+    var hh=_valNum(s.h2h_disp), vsT=null;
+    if(hh[1]) vsT=Math.max(0,Math.min(100,100*(hh[0]+0.6*2)/(hh[1]+2)));
+    var avail=[hot,vsP,vsT].filter(function(v){return v!=null;});
+    if(!avail.length) return;
+    var prod=1; avail.forEach(function(v){prod*=Math.max(v,1);});
+    var comp=Math.pow(prod,1/avail.length);
+    var plays=Object.keys(e.plays).map(function(l){return [e.plays[l],l];}).sort(function(a,b){return a[0]-b[0];});
+    out.push(Object.assign({}, s, {
+      _hot:(hot!=null?Math.round(hot):null),
+      _vsP:(vsP!=null?Math.round(vsP):null),
+      _vsT:(vsT!=null?Math.round(vsT):null),
+      _comp:Math.round(comp*10)/10, _ncov:avail.length, _plays:plays, _vpdisp:vp.display}));
+  });
+  out.sort(function(a,b){return b._comp-a._comp;});
+  return out;
+}
+function _valForm(key){
+  var p=(window.__VAL_REG__||{})[key]; if(!p) return;
+  if(p.recent_rbi_log!==undefined){ _rbiForm(p); }
+  else if(p.recent_tb_log!==undefined){ _tbForm(p); }
+  else if(p.recent_runs_log!==undefined){ _runsForm(p); }
+  else if(p.recent_walks_log!==undefined){ _walksForm(p); }
+  else if(p.recent_hr_log!==undefined){ _hrForm(p); }
+  else { _hitForm(p); }
+}
+function _valStdRow(lbl, val, det, blank){
+  var v=blank?'<span style="color:#64748b;font-weight:800">&mdash;</span>':('<span style="font-weight:800;color:#e2e8f0">'+val+'</span>');
+  return '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:3px">'
+    +'<span style="font-size:.7rem;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em">'+lbl+'</span>'
+    +'<span style="display:flex;align-items:center;gap:8px"><span style="font-size:.66rem;color:#64748b">'+(det||'')+'</span>'+v+'</span></div>';
+}
+function _valueCard(p, rank){
+  var abbr=_mlbTeamAbbr(p.team);
+  var teamLogo=abbr?('https://a.espncdn.com/i/teamlogos/mlb/500/'+abbr+'.png'):'';
+  var rnkColors=rank===1?['#22d3ee','#000']:rank===2?['#67e8f9','#000']:rank===3?['#0891b2','#fff']:['#1e1e1e','#22d3ee'];
+  var sideCls=p.side==='HOME'?'badge-home':'badge-away';
+  var c=p._comp;
+  var cClr=c>=85?'#22c55e':c>=70?'#4ade80':c>=55?'#86efac':'#94a3b8';
+  var hotDet=(p.recent_l10?('L10 '+p.recent_l10):'')+(p.recent_l5?(' \u00b7 L5 '+p.recent_l5):'');
+  var pitDet=p._vsP!=null?String(p._vpdisp||''):'never faced';
+  var teamDet=p._vsT!=null?('hit '+(p.h2h_disp||'')+' g'):'no history';
+  var rows=_valStdRow('Hot',p._hot,hotDet,p._hot==null)
+    +_valStdRow('vs Pitcher',p._vsP,pitDet,p._vsP==null)
+    +_valStdRow('vs Team',p._vsT,teamDet,p._vsT==null);
+  var plays=(p._plays||[]).map(function(pl){
+    return '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:3px">'
+      +'<span style="font-size:.78rem;color:#cbd5e1">'+pl[1]+'</span>'
+      +'<span style="font-family:monospace;font-weight:800;color:#34d399">+'+pl[0]+'</span></div>';
+  }).join('');
+  window.__VAL_REG__=window.__VAL_REG__||{}; window.__VAL_REG__['vr'+rank]=p;
+  return `<div class="mlb-pick-card" onclick="_valForm('vr${rank}')" title="Click for recent form" style="cursor:pointer">
+    <div class="mlb-card-header" style="background:linear-gradient(135deg,#06303a 0%,#02161c 100%)">${_cardHdr(rank,rnkColors,'<span style="font-size:.66rem;letter-spacing:.1em;background:#22d3ee;color:#000;padding:2px 6px;border-radius:4px;font-weight:900">VALUE</span>',teamLogo,(p.team||''),_seriesTag(p,'O',false,0))}</div>
+    ${_nameBar(rank,rnkColors,p.batter_id,(p.name||p.full_name||''))}
+    <div class="mlb-card-body">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <span style="font-size:.82rem;color:#94a3b8">vs <strong style="color:#fff">${p.opp||'\u2014'}</strong></span>
+        ${p.side?`<span class="badge ${sideCls}">${p.side}</span>`:''}
+      </div>
+      ${p.pitcher?`<div style="font-size:.78rem;color:#64748b;margin-top:2px">vs ${p.pitcher}</div>`:''}
+      <div style="margin-top:8px;padding-top:8px;border-top:1px solid #1f1f1f">
+        <div style="font-size:.6rem;font-weight:800;letter-spacing:.07em;color:#22d3ee;text-transform:uppercase">3 Standards</div>
+        ${rows}
+      </div>
+      <div style="margin-top:8px;padding-top:8px;border-top:1px solid #1f1f1f">
+        <div style="font-size:.6rem;font-weight:800;letter-spacing:.07em;color:#34d399;text-transform:uppercase">+Odds Value Plays</div>
+        ${plays||'<div style="font-size:.72rem;color:#64748b;margin-top:3px">\u2014</div>'}
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;padding-top:8px;border-top:1px solid #1f1f1f">
+        <span style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">3-Std Score</span>
+        <span style="display:flex;align-items:baseline;gap:6px"><span style="font-weight:900;font-size:1.05rem;color:${cClr}">${c}</span><span style="font-size:.62rem;color:#64748b">${p._ncov}/3</span></span>
+      </div>
+    </div>
+  </div>`;
+}
+
 function _hrrCard(p, rank, pfx) {
   pfx = pfx || 'hrr';
   const abbr = _mlbTeamAbbr(p.team);
@@ -7851,13 +7991,14 @@ function _openBestBetsStats(){
 // Pitcher rows now carry a `proj` field (banked going forward), so this fills in
 // from the day the build ships. Reuses the shared grade cache. Edge / Best Bets
 // records untouched.
-var _PE_KEYS=['top10_batter','top10_batter_new','top10_pitcher','hitter_overs','hitter_more','hitter_unders','runs','tb_under','tb_over','rbi','hr','batter_walks','hrr','pitcher_ks','pitcher_props','overflow'];
+var _PE_KEYS=['top10_batter','top10_batter_new','top10_pitcher','hitter_overs','hitter_more','hitter_unders','runs','tb_under','tb_over','rbi','batter_walks','hrr','pitcher_ks','pitcher_props','overflow'];
 function _peFlatten(g){ var out=[]; if(!g||g==='LOADING'||g.__error__) return out; _PE_KEYS.forEach(function(k){ (g[k]||[]).forEach(function(r){ out.push(r); }); }); return out; }
 function _peBaseCat(c){ c=c||'?'; if(c==='Hitter Hits (More)') return 'Hitter Hits'; if(c.slice(-6)===' (OVF)') return c.slice(0,-6); return c; }
 function _peIsPitcher(cat){ return (cat||'').indexOf('Pitcher')===0; }
 function _peOK(r){
   if(_trkSkipMeta(r)) return false;
   var cat=r.category||'';
+  if(_isHrCat(cat)) return false;   // HR removed from Proj Edge board + record (own tracker keeps it)
   if(_peIsPitcher(cat)){
     var pj=r.proj; if(pj==null||!isFinite(Number(pj))) return false;
     var ln=r.line; if(ln==null||!isFinite(Number(ln))) return false;
@@ -7877,6 +8018,31 @@ function _peVal(r){
   }
   return ((r.edge||0)*100).toFixed(1)+'%';
 }
+// Numeric ranking value mirroring the live Proj Edge board (_openProjEdge):
+// hitters by model edge, pitchers by projection-vs-line gap on the picked side.
+function _peRank(r){
+  var cat=r.category||'';
+  if(_peIsPitcher(cat)){
+    var pj=Number(r.proj), ln=Number(r.line);
+    if(!isFinite(pj)||!isFinite(ln)) return -1e9;
+    var sd=(r.side||'OVER').toUpperCase();
+    return sd==='OVER'?(pj-ln):(ln-pj);
+  }
+  return (r.edge||0);
+}
+// The live Proj Edge popup shows only the TOP 5 plays per category (by edge/gap).
+// Cap each base category to its best 5 so the record grades the SAME set the
+// button shows &#x2014; not the deep overflow ranks (11-30) the popup never lists.
+function _peCapPerCat(rows){
+  var by={};
+  rows.forEach(function(r){ var bc=_peBaseCat(r.category||'?'); (by[bc]=by[bc]||[]).push(r); });
+  var out=[];
+  Object.keys(by).forEach(function(bc){
+    by[bc].sort(function(a,b){ return _peRank(b)-_peRank(a); });
+    for(var i=0;i<by[bc].length&&i<5;i++) out.push(by[bc][i]);
+  });
+  return out;
+}
 function _peRowsForDate(date){
   var d=window.__TRACK__||{}; var rows=[]; var have=false;
   (d.detail||[]).forEach(function(r){ if(r.date===date){ have=true; if(_peOK(r)&&(r.result==='WIN'||r.result==='LOSS')) rows.push(r); } });
@@ -7885,6 +8051,7 @@ function _peRowsForDate(date){
     if(!g||g==='LOADING'||g.__error__||!g.all_final) return [];
     _peFlatten(g).forEach(function(r){ if(_peOK(r)&&(r.result==='WIN'||r.result==='LOSS')) rows.push(r); });
   }
+  rows=_peCapPerCat(rows);
   rows.sort(function(a,b){ return (b.edge||0)-(a.edge||0); });
   return rows;
 }
