@@ -7653,7 +7653,7 @@ function _trkBuildCfg(){
     'Pitcher Ks (OVF)|OVER','Pitcher Ks (OVF)|UNDER','Pitcher Hits Allowed (OVF)|OVER','Pitcher Hits Allowed (OVF)|UNDER',
     'Pitcher Outs (OVF)|OVER','Pitcher Outs (OVF)|UNDER','Pitcher Earned Runs (OVF)|OVER','Pitcher Earned Runs (OVF)|UNDER',
     'Pitcher Walks (OVF)|OVER','Pitcher Walks (OVF)|UNDER'];
-  window.__TRK_CFG__=CAT_CFG; window.__TRK_ORDER__=CAT_ORDER.concat(OVF_ORDER); window.__OVF_ORDER__=OVF_ORDER;
+  window.__TRK_CFG__=CAT_CFG; window.__TRK_ORDER__=CAT_ORDER; window.__OVF_ORDER__=OVF_ORDER;
 }
 
 function renderTrackRecord(d){
@@ -7965,10 +7965,11 @@ function _trkRenderDaily(stake){
 }
 // ===== Track Record tabs: Daily / Weekly (last 7 days) / Monthly =====
 var _TRK_KEYS=['top10_batter','top10_batter_new','top10_pitcher','hitter_overs','hitter_unders','runs','tb_under','tb_over','rbi','batter_walks','hrr','pitcher_ks','pitcher_props'];
-// Main Track Record flatten ALSO pulls in ranks 11-20 (overflow) + Value Plays so
-// they surface in the daily/weekly/monthly views. Kept SEPARATE from _TRK_KEYS so
-// Best Bets (which shares _trkFlatten) stays a top-10-only board.
-var _TRK_KEYS_FULL=_TRK_KEYS.concat(['hitter_more','overflow','value_plays']);
+// Main Track Record flatten ALSO pulls in Value Plays so it surfaces in the daily/
+// weekly/monthly views. Overflow (ranks 11-20) is deliberately NOT here — it lives
+// ONLY in the Overflow tab. Kept SEPARATE from _TRK_KEYS so Best Bets (which shares
+// _trkFlatten) stays a top-10-only board.
+var _TRK_KEYS_FULL=_TRK_KEYS.concat(['value_plays']);
 function _trkTodayISO(){ var d=new Date(); var z=d.getTimezoneOffset()*60000; return new Date(d.getTime()-z).toISOString().slice(0,10); }
 function _isoShift(iso,days){ var d=new Date(iso+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()+days); return d.toISOString().slice(0,10); }
 function _trkRC(w,n){ if(!n) return '#64748b'; var p=w/n; return p>=0.70?'#4ade80':(p>=0.55?'#facc15':'#f87171'); }
@@ -8279,7 +8280,7 @@ function _openProjEdgeStats(){
 function _trkRenderActive(){ var be=document.getElementById('track-body'); if(!be) return; var stake=_trkStake(); var t=window.__TRK_TAB__||'daily'; if(t==='daily') _trkRenderDailyTab(be,stake); else _trkRenderRangeTab(be,stake,t); }
 function _trkFlatten(g){ var out=[]; if(!g||g==='LOADING'||g.__error__) return out; _TRK_KEYS.forEach(function(k){ (g[k]||[]).forEach(function(r){ out.push(r); }); }); return out; }
 function _trkFlattenFull(g){ var out=[]; if(!g||g==='LOADING'||g.__error__) return out; _TRK_KEYS_FULL.forEach(function(k){ (g[k]||[]).forEach(function(r){ out.push(r); }); }); return out; }
-function _trkRangePool(from,to){ var d=window.__TRACK__||{}; var pool=[]; var have={}; (d.detail||[]).forEach(function(r){ if(r.date>=from&&r.date<=to){ have[r.date]=true; if(_isHrCat(r.category)) return; pool.push(r); } }); var cache=window.__TRK_GRADE_CACHE__||{}; var cur=from; while(cur<=to){ if(!have[cur]){ _trkFlattenFull(cache[cur]).forEach(function(r){ if(r.result==='WIN'||r.result==='LOSS'){ var c={}; for(var kk in r) c[kk]=r[kk]; c.date=cur; pool.push(c); } }); } cur=_isoShift(cur,1); } return pool; }
+function _trkRangePool(from,to){ var d=window.__TRACK__||{}; var pool=[]; var have={}; (d.detail||[]).forEach(function(r){ if(r.date>=from&&r.date<=to){ have[r.date]=true; if(_isOvfCat(r.category)||_isHrCat(r.category)) return; pool.push(r); } }); var cache=window.__TRK_GRADE_CACHE__||{}; var cur=from; while(cur<=to){ if(!have[cur]){ _trkFlattenFull(cache[cur]).forEach(function(r){ if(r.result==='WIN'||r.result==='LOSS'){ var c={}; for(var kk in r) c[kk]=r[kk]; c.date=cur; pool.push(c); } }); } cur=_isoShift(cur,1); } return pool; }
 // Days in [from,to] (up to today) that are neither locked into the permanent ledger
 // nor yet fetched into the grade cache. These must be graded on demand so Weekly/
 // Monthly sum EVERY day (postponed / still-pending days included), not just locked
@@ -9119,7 +9120,7 @@ function renderHRTracker(d){
 function _amDec(o){ if(o==null||o==='') return null; o=Number(o); if(!isFinite(o)||o===0) return null; return o>0?(1+o/100):(1+100/Math.abs(o)); }
 // Meta-ranking buckets duplicate the per-category picks — exclude them so CLV
 // and calibration never double-count the same bet.
-function _trkSkipMeta(r){ return r.category==='Top 10 Batter'||r.category==='Top 10 Batter (NEW)'||r.category==='Top 10 Pitcher'||r.category==='Value Plays'||r.category==='Top 10 Batter (OVF)'||r.category==='Top 10 Batter NEW (OVF)'; }
+function _trkSkipMeta(r){ return r.category==='Top 10 Batter'||r.category==='Top 10 Batter (NEW)'||r.category==='Top 10 Pitcher'||r.category==='Value Plays'; }
 function _trkAmOdds(o){ o=Number(o); return (o>0?'+':'')+o; }
 
 // CLOSING LINE VALUE — did you get a better price than the market settled at?
