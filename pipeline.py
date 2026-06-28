@@ -1986,6 +1986,114 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     except Exception as _exc:
         emit({"type": "log", "msg": f"⚠️ Series game# skipped: {_exc}"})
 
+    # ── Day/Night BA for ALL hitter picks (display on every card) ────────
+    # Hit-pool picks already carry ESPN day/night BA (Step 4 / S5). The other
+    # categories don't, so stamp each hitter's day/night BA (MLB Stats API,
+    # batched by personId) for today's game time onto every pick so the card
+    # can show it. Display only — ordering and gates are untouched.
+    try:
+        from datetime import datetime as _DT
+
+        def _dn_gtype(team_name):
+            s = team_schedule.get(team_name)
+            if not s and team_name:
+                tl = team_name.lower()
+                for _k, _v in team_schedule.items():
+                    if tl in _k.lower() or _k.lower() in tl:
+                        s = _v
+                        break
+            gs = (s or {}).get("game_start", "") or ""
+            if not gs:
+                return "unknown"
+            try:
+                _dt = _DT.fromisoformat(gs.replace("Z", "+00:00"))
+                return "night" if (_dt.hour >= 21 or _dt.hour <= 5) else "day"
+            except Exception:
+                return "unknown"
+
+        _dn_lists = [under_picks_list, runs_picks_list, tb_picks_list,
+                     tb_over_picks_list, rbi_picks_list, walks_picks_list,
+                     hrr_picks_list, hr_picks_list]
+
+        # reuse hit-pool day/night where the same player already has it so a
+        # player shows the SAME number on every card
+        _dn_existing = {}
+        for _r in list(top9) + list(also_ran):
+            _bid = _r.get("batter_id") or _r.get("player_id")
+            if _bid and _r.get("s5"):
+                _dn_existing[int(_bid)] = (_r.get("dn_label"), _r.get("s5"))
+
+        _dn_need = set()
+        for _lst in _dn_lists:
+            for _r in _lst:
+                _bid = _r.get("batter_id") or _r.get("player_id")
+                if _bid and int(_bid) not in _dn_existing and not _r.get("s5"):
+                    _dn_need.add(int(_bid))
+
+        _dn_map = {}
+        _dn_ids = list(_dn_need)
+        _dn_season = str(run_date)[:4]
+        for _i in range(0, len(_dn_ids), 40):
+            _chunk = _dn_ids[_i:_i + 40]
+            try:
+                _u = ("https://statsapi.mlb.com/api/v1/people?personIds="
+                      + ",".join(str(x) for x in _chunk)
+                      + "&hydrate=stats(group=[hitting],type=[statSplits],"
+                      + "sitCodes=[d,n],season=" + _dn_season + ")")
+                _j = requests.get(_u, timeout=15).json()
+                for _per in _j.get("people", []):
+                    _pid = _per.get("id")
+                    _sp = {}
+                    for _st in _per.get("stats", []):
+                        for _s in _st.get("splits", []):
+                            _code = (_s.get("split") or {}).get("code")
+                            _stat = _s.get("stat") or {}
+                            if _code in ("d", "n"):
+                                _sp[_code] = (_stat.get("avg"), _stat.get("atBats"))
+                    if _pid is not None:
+                        _dn_map[int(_pid)] = _sp
+            except Exception:
+                continue
+
+        def _dn_fmt(_avg):
+            try:
+                _f = float(_avg)
+            except Exception:
+                return None, "N/A"
+            _d = "%.3f" % _f
+            if _d.startswith("0."):
+                _d = _d[1:]
+            return _f, _d
+
+        _dn_n = 0
+        for _lst in _dn_lists:
+            for _r in _lst:
+                if _r.get("s5"):
+                    continue
+                _bid = _r.get("batter_id") or _r.get("player_id")
+                _bid = int(_bid) if _bid else None
+                if _bid and _bid in _dn_existing:
+                    _lbl, _s5 = _dn_existing[_bid]
+                    _r["dn_label"] = _lbl
+                    _r["s5"] = _s5
+                    _dn_n += 1
+                    continue
+                _gt = _dn_gtype(_r.get("team", ""))
+                if _gt == "unknown":
+                    continue
+                _code = "d" if _gt == "day" else "n"
+                _avg, _ab = (_dn_map.get(_bid or -1, {}).get(_code) or (None, None))
+                _ba, _disp = _dn_fmt(_avg)
+                _r["dn_label"] = "DAY" if _gt == "day" else "NIGHT"
+                _r["s5"] = {"ba": _ba,
+                            "score": (round(_ba * 1000) if _ba else 0),
+                            "display": _disp, "ab": _ab}
+                _dn_n += 1
+        emit({"type": "log",
+              "msg": f"  ✅ Day/Night BA stamped ({_dn_n} hitter picks, {len(_dn_map)} fetched)"})
+    except Exception as _exc:
+        emit({"type": "log", "msg": f"⚠️ Day/Night BA stamp skipped: {_exc}"})
+
     # ── EV enrichment for ALL non-hit categories ────────────────────────
     # Each pick gets ev / edge / ev_prob from our model probability vs the
     # posted price for the SIDE we picked. Binary 0.5/1.5 batter markets use the
