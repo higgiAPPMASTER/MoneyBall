@@ -1,4 +1,3 @@
-
 """
 mlb_stats_splits.py - Steps 2 & 3 via MLB Stats API game logs.
 Replaces statmuse_fetch.py - no scraping, no credentials needed.
@@ -12,14 +11,29 @@ import time
 from datetime import date
 from concurrent.futures import ThreadPoolExecutor
 
-# ── Module-level cache: (player_id, season) → splits list ──────────
-_CACHE: dict = {}
+# ── Module-level caches ────────────────────────────────────────────
+# Prior seasons are immutable → cache forever in _CACHE.
+# The CURRENT season gains new games nightly. On the always-on (no spin-down)
+# Render instance a permanent cache would FREEZE the data — even a Force Refresh
+# could never pick up last night's games (it just reuses the cached log). So the
+# current season carries a fetch timestamp and is re-pulled once it ages past
+# _CUR_TTL, which is what lets a Force Refresh show last night's line.
+_CACHE: dict = {}        # (player_id, season) → splits            (prior years)
+_CUR_CACHE: dict = {}    # (player_id, season) → (fetched_ts, splits)  (current)
+_CUR_TTL = 600           # seconds; re-pull current-season logs after 10 min
 
 
 def _get_game_logs(player_id: int, season: int) -> list:
-    """Fetch and cache hitting game-log splits for one player/season."""
+    """Fetch and cache hitting game-log splits for one player/season.
+    Prior seasons cache permanently; the current season uses a short TTL so
+    newly-completed games show up without waiting for a process restart."""
+    is_current = season >= date.today().year
     key = (player_id, season)
-    if key in _CACHE:
+    if is_current:
+        hit = _CUR_CACHE.get(key)
+        if hit and (time.time() - hit[0]) < _CUR_TTL:
+            return hit[1]
+    elif key in _CACHE:
         return _CACHE[key]
     for attempt in range(3):
         try:
@@ -31,12 +45,18 @@ def _get_game_logs(player_id: int, season: int) -> list:
             )
             r.raise_for_status()
             splits = r.json().get("stats", [{}])[0].get("splits", [])
-            _CACHE[key] = splits
+            if is_current:
+                _CUR_CACHE[key] = (time.time(), splits)
+            else:
+                _CACHE[key] = splits
             return splits
         except Exception:
             if attempt < 2:
                 time.sleep(0.4)
-    _CACHE[key] = []
+    if is_current:
+        _CUR_CACHE[key] = (time.time(), [])
+    else:
+        _CACHE[key] = []
     return []
 
 
@@ -67,8 +87,16 @@ def prefetch_game_logs(player_ids: list, seasons: list = None):
     if seasons is None:
         current_year = date.today().year
         seasons = list(range(current_year, current_year - 5, -1))
+    cur_year = date.today().year
+
+    def _needs(pid, s):
+        if s >= cur_year:                       # current season → honor TTL
+            hit = _CUR_CACHE.get((pid, s))
+            return not (hit and (time.time() - hit[0]) < _CUR_TTL)
+        return (pid, s) not in _CACHE           # prior season → permanent
+
     tasks = [(pid, s) for pid in player_ids if pid
-             for s in seasons if (pid, s) not in _CACHE]
+             for s in seasons if _needs(pid, s)]
     if not tasks:
         return
     def _fetch_one(args):
