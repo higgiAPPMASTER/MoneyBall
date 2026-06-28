@@ -5987,6 +5987,17 @@ function _xbaBadge(p){
 }
 
 function _bookTag(p){ return (p&&p.book)?(' <span style="font-size:.62rem;color:#94a3b8;font-weight:600">'+p.book+'</span>'):''; }
+function _dnChip(p){
+  if(!p||!p.s5) return '';
+  var v=(p.s5&&p.s5.display)||'';
+  if(!v||v==='N/A') return '';
+  if(v.charAt(0)==='0'&&v.charAt(1)==='.') v=v.slice(1);
+  var lbl=p.dn_label||'D/N';
+  if(lbl==='DAY') lbl='Day'; else if(lbl==='NIGHT') lbl='Night';
+  return '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">'
+    +'<span style="font-size:.72rem;color:#64748b">'+lbl+' BA</span>'
+    +'<span style="font-family:monospace;font-weight:700;color:#7dd3fc;font-size:.82rem">'+v+'</span></div>';
+}
 function _mlbCard(p, rank, dim) {
   const abbr = _mlbTeamAbbr(p.team);
   const teamLogo = abbr ? `https://a.espncdn.com/i/teamlogos/mlb/500/${abbr}.png` : '';
@@ -6141,6 +6152,7 @@ function _runsCard(p, rank, pfx) {
         <span style="font-size:.72rem;color:#64748b">Recent</span>
         <span style="font-size:.78rem;color:#cbd5e1">${log.length?recCnt+'/'+log.length:'—'}</span>
       </div>
+      ${_dnChip(p)}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
         <span style="font-size:.8rem;color:${pickClr};font-weight:900">${p.pick} ${p.line!=null?p.line:0.5} Runs</span>
         <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}${_bookTag(p)}</span>
@@ -6189,6 +6201,7 @@ function _rbiCard(p, rank, pfx) {
         <span style="font-size:.72rem;color:#64748b">Recent</span>
         <span style="font-size:.78rem;color:#cbd5e1">${log.length?recCnt+'/'+log.length:'—'}</span>
       </div>
+      ${_dnChip(p)}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
         <span style="font-size:.8rem;color:${pickClr};font-weight:900">${p.pick} ${p.line!=null?p.line:0.5} RBI</span>
         <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}${_bookTag(p)}</span>
@@ -6290,6 +6303,7 @@ function _hrCard(p, rank, pfx) {
         <span style="font-size:.72rem;color:#64748b">Recent HR</span>
         <span style="font-size:.78rem;color:#cbd5e1">${log.length?recCnt+'/'+log.length:(p.recent_disp||'—')}</span>
       </div>
+      ${_dnChip(p)}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
         <span style="font-size:.8rem;color:${pickClr};font-weight:900">${p.pick} ${p.line!=null?p.line:0.5} HR</span>
         <span style="font-family:monospace;color:#f43f5e;font-weight:700;font-size:.95rem">${odDisp}${_bookTag(p)}</span>
@@ -6381,6 +6395,7 @@ function _walksCard(p, rank, pfx) {
         <span style="font-size:.72rem;color:#64748b">Recent</span>
         <span style="font-size:.78rem;color:#cbd5e1">${log.length?recCnt+'/'+log.length:'—'}</span>
       </div>
+      ${_dnChip(p)}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
         <span style="font-size:.8rem;color:${pickClr};font-weight:900">${p.pick} ${p.line!=null?p.line:0.5} Walks</span>
         <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}${_bookTag(p)}</span>
@@ -6469,6 +6484,7 @@ function _tbCard(p, rank) {
         <span style="font-size:.72rem;color:#64748b">Recent</span>
         <span style="font-size:.78rem;color:#cbd5e1">${log.length?underCnt+'/'+log.length+' under':'—'}</span>
       </div>
+      ${_dnChip(p)}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
         <span style="font-size:.8rem;color:#a78bfa;font-weight:900">UNDER 1.5 Total Bases</span>
         <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}${_bookTag(p)}</span>
@@ -6512,6 +6528,7 @@ function _tbOverCard(p, rank) {
         <span style="font-size:.72rem;color:#64748b">Recent</span>
         <span style="font-size:.78rem;color:#cbd5e1">${log.length?overCnt+'/'+log.length+' over':'—'}</span>
       </div>
+      ${_dnChip(p)}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
         <span style="font-size:.8rem;color:#4ade80;font-weight:900">OVER 1.5 Total Bases</span>
         <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}${_bookTag(p)}</span>
@@ -6808,6 +6825,7 @@ function _top10Card(p, rank) {
       +'</div>'
       +_envChip(p)+_umpChip(p)+_bpChip(p)
       +((p.h2h_disp||p.l10_disp)?_rateRows(p,'#facc15'):'<div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px"><span style="font-size:.78rem;color:#94a3b8">Rate vs opp</span><span style="font-family:monospace;font-weight:700;color:#facc15">'+rate+'</span></div>')
+      +_dnChip(p)
       +'<div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">'
         +'<span style="font-size:.8rem;color:'+kc+';font-weight:900">'+label+'</span>'
         +'<span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">'+odDisp+_bookTag(p)+'</span>'
@@ -6923,6 +6941,7 @@ function _valueCard(p, rank){
         ${p.side?`<span class="badge ${sideCls}">${p.side}</span>`:''}
       </div>
       ${p.pitcher?`<div style="font-size:.78rem;color:#64748b;margin-top:2px">vs ${p.pitcher}</div>`:''}
+      ${_dnChip(p)}
       <div style="margin-top:8px;padding-top:8px;border-top:1px solid #1f1f1f">
         <div style="font-size:.6rem;font-weight:800;letter-spacing:.07em;color:#22d3ee;text-transform:uppercase">3 Standards</div>
         ${rows}
@@ -6977,6 +6996,7 @@ function _hrrCard(p, rank, pfx) {
         <span style="font-size:.72rem;color:#64748b">Recent</span>
         <span style="font-size:.78rem;color:#cbd5e1">${recDisp}</span>
       </div>
+      ${_dnChip(p)}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
         <span style="font-size:.8rem;color:${pickClr};font-weight:900">${isOver?'OVER':'UNDER'} 1.5 H+R+RBI</span>
         <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}${_bookTag(p)}</span>
