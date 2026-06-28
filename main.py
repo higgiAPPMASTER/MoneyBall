@@ -7033,10 +7033,21 @@ function _valueCard(p, rank){
   var rows=_valStdRow('Hot',p._hot,hotDet,p._hot==null)
     +_valStdRow('vs Pitcher',p._vsP,pitDet,p._vsP==null)
     +_valStdRow('vs Team',p._vsT,teamDet,p._vsT==null);
+  // Each value market maps to its native category/stat key so Track Bet + Parlay
+  // grade and settle exactly like the standalone RBI/TB/Runs/Walks/HRR cards.
+  var _VAL_BET={'1+ RBI':['RBI','OVER','rbi','RBI',0.5],
+    '2+ Total Bases':['TB Over','OVER','total_bases','Total Bases',1.5],
+    '1+ Run':['Runs','OVER','runs','Runs',0.5],
+    '1+ Walk':['Batter Walks','OVER','walks_bat','Walks',0.5],
+    '2+ H+R+RBI':['HRR','OVER','hrr','H+R+RBI',1.5]};
   var plays=(p._plays||[]).map(function(pl){
-    return '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:3px">'
+    var m=_VAL_BET[pl[1]];
+    var bb=m?_betBtn(p,m[0],m[1],m[2],m[3],m[4],pl[0]):'';
+    return '<div style="margin-top:3px">'
+      +'<div style="display:flex;align-items:center;justify-content:space-between">'
       +'<span style="font-size:.78rem;color:#cbd5e1">'+pl[1]+'</span>'
-      +'<span style="font-family:monospace;font-weight:800;color:#34d399">+'+pl[0]+'</span></div>';
+      +'<span style="font-family:monospace;font-weight:800;color:#34d399">+'+pl[0]+'</span></div>'
+      +bb+'</div>';
   }).join('');
   window.__VAL_REG__=window.__VAL_REG__||{}; window.__VAL_REG__['vr'+rank]=p;
   return `<div class="mlb-pick-card" onclick="_valForm('vr${rank}')" title="Click for recent form" style="cursor:pointer">
