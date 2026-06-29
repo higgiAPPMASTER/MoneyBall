@@ -9664,8 +9664,131 @@ async function _saveBet(){
     if(mb && !mb.classList.contains('hidden')) openMyBets(false);
   }catch(e){ msg.textContent=(e.message||'Save failed'); btn.disabled=false; btn.textContent='Log Bet'; }
 }
-function _manualBetForm(){
-  var MCATS=[
+function _manualParlayForm(){
+  var MCATS=_mcatsList(); window.__MPCATS__=MCATS; window.__mpLegs__=[];
+  var ov=document.getElementById('mpp-modal');
+  if(!ov){ ov=document.createElement('div'); ov.id='mpp-modal';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.85);z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; };
+    document.body.appendChild(ov);
+  }
+  var today=new Date().toISOString().slice(0,10);
+  var opts=MCATS.map(function(c,i){ return '<option value="'+i+'">'+c.label+'</option>'; }).join('');
+  var inp='display:block;width:100%;margin-top:5px;background:#0b1120;border:1px solid #334155;border-radius:8px;padding:9px 11px;color:#fff;font-size:.9rem;box-sizing:border-box';
+  ov.innerHTML='<div style="background:#0f172a;border:1px solid #312e81;border-radius:16px;max-width:420px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.6);max-height:92vh;overflow-y:auto">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid #1e293b">'
+      +'<div style="font-weight:800;color:#fbbf24;font-size:1rem">Manual Parlay Entry</div>'
+      +'<button onclick="document.getElementById(&#39;mpp-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem">&#215;</button>'
+    +'</div>'
+    +'<div style="padding:14px 18px;border-bottom:1px solid #1e293b;display:grid;gap:9px">'
+      +'<div style="font-size:.7rem;color:#6ee7b7;font-weight:800;text-transform:uppercase;letter-spacing:.04em">Add a Leg</div>'
+      +'<label style="font-size:.72rem;color:#94a3b8;font-weight:600">Player Name<input id="mpp-name" type="text" placeholder="e.g. Yordan Alvarez" style="'+inp+'"></label>'
+      +'<label style="font-size:.72rem;color:#94a3b8;font-weight:600">Opponent<input id="mpp-opp" type="text" placeholder="e.g. Red Sox" style="'+inp+'"></label>'
+      +'<label style="font-size:.72rem;color:#94a3b8;font-weight:600">Category<select id="mpp-cat" onchange="_mppCatChange()" style="'+inp+';color:#e2e8f0">'+opts+'</select></label>'
+      +'<div style="display:flex;gap:9px">'
+        +'<label style="flex:1;font-size:.72rem;color:#94a3b8;font-weight:600">Line<input id="mpp-line" type="number" step="0.5" min="0" style="'+inp+';font-family:monospace;font-weight:700;font-size:.95rem"></label>'
+        +'<label style="flex:1;font-size:.72rem;color:#94a3b8;font-weight:600">Odds (American)<input id="mpp-lodds" type="number" placeholder="-150 / +110" style="'+inp+';color:#fbbf24;font-family:monospace;font-weight:700;font-size:.95rem"></label>'
+      +'</div>'
+      +'<div id="mpp-legmsg" style="font-size:.74rem;color:#f87171;min-height:1em"></div>'
+      +'<button onclick="_mppAddLeg()" style="background:#0d2318;color:#6ee7b7;border:1px solid #166534;border-radius:9px;padding:9px;font-weight:800;cursor:pointer;font-size:.86rem">+ Add Leg</button>'
+    +'</div>'
+    +'<div id="mpp-legs" style="padding:12px 18px;border-bottom:1px solid #1e293b"></div>'
+    +'<div style="padding:16px 18px;display:grid;gap:11px">'
+      +'<label style="font-size:.72rem;color:#94a3b8;font-weight:600">Combined Odds (American)<input id="mpp-codds" type="number" placeholder="auto from legs" style="'+inp+';color:#fbbf24;font-family:monospace;font-weight:700;font-size:.95rem"></label>'
+      +'<label style="font-size:.72rem;color:#94a3b8;font-weight:600">Bet size ($)<input id="mpp-stake" type="number" min="0" step="0.01" placeholder="e.g. 20" style="'+inp+';font-weight:700;font-size:.95rem"></label>'
+      +'<label style="font-size:.72rem;color:#94a3b8;font-weight:600">Date<input id="mpp-date" type="date" value="'+today+'" style="'+inp+'"></label>'
+      +'<div id="mpp-payout" style="font-size:.78rem;color:#64748b;min-height:1em"></div>'
+      +'<div id="mpp-msg" style="font-size:.76rem;color:#f87171;min-height:1em"></div>'
+      +'<button id="mpp-save" onclick="_saveManualParlay()" style="background:#4338ca;color:#fff;border:none;border-radius:9px;padding:11px;font-weight:800;cursor:pointer;font-size:.92rem">Log Parlay</button>'
+    +'</div></div>';
+  ov.style.display='flex';
+  _mppCatChange(); _mppRender();
+  var so=document.getElementById('mpp-codds'),ss=document.getElementById('mpp-stake');
+  so.oninput=_mppPayout; ss.oninput=_mppPayout;
+  setTimeout(function(){ document.getElementById('mpp-name').focus(); },50);
+}
+function _mppCatChange(){
+  var sel=document.getElementById('mpp-cat'); if(!sel) return;
+  var c=(window.__MPCATS__||[])[parseInt(sel.value)]; if(!c) return;
+  var li=document.getElementById('mpp-line'); if(li && c.line!=null) li.value=c.line;
+}
+function _mppAddLeg(){
+  var name=(document.getElementById('mpp-name').value||'').trim();
+  var opp=(document.getElementById('mpp-opp').value||'').trim();
+  var sel=document.getElementById('mpp-cat');
+  var c=(window.__MPCATS__||[])[parseInt(sel?sel.value:0)];
+  var line=parseFloat(document.getElementById('mpp-line').value);
+  var o=parseFloat(document.getElementById('mpp-lodds').value);
+  var m=document.getElementById('mpp-legmsg');
+  if(!name){ m.textContent='Enter a player name for this leg.'; return; }
+  if(!c){ m.textContent='Select a category.'; return; }
+  if(!isFinite(line)||line<=0){ m.textContent='Enter a valid line for this leg.'; return; }
+  if(!isFinite(o)){ m.textContent='Enter the odds for this leg.'; return; }
+  m.textContent='';
+  (window.__mpLegs__=window.__mpLegs__||[]).push({name:name,opp:opp,cat:c.cat,sk:c.sk,sl:c.sl,side:c.side,line:line,odds:Math.round(o)});
+  document.getElementById('mpp-name').value='';
+  document.getElementById('mpp-opp').value='';
+  document.getElementById('mpp-lodds').value='';
+  _mppCatChange(); _mppRender();
+  document.getElementById('mpp-name').focus();
+}
+function _mppDelLeg(i){ var L=window.__mpLegs__||[]; L.splice(i,1); _mppRender(); }
+function _mppRender(){
+  var L=window.__mpLegs__||[];
+  var box=document.getElementById('mpp-legs'); if(!box) return;
+  if(!L.length){ box.innerHTML='<div style="color:#64748b;font-size:.78rem;text-align:center;padding:6px 0">No legs yet &mdash; add at least 2.</div>'; }
+  else{
+    box.innerHTML='<div style="font-size:.7rem;color:#a5b4fc;font-weight:800;text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">'+L.length+' Leg'+(L.length>1?'s':'')+'</div>'
+      +L.map(function(l,i){
+        var fo=(l.odds>0?'+':'')+l.odds;
+        return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #1e293b;font-size:.78rem">'
+          +'<span style="flex:1;color:#e2e8f0;font-weight:700">'+(i+1)+'. '+_esc(l.name)+'<span style="color:#94a3b8;font-weight:500"> &middot; '+_esc(l.side+' '+l.line+' '+l.sl)+(l.opp?(' vs '+_esc(l.opp)):'')+'</span></span>'
+          +'<span style="font-family:monospace;color:#fbbf24;font-weight:700">'+fo+'</span>'
+          +'<button onclick="_mppDelLeg('+i+')" style="background:#3a0d0d;color:#fca5a5;border:none;border-radius:6px;width:22px;height:22px;cursor:pointer;font-size:.9rem;line-height:1;flex-shrink:0">&#215;</button>'
+          +'</div>';
+      }).join('');
+  }
+  var dec=1, ok=L.length>0;
+  L.forEach(function(l){ var d=_amToDec(l.odds); if(d) dec*=d; else ok=false; });
+  var co=document.getElementById('mpp-codds');
+  if(co && ok && L.length){ var am=_decToAm(dec); if(am!=null) co.value=(''+am).replace('+',''); }
+  if(co && !L.length){ co.value=''; }
+  _mppPayout();
+}
+function _mppPayout(){
+  var o=parseFloat(document.getElementById('mpp-codds').value);
+  var s=parseFloat(document.getElementById('mpp-stake').value);
+  var pay=document.getElementById('mpp-payout'); if(!pay) return;
+  if(!isFinite(o)||!isFinite(s)||s<=0){ pay.textContent=''; return; }
+  var win=o>0?s*(o/100):s*(100/Math.abs(o));
+  pay.innerHTML='To win <strong style="color:#4ade80">$'+win.toFixed(2)+'</strong> &middot; total <strong style="color:#cbd5e1">$'+(s+win).toFixed(2)+'</strong>';
+}
+async function _saveManualParlay(){
+  var L=window.__mpLegs__||[];
+  var msg=document.getElementById('mpp-msg');
+  if(L.length<2){ msg.textContent='Add at least 2 legs for a parlay.'; return; }
+  var o=parseFloat(document.getElementById('mpp-codds').value);
+  var s=parseFloat(document.getElementById('mpp-stake').value);
+  var dt=(document.getElementById('mpp-date').value||new Date().toISOString().slice(0,10));
+  if(!isFinite(o)){ msg.textContent='Enter the combined odds.'; return; }
+  if(!isFinite(s)||s<=0){ msg.textContent='Enter a bet size greater than 0.'; return; }
+  var btn=document.getElementById('mpp-save'); btn.disabled=true; btn.textContent='Saving...';
+  try{
+    var legsData=L.map(function(l){
+      return {name:l.name,team:'',opp:l.opp,category:l.cat,stat_key:l.sk,stat_label:l.sl,side:l.side,line:l.line,odds:l.odds,date:dt};
+    });
+    var body={bet_type:'parlay',legs:legsData,odds:Math.round(o),stake:s,date:dt,placed_at:new Date().toISOString()};
+    var res=await fetch('/api/bets'+_betAuthQS(),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(!res.ok){ throw new Error(await res.text()); }
+    document.getElementById('mpp-modal').style.display='none';
+    window.__mpLegs__=[];
+    _betToast('Parlay logged');
+    var mb=document.getElementById('mybets-card');
+    if(mb && !mb.classList.contains('hidden')) openMyBets(false);
+  }catch(e){ msg.textContent=(e.message||'Save failed'); btn.disabled=false; btn.textContent='Log Parlay'; }
+}
+function _mcatsList(){
+  return [
     {label:'Hits Over 0.5',        cat:'Hitter Hits',   sk:'hits',         sl:'Hits',          line:0.5, side:'OVER'},
     {label:'Hits Under 1.5',       cat:'Hits Under',    sk:'hits',         sl:'Hits',          line:1.5, side:'UNDER'},
     {label:'TB Over 1.5',          cat:'TB Over',       sk:'total_bases',  sl:'Total Bases',   line:1.5, side:'OVER'},
@@ -9691,6 +9814,9 @@ function _manualBetForm(){
     {label:'Walks Allowed Over',   cat:'Pitcher Props', sk:'walks',        sl:'Walks Allowed', line:null,side:'OVER'},
     {label:'Walks Allowed Under',  cat:'Pitcher Props', sk:'walks',        sl:'Walks Allowed', line:null,side:'UNDER'}
   ];
+}
+function _manualBetForm(){
+  var MCATS=_mcatsList();
   window.__MCATS__=MCATS;
   var ov=document.getElementById('mbet-modal');
   if(!ov){ ov=document.createElement('div'); ov.id='mbet-modal';
@@ -10465,6 +10591,7 @@ function downloadMyBetsCSV(){
     <div id="mybets-body"></div>
     <div style="margin-top:18px;padding-top:14px;border-top:1px solid #1e293b;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
       <button onclick="_manualBetForm()" style="background:#0f766e;color:#fff;border:none;border-radius:10px;padding:10px 22px;font-size:.88rem;font-weight:800;cursor:pointer">+ Manual Entry</button>
+      <button onclick="_manualParlayForm()" style="background:#4338ca;color:#fff;border:none;border-radius:10px;padding:10px 22px;font-size:.88rem;font-weight:800;cursor:pointer">+ Manual Parlay</button>
       <button id="mybets-results-btn" onclick="getMyBetsResults()" style="background:#22c55e;color:#0f172a;border:none;border-radius:10px;padding:10px 22px;font-size:.88rem;font-weight:800;cursor:pointer">🔄 Get Results</button>
       <span style="font-size:.78rem;color:#64748b">Fetches box scores and grades all pending bets</span>
       <span id="mybets-spinner-wrap"></span>
