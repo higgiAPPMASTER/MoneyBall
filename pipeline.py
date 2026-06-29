@@ -1828,6 +1828,16 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         for _pp in (_bucket.get("picks", []) + _bucket.get("all", [])):
             _pp["game_start"] = _game_start_for(_pp.get("team", ""))
 
+    # Pool B record-a-hit picks (hot hitters with no career vs pitcher, folded
+    # into also_ran above) are the only hit picks that never got a first-pitch
+    # stamp — career picks get it at build time, every other category gets it
+    # here. Without game_start the frontend's started-game filter can never drop
+    # them, so they stay on the board after their game starts/finishes while
+    # every other category clears. Backfill any hit pick missing it.
+    for _hp in (top9 + also_ran):
+        if not _hp.get("game_start"):
+            _hp["game_start"] = _game_start_for(_hp.get("team", ""))
+
     # ── Runs Picks (Batter Runs Scored, Over/Under 0.5) ───────────────
     try:
         from under_picks import run_runs_picks
