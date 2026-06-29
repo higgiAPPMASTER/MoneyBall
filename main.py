@@ -5190,7 +5190,21 @@ function _edgeAllPicks(r, minEdge, opts){
 // ── Best Bets board ─────────────────────────────────────────────────────────
 // Re-selection of existing picks: positive edge AND odds -200 or better, ranked
 // by edge, with conviction 1-5. Additive — Edge Plays and Proj Edge untouched.
-function _bestBetsPicks(r){ return _edgeAllPicks(r, 1e-9, {minOdds:-200, cap:60}).filter(function(it){ return !_isHrCat(it.cat); }).slice(0,30); }
+function _bestBetsPicks(r){
+  var all=_edgeAllPicks(r, 1e-9, {minOdds:-200, cap:60}).filter(function(it){ return !_isHrCat(it.cat); });
+  // One pick per player: _edgeAllPicks is edge-sorted desc, so the FIRST time a
+  // player appears is their best pick that made the list. Drop any later (lower
+  // edge) picks for that same player so nobody shows up twice.
+  var seen={}, out=[];
+  all.forEach(function(it){
+    var p=it.p||{};
+    var key=(p.full_name||p.name||'').trim().toLowerCase();
+    if(key && seen[key]) return;
+    if(key) seen[key]=1;
+    out.push(it);
+  });
+  return out.slice(0,30);
+}
 function _convTier(edge){ edge=edge||0; if(edge>=0.12)return 5; if(edge>=0.08)return 4; if(edge>=0.05)return 3; if(edge>=0.025)return 2; return 1; }
 function _convMeta(t){ var m={5:{c:'#7c3aed',l:'5/5'},4:{c:'#2563eb',l:'4/5'},3:{c:'#0891b2',l:'3/5'},2:{c:'#475569',l:'2/5'},1:{c:'#334155',l:'1/5'}}; return m[t]||m[1]; }
 function _bbPlayerForm(i){ var ep=(window.__BEST_BETS__||[])[i]; if(!ep) return; _edgeRouteForm(ep.p,ep.cat); }
