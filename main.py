@@ -4570,7 +4570,7 @@ function _playerForm(key){
   var p=(window.__NAME_REG__||{})[key]; if(!p) return;
   if(p._prop){ _ppForm(p); }
   else if(p.recent_k_log!==undefined || p.avg_k!==undefined){ _pkForm(p); }
-  else if(p.recent_tb_log!==undefined){ _tbForm(p); }
+  else if(p.recent_tb_log!==undefined){ if(p.pick==='OVER'){ _tbOverForm(p); } else { _tbForm(p); } }
   else if(p.recent_hr_log!==undefined && p.recent_hit_log===undefined && p.recent_runs_log===undefined){ _hrForm(p); }
   else if(p.recent_rbi_log!==undefined && p.recent_hit_log===undefined && p.recent_runs_log===undefined){ _rbiForm(p); }
   else if(p.recent_runs_log!==undefined && p.recent_hit_log===undefined){ _runsForm(p); }
@@ -7007,12 +7007,15 @@ function _buildValuePlays(result){
 }
 function _valForm(key){
   var p=(window.__VAL_REG__||{})[key]; if(!p) return;
-  if(p.recent_rbi_log!==undefined){ _rbiForm(p); }
-  else if(p.recent_tb_log!==undefined){ _tbForm(p); }
-  else if(p.recent_runs_log!==undefined){ _runsForm(p); }
-  else if(p.recent_walks_log!==undefined){ _walksForm(p); }
-  else if(p.recent_hr_log!==undefined){ _hrForm(p); }
-  else { _hitForm(p); }
+  var q={}; for(var k in p){ if(Object.prototype.hasOwnProperty.call(p,k)) q[k]=p[k]; }
+  q.pick='OVER';   // value-board plays are always the +odds OVER market
+  if(q.recent_rbi_log!==undefined){ _rbiForm(q); }
+  else if(q.recent_tb_log!==undefined){ _tbOverForm(q); }
+  else if(q.recent_runs_log!==undefined){ _runsForm(q); }
+  else if(q.recent_walks_log!==undefined){ _walksForm(q); }
+  else if(q.recent_hrr_log!==undefined){ _hrrForm(q); }
+  else if(q.recent_hr_log!==undefined){ _hrForm(q); }
+  else { _hitForm(q); }
 }
 function _valStdRow(lbl, val, det, blank){
   var v=blank?'<span style="color:#64748b;font-weight:800">&mdash;</span>':('<span style="font-weight:800;color:#e2e8f0">'+val+'</span>');
