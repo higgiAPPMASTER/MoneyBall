@@ -310,7 +310,7 @@ def _pitcher_hr9(pitcher_id, season) -> dict:
         r_outs = sum(o for _, o in rec)
         recent_hr9 = (r_hr * 27.0 / r_outs) if r_outs > 0 else None
         if season_hr9 is not None and recent_hr9 is not None:
-            blended = 0.6 * season_hr9 + 0.4 * recent_hr9
+            blended = 0.45 * season_hr9 + 0.55 * recent_hr9
         else:
             blended = season_hr9 if season_hr9 is not None else recent_hr9
         if blended is not None:
@@ -1824,10 +1824,13 @@ def run_hr_picks(run_date: str, team_schedule: dict, emit=None) -> list:
             p_pow = max(0.02, min(0.35, 0.02 + bp["barrel_pct"] / 100.0 * 1.6))
 
         comps = []
-        if r_recent is not None: comps.append((0.40, r_recent))
-        if r_pit    is not None: comps.append((0.20, r_pit))
+        # History/true-power dominant: a hitter's Statcast power (xISO/barrel) is
+        # the real "is this an HR hitter" signal. Recent form is mostly fluke
+        # variance (1-2 HRs in a 15-game window), so it is the smallest weight.
+        if r_recent is not None: comps.append((0.20, r_recent))
+        if r_pit    is not None: comps.append((0.15, r_pit))
         if r_team   is not None: comps.append((0.15, r_team))
-        if p_pow    is not None: comps.append((0.25, p_pow))
+        if p_pow    is not None: comps.append((0.50, p_pow))
         if not comps:
             return None
         wsum = sum(w for w, _ in comps)
@@ -1840,7 +1843,7 @@ def run_hr_picks(run_date: str, team_schedule: dict, emit=None) -> list:
         pit_barrel_disp = ""
         _hr9 = _pitcher_hr9(pitcher_id, season) if pitcher_id else None
         if _hr9 and _hr9.get("blended_hr9") is not None:
-            pit_mult = max(0.60, min(1.70, _hr9["blended_hr9"] / LEAGUE_HR9))
+            pit_mult = max(0.55, min(1.85, _hr9["blended_hr9"] / LEAGUE_HR9))
             pit_hr9_disp = _hr9["disp"]
         _pp = _pitcher_power_lookup(pitcher_id) if pitcher_id else {}
         _pbrl = _pp.get("barrel_pct")
