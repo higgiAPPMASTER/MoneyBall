@@ -2126,9 +2126,9 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         _hsp_before = len(hrr_special_list)
         hrr_special_list = [p for p in hrr_special_list
                             if (p.get("s5") or {}).get("ba") is not None
-                            and p["s5"]["ba"] >= 0.275]
+                            and p["s5"]["ba"] >= 0.270]
         emit({"type": "log",
-              "msg": f"  ✅ HRR Special day/night gate (>=.275): "
+              "msg": f"  ✅ HRR Special day/night gate (>=.270): "
                      f"{len(hrr_special_list)}/{_hsp_before} cleared"})
     except Exception as _exc:
         emit({"type": "log", "msg": f"⚠️ HRR Special day/night gate skipped: {_exc}"})
