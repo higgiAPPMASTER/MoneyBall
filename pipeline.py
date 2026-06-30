@@ -1904,6 +1904,20 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         _hp["game_start"]    = _game_start_for(_hp.get("team", ""))
         _hp["series_splits"] = fetch_series_splits(_hp.get("batter_id"), _hp.get("opp", ""), run_date, _hp.get("side", ""))
 
+    # ── HRR Special (parlay confluence board, OVER only) ──────────────────
+    # Stricter, separate board for parlays. Gates 1-3 (.275 vs pitcher / 65%
+    # vs team H/A / 65% L10 H/A) run inside run_hrr_special_picks; the 4th gate
+    # (.275 day/night BA for today's game type) is applied AFTER the day/night
+    # stamp below. The regular HRR board above is untouched.
+    try:
+        from under_picks import run_hrr_special_picks
+        hrr_special_list = run_hrr_special_picks(run_date, team_schedule, emit=emit)
+    except Exception as exc:
+        emit({"type": "log", "msg": f"⚠️ HRR Special picks skipped: {exc}"})
+        hrr_special_list = []
+    for _hsp in hrr_special_list:
+        _hsp["game_start"] = _game_start_for(_hsp.get("team", ""))
+
     # ── HR Picks (Batter Home Runs, Over/Under 0.5) ───────────────────────
     try:
         from under_picks import run_hr_picks
@@ -2023,7 +2037,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
 
         _dn_lists = [under_picks_list, runs_picks_list, tb_picks_list,
                      tb_over_picks_list, rbi_picks_list, walks_picks_list,
-                     hrr_picks_list, hr_picks_list]
+                     hrr_picks_list, hr_picks_list, hrr_special_list]
 
         # reuse hit-pool day/night where the same player already has it so a
         # player shows the SAME number on every card
@@ -2103,6 +2117,21 @@ def run_pipeline(run_date: str, emit=None) -> dict:
               "msg": f"  ✅ Day/Night BA stamped ({_dn_n} hitter picks, {len(_dn_map)} fetched)"})
     except Exception as _exc:
         emit({"type": "log", "msg": f"⚠️ Day/Night BA stamp skipped: {_exc}"})
+
+    # ── HRR Special GATE 4 — day/night BA (today's game type) must clear .275 ─
+    # The stamp above set s5.ba to each batter's BA in TODAY's game type. A
+    # special pick must hit >= .275 there too; if we can't measure it (no split
+    # / no AB in that game type), it can't qualify for the confluence board.
+    try:
+        _hsp_before = len(hrr_special_list)
+        hrr_special_list = [p for p in hrr_special_list
+                            if (p.get("s5") or {}).get("ba") is not None
+                            and p["s5"]["ba"] >= 0.275]
+        emit({"type": "log",
+              "msg": f"  ✅ HRR Special day/night gate (>=.275): "
+                     f"{len(hrr_special_list)}/{_hsp_before} cleared"})
+    except Exception as _exc:
+        emit({"type": "log", "msg": f"⚠️ HRR Special day/night gate skipped: {_exc}"})
 
     # ── EV enrichment for ALL non-hit categories ────────────────────────
     # Each pick gets ev / edge / ev_prob from our model probability vs the
@@ -2657,7 +2686,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     elapsed = round(time.time() - t_start, 1)
     result = {
         "date": run_date, "top9": top9, "also_ran": also_ran,
-        "under_picks": under_picks_list, "runs_picks": runs_picks_list, "tb_picks": tb_picks_list, "tb_over_picks": tb_over_picks_list, "rbi_picks": rbi_picks_list, "walks_picks": walks_picks_list, "hrr_picks": hrr_picks_list, "hr_picks": hr_picks_list,
+        "under_picks": under_picks_list, "runs_picks": runs_picks_list, "tb_picks": tb_picks_list, "tb_over_picks": tb_over_picks_list, "rbi_picks": rbi_picks_list, "walks_picks": walks_picks_list, "hrr_picks": hrr_picks_list, "hrr_special_picks": hrr_special_list, "hr_picks": hr_picks_list,
         "all_qualified": era_qualified,
         "dq_s1_s3": [x for x in results if x["dq"] and x not in dn_dq and x not in era_dq and x not in dq_lineup and x not in s4_dq],
         "dq_step4": dn_dq, "dq_step5": era_dq, "dq_lineup": dq_lineup, "dq_s4": s4_dq, "pitcher_k": pitcher_k_result,
@@ -2671,6 +2700,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                   "rbi_count": len(rbi_picks_list),
                   "walks_count": len(walks_picks_list),
                   "hrr_count": len(hrr_picks_list),
+                  "hrr_special_count": len(hrr_special_list),
                   "hr_count": len(hr_picks_list),
                   "pitcher_k_count": len(pitcher_k_result.get("picks", [])),
                   "prop_counts": {m: len(b.get("picks", [])) for m, b in pitcher_props.items()},
