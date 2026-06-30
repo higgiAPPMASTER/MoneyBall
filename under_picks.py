@@ -2559,6 +2559,103 @@ def run_hrr_picks(run_date: str, team_schedule: dict, emit=None) -> list:
     return picks
 
 
+# ── HRR SPECIAL (parlay confluence board) ─────────────────────────────────
+# A separate, stricter OVER-only board built for parlays. A pick qualifies ONLY
+# when ALL gates clear together (AND confluence). Gates 1-3 live here; the 4th
+# (day/night BA >= .275 for today's game type) is applied in the pipeline where
+# the day/night BA is already fetched. The regular run_hrr_picks board is left
+# completely untouched.
+HRR_SPECIAL_BA    = 0.275  # min career BA vs today's pitcher
+HRR_SPECIAL_RATE  = 65     # min % (vs-team H/A AND last-10 H/A) for 2+ HRR
+HRR_SPECIAL_TOP_N = 30     # cap
+
+
+def run_hrr_special_picks(run_date: str, team_schedule: dict, emit=None) -> list:
+    _log(emit, "", "log")
+    _log(emit, "▸ HRR Special (Parlay) — BA>=.275 vs P · 65% vs team · 65% L10 H/A", "section")
+    season = int(run_date[:4])
+
+    if not HRR_ODDS:
+        _fetch_hits_lines(run_date, emit)
+    candidates = list(HRR_ODDS.values())
+    if not candidates:
+        _log(emit, "  No batter HRR over lines posted today.")
+        return []
+
+    _build_player_map(season)
+    id_map: dict = {}
+    for c in candidates:
+        pid = _resolve_id(c["name"])
+        if pid:
+            id_map[c["name"]] = pid
+    team_map = _get_teams_batch(list(id_map.values()))
+    pitchers = _get_probable_pitchers(run_date)
+
+    def _eval(c):
+        name = c["name"]
+        over_odds = c.get("hrr_over_odds")          # must be priced — feeds parlays
+        if over_odds is None:
+            return None
+        batter_id = id_map.get(name)
+        player_team = team_map.get(batter_id, "") if batter_id else ""
+        if not batter_id or not player_team:
+            return None
+        if _team_match(player_team, c["home_team"]):
+            side, opp_name = "HOME", c["away_team"]
+        elif _team_match(player_team, c["away_team"]):
+            side, opp_name = "AWAY", c["home_team"]
+        else:
+            return None
+        pitcher_name, pitcher_id = "TBD", None
+        for pteam, pinfo in pitchers.items():
+            if _team_match(pteam, opp_name):
+                pitcher_name = pinfo["name"]
+                pitcher_id   = pinfo.get("id")
+                break
+        # GATE 1 — career BA vs today's pitcher >= .275
+        s1 = _get_s1_vs_pitcher(batter_id, pitcher_id)
+        if s1.get("ba") is None or s1["ba"] < HRR_SPECIAL_BA:
+            return None
+        # GATE 2 — vs-team H/A 2+ HRR rate (last 10 such games) >= 65%
+        vs_team = _hrr_consistency_over(batter_id, side, opp_name, 10)
+        if vs_team["games"] < 1 or vs_team["score"] < HRR_SPECIAL_RATE:
+            return None
+        # GATE 3 — last-10 H/A any-opp 2+ HRR rate >= 65%
+        l10 = _hrr_consistency_over(batter_id, side, "", 10)
+        if l10["games"] < 1 or l10["score"] < HRR_SPECIAL_RATE:
+            return None
+        conf = round((vs_team["score"] + l10["score"]) / 2)
+        return {"name": name, "team": player_team, "side": side, "opp": opp_name,
+                "pick": "OVER", "line": 1.5, "special": True,
+                "score": conf, "games": vs_team["games"],
+                "vsp_ba": round(s1["ba"], 3), "vsp_ba_disp": s1.get("display", "N/A"),
+                "vsteam_disp": vs_team["display"], "vsteam_score": vs_team["score"],
+                "l10_disp": l10["display"], "l10_score": l10["score"],
+                "rate_disp": vs_team["display"],
+                "wilson": round(_wilson_lb(vs_team["hrr_games"], vs_team["games"]), 4),
+                "hrr_over_odds": over_odds, "hrr_under_odds": None,
+                "book": _book_label(c.get("hrr_over_odds_book")),
+                "batter_id": batter_id, "pitcher": pitcher_name,
+                "recent_hrr_log": _recent_hrr_log(batter_id)}
+
+    picks = []
+    with ThreadPoolExecutor(max_workers=8) as _ex:
+        _futs = {_ex.submit(_eval, c): c for c in candidates}
+        for _fut in as_completed(_futs):
+            try:
+                pk = _fut.result()
+            except Exception:
+                pk = None
+            if pk:
+                picks.append(pk)
+
+    picks.sort(key=lambda p: (-p["score"], -p["vsp_ba"], -p["games"]))
+    picks = picks[:HRR_SPECIAL_TOP_N]
+    _log(emit, f"✅ HRR Special (Parlay): {len(picks)} confluence plays "
+               f"(pre day/night gate)")
+    return picks
+
+
 TB_OVER_CUT    = 60   # >= this % → likely to get 1.5+ total bases (vs opp H/A)
 TB_OVER_MIN_VS  = 2    # vs-opp H/A games to use the head-to-head anchor
 TB_OVER_MIN_ANY = 5    # else fall back to L10 H/A any-opp with >= this many games
