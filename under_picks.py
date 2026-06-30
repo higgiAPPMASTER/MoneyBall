@@ -2422,7 +2422,8 @@ HRR_OVER_CUT    = 60   # >= this % → likely to get H+R+RBI >= 2 (vs opp H/A)
 HRR_UNDER_CUT   = 30   # <= this % → likely to stay under 1.5 H+R+RBI (vs opp H/A)
 HRR_MIN_VS  = 2    # vs-opp H/A games to use the head-to-head anchor
 HRR_MIN_ANY = 5    # else fall back to L10 H/A any-opp with >= this many games
-HRR_OVER_TOP_N  = 20   # cap per side
+HRR_OVER_TOP_N  = 30   # OVER side cap (top 10 on the card + ranks 11-30 in "more")
+HRR_UNDER_TOP_N = 20   # UNDER side cap
 
 
 def run_hrr_picks(run_date: str, team_schedule: dict, emit=None) -> list:
@@ -2551,7 +2552,7 @@ def run_hrr_picks(run_date: str, team_schedule: dict, emit=None) -> list:
         -p["games"],
     ))
     overs  = [p for p in picks if p["pick"] == "OVER"][:HRR_OVER_TOP_N]
-    unders = [p for p in picks if p["pick"] == "UNDER"][:HRR_OVER_TOP_N]
+    unders = [p for p in picks if p["pick"] == "UNDER"][:HRR_UNDER_TOP_N]
     picks = overs + unders
     _log(emit, f"✅ HRR Picks: {len(picks)} "
                f"({len(overs)} over / {len(unders)} under)")
