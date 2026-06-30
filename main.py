@@ -3799,6 +3799,10 @@ function showResults(result) {
   // Value re-rank: merge Top Picks + More Hit Picks, order by EV (default keeps
   // ALL plays), then re-split 10 / rest. "+EV Only" toggle filters to ev>0.
   var _hitAll=_evSortFilter((top9||[]).concat(view.also_ran||[]));
+  // One card per player: the same hitter can slip into the pool twice (e.g. two
+  // lineup-slot / facing-pitcher rows). Keep the first (best-ranked) and drop the
+  // rest so nobody appears twice; slice(0,10) then backfills the freed slot.
+  (function(){ var seen={}, dd=[]; _hitAll.forEach(function(p){ var k=String((p&&(p.player_id!=null?p.player_id:(p.full_name||p.name)))||''); if(k&&seen[k]) return; if(k) seen[k]=1; dd.push(p); }); _hitAll=dd; })();
   var _hitTop=_hitAll.slice(0,10), _hitMore=_hitAll.slice(10);
   document.getElementById('picks-body').innerHTML = _hitTop.length>0
     ? _hitTop.map((p,i) => _mlbCard(p, i+1)).join('')
