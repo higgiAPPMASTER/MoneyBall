@@ -3246,6 +3246,7 @@ _HTML = """
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="HR_U" checked onchange="_catChanged()"> HR Under 0.5</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="HRR_O" checked onchange="_catChanged()"> H+R+RBI Over 1.5</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="HRR_U" checked onchange="_catChanged()"> H+R+RBI Under 1.5</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="HRR_SP" checked onchange="_catChanged()"> ⭐ HRR Special (Over)</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="BWALK_O" checked onchange="_catChanged()"> Batter Walks Over</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="BWALK_U" checked onchange="_catChanged()"> Batter Walks Under</label>
                 <div class="parlay-cat-section">Pitchers</div>
@@ -3322,6 +3323,12 @@ _HTML = """
           <div class="section-hdr" style="color:#a78bfa">⬇️ Top 10 Under 1.5 Total Bases</div>
           <div id="tb-picks-body" class="mlb-picks-grid"></div>
           <div id="tb-more-wrap"></div>
+        </div>
+        <div class="card p-6 hidden" id="hrr-special-card" style="border-color:rgba(167,139,250,.4)">
+          <div class="section-hdr" style="color:#a78bfa">⭐ HRR Special — Parlay Confluence</div>
+          <div style="font-size:.72rem;color:#94a3b8;margin:-4px 0 8px;line-height:1.6">All 4 must clear: BA &ge; .275 vs pitcher &middot; 65%+ vs team (H/A) &middot; 65%+ last-10 H/A &middot; BA &ge; .275 in today&#39;s day/night split</div>
+          <div id="hrr-special-body" class="mlb-picks-grid"></div>
+          <div id="hrr-special-more"></div>
         </div>
         <div class="card p-6 hidden" id="hrr-over-card" style="border-color:rgba(251,146,60,.25)">
           <div class="section-hdr" style="color:#fb923c">🔥 Top 10 Over 1.5 HRR</div>
@@ -3688,7 +3695,7 @@ function _filterStarted(result){
   if(!result) return result;
   var r=Object.assign({},result);
   function f(a){return (a||[]).filter(function(p){return !_started(p);});}
-  r.top9=f(r.top9); r.also_ran=f(r.also_ran); r.under_picks=f(r.under_picks); r.runs_picks=f(r.runs_picks); r.tb_picks=f(r.tb_picks); r.tb_over_picks=f(r.tb_over_picks||[]); r.hrr_picks=f(r.hrr_picks||[]); r.rbi_picks=f(r.rbi_picks||[]); r.hr_picks=f(r.hr_picks||[]); r.walks_picks=f(r.walks_picks||[]);
+  r.top9=f(r.top9); r.also_ran=f(r.also_ran); r.under_picks=f(r.under_picks); r.runs_picks=f(r.runs_picks); r.tb_picks=f(r.tb_picks); r.tb_over_picks=f(r.tb_over_picks||[]); r.hrr_picks=f(r.hrr_picks||[]); r.hrr_special_picks=f(r.hrr_special_picks||[]); r.rbi_picks=f(r.rbi_picks||[]); r.hr_picks=f(r.hr_picks||[]); r.walks_picks=f(r.walks_picks||[]);
   if(r.pitcher_k){
     r.pitcher_k=Object.assign({},r.pitcher_k);
     r.pitcher_k.picks=f(r.pitcher_k.picks);
@@ -3710,7 +3717,7 @@ function showResults(result) {
   if(typeof _renderLeanBanner==='function') _renderLeanBanner();
   // Hide all section cards FIRST — before any filtering — so stale cards from a
   // previous render can never persist if the filter or any later code throws.
-  ['top10-plays-card','value-plays-card','under-picks-card','tb-picks-card','tb-over-picks-card','hrr-over-card','hrr-under-card','rbi-over-card','rbi-under-card','hr-over-card','hr-under-card','runs-over-card','runs-under-card','bwalk-over-card','bwalk-under-card','pitch-day-card','pitcher-all-card','k-over-card','k-under-card','prop-ha-over-card','prop-ha-under-card','prop-outs-over-card','prop-outs-under-card','prop-er-over-card','prop-er-under-card','prop-bb-over-card','prop-bb-under-card'].forEach(hide);
+  ['top10-plays-card','value-plays-card','under-picks-card','tb-picks-card','tb-over-picks-card','hrr-special-card','hrr-over-card','hrr-under-card','rbi-over-card','rbi-under-card','hr-over-card','hr-under-card','runs-over-card','runs-under-card','bwalk-over-card','bwalk-under-card','pitch-day-card','pitcher-all-card','k-over-card','k-under-card','prop-ha-over-card','prop-ha-under-card','prop-outs-over-card','prop-outs-under-card','prop-er-over-card','prop-er-under-card','prop-bb-over-card','prop-bb-under-card'].forEach(hide);
   // Odds-range filter: self-contained, uses the EXACT field each card displays.
   // Applied directly to the source data before _vBase / EV-filter so every
   // category is covered and there is nothing to guess or chain.
@@ -3749,6 +3756,7 @@ function showResults(result) {
       runs_picks:  (result.runs_picks||[]).filter(function(p){return p.pick==='OVER'?_rok(p.over_odds):_rok(p.under_odds);}),
       walks_picks: (result.walks_picks||[]).filter(function(p){return p.pick==='OVER'?_rok(p.over_odds):_rok(p.under_odds);}),
       hrr_picks:   (result.hrr_picks||[]).filter(function(p){return p.pick==='UNDER'?_rok(p.hrr_under_odds):_rok(p.hrr_over_odds);}),
+      hrr_special_picks: (result.hrr_special_picks||[]).filter(function(p){return _rok(p.hrr_over_odds);}),
       pitcher_k:   _rpk?Object.assign({},_rpk,{picks:(_rpk.picks||[]).filter(function(p){return _rok(p.odds);}),all:(_rpk.all||[]).filter(function(p){return _rok(p.odds);})}):_rpk,
       pitcher_props:(function(){var out={};Object.keys(_rpp).forEach(function(m){var b=_rpp[m]||{};out[m]={picks:(b.picks||[]).filter(function(p){return _rok(p.odds);}),all:(b.all||[]).filter(function(p){return _rok(p.odds);})}; });return out;})(),
     });
@@ -3758,6 +3766,7 @@ function showResults(result) {
     ? Object.assign({}, _renderSrc, {
         top9: [],
         also_ran: [],
+        hrr_special_picks: [],
         pitcher_k: _renderSrc.pitcher_k ? Object.assign({}, _renderSrc.pitcher_k, {
           all: (_renderSrc.pitcher_k.all || []).filter(p => p.pick === 'UNDER'),
           picks: (_renderSrc.pitcher_k.picks || []).filter(p => p.pick === 'UNDER'),
@@ -3917,6 +3926,8 @@ function showResults(result) {
     const hrrUnder = hrrPicks.filter(function(p){ return p.pick==='UNDER' && _oddsOk(p.hrr_under_odds); });
     _fillCard('hrr-over-card','hrr-over-body','hrr-over-more',hrrOver,function(p,r){return _hrrCard(p,r,'hro');},'HRR Over','#fb923c');
     _fillCard('hrr-under-card','hrr-under-body','hrr-under-more',hrrUnder,function(p,r){return _hrrCard(p,r,'hru');},'HRR Under','#ff8a65');
+    const hrrSpecial = (view.hrr_special_picks||[]).filter(function(p){ return _oddsOk(p.hrr_over_odds); });
+    _fillCard('hrr-special-card','hrr-special-body','hrr-special-more',hrrSpecial,function(p,r){return _hrrSpCard(p,r,'hrsp');},'HRR Special','#a78bfa');
 
   renderPitcherProps(view);
   renderByGame(view);
@@ -4750,6 +4761,12 @@ function _mlbPool(){
       cands.push({type:'HRR',dir:(isOver?'OVER':'UNDER'),player:(p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'H+R+RBI',line:1.5,odds:od,conf:clampConf(86,i),reason:'🔥 '+(isOver?'Over':'Under')+' 1.5 HRR · '+(p.rate_disp||'')+' rate vs '+(p.opp||''),src:p});
     }
   });
+  (r.hrr_special_picks||[]).forEach(function(p,i){
+    var od=p.hrr_over_odds;
+    if(_underOk(od)){
+      cands.push({type:'HRRSP',dir:'OVER',player:(p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'H+R+RBI',line:1.5,odds:od,conf:clampConf(92,i),reason:'⭐ Special Over 1.5 HRR · BA '+(p.vsp_ba_disp||'')+' vs P · '+(p.vsteam_score!=null?p.vsteam_score+'% vs team':'')+' · '+(p.l10_score!=null?p.l10_score+'% L10':''),src:p});
+    }
+  });
   // Pitcher prop legs (Hits Allowed / Outs / Earned Runs) — one type per market.
   var _pp=(r.pitcher_props)||{};
   PROP_ORDER.forEach(function(mkt){
@@ -4795,7 +4812,7 @@ function _mlbPool(){
   // supply a Hits leg + a Total Bases leg — so the new prop categories actually
   // deepen the parlay pool instead of being collapsed into a single leg.
   var byKey={};
-  cands.forEach(function(c){ if(!c.player) return; var k=c.player+'|'+c.type+'|'+c.stat; var cur=byKey[k]; if(!cur||_legScoreP(c)>_legScoreP(cur)) byKey[k]=c; });
+  cands.forEach(function(c){ if(!c.player) return; var _ty=(c.type==='HRRSP'?'HRR':c.type); var k=c.player+'|'+_ty+'|'+c.stat; var cur=byKey[k]; if(!cur||_legScoreP(c)>_legScoreP(cur)) byKey[k]=c; });
   return Object.keys(byKey).map(function(k){return byKey[k];}).sort(function(a,b){return _legScoreP(b)-_legScoreP(a);});
 }
 function closeParlay(){ var o=document.getElementById('parlayResult'); if(o) o.innerHTML=''; }
@@ -4875,9 +4892,10 @@ function _replaceParlayLeg(idx){
   var legs=window._parlayLegs; if(!legs||!legs[idx]) return;
   _syncParlayCats();  // swap must respect exactly what is checked, too
   var cur=legs[idx];
-  var curKey=cur.player+'|'+cur.type+'|'+cur.stat;
-  var used={}; legs.forEach(function(l,i){ if(i!==idx) used[l.player+'|'+l.type+'|'+l.stat]=1; });
-  var pool=_mlbPool().filter(function(c){ var k=c.player+'|'+c.type+'|'+c.stat; return k!==curKey && !used[k]; });
+  var _aty=function(t){return t==='HRRSP'?'HRR':t;};
+  var curKey=cur.player+'|'+_aty(cur.type)+'|'+cur.stat;
+  var used={}; legs.forEach(function(l,i){ if(i!==idx) used[l.player+'|'+_aty(l.type)+'|'+l.stat]=1; });
+  var pool=_mlbPool().filter(function(c){ var k=c.player+'|'+_aty(c.type)+'|'+c.stat; return k!==curKey && !used[k]; });
   if(!pool.length){ _flashNoSwapP(idx); return; }
   legs[idx]=pool[Math.floor(Math.random()*pool.length)];
   window._lastParlayPlayers=legs.map(function(l){return l.player;});
@@ -4909,7 +4927,7 @@ window.PARLAY_MINUS = false;
 window.PARLAY_PLUS = false;
 window.PARLAY_ODDS_RANGE = 'all';
 // Parlay category checkboxes — which pick categories feed the parlay pool (all on by default).
-window.PARLAY_CATS = {HIT_O:true,HIT_U:true,TB_O:true,TB_U:true,RUN_O:true,RUN_U:true,RBI_O:true,RBI_U:true,HR_O:true,HR_U:true,HRR_O:true,HRR_U:true,BWALK_O:true,BWALK_U:true,K_O:true,K_U:true,PHA_O:true,PHA_U:true,POUT_O:true,POUT_U:true,PER_O:true,PER_U:true,PWK_O:true,PWK_U:true};
+window.PARLAY_CATS = {HIT_O:true,HIT_U:true,TB_O:true,TB_U:true,RUN_O:true,RUN_U:true,RBI_O:true,RBI_U:true,HR_O:true,HR_U:true,HRR_O:true,HRR_U:true,HRR_SP:true,BWALK_O:true,BWALK_U:true,K_O:true,K_U:true,PHA_O:true,PHA_U:true,POUT_O:true,POUT_U:true,PER_O:true,PER_U:true,PWK_O:true,PWK_U:true};
 // Parlay game filter — which games feed the parlay pool. Empty = all games allowed; a
 // game is excluded only when explicitly set false. Keyed by the same gameKey() label as
 // the "By Game" card. Repopulated each run from the day's slate (_buildGamesMenu).
@@ -4983,6 +5001,7 @@ function _legCat(c){
   if(c.type==='RUN') return 'RUN_'+dir;
   if(c.type==='RBI') return 'RBI_'+dir;
   if(c.type==='HR') return 'HR_'+dir;
+  if(c.type==='HRRSP') return 'HRR_SP';
   if(c.type==='HRR') return 'HRR_'+dir;
   if(c.type==='BWALK') return 'BWALK_'+dir;
   if(c.type==='K') return 'K_'+dir;
@@ -7147,6 +7166,47 @@ function _hrrCard(p, rank, pfx) {
   </div>`;
 }
 
+function _hrrSpCard(p, rank, pfx) {
+  pfx = pfx || 'hrsp';
+  const abbr = _mlbTeamAbbr(p.team);
+  const teamLogo = abbr ? `https://a.espncdn.com/i/teamlogos/mlb/500/${abbr}.png` : '';
+  const rnkColors = rank===1?['#c4b5fd','#000']:rank===2?['#a78bfa','#000']:rank===3?['#8b5cf6','#fff']:['#1e1e1e','#a78bfa'];
+  const sideCls = p.side==='HOME'?'badge-home':'badge-away';
+  const od = p.hrr_over_odds;
+  const odDisp = od!=null?(od>0?'+':'')+od:'—';
+  const s5 = p.s5||{};
+  const dnLbl = p.dn_label||'Day/Night';
+  const dnDisp = s5.display||'—';
+  window.__HRR_REG__=window.__HRR_REG__||{}; window.__HRR_REG__[pfx+rank]=p;
+  function _g(lbl,val){
+    return '<div style="display:flex;align-items:center;justify-content:space-between;font-size:.72rem;margin-top:4px">'
+      +'<span style="color:#94a3b8"><span style="color:#4ade80">&#10003;</span> '+lbl+'</span>'
+      +'<span style="color:#ddd6fe;font-weight:700;font-family:monospace">'+val+'</span></div>';
+  }
+  return `<div class="mlb-pick-card" onclick="_hrrForm('${pfx}${rank}')" title="Click for recent form" style="cursor:pointer;border:1px solid rgba(167,139,250,.4)">
+    <div class="mlb-card-header" style="background:linear-gradient(135deg,#2e1065 0%,#10071f 100%)">${_cardHdr(rank,rnkColors,_catLbl('HRR','#a78bfa'),teamLogo,p.team,_seriesTag(p,'O',false,2))}</div>
+    ${_nameBar(rank,rnkColors,p.batter_id,p.name)}
+    <div class="mlb-card-body">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <span style="font-size:.82rem;color:#94a3b8">vs <strong style="color:#fff">${p.opp||'—'}</strong></span>
+        <span class="badge ${sideCls}">${p.side}</span>
+      </div>
+      <div style="margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
+        <div style="font-size:.6rem;font-weight:800;letter-spacing:.07em;color:#a78bfa;text-transform:uppercase">4 Gates Cleared</div>
+        ${_g('BA vs '+(p.pitcher||'pitcher'), p.vsp_ba_disp||'—')}
+        ${_g('vs team (H/A)', (p.vsteam_disp||'—')+(p.vsteam_score!=null?' &middot; '+p.vsteam_score+'%':''))}
+        ${_g('Last 10 (H/A)', (p.l10_disp||'—')+(p.l10_score!=null?' &middot; '+p.l10_score+'%':''))}
+        ${_g(dnLbl+' BA', dnDisp)}
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;padding-top:8px;border-top:1px solid #1f1f1f">
+        <span style="font-size:.8rem;color:#a78bfa;font-weight:900">OVER 1.5 H+R+RBI</span>
+        <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}${_bookTag(p)}</span>
+      </div>
+    </div>
+  ${_betBtn(p,'HRR','OVER','hrr','H+R+RBI',1.5,od)}
+  </div>`;
+}
+
 function _hrrForm(key){
   var p=(key&&typeof key==='object')?key:(window.__HRR_REG__||{})[key]; if(!p) return;
   var ov=document.getElementById('hrr-modal');
@@ -7317,6 +7377,7 @@ function _renderCatBar(view){
     {icon:'⬇️',label:'U1.5 Hits',count:(view.under_picks||[]).length,target:'under-picks-card',tone:'under'},
     {icon:'📈',label:'TB Over',count:(view.tb_over_picks||[]).length,target:'tb-over-picks-card',tone:'over'},
     {icon:'⬇️',label:'TB Under',count:(view.tb_picks||[]).length,target:'tb-picks-card',tone:'under'},
+    {icon:'⭐',label:'HRR SP',count:(view.hrr_special_picks||[]).length,target:'hrr-special-card'},
     {icon:'🔥',label:'HRR',count:(view.hrr_picks||[]).length,target:'hrr-over-card'},
     {icon:'💥',label:'RBI',count:(view.rbi_picks||[]).length,target:'rbi-over-card'},
     {icon:'💣',label:'HR',count:(view.hr_picks||[]).length,target:'hr-over-card'},
@@ -9789,7 +9850,7 @@ function _legStatKey(l){
     'hits allowed':'hits_allowed','earned runs':'earnedRuns','walks allowed':'walks'};
   if(byLabel[lbl]) return byLabel[lbl];
   var byType={HIT:'hits',HITS:'hits',K:'strikeOuts',RUN:'runs',RUNS:'runs',
-    RBI:'rbi',HRR:'hrr',HR:'homeRuns',BWALK:'walks_bat',TB:'total_bases',
+    RBI:'rbi',HRR:'hrr',HRRSP:'hrr',HR:'homeRuns',BWALK:'walks_bat',TB:'total_bases',
     TBO:'total_bases',TBU:'total_bases',
     pitcher_hits_allowed:'hits_allowed',pitcher_outs:'outs',
     pitcher_earned_runs:'earnedRuns',pitcher_walks:'walks'};
