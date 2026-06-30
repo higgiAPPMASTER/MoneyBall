@@ -2562,11 +2562,11 @@ def run_hrr_picks(run_date: str, team_schedule: dict, emit=None) -> list:
 # ── HRR SPECIAL (parlay confluence board) ─────────────────────────────────
 # A separate, stricter OVER-only board built for parlays. A pick qualifies ONLY
 # when ALL gates clear together (AND confluence). Gates 1-3 live here; the 4th
-# (day/night BA >= .275 for today's game type) is applied in the pipeline where
+# (day/night BA >= .270 for today's game type) is applied in the pipeline where
 # the day/night BA is already fetched. The regular run_hrr_picks board is left
 # completely untouched.
-HRR_SPECIAL_BA    = 0.275  # min career BA vs today's pitcher
-HRR_SPECIAL_RATE  = 65     # min % (vs-team H/A AND last-10 H/A) for 2+ HRR
+HRR_SPECIAL_BA    = 0.270  # min career BA vs today's pitcher
+HRR_SPECIAL_RATE  = 60     # min % (vs-team H/A AND last-10 H/A) for 2+ HRR
 HRR_SPECIAL_TOP_N = 30     # cap
 
 
