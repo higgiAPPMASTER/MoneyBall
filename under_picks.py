@@ -2616,9 +2616,10 @@ def run_hrr_special_picks(run_date: str, team_schedule: dict, emit=None) -> list
         s1 = _get_s1_vs_pitcher(batter_id, pitcher_id)
         if s1.get("ba") is None or s1["ba"] < HRR_SPECIAL_BA:
             return None
-        # GATE 2 — vs-team H/A 2+ HRR rate (last 10 such games) >= 65%
+        # GATE 2 — vs-team H/A 2+ HRR rate (last 10 such games) >= rate,
+        # minimum 2 games faced vs this team (H/A).
         vs_team = _hrr_consistency_over(batter_id, side, opp_name, 10)
-        if vs_team["games"] < 1 or vs_team["score"] < HRR_SPECIAL_RATE:
+        if vs_team["games"] < 2 or vs_team["score"] < HRR_SPECIAL_RATE:
             return None
         # GATE 3 — last-10 H/A any-opp 2+ HRR rate >= 65%
         l10 = _hrr_consistency_over(batter_id, side, "", 10)
