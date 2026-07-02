@@ -491,6 +491,7 @@ def career_ha_ks_vs_opp(pitcher_id: int, side: str, opp_name: str) -> dict:
             if sp.get("isHome") != is_home: continue
             stat = sp.get("stat", {})
             if int(stat.get("gamesStarted", 0) or 0) < 1: continue
+            ip = _ip_to_float(stat.get("inningsPitched", "0"))
             k = stat.get("strikeOuts", 0)
             h = int(stat.get("hits", 0) or 0)   # "hits" in pitching gameLog = hits ALLOWED
             er = int(stat.get("earnedRuns", 0) or 0)
