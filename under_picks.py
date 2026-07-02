@@ -2612,9 +2612,12 @@ def run_hrr_special_picks(run_date: str, team_schedule: dict, emit=None) -> list
                 pitcher_name = pinfo["name"]
                 pitcher_id   = pinfo.get("id")
                 break
-        # GATE 1 — career BA vs today's pitcher >= .275
+        # GATE 1 — career BA vs today's pitcher >= HRR_SPECIAL_BA (combined
+        # lifetime, no H/A filter). If no career history exists (0 AB or TBD
+        # pitcher), the player passes through — only a KNOWN sub-threshold BA
+        # disqualifies.
         s1 = _get_s1_vs_pitcher(batter_id, pitcher_id)
-        if s1.get("ba") is None or s1["ba"] < HRR_SPECIAL_BA:
+        if s1.get("ba") is not None and s1["ba"] < HRR_SPECIAL_BA:
             return None
         # GATE 2 — vs-team H/A 2+ HRR rate (last 10 such games) >= rate,
         # minimum 2 games faced vs this team (H/A).
