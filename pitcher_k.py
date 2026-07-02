@@ -430,7 +430,7 @@ def _get_recent_k_form(pitcher_id: int, n: int = 5) -> dict:
     """Last n actual starts (any opponent) from the current season."""
     splits = _get_pitching_logs(pitcher_id, int(SEASON))
     starts = [sp for sp in splits
-              if _ip_to_float(sp.get("stat", {}).get("inningsPitched", "0")) >= MIN_IP_START]
+              if int(sp.get("stat", {}).get("gamesStarted", 0) or 0) >= 1]
     recent = starts[-n:]
     if not recent:
         return {"recent_avg_k": None, "recent_k_list": [], "recent_starts": 0, "recent_k_log": [],
@@ -490,8 +490,7 @@ def career_ha_ks_vs_opp(pitcher_id: int, side: str, opp_name: str) -> dict:
             if sp.get("opponent", {}).get("id") != opp_id: continue
             if sp.get("isHome") != is_home: continue
             stat = sp.get("stat", {})
-            ip = _ip_to_float(stat.get("inningsPitched", "0"))
-            if ip < MIN_IP_START: continue
+            if int(stat.get("gamesStarted", 0) or 0) < 1: continue
             k = stat.get("strikeOuts", 0)
             h = int(stat.get("hits", 0) or 0)   # "hits" in pitching gameLog = hits ALLOWED
             er = int(stat.get("earnedRuns", 0) or 0)
