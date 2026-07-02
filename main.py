@@ -3853,7 +3853,7 @@ function showResults(result) {
       if(!_ex||(!_ex.pick&&_p.pick)) window.__PK_BY_NAME__[_nm]=_p;
     });
     if (pkAll.length > 0) {
-      const pkSorted = pkAll.filter(p=>p.pick && (p.starts||0)>0).sort((a,b)=>{
+      const pkSorted = pkAll.filter(p=>p.pick).sort((a,b)=>{
         const ga=Math.abs((a.blended_avg_k!=null?a.blended_avg_k:(a.avg_k||0))-(a.line||0))*_umpKMul(a);
         const gb=Math.abs((b.blended_avg_k!=null?b.blended_avg_k:(b.avg_k||0))-(b.line||0))*_umpKMul(b);
         return gb-ga;
@@ -4651,7 +4651,7 @@ function downloadPicksCSV(){
       (isOver?'Over':'Under')+' '+(p.line!=null?p.line:0.5)+' Walks', (p.line!=null?p.line:0.5), _csvOdds(od), '', (p.rate_disp||'')+(p.basis?(' '+p.basis):'')]);
   });
   var pk=(r.pitcher_k&&r.pitcher_k.all)||[];
-  pk.filter(function(p){return p.pick && (p.starts||0)>0;}).sort(function(a,b){
+  pk.filter(function(p){return p.pick;}).sort(function(a,b){
     var ga=Math.abs((a.avg_k||0)-(a.line||0)), gb=Math.abs((b.avg_k||0)-(b.line||0));
     return gb-ga;
   }).forEach(function(p,i){
@@ -4717,7 +4717,7 @@ function _mlbPool(){
     }
   });
   var pk=(r.pitcher_k&&r.pitcher_k.all)||[];
-  pk.filter(function(p){return p.pick && (p.starts||0)>0;}).sort(function(a,b){var ga=Math.abs((a.avg_k||0)-(a.line||0)),gb=Math.abs((b.avg_k||0)-(b.line||0));return gb-ga;}).forEach(function(p,i){
+  pk.filter(function(p){return p.pick;}).sort(function(a,b){var ga=Math.abs((a.avg_k||0)-(a.line||0)),gb=Math.abs((b.avg_k||0)-(b.line||0));return gb-ga;}).forEach(function(p,i){
     var hasSugg=(p.sugg_line!=null);
     var dir=hasSugg?'OVER':p.pick;
     var line=hasSugg?p.sugg_line:p.line;
@@ -5044,7 +5044,7 @@ function _allGameKeys(){
   (r.top9||[]).forEach(function(p){all.push(p);});
   (r.also_ran||[]).forEach(function(p){all.push(p);});
   (r.under_picks||[]).forEach(function(p){all.push(p);});
-  ((((r.pitcher_k||{}).all)||[]).filter(function(p){return p.pick&&(p.starts||0)>0;})).forEach(function(p){all.push(p);});
+  ((((r.pitcher_k||{}).all)||[]).filter(function(p){return p.pick;})).forEach(function(p){all.push(p);});
   (r.runs_picks||[]).forEach(function(p){all.push(p);});
   var _pp=(r.pitcher_props)||{};
   PROP_ORDER.forEach(function(mkt){ ((((_pp[mkt]||{}).picks))||[]).forEach(function(p){all.push(p);}); });
@@ -5695,7 +5695,7 @@ function renderByGame(result){
   var tbUnders=(result.tb_picks||[]).map(function(p){return Object.assign({_kind:'TB UNDER'},p);});
   var tbOvers=(result.tb_over_picks||[]).map(function(p){return Object.assign({_kind:'TB OVER'},p);});
   var hrrs=(result.hrr_picks||[]).map(function(p){return Object.assign({_kind:'HRR'},p);});
-  var ks=((result.pitcher_k||{}).picks||[]).filter(function(p){return (p.starts||0)>0;}).map(function(p){return Object.assign({_kind:'PITCHER K'},p);});
+  var ks=((result.pitcher_k||{}).picks||[]).map(function(p){return Object.assign({_kind:'PITCHER K'},p);});
   var runs=(result.runs_picks||[]).map(function(p){return Object.assign({_kind:'RUNS'},p);});
   var propLegs=[];
   var _ppBG=(result.pitcher_props)||{};
@@ -6831,7 +6831,7 @@ function _buildPitchDay(view){
   var dayList=[];
   var _pk=(view&&view.pitcher_k)||{};
   (_pk.all||[]).forEach(function(p){
-    if(!(p.pick&&(p.starts||0)>0)) return;
+    if(!p.pick) return;
     dayList.push({p:p,kind:'K',ev:(p.ev!=null?p.ev:-999)});
   });
   PROP_ORDER.forEach(function(m){
@@ -10044,6 +10044,7 @@ function _mpRender(){
 function _mpAddLeg(done){
   var ne=document.getElementById('mp-add-err'); if(ne) ne.textContent='';
   var name=(document.getElementById('mp-name')||{}).value||''; name=name.trim();
+  if(done&&!name&&window._mpLegs.length>=2){window._mpPhase=2;_mpRender();return;}
   var type=(document.getElementById('mp-type')||{}).value||'HIT';
   var side=(document.getElementById('mp-side')||{}).value||'OVER';
   var lineEl=document.getElementById('mp-line'); var line=lineEl?parseFloat(lineEl.value):NaN;
