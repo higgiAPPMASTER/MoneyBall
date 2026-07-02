@@ -327,6 +327,24 @@ def _build_rotation_ranks(run_date: str) -> dict:
             past, upc = {}, {}
         recent = {p: past.get(p, 0) + upc.get(p, 0)
                   for p in set(past) | set(upc)}
+        # ACTIVE-ROSTER check: instantly drop arms that just hit the IL / were
+        # optioned (their trailing starts otherwise keep them ranked for up to
+        # 3 weeks). A pitcher with an UPCOMING probable start is kept even if
+        # not yet on the active roster (being activated off the IL to start).
+        # Fail open: if the roster fetch errors, skip the filter entirely.
+        active_ids: set = set()
+        roster_ok = False
+        try:
+            rr = requests.get(
+                f"https://statsapi.mlb.com/api/v1/teams/{tid}/roster"
+                "?rosterType=active", timeout=15).json()
+            for e in rr.get("roster", []):
+                pid_a = ((e.get("person") or {}).get("id"))
+                if pid_a:
+                    active_ids.add(int(pid_a))
+            roster_ok = len(active_ids) > 0
+        except Exception:
+            roster_ok = False
         # Season ERA powers the ranking (best arm = SP1); GS only breaks ties.
         seas: dict = {}   # pid -> season games started
         era:  dict = {}   # pid -> season ERA (float; 999.0 when none / 0 IP)
@@ -360,6 +378,11 @@ def _build_rotation_ranks(run_date: str) -> dict:
         # season line still reads like a reliever. If nothing recurs, fall back to
         # anyone listed as a probable starter in the window.
         cand = [p for p in recent if past.get(p, 0) >= 2 or upc.get(p, 0) >= 1]
+        if roster_ok:
+            # Trailing-only qualifiers must be on the active roster; an arm
+            # with an upcoming probable start always stays.
+            cand = [p for p in cand
+                    if upc.get(p, 0) >= 1 or p in active_ids]
         if not cand:
             cand = list(recent.keys())
         # POWER RANKING: season ERA asc (lowest ERA = toughest arm = SP1);
