@@ -872,6 +872,24 @@ def _build_blurb(r):
     s3_ba = s3.get("ba")
     if s3_ba and s3_ba > 0 and "✅" in (s3.get("flag") or ""):
         parts.append(f".{round(s3_ba * 1000):03d} BA last 10 {side_str} games")
+    # Pool B (hot hitters with NO career vs today's pitcher): the career / s3 / s4
+    # lines above all come back empty, so build a recent-form write-up from the
+    # shared Over-engine signals so EVERY record-a-hit card still carries a blurb.
+    if not parts and r.get("over_sourced"):
+        h2h = (r.get("h2h_disp") or "").strip()
+        if h2h and (r.get("h2h_games") or 0) >= 1 and opp:
+            parts.append(f"{h2h.replace('/', ' of ')} {side_str} games with a hit vs {opp}")
+        r10 = (r.get("recent_l10") or "").strip()
+        if r10:
+            parts.append(f"{r10.replace('/', ' of ')} recent games with a hit")
+        hot = (r.get("hot_disp") or "").strip()
+        if hot:
+            parts.append(hot)
+        if parts:
+            lead = "Hot bat"
+            if pitcher and pitcher != "TBD":
+                lead += f", no career vs {pitcher}"
+            parts.insert(0, lead)
     return " · ".join(parts)
 
 
@@ -1743,6 +1761,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
             _pb["recent_hit_log"] = _recent_hit_log(_pb.get("player_id"))
             _pb["series_splits"]  = fetch_series_splits(
                 _pb.get("player_id"), _pb.get("opp", ""), run_date, _pb.get("side", ""))
+            _pb["blurb"]          = _build_blurb(_pb)   # recent-form write-up (pool B branch)
         also_ran.extend(_pool_b)
         emit({"type": "log", "msg": f"  ✅ Record-a-Hit pool B added: {len(_pool_b)} hot hitters (no career vs pitcher)"})
     except Exception as _exc:
@@ -2060,7 +2079,8 @@ def run_pipeline(run_date: str, emit=None) -> dict:
 
         _dn_lists = [under_picks_list, runs_picks_list, tb_picks_list,
                      tb_over_picks_list, rbi_picks_list, walks_picks_list,
-                     hrr_picks_list, hr_picks_list, hrr_special_list]
+                     hrr_picks_list, hr_picks_list, hrr_special_list,
+                     [p for p in also_ran if p.get("over_sourced")]]
 
         # reuse hit-pool day/night where the same player already has it so a
         # player shows the SAME number on every card
