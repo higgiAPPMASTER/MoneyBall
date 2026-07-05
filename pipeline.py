@@ -2441,6 +2441,151 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     except Exception as _exc:
         emit({"type": "log", "msg": f"⚠️ HRR Special day/night gate skipped: {_exc}"})
 
+    # ── Triple Split Club — hitters batting > .275 in ALL THREE of today's
+    # applicable splits: Home/Away (season), Day/Night (today's game type), and
+    # Series-Game (G1/G2/G3+ of today's series). "To record a hit" board:
+    # display + parlay legs + its own forward-only W/L record. Day/Night (s5.ba)
+    # and Series (series_splits.g#_ba) are already stamped on every batter pick,
+    # so only Home/Away needs a fetch — and only for hitters who already clear
+    # the first two gates (one small batched statSplits sitCodes=[h,a] call).
+    triple_split_list = []
+    try:
+        _TSC_MIN = 0.275
+        _tsc_hit_ids = set()
+        for _lst in (top9, also_ran):
+            for _r in _lst:
+                _b = _r.get("batter_id") or _r.get("player_id")
+                if _b:
+                    _tsc_hit_ids.add(int(_b))
+        _tsc_lists = [top9, also_ran, under_picks_list, runs_picks_list,
+                      tb_picks_list, tb_over_picks_list, rbi_picks_list,
+                      walks_picks_list, hrr_picks_list, hr_picks_list]
+        _tsc_by_id = {}
+        for _lst in _tsc_lists:
+            for _r in _lst:
+                _b = _r.get("batter_id") or _r.get("player_id")
+                if not _b:
+                    continue
+                _b = int(_b)
+                if _b not in _tsc_by_id:
+                    _tsc_by_id[_b] = _r
+
+        def _tsc_series_ba(_r):
+            _ss = _r.get("series_splits") or {}
+            _g = _r.get("series_game") or _ss.get("today_pos") or 1
+            try:
+                _g = int(_g)
+            except Exception:
+                _g = 1
+            _g = 1 if _g < 1 else (3 if _g > 3 else _g)
+            return _ss.get("g%d_ba" % _g), _g
+
+        # Gate A (day/night today) + Gate B (series game) off already-stamped data
+        _tsc_stage = []
+        for _b, _r in _tsc_by_id.items():
+            _dn = (_r.get("s5") or {}).get("ba")
+            _sb, _gno = _tsc_series_ba(_r)
+            if _dn is None or _sb is None:
+                continue
+            try:
+                _dn = float(_dn); _sb = float(_sb)
+            except Exception:
+                continue
+            if _dn > _TSC_MIN and _sb > _TSC_MIN:
+                _tsc_stage.append((_b, _r, _dn, _sb, _gno))
+
+        # Gate C (Home/Away season BA) — one batched call over survivors only
+        _tsc_ha = {}
+        _tsc_ids = [x[0] for x in _tsc_stage]
+        _tsc_season = str(run_date)[:4]
+        for _i in range(0, len(_tsc_ids), 40):
+            _chunk = _tsc_ids[_i:_i + 40]
+            try:
+                _u = ("https://statsapi.mlb.com/api/v1/people?personIds="
+                      + ",".join(str(x) for x in _chunk)
+                      + "&hydrate=stats(group=[hitting],type=[statSplits],"
+                      + "sitCodes=[h,a],season=" + _tsc_season + ")")
+                _j = requests.get(_u, timeout=15).json()
+                for _per in _j.get("people", []):
+                    _pid = _per.get("id")
+                    _sp = {}
+                    for _st in _per.get("stats", []):
+                        for _s in _st.get("splits", []):
+                            _code = (_s.get("split") or {}).get("code")
+                            _stat = _s.get("stat") or {}
+                            if _code in ("h", "a"):
+                                _sp[_code] = _stat.get("avg")
+                    if _pid is not None:
+                        _tsc_ha[int(_pid)] = _sp
+            except Exception:
+                continue
+
+        def _tsc_d3(v):
+            _d = "%.3f" % v
+            return _d[1:] if _d.startswith("0.") else _d
+
+        for _b, _r, _dn, _sb, _gno in _tsc_stage:
+            _side = (_r.get("side") or "").upper()
+            _code = "h" if _side == "HOME" else ("a" if _side == "AWAY" else None)
+            if not _code:
+                continue
+            _hraw = (_tsc_ha.get(_b) or {}).get(_code)
+            try:
+                _hav = float(_hraw) if _hraw is not None else None
+            except Exception:
+                _hav = None
+            if _hav is None or _hav <= _TSC_MIN:
+                continue
+            # "record a hit" price: reuse the pick's hit_odds when present (hit
+            # pool), else look it up from the shared HIT_ODDS market.
+            _ho = _r.get("hit_odds")
+            _bk = _r.get("book", "") if _ho is not None else ""
+            if _ho is None:
+                try:
+                    _mk = _lookup_odds(_r)
+                    if _mk:
+                        _ho = _HIT_ODDS.get(_mk)
+                        _bk = _hit_book_label(_HIT_ODDS_BOOK.get(_mk))
+                except Exception:
+                    pass
+            _from_hit = _b in _tsc_hit_ids
+            triple_split_list.append({
+                "name": _r.get("name", ""),
+                "full_name": _r.get("full_name", _r.get("name", "")),
+                "batter_id": _b,
+                "player_id": _r.get("player_id"),
+                "team": _r.get("team", ""),
+                "opp": _r.get("opp", ""),
+                "pitcher": _r.get("pitcher", ""),
+                "side": _side,
+                "dn_label": _r.get("dn_label", ""),
+                "s5": _r.get("s5"),
+                "series_splits": _r.get("series_splits"),
+                "series_game": _r.get("series_game"),
+                "series_of": _r.get("series_of"),
+                "series_gno": _gno,
+                "game_start": _r.get("game_start"),
+                "recent_hit_log": _r.get("recent_hit_log"),
+                "hit_odds": _ho,
+                "book": _bk,
+                "ha_ba": _hav, "ha_disp": _tsc_d3(_hav),
+                "dn_ba": _dn, "dn_disp": _tsc_d3(_dn),
+                "series_ba": _sb, "series_disp": _tsc_d3(_sb),
+                "tsc_min": min(_dn, _sb, _hav),
+                "matchup_prob": (_r.get("matchup_prob") if _from_hit else None),
+                "ev": (_r.get("ev") if _from_hit else None),
+                "ev_prob": (_r.get("ev_prob") if _from_hit else None),
+                "edge": (_r.get("edge") if _from_hit else None),
+            })
+        triple_split_list.sort(key=lambda x: (x["tsc_min"], x["dn_ba"]), reverse=True)
+        triple_split_list = triple_split_list[:20]
+        emit({"type": "log",
+              "msg": f"  🔱 Triple Split Club: {len(triple_split_list)} hitters clear "
+                     f">.275 in all 3 splits (H/A + D/N + series)"})
+    except Exception as _exc:
+        triple_split_list = []
+        emit({"type": "log", "msg": f"⚠️ Triple Split Club skipped: {_exc}"})
+
     # ── EV enrichment for ALL non-hit categories ────────────────────────
     # Each pick gets ev / edge / ev_prob from our model probability vs the
     # posted price for the SIDE we picked. Binary 0.5/1.5 batter markets use the
@@ -3009,7 +3154,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     elapsed = round(time.time() - t_start, 1)
     result = {
         "date": run_date, "top9": top9, "also_ran": also_ran,
-        "under_picks": under_picks_list, "runs_picks": runs_picks_list, "tb_picks": tb_picks_list, "tb_over_picks": tb_over_picks_list, "rbi_picks": rbi_picks_list, "walks_picks": walks_picks_list, "hrr_picks": hrr_picks_list, "hrr_special_picks": hrr_special_list, "hr_picks": hr_picks_list,
+        "under_picks": under_picks_list, "runs_picks": runs_picks_list, "tb_picks": tb_picks_list, "tb_over_picks": tb_over_picks_list, "rbi_picks": rbi_picks_list, "walks_picks": walks_picks_list, "hrr_picks": hrr_picks_list, "hrr_special_picks": hrr_special_list, "triple_split_picks": triple_split_list, "hr_picks": hr_picks_list,
         "all_qualified": era_qualified,
         "game_predictions": game_predictions,
         "dq_s1_s3": [x for x in results if x["dq"] and x not in dn_dq and x not in era_dq and x not in dq_lineup and x not in s4_dq],
@@ -3025,6 +3170,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                   "walks_count": len(walks_picks_list),
                   "hrr_count": len(hrr_picks_list),
                   "hrr_special_count": len(hrr_special_list),
+                  "triple_split_count": len(triple_split_list),
                   "hr_count": len(hr_picks_list),
                   "pitcher_k_count": len(pitcher_k_result.get("picks", [])),
                   "prop_counts": {m: len(b.get("picks", [])) for m, b in pitcher_props.items()},
