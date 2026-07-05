@@ -2902,11 +2902,32 @@ def api_player_deep(name: str = "", date_str: str = ""):
                             s1_ba = None
         except Exception:
             pass
+    # season Home/Away + Day/Night splits (one statSplits call)
+    splits_out = {}
+    try:
+        r = _rq.get(f"{MLB}/people/{pid}/stats",
+                    params={"stats": "statSplits", "group": "hitting",
+                            "sitCodes": "h,a,d,n", "season": season, "gameType": "R"},
+                    timeout=8).json()
+        keymap = {"h": "home", "a": "away", "d": "day", "n": "night"}
+        for sg in r.get("stats", []):
+            for sp in sg.get("splits", []):
+                k = keymap.get((sp.get("split") or {}).get("code"))
+                if not k:
+                    continue
+                st = sp.get("stat", {}) or {}
+                try:
+                    ab = int(st.get("atBats", 0) or 0)
+                except Exception:
+                    ab = 0
+                splits_out[k] = {"avg": str(st.get("avg", "") or ""), "ab": ab}
+    except Exception:
+        pass
     return {"found": True, "full_name": full, "team": teams.get(team_id, ""),
             "side": side, "opp": teams.get(opp_id, "") if opp_id else "",
             "opp_abbr": abbr.get(opp_id, "") if opp_id else "",
             "pitcher": opp_pname or "", "in_game": bool(side),
-            "s1_ba": s1_ba, "s1_ab": s1_ab, "games": games}
+            "s1_ba": s1_ba, "s1_ab": s1_ab, "splits": splits_out, "games": games}
 
 @app.get("/api/whoami")
 async def whoami(request: Request, token: str = ""):
@@ -5967,6 +5988,19 @@ async function openPlayerDeep(name){
     ov.innerHTML='<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:520px;width:100%;padding:24px;color:#fca5a5">Lookup failed. Try again.<div style="margin-top:14px"><button onclick="document.getElementById(&#39;deep-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;padding:8px 16px;border-radius:8px;cursor:pointer">Close</button></div></div>';
   }
 }
+function _deepSplit(lbl,o){
+  if(!o||!o.ab){
+    return '<div style="flex:1;min-width:66px;background:#0b1220;border:1px solid #1e293b;border-radius:9px;padding:8px 4px;text-align:center">'
+      +'<div style="color:#94a3b8;font-size:.6rem;font-weight:700;letter-spacing:.03em">'+lbl+'</div>'
+      +'<div style="color:#475569;font-size:1.05rem;font-weight:800;margin:2px 0">&#8212;</div>'
+      +'<div style="color:#475569;font-size:.56rem">no data</div></div>';
+  }
+  var av=parseFloat(o.avg)||0, col=av>=.300?'#22c55e':(av>=.250?'#fbbf24':'#94a3b8');
+  return '<div style="flex:1;min-width:66px;background:#0b1220;border:1px solid #1e293b;border-radius:9px;padding:8px 4px;text-align:center">'
+    +'<div style="color:#94a3b8;font-size:.6rem;font-weight:700;letter-spacing:.03em">'+lbl+'</div>'
+    +'<div style="color:'+col+';font-size:1.05rem;font-weight:800;margin:2px 0">'+(o.avg||'&#8212;')+'</div>'
+    +'<div style="color:#cbd5e1;font-size:.58rem">'+o.ab+' AB</div></div>';
+}
 function _deepCard(d){
   var games=(d.games||[]).map(function(g){ g.hrr=(g.h||0)+(g.r||0)+(g.rbi||0); return g; });
   var n=games.length;
@@ -6012,6 +6046,12 @@ function _deepCard(d){
       +'</div>';
   }).join('');
   var sideBadge=d.side?('<span class="badge '+(d.side==='HOME'?'badge-home':'badge-away')+'">'+d.side+' vs '+_esc(d.opp_abbr||d.opp||'')+'</span>'):'<span style="color:#64748b;font-size:.78rem">Not in a game today</span>';
+  var sp=d.splits||{};
+  var hasSplit=(sp.home&&sp.home.ab)||(sp.away&&sp.away.ab)||(sp.day&&sp.day.ab)||(sp.night&&sp.night.ab);
+  var splitRow=hasSplit?('<div style="color:#fbbf24;font-weight:700;font-size:.76rem;letter-spacing:.04em;margin-bottom:6px">SEASON SPLITS</div>'
+    +'<div style="display:flex;gap:5px;flex-wrap:nowrap;margin-bottom:14px">'
+    +_deepSplit('HOME',sp.home)+_deepSplit('AWAY',sp.away)+_deepSplit('DAY',sp.day)+_deepSplit('NIGHT',sp.night)
+    +'</div>'):'';
   function th(t,al){ return '<th style="padding:6px 8px;text-align:'+al+';color:#94a3b8;font-size:.66rem">'+t+'</th>'; }
   function ft(v){ return '<td style="padding:6px 8px;text-align:right;color:#fbbf24;font-weight:800;font-family:monospace">'+v+'</td>'; }
   return '<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:900px;width:100%;max-height:90vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">'
@@ -6022,6 +6062,7 @@ function _deepCard(d){
       +'<button onclick="document.getElementById(&#39;deep-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem">&#x2715;</button></div>'
     +'</div>'
     +'<div style="padding:14px 18px">'
+      +splitRow
       +'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">'
         +'<span style="background:'+vcol+'22;color:'+vcol+';border:1px solid '+vcol+'55;border-radius:6px;padding:3px 10px;font-weight:800;font-size:.78rem">'+vtxt+'</span>'
         +'<span style="color:#cbd5e1;font-size:.82rem">'+ba+' last '+n+(careerLine?(' &#183; '+careerLine):'')+(hot5>=2?(' &#183; &#128293; '+hot5+' HR in L5'):'')+'</span>'
