@@ -2617,6 +2617,7 @@ async def track_record(request: Request, token: str = "", admin: str = ""):
 # + recent H/A hit rate vs opponent (S4). On-demand: no run-time cost.
 _LOOKUP_PLAYERS: dict = {}   # season -> {name_lower: {"id","team_id","full"}}
 _LOOKUP_TEAMS: dict = {}     # season -> {team_id: name}
+_LOOKUP_ABBR: dict = {}      # season -> {team_id: abbrev}
 
 
 def _load_lookup_index(season: str):
@@ -2627,8 +2628,9 @@ def _load_lookup_index(season: str):
             tr = _rq.get(f"{MLB}/teams", params={"sportId": 1, "season": season},
                          timeout=15).json()
             _LOOKUP_TEAMS[season] = {t["id"]: t.get("name", "") for t in tr.get("teams", [])}
+            _LOOKUP_ABBR[season]  = {t["id"]: (t.get("abbreviation") or "").upper() for t in tr.get("teams", [])}
         except Exception:
-            _LOOKUP_TEAMS[season] = {}
+            _LOOKUP_TEAMS[season] = {}; _LOOKUP_ABBR[season] = {}
     if season not in _LOOKUP_PLAYERS:
         idx = {}
         try:
@@ -2781,6 +2783,130 @@ def api_lookup(name: str, date_str: str):
         "s4_display": s4.get("display"), "s4_pct": rate, "s4_games": games_n,
         "blurb": blurb,
     }
+
+@app.get("/api/lookup_matches")
+def api_lookup_matches(name: str, date_str: str):
+    # Lightweight: EVERY player whose name matches `name` AND is in a game today
+    # (identity + game info only, no per-player stat calls). Lets the search show
+    # both same-name players (e.g. the Contreras brothers), not just the one pick.
+    q = (name or "").strip().lower()
+    if len(q) < 3:
+        return {"players": []}
+    season = (date_str or "")[:4] or "2026"
+    players, teams = _load_lookup_index(season)
+    seen, cands = set(), []
+    for k, v in players.items():
+        if q in k and v["id"] not in seen:
+            seen.add(v["id"]); cands.append(v)
+    if not cands:
+        return {"players": []}
+    from fic_cache import _get_all_games
+    games = _get_all_games(date_str)
+    out = []
+    for v in cands:
+        tid = v["team_id"]; side = opp_id = opp_pname = None
+        for g in games:
+            if g["home_id"] == tid:
+                side, opp_id, opp_pname = "HOME", g["away_id"], g.get("away_pitcher_short"); break
+            if g["away_id"] == tid:
+                side, opp_id, opp_pname = "AWAY", g["home_id"], g.get("home_pitcher_short"); break
+        if not side:
+            continue
+        out.append({"full_name": v["full"], "team": teams.get(tid, ""),
+                    "side": side, "opp": teams.get(opp_id, ""), "pitcher": opp_pname or ""})
+    out.sort(key=lambda x: x["full_name"])
+    return {"players": out[:8]}
+
+@app.get("/api/player_deep")
+def api_player_deep(name: str = "", date_str: str = ""):
+    # Player Deep Dive (SEARCH BAR ONLY): resolve any hitter, return their last
+    # 10 games (per-game H/R/RBI/BB/HR/TB) + career-vs-today's-pitcher, so the
+    # search pop-up can show one consolidated card. One MLB gameLog call.
+    import requests as _rq
+    MLB = "https://statsapi.mlb.com/api/v1"
+    q = (name or "").strip().lower()
+    if len(q) < 3:
+        return {"found": False, "msg": "Type at least 3 letters."}
+    season = (date_str or "")[:4] or "2026"
+    players, teams = _load_lookup_index(season)
+    abbr = _LOOKUP_ABBR.get(season, {})
+    match = players.get(q)
+    if not match:
+        cands = [v for k, v in players.items() if q in k]
+        ids = {v["id"] for v in cands}
+        if len(ids) == 1:
+            match = cands[0]
+        elif len(ids) > 1:
+            ln = [v for k, v in players.items() if k.split() and k.split()[-1] == q]
+            lnids = {v["id"] for v in ln}
+            if len(lnids) == 1:
+                match = ln[0]
+    if not match:
+        return {"found": False, "msg": f'No single MLB player found for "{name}".'}
+    pid = match["id"]; team_id = match["team_id"]; full = match["full"]
+    # today's game / opponent / opposing starter
+    side = opp_id = opp_pid = opp_pname = None
+    try:
+        from fic_cache import _get_all_games
+        for g in _get_all_games(date_str):
+            if g["home_id"] == team_id:
+                side, opp_id, opp_pid, opp_pname = "HOME", g["away_id"], g.get("away_pitcher_id"), g.get("away_pitcher_short"); break
+            if g["away_id"] == team_id:
+                side, opp_id, opp_pid, opp_pname = "AWAY", g["home_id"], g.get("home_pitcher_id"), g.get("home_pitcher_short"); break
+    except Exception:
+        pass
+    # last-10 hitting game log (per-game)
+    games = []
+    try:
+        r = _rq.get(f"{MLB}/people/{pid}/stats",
+                    params={"stats": "gameLog", "group": "hitting", "season": season},
+                    timeout=10).json()
+        splits = []
+        for sg in r.get("stats", []):
+            for sp in sg.get("splits", []):
+                splits.append(sp)
+        for sp in splits[-10:][::-1]:
+            st = sp.get("stat", {}) or {}
+            oid = (sp.get("opponent") or {}).get("id")
+            oab = abbr.get(oid, "") or (((sp.get("opponent") or {}).get("name", "") or "")[:3].upper())
+            def _i(k):
+                try:
+                    return int(st.get(k, 0) or 0)
+                except Exception:
+                    return 0
+            games.append({"date": sp.get("date", ""), "opp": oab, "home": bool(sp.get("isHome")),
+                          "ab": _i("atBats"), "h": _i("hits"), "r": _i("runs"), "rbi": _i("rbi"),
+                          "bb": _i("baseOnBalls"), "hr": _i("homeRuns"), "tb": _i("totalBases")})
+    except Exception:
+        pass
+    # career vs today's pitcher (one aggregate split)
+    s1_ba = s1_ab = None
+    if opp_pid:
+        try:
+            r = _rq.get(f"{MLB}/people/{pid}/stats",
+                        params={"stats": "vsPlayerTotal", "group": "hitting", "opposingPlayerId": opp_pid},
+                        timeout=8).json()
+            for sg in r.get("stats", []):
+                for sp in sg.get("splits", []):
+                    st = sp.get("stat", {}) or {}
+                    try:
+                        ab = int(st.get("atBats", 0) or 0)
+                    except Exception:
+                        ab = 0
+                    if ab:
+                        s1_ab = ab
+                        av = str(st.get("avg", "") or "")
+                        try:
+                            s1_ba = float(av) if av not in ("", ".---", "-.--") else None
+                        except Exception:
+                            s1_ba = None
+        except Exception:
+            pass
+    return {"found": True, "full_name": full, "team": teams.get(team_id, ""),
+            "side": side, "opp": teams.get(opp_id, "") if opp_id else "",
+            "opp_abbr": abbr.get(opp_id, "") if opp_id else "",
+            "pitcher": opp_pname or "", "in_game": bool(side),
+            "s1_ba": s1_ba, "s1_ab": s1_ab, "games": games}
 
 @app.get("/api/whoami")
 async def whoami(request: Request, token: str = ""):
@@ -5604,7 +5730,7 @@ function onOddsRangeChange(){
   if(window._lastResult) showResults(window._lastResult);
 }
 
-function _srchOpen(k){ var e=(window.__SRCH_REG__||{})[k]; if(e&&e.fn){ try{ e.fn(e.p); }catch(err){} } }
+function _srchOpen(k){ var e=(window.__SRCH_REG__||{})[k]; if(!e) return; if(e.pitcher){ if(e.fn){ try{ e.fn(e.p); }catch(err){} } return; } openPlayerDeep(e.name||(e.p&&(e.p.full_name||e.p.name))||''); }
 function runPlayerSearch(raw){
   var box = document.getElementById('player-search-result');
   var q = (raw||'').trim().toLowerCase();
@@ -5658,11 +5784,10 @@ function runPlayerSearch(raw){
   _addCat(r.hrr_picks,     'HRR',          _hrrForm,    function(p){return p.pick==='UNDER'?p.hrr_under_odds:p.hrr_over_odds;}, function(){return 1.5;});
 
   if(!hits.length){
-    box.innerHTML='<div class="text-slate-500 text-sm" style="margin-bottom:10px">"<strong>'+raw+'</strong>" isn&#39;t one of today&#39;s ranked picks &#8212; pulling whatever data we have&#8230;</div>'
-      +'<button onclick="lookupAnyPlayer()" style="background:#fbbf24;color:#111;border:none;border-radius:8px;padding:8px 16px;font-weight:700;cursor:pointer">Look up this player &#8594;</button>'
-      +'<div class="text-slate-600 text-xs" style="margin-top:8px">Searching a pitcher? Expand "All today&#39;s pitchers" below the K Picks table.</div>'
-      +'<div id="lookup-any-result" style="margin-top:12px"></div>';
-    if(q.length>=3){ window.__lkTimer__=setTimeout(function(){ lookupAnyPlayer(); }, 500); }
+    box.innerHTML='<div class="text-slate-500 text-sm" style="margin-bottom:10px">"<strong>'+_esc(raw)+'</strong>" isn&#39;t one of today&#39;s ranked picks &#8212; pulling whatever data we have&#8230;</div>'
+      +'<div class="text-slate-600 text-xs" style="margin-bottom:10px">Searching a pitcher? Expand "All today&#39;s pitchers" below the K Picks table.</div>'
+      +'<div id="search-extra"></div>';
+    if(q.length>=3){ window.__lkTimer__=setTimeout(function(){ _findMorePlayers(raw, {}, true); }, 300); }
     return;
   }
 
@@ -5671,7 +5796,7 @@ function runPlayerSearch(raw){
     var fn = h.fn || (kind==='PITCHER'?_pkForm:_hitForm);
     window.__SRCH_REG__=window.__SRCH_REG__||{};
     var sk='sr'+(window.__SRCH_N__=(window.__SRCH_N__||0)+1);
-    window.__SRCH_REG__[sk]={p:p, fn:fn};
+    window.__SRCH_REG__[sk]={p:p, fn:fn, pitcher:(kind==='PITCHER'), name:(p.full_name||p.name||'')};
     var color = kind==='CAT'?'#a78bfa':
                 h.bucket==='Top Picks'?'#fbbf24':
                 h.bucket==='Money Ball Picks'?'#94a3b8':
@@ -5727,7 +5852,9 @@ function runPlayerSearch(raw){
     html+='<div style="margin-top:10px;color:'+color+';font-size:.8rem;font-weight:700">View full card &#8594;</div>';
     html+='</div>';
     return html;
-  }).join('');
+  }).join('') + '<div id="search-extra" style="margin-top:6px"></div>';
+  var shown={}; hits.forEach(function(h){ var n=((h.p.full_name||h.p.name||'')+'').toLowerCase(); if(n) shown[n]=1; });
+  if(q.length>=3){ window.__lkTimer__=setTimeout(function(){ _findMorePlayers(raw, shown, false); }, 300); }
 }
 
 async function lookupAnyPlayer(){
@@ -5743,18 +5870,175 @@ async function lookupAnyPlayer(){
     var d=await r.json();
     if(!d.found){ out.innerHTML='<div class="text-slate-400 text-sm">'+(d.msg||'No match.')+'</div>'; return; }
     if(d.verdict==='NOT_PLAYING'){ out.innerHTML='<div class="text-slate-400 text-sm">'+(d.msg||'')+'</div>'; return; }
-    var color=d.verdict==='GOOD'?'#22c55e':d.verdict==='DECENT'?'#fbbf24':d.verdict==='UNDER'?'#ff8a65':(d.verdict==='UNKNOWN'||d.verdict==='INSUFFICIENT')?'#9ca3af':'#ef4444';
-    var html='<div style="background:#0f0f0f;border:1px solid #262626;border-left:4px solid '+color+';border-radius:10px;padding:14px 18px">';
-    html+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
-    html+='<span style="color:#fff;font-weight:700;font-size:1.05rem">'+(d.full_name||name)+'</span>';
-    if(d.side) html+='<span class="badge '+(d.side==='HOME'?'badge-home':'badge-away')+'">'+d.side+' vs '+(d.opp||'')+'</span>';
-    html+='</div>';
-    html+='<div style="color:'+color+';font-weight:700;font-size:1rem;margin-bottom:6px">'+(d.headline||'')+'</div>';
-    html+='<div style="color:#cbd5e1;font-size:.85rem">'+(d.blurb||'')+'</div>';
-    if(d.pitcher) html+='<div style="color:#94a3b8;font-size:.8rem;margin-top:6px">Facing '+d.pitcher+'</div>';
-    html+='</div>';
-    out.innerHTML=html;
+    out.innerHTML=_lkCard(d, name);
   }catch(e){ out.innerHTML='<div class="text-red-400 text-sm">Lookup failed. Try again.</div>'; }
+}
+
+function _lkCard(d, name){
+  var color=d.verdict==='GOOD'?'#22c55e':d.verdict==='DECENT'?'#fbbf24':d.verdict==='UNDER'?'#ff8a65':(d.verdict==='UNKNOWN'||d.verdict==='INSUFFICIENT')?'#9ca3af':'#ef4444';
+  var html='<div style="background:#0f0f0f;border:1px solid #262626;border-left:4px solid '+color+';border-radius:10px;padding:14px 18px">';
+  html+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+  html+='<span style="color:#fff;font-weight:700;font-size:1.05rem">'+_esc(d.full_name||name||'')+'</span>';
+  if(d.side) html+='<span class="badge '+(d.side==='HOME'?'badge-home':'badge-away')+'">'+d.side+' vs '+_esc(d.opp||'')+'</span>';
+  html+='</div>';
+  html+='<div style="color:'+color+';font-weight:700;font-size:1rem;margin-bottom:6px">'+_esc(d.headline||'')+'</div>';
+  html+='<div style="color:#cbd5e1;font-size:.85rem">'+_esc(d.blurb||'')+'</div>';
+  if(d.pitcher) html+='<div style="color:#94a3b8;font-size:.8rem;margin-top:6px">Facing '+_esc(d.pitcher)+'</div>';
+  html+='</div>';
+  return html;
+}
+
+async function lookupNamed(rid){
+  var e=(window.__LKM_REG__||{})[rid]; if(!e) return;
+  var out=document.getElementById(e.out); if(!out) return;
+  var date=(window._lastResult&&window._lastResult.date)||'';
+  out.innerHTML='<div class="text-slate-500 text-sm">Checking '+_esc(e.name)+'&#8230;</div>';
+  try{
+    var r=await fetch('/api/lookup?name='+encodeURIComponent(e.name)+'&date_str='+encodeURIComponent(date));
+    var d=await r.json();
+    if(!d.found){ out.innerHTML='<div class="text-slate-400 text-sm">'+_esc(d.msg||'No match.')+'</div>'; return; }
+    if(d.verdict==='NOT_PLAYING'){ out.innerHTML='<div class="text-slate-400 text-sm">'+_esc(d.msg||'')+'</div>'; return; }
+    out.innerHTML=_lkCard(d, e.name);
+  }catch(err){ out.innerHTML='<div class="text-red-400 text-sm">Lookup failed. Try again.</div>'; }
+}
+
+async function _findMorePlayers(raw, shown, isEmpty){
+  var ex=document.getElementById('search-extra'); if(!ex) return;
+  var q=(raw||'').trim();
+  var date=(window._lastResult&&window._lastResult.date)||'';
+  try{
+    var r=await fetch('/api/lookup_matches?name='+encodeURIComponent(q)+'&date_str='+encodeURIComponent(date));
+    var d=await r.json();
+    var list=(d.players||[]).filter(function(p){ return !shown[(p.full_name||'').toLowerCase()]; });
+    if(!list.length){
+      ex.innerHTML = isEmpty ? '<div class="text-slate-400 text-sm">No one matching "'+_esc(raw)+'" is in a game today.</div>' : '';
+      return;
+    }
+    window.__LKM_REG__=window.__LKM_REG__||{};
+    var html = isEmpty ? '' : '<div class="text-slate-500 text-xs" style="margin:4px 0 8px">Others in today&#8217;s games</div>';
+    list.forEach(function(p){
+      var rid='lkm'+(window.__LKM_N__=(window.__LKM_N__||0)+1);
+      window.__LKM_REG__[rid]={name:p.full_name};
+      html+='<div style="background:#0f0f0f;border:1px solid #262626;border-left:4px solid #9ca3af;border-radius:10px;padding:14px 18px;margin-bottom:10px">';
+      html+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
+      html+='<span style="color:#fff;font-weight:700;font-size:1.05rem">'+_esc(p.full_name||'')+'</span>';
+      if(p.side) html+='<span class="badge '+(p.side==='HOME'?'badge-home':'badge-away')+'">'+p.side+' vs '+_esc(p.opp||'')+'</span>';
+      html+='</div>';
+      html+='<div style="color:#94a3b8;font-size:.82rem">Not in today&#8217;s ranked picks'+(p.pitcher?(' &#183; facing '+_esc(p.pitcher)):'')+'</div>';
+      html+='<div onclick="_deepFromReg(&#39;'+rid+'&#39;)" style="margin-top:8px;color:#fbbf24;font-size:.8rem;font-weight:700;cursor:pointer">Tap for last 10 &amp; all stats &#8594;</div>';
+      html+='</div>';
+    });
+    ex.innerHTML=html;
+  }catch(e){ ex.innerHTML = isEmpty ? '<div class="text-red-400 text-sm">Lookup failed. Try again.</div>' : ''; }
+}
+
+// ── Player Deep Dive (SEARCH BAR ONLY) ───────────────────────────────
+// One consolidated pop-up per hitter: last 10 games (H/R/RBI/BB/HR/TB/HRR)
+// + TOTALS + 7 over-rate tiles + matchup verdict. Any hitter in today's
+// games (picked or not). Pitchers keep _pkForm.
+function _deepFromReg(rid){ var e=(window.__LKM_REG__||{})[rid]; if(e) openPlayerDeep(e.name); }
+function _deepDate(s){
+  if(!s) return '&#8212;';
+  var m=String(s).split('-'); if(m.length<3) return _esc(s);
+  var mo=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][parseInt(m[1],10)-1]||'';
+  return mo+' '+parseInt(m[2],10);
+}
+async function openPlayerDeep(name){
+  if(!name) return;
+  var ov=document.getElementById('deep-modal');
+  if(!ov){
+    ov=document.createElement('div'); ov.id='deep-modal';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:10050;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; };
+    document.body.appendChild(ov);
+  }
+  ov.innerHTML='<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:520px;width:100%;padding:26px;color:#94a3b8">Loading '+_esc(name)+' &#8230;</div>';
+  ov.style.display='flex';
+  var date=(window._lastResult&&window._lastResult.date)||'';
+  try{
+    var r=await fetch('/api/player_deep?name='+encodeURIComponent(name)+'&date_str='+encodeURIComponent(date));
+    var d=await r.json();
+    if(!d||!d.found){
+      ov.innerHTML='<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:520px;width:100%;padding:24px;color:#cbd5e1">'+_esc((d&&d.msg)||'No data.')+'<div style="margin-top:14px"><button onclick="document.getElementById(&#39;deep-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;padding:8px 16px;border-radius:8px;cursor:pointer">Close</button></div></div>';
+      return;
+    }
+    ov.innerHTML=_deepCard(d);
+  }catch(e){
+    ov.innerHTML='<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:520px;width:100%;padding:24px;color:#fca5a5">Lookup failed. Try again.<div style="margin-top:14px"><button onclick="document.getElementById(&#39;deep-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;padding:8px 16px;border-radius:8px;cursor:pointer">Close</button></div></div>';
+  }
+}
+function _deepCard(d){
+  var games=(d.games||[]).map(function(g){ g.hrr=(g.h||0)+(g.r||0)+(g.rbi||0); return g; });
+  var n=games.length;
+  var T={ab:0,h:0,r:0,rbi:0,bb:0,hr:0,tb:0,hrr:0};
+  games.forEach(function(g){ T.ab+=g.ab||0;T.h+=g.h||0;T.r+=g.r||0;T.rbi+=g.rbi||0;T.bb+=g.bb||0;T.hr+=g.hr||0;T.tb+=g.tb||0;T.hrr+=g.hrr||0; });
+  var l10=T.ab?(T.h/T.ab):0;
+  var ba=T.ab?('.'+('00'+Math.round(l10*1000)).slice(-3)):'&#8212;';
+  var vcol=l10>=.300?'#22c55e':(l10>=.250?'#fbbf24':'#ff8a65');
+  var vtxt=l10>=.300?'HOT BAT':(l10>=.250?'DECENT':'COLD BAT');
+  if(!n){ vcol='#64748b'; vtxt='NO RECENT GAMES'; }
+  var careerLine=(d.s1_ba!=null&&d.s1_ab)?(_fmtBA(d.s1_ba)+' career vs '+_esc(d.pitcher||'pitcher')+' ('+d.s1_ab+' AB)'):(d.pitcher?('no career AB vs '+_esc(d.pitcher)):'');
+  var hot5=0; games.slice(0,5).forEach(function(g){ hot5+=g.hr||0; });
+  var rows=n?games.map(function(g){
+    var opp=(g.home?'vs ':'@ ')+_esc(g.opp||'');
+    var hc=g.h>=2?'#63cab7':(g.h>=1?'#e2e8f0':'#64748b');
+    var hrc=g.hr>=1?'#fbbf24':'#64748b';
+    function td(v,col,bold){ return '<td style="padding:6px 8px;text-align:right;font-family:monospace;color:'+col+(bold?';font-weight:800':'')+'">'+v+'</td>'; }
+    return '<tr style="border-top:1px solid #1e293b">'
+      +'<td style="padding:6px 8px;color:#94a3b8;font-family:monospace;font-size:.76rem">'+_deepDate(g.date)+'</td>'
+      +'<td style="padding:6px 8px;color:#cbd5e1;font-size:.78rem">'+opp+'</td>'
+      +td(g.ab||0,'#64748b')+td(g.h||0,hc,true)+td(g.r||0,g.r>=1?'#e2e8f0':'#64748b')
+      +td(g.rbi||0,g.rbi>=1?'#e2e8f0':'#64748b')+td(g.bb||0,g.bb>=1?'#e2e8f0':'#64748b')
+      +td(g.hr||0,hrc,true)+td(g.tb||0,g.tb>=2?'#e2e8f0':'#64748b')+td(g.hrr||0,g.hrr>=2?'#e2e8f0':'#64748b')
+      +'</tr>';
+  }).join(''):'<tr><td colspan="10" style="padding:16px;text-align:center;color:#64748b">No recent games on record</td></tr>';
+  function rate(f){ var c=0; games.forEach(function(g){ if(f(g)) c++; }); return n?Math.round(c/n*100):0; }
+  var tiles=[
+    ['HITS', rate(function(g){return (g.h||0)>=1;}), T.h, 'O0.5'],
+    ['RUNS', rate(function(g){return (g.r||0)>=1;}), T.r, 'O0.5'],
+    ['RBI',  rate(function(g){return (g.rbi||0)>=1;}), T.rbi, 'O0.5'],
+    ['WALKS',rate(function(g){return (g.bb||0)>=1;}), T.bb, 'O0.5'],
+    ['HR',   rate(function(g){return (g.hr||0)>=1;}), T.hr, 'O0.5'],
+    ['TB',   rate(function(g){return (g.tb||0)>=2;}), T.tb, 'O1.5'],
+    ['HRR',  rate(function(g){return (g.hrr||0)>=2;}), T.hrr, 'O1.5']
+  ];
+  var tileHtml=tiles.map(function(t){
+    var pct=t[1], col=pct>=60?'#22c55e':(pct>=40?'#fbbf24':'#64748b'), av=n?(t[2]/n):0;
+    return '<div style="flex:1;min-width:60px;background:#0b1220;border:1px solid #1e293b;border-radius:9px;padding:8px 3px;text-align:center">'
+      +'<div style="color:#94a3b8;font-size:.6rem;font-weight:700;letter-spacing:.03em">'+t[0]+'</div>'
+      +'<div style="color:'+col+';font-size:1.15rem;font-weight:800;margin:2px 0">'+pct+'%</div>'
+      +'<div style="color:#cbd5e1;font-size:.6rem">'+av.toFixed(1)+'/gm</div>'
+      +'<div style="color:#475569;font-size:.56rem">'+t[3]+'</div>'
+      +'</div>';
+  }).join('');
+  var sideBadge=d.side?('<span class="badge '+(d.side==='HOME'?'badge-home':'badge-away')+'">'+d.side+' vs '+_esc(d.opp_abbr||d.opp||'')+'</span>'):'<span style="color:#64748b;font-size:.78rem">Not in a game today</span>';
+  function th(t,al){ return '<th style="padding:6px 8px;text-align:'+al+';color:#94a3b8;font-size:.66rem">'+t+'</th>'; }
+  function ft(v){ return '<td style="padding:6px 8px;text-align:right;color:#fbbf24;font-weight:800;font-family:monospace">'+v+'</td>'; }
+  return '<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:900px;width:100%;max-height:90vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">'
+    +'<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:16px 18px;border-bottom:1px solid #1e293b">'
+      +'<div><div style="font-weight:800;font-size:1.15rem;color:#fff">'+_esc(d.full_name||'')+'</div>'
+      +'<div style="color:#94a3b8;font-size:.78rem;margin-top:2px">'+_esc(d.team||'')+(d.pitcher?(' &#183; Facing '+_esc(d.pitcher)):'')+'</div></div>'
+      +'<div style="display:flex;align-items:center;gap:10px">'+sideBadge
+      +'<button onclick="document.getElementById(&#39;deep-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem">&#x2715;</button></div>'
+    +'</div>'
+    +'<div style="padding:14px 18px">'
+      +'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">'
+        +'<span style="background:'+vcol+'22;color:'+vcol+';border:1px solid '+vcol+'55;border-radius:6px;padding:3px 10px;font-weight:800;font-size:.78rem">'+vtxt+'</span>'
+        +'<span style="color:#cbd5e1;font-size:.82rem">'+ba+' last '+n+(careerLine?(' &#183; '+careerLine):'')+(hot5>=2?(' &#183; &#128293; '+hot5+' HR in L5'):'')+'</span>'
+      +'</div>'
+      +'<div style="color:#fbbf24;font-weight:700;font-size:.76rem;letter-spacing:.04em;margin-bottom:6px">LAST '+n+' GAMES</div>'
+      +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:.82rem">'
+        +'<thead><tr style="background:#0b1220">'+th('Date','left')+th('Opp','left')+th('AB','right')+th('H','right')+th('R','right')+th('RBI','right')+th('BB','right')+th('HR','right')+th('TB','right')+th('HRR','right')+'</tr></thead>'
+        +'<tbody>'+rows
+        +'<tr style="border-top:2px solid #334155;background:#0b1220">'
+          +'<td style="padding:6px 8px;color:#fbbf24;font-weight:800;font-size:.72rem">TOTALS</td>'
+          +'<td style="padding:6px 8px;color:#fbbf24;font-weight:800;font-family:monospace;font-size:.72rem">'+ba+'</td>'
+          +ft(T.ab)+ft(T.h)+ft(T.r)+ft(T.rbi)+ft(T.bb)+ft(T.hr)+ft(T.tb)+ft(T.hrr)
+        +'</tr></tbody></table></div>'
+      +'<div style="color:#fbbf24;font-weight:700;font-size:.76rem;letter-spacing:.04em;margin:14px 0 6px">LAST '+n+' &#8212; HOW OFTEN HE HIT THE OVER</div>'
+      +'<div style="display:flex;gap:5px;flex-wrap:nowrap">'+tileHtml+'</div>'
+    +'</div>'
+  +'</div>';
 }
 
 function toggleGameMLB(n){
