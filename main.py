@@ -2855,6 +2855,29 @@ def api_player_deep(name: str = "", date_str: str = ""):
                 side, opp_id, opp_pid, opp_pname = "AWAY", g["home_id"], g.get("home_pitcher_id"), g.get("home_pitcher_short"); break
     except Exception:
         pass
+    # today's day/night + game-of-series (schedule) to highlight the live slot
+    today_dn = today_series = None
+    if side:
+        try:
+            r = _rq.get(f"{MLB}/schedule", params={"date": date_str, "sportId": 1},
+                        timeout=8).json()
+            done = False
+            for dd in r.get("dates", []):
+                for g in dd.get("games", []):
+                    tt = g.get("teams", {}) or {}
+                    hid = (((tt.get("home") or {}).get("team")) or {}).get("id")
+                    aid = (((tt.get("away") or {}).get("team")) or {}).get("id")
+                    if team_id in (hid, aid):
+                        dn = (g.get("dayNight") or "").lower()
+                        today_dn = dn if dn in ("day", "night") else None
+                        sgn = g.get("seriesGameNumber")
+                        if sgn:
+                            today_series = "g1" if sgn == 1 else ("g2" if sgn == 2 else "g3")
+                        done = True; break
+                if done:
+                    break
+        except Exception:
+            pass
     # last-10 hitting game log (per-game)
     games = []
     series_out = {}
@@ -2950,7 +2973,8 @@ def api_player_deep(name: str = "", date_str: str = ""):
             "opp_abbr": abbr.get(opp_id, "") if opp_id else "",
             "pitcher": opp_pname or "", "in_game": bool(side),
             "s1_ba": s1_ba, "s1_ab": s1_ab, "splits": splits_out,
-            "series": series_out, "games": games}
+            "series": series_out, "today_dn": today_dn,
+            "today_series": today_series, "games": games}
 
 @app.get("/api/whoami")
 async def whoami(request: Request, token: str = ""):
@@ -6011,15 +6035,18 @@ async function openPlayerDeep(name){
     ov.innerHTML='<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:520px;width:100%;padding:24px;color:#fca5a5">Lookup failed. Try again.<div style="margin-top:14px"><button onclick="document.getElementById(&#39;deep-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;padding:8px 16px;border-radius:8px;cursor:pointer">Close</button></div></div>';
   }
 }
-function _deepSplit(lbl,o){
+function _deepSplit(lbl,o,active){
+  var br=active?'#38bdf8':'#1e293b', bg=active?'#0c1a2e':'#0b1220';
+  var box='flex:1;min-width:66px;background:'+bg+';border:1px solid '+br+';border-radius:9px;padding:'+(active?'4px':'8px')+' 4px 8px;text-align:center'+(active?';box-shadow:0 0 0 1px #38bdf8':'');
+  var tag=active?'<div style="color:#38bdf8;font-size:.5rem;font-weight:800;letter-spacing:.06em;margin-bottom:1px">TODAY</div>':'';
   if(!o||!o.ab){
-    return '<div style="flex:1;min-width:66px;background:#0b1220;border:1px solid #1e293b;border-radius:9px;padding:8px 4px;text-align:center">'
+    return '<div style="'+box+'">'+tag
       +'<div style="color:#94a3b8;font-size:.6rem;font-weight:700;letter-spacing:.03em">'+lbl+'</div>'
       +'<div style="color:#475569;font-size:1.05rem;font-weight:800;margin:2px 0">&#8212;</div>'
       +'<div style="color:#475569;font-size:.56rem">no data</div></div>';
   }
   var av=parseFloat(o.avg)||0, col=av>=.300?'#22c55e':(av>=.250?'#fbbf24':'#94a3b8');
-  return '<div style="flex:1;min-width:66px;background:#0b1220;border:1px solid #1e293b;border-radius:9px;padding:8px 4px;text-align:center">'
+  return '<div style="'+box+'">'+tag
     +'<div style="color:#94a3b8;font-size:.6rem;font-weight:700;letter-spacing:.03em">'+lbl+'</div>'
     +'<div style="color:'+col+';font-size:1.05rem;font-weight:800;margin:2px 0">'+(o.avg||'&#8212;')+'</div>'
     +'<div style="color:#cbd5e1;font-size:.58rem">'+o.ab+' AB</div></div>';
@@ -6069,17 +6096,18 @@ function _deepCard(d){
       +'</div>';
   }).join('');
   var sideBadge=d.side?('<span class="badge '+(d.side==='HOME'?'badge-home':'badge-away')+'">'+d.side+' vs '+_esc(d.opp_abbr||d.opp||'')+'</span>'):'<span style="color:#64748b;font-size:.78rem">Not in a game today</span>';
+  var tside=d.side||'', tdn=d.today_dn||'', tsg=d.today_series||'';
   var sp=d.splits||{};
   var hasSplit=(sp.home&&sp.home.ab)||(sp.away&&sp.away.ab)||(sp.day&&sp.day.ab)||(sp.night&&sp.night.ab);
   var splitRow=hasSplit?('<div style="color:#fbbf24;font-weight:700;font-size:.76rem;letter-spacing:.04em;margin-bottom:6px">SEASON SPLITS</div>'
     +'<div style="display:flex;gap:5px;flex-wrap:nowrap;margin-bottom:14px">'
-    +_deepSplit('HOME',sp.home)+_deepSplit('AWAY',sp.away)+_deepSplit('DAY',sp.day)+_deepSplit('NIGHT',sp.night)
+    +_deepSplit('HOME',sp.home,tside==='HOME')+_deepSplit('AWAY',sp.away,tside==='AWAY')+_deepSplit('DAY',sp.day,tdn==='day')+_deepSplit('NIGHT',sp.night,tdn==='night')
     +'</div>'):'';
   var sr=d.series||{};
   var hasSeries=(sr.g1&&sr.g1.ab)||(sr.g2&&sr.g2.ab)||(sr.g3&&sr.g3.ab);
   var seriesRow=hasSeries?('<div style="color:#fbbf24;font-weight:700;font-size:.76rem;letter-spacing:.04em;margin-bottom:6px">SERIES SPLIT &#183; GAME OF SERIES</div>'
     +'<div style="display:flex;gap:5px;flex-wrap:nowrap;margin-bottom:14px">'
-    +_deepSplit('GAME 1',sr.g1)+_deepSplit('GAME 2',sr.g2)+_deepSplit('GAME 3+',sr.g3)
+    +_deepSplit('GAME 1',sr.g1,tsg==='g1')+_deepSplit('GAME 2',sr.g2,tsg==='g2')+_deepSplit('GAME 3+',sr.g3,tsg==='g3')
     +'</div>'):'';
   function th(t,al){ return '<th style="padding:6px 8px;text-align:'+al+';color:#94a3b8;font-size:.66rem">'+t+'</th>'; }
   function ft(v){ return '<td style="padding:6px 8px;text-align:right;color:#fbbf24;font-weight:800;font-family:monospace">'+v+'</td>'; }
