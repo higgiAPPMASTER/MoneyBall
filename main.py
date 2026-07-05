@@ -4581,9 +4581,10 @@ function _popSig(p, rateLbl, oddsLbl, oddsVal, isOver){
   var rate=(rateLbl&&p.rate_disp)?('<div style="margin-top:2px;font-size:.82rem"><span style="color:#94a3b8">'+rateLbl+'</span> <span style="font-family:monospace;font-weight:700;color:#86efac;font-size:1rem">'+p.rate_disp+'</span> <span style="color:#64748b;font-size:.66rem">'+(p.basis||'')+'</span></div>'):'';
   var conv=p.conv_flag?'<div style="font-size:.82rem;color:#4ade80;font-weight:600;margin-top:3px">&#10003; Converged &middot; L10 '+(p.recent_l10||'N/A')+' L5 '+(p.recent_l5||'N/A')+'</div>':(p.cold_flag?'<div style="font-size:.82rem;color:#fb923c;font-weight:600;margin-top:3px">&#9888; Recent diverges &middot; L5 '+(p.recent_l5||'N/A')+'</div>':((p.recent_l10||p.recent_l5)?'<div style="font-size:.82rem;color:#64748b;margin-top:3px">L10 '+(p.recent_l10||'N/A')+' &middot; L5 '+(p.recent_l5||'N/A')+'</div>':''));
   var hot=(isOver&&p.hot_disp)?'<div style="font-size:.82rem;color:#fbbf24;font-weight:700;margin-top:3px">&#128293; Hot hand &middot; '+p.hot_disp+' (+'+p.hot_bonus+')</div>':'';
+  var dn=(typeof _dnChip==='function')?_dnChip(p):'';
   var odStr=(oddsVal!=null)?((oddsVal>0?'+':'')+oddsVal):'\u2014';
   var odds='<div style="margin-top:8px;padding-top:8px;border-top:1px solid #1f2937"><span style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">'+(oddsLbl||'Odds')+'</span> <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:1rem">'+odStr+_bookTag(p)+'</span></div>';
-  return chipRow+rate+conv+hot+odds;
+  return chipRow+rate+conv+hot+dn+odds;
 }
 
 // ── Two even boxes: matchup signals (left) + series splits & last games (right) ──
