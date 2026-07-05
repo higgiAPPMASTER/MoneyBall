@@ -2857,6 +2857,7 @@ def api_player_deep(name: str = "", date_str: str = ""):
         pass
     # last-10 hitting game log (per-game)
     games = []
+    series_out = {}
     try:
         r = _rq.get(f"{MLB}/people/{pid}/stats",
                     params={"stats": "gameLog", "group": "hitting", "season": season},
@@ -2877,6 +2878,27 @@ def api_player_deep(name: str = "", date_str: str = ""):
             games.append({"date": sp.get("date", ""), "opp": oab, "home": bool(sp.get("isHome")),
                           "ab": _i("atBats"), "h": _i("hits"), "r": _i("runs"), "rbi": _i("rbi"),
                           "bb": _i("baseOnBalls"), "hr": _i("homeRuns"), "tb": _i("totalBases")})
+        # season series-game split (G1/G2/G3+) from full regular-season gameLog:
+        # walk chronologically, numbering games within each run vs the same opp+venue
+        buckets = {"g1": [0, 0], "g2": [0, 0], "g3": [0, 0]}  # [ab, hits]
+        prev_key = None; cnt = 0
+        for sp in splits:
+            if (sp.get("gameType") or "R") != "R":
+                continue
+            key = ((sp.get("opponent") or {}).get("id"), bool(sp.get("isHome")))
+            cnt = 1 if key != prev_key else cnt + 1
+            prev_key = key
+            bk = "g1" if cnt == 1 else ("g2" if cnt == 2 else "g3")
+            st = sp.get("stat", {}) or {}
+            try:
+                buckets[bk][0] += int(st.get("atBats", 0) or 0)
+                buckets[bk][1] += int(st.get("hits", 0) or 0)
+            except Exception:
+                pass
+        for bk, (ab, h) in buckets.items():
+            if ab:
+                s = f"{(h / ab):.3f}"
+                series_out[bk] = {"avg": (s[1:] if s.startswith("0.") else s), "ab": ab}
     except Exception:
         pass
     # career vs today's pitcher (one aggregate split)
@@ -2927,7 +2949,8 @@ def api_player_deep(name: str = "", date_str: str = ""):
             "side": side, "opp": teams.get(opp_id, "") if opp_id else "",
             "opp_abbr": abbr.get(opp_id, "") if opp_id else "",
             "pitcher": opp_pname or "", "in_game": bool(side),
-            "s1_ba": s1_ba, "s1_ab": s1_ab, "splits": splits_out, "games": games}
+            "s1_ba": s1_ba, "s1_ab": s1_ab, "splits": splits_out,
+            "series": series_out, "games": games}
 
 @app.get("/api/whoami")
 async def whoami(request: Request, token: str = ""):
@@ -6052,6 +6075,12 @@ function _deepCard(d){
     +'<div style="display:flex;gap:5px;flex-wrap:nowrap;margin-bottom:14px">'
     +_deepSplit('HOME',sp.home)+_deepSplit('AWAY',sp.away)+_deepSplit('DAY',sp.day)+_deepSplit('NIGHT',sp.night)
     +'</div>'):'';
+  var sr=d.series||{};
+  var hasSeries=(sr.g1&&sr.g1.ab)||(sr.g2&&sr.g2.ab)||(sr.g3&&sr.g3.ab);
+  var seriesRow=hasSeries?('<div style="color:#fbbf24;font-weight:700;font-size:.76rem;letter-spacing:.04em;margin-bottom:6px">SERIES SPLIT &#183; GAME OF SERIES</div>'
+    +'<div style="display:flex;gap:5px;flex-wrap:nowrap;margin-bottom:14px">'
+    +_deepSplit('GAME 1',sr.g1)+_deepSplit('GAME 2',sr.g2)+_deepSplit('GAME 3+',sr.g3)
+    +'</div>'):'';
   function th(t,al){ return '<th style="padding:6px 8px;text-align:'+al+';color:#94a3b8;font-size:.66rem">'+t+'</th>'; }
   function ft(v){ return '<td style="padding:6px 8px;text-align:right;color:#fbbf24;font-weight:800;font-family:monospace">'+v+'</td>'; }
   return '<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:900px;width:100%;max-height:90vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">'
@@ -6063,6 +6092,7 @@ function _deepCard(d){
     +'</div>'
     +'<div style="padding:14px 18px">'
       +splitRow
+      +seriesRow
       +'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">'
         +'<span style="background:'+vcol+'22;color:'+vcol+';border:1px solid '+vcol+'55;border-radius:6px;padding:3px 10px;font-weight:800;font-size:.78rem">'+vtxt+'</span>'
         +'<span style="color:#cbd5e1;font-size:.82rem">'+ba+' last '+n+(careerLine?(' &#183; '+careerLine):'')+(hot5>=2?(' &#183; &#128293; '+hot5+' HR in L5'):'')+'</span>'
