@@ -1148,6 +1148,29 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "edge": p.get("edge"),
         })
 
+    # HRR Special (Parlay Confluence) — OVER only, top 20 for its own record
+    # Deliberately kept OUT of main Track Record (_TRK_KEYS) to avoid double-
+    # counting with the regular HRR overs. Has its own button + modal.
+    hrr_special_rows = []
+    for p in (picks.get("hrr_special_picks") or [])[:20]:
+        st = _lookup(p.get("batter_id"), p.get("name"))
+        actual = st["hrr"] if st else None
+        hrr_special_rows.append({
+            "name": p.get("name", ""),
+            "team": p.get("team", ""),
+            "category": "HRR Special", "side": "OVER",
+            "pick": "OVER 1.5 H+R+RBI (Special)",
+            "odds": p.get("hrr_over_odds"),
+            "line": 1.5,
+            "actual": actual,
+            "stat": "H+R+RBI",
+            "result": _grade("OVER", 1.5, actual, (st or {}).get("final", False)),
+            "game_status": (st or {}).get("status", "—"),
+            "ev": p.get("ev"),
+            "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
+            "edge": p.get("edge"),
+        })
+
     # Pitcher Ks — top 10 PER SIDE for Track Record (Over and Under each get
     # their own top 10 so a side with <10 picks never spills into overflow)
     pitcher_ks = []
@@ -1597,6 +1620,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
         "hr":            hr_picks,
         "batter_walks":  walks_rows,
         "hrr":           hrr_rows,
+        "hrr_special":   hrr_special_rows,
         "pitcher_ks":    pitcher_ks,
         "pitcher_props": pitcher_props,
         "top10_batter":  top10_batter,
@@ -1736,7 +1760,7 @@ def _aggregate_graded(graded: dict) -> dict:
     """Collapse a graded day into {category: {side: [W, L]}} counting only decided picks
     that had odds posted — no-odds picks are excluded from the record."""
     agg: dict = {}
-    for key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "hr", "batter_walks", "hrr", "pitcher_ks", "pitcher_props", "top10_batter", "top10_batter_new", "top10_pitcher", "overflow", "value_plays"):
+    for key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "hr", "batter_walks", "hrr", "hrr_special", "pitcher_ks", "pitcher_props", "top10_batter", "top10_batter_new", "top10_pitcher", "overflow", "value_plays"):
         for r in graded.get(key, []):
             res = r.get("result")
             if res not in ("WIN", "LOSS"):
@@ -1761,7 +1785,7 @@ def _detail_graded(graded: dict) -> list:
     fields an earnings sheet needs: player, team, category, side, pick, odds,
     line, result. No-odds picks are excluded — they don't count in the record."""
     out = []
-    for key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "hr", "batter_walks", "hrr", "pitcher_ks", "pitcher_props", "top10_batter", "top10_batter_new", "top10_pitcher", "overflow", "value_plays"):
+    for key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "hr", "batter_walks", "hrr", "hrr_special", "pitcher_ks", "pitcher_props", "top10_batter", "top10_batter_new", "top10_pitcher", "overflow", "value_plays"):
         for r in graded.get(key, []):
             res = r.get("result")
             if res not in ("WIN", "LOSS"):
@@ -7768,6 +7792,7 @@ function renderTrackRecord(d){
   var tabs='<div style="display:flex;gap:8px;margin-bottom:4px;flex-wrap:wrap">'+_trkTabBtn('daily','Daily')+_trkTabBtn('weekly','Weekly')+_trkTabBtn('monthly','Monthly')+_trkTabBtn('custom','Custom')
     +'<button onclick="_openBestBetsStats()" title="W/L record and ROI for Best Bets — value plays at odds -200 or better, tracked forward each day" style="background:#2e1065;color:#c4b5fd;border:1px solid #7c3aed;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:800;cursor:pointer;margin-left:auto;white-space:nowrap">&#9670; Best Bets Record</button>'
     +'<button onclick="_openProjEdgeStats()" title="W/L record and ROI for Proj Edge plays (pitchers: projection beats the line; hitters: positive edge), tracked forward each day &#x2014; separate from Track Record" style="background:#0c4a6e;color:#7dd3fc;border:1px solid #0ea5e9;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">&#9650; Proj Edge Record</button>'
+    +'<button onclick="_openHrrSpStats()" title="W/L record for HRR Special confluence picks (all 4 gates cleared) &#x2014; separate from main Track Record" style="background:#1a0e2e;color:#c4b5fd;border:1px solid #7c3aed;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">&#11088; HRR SP Record</button>'
     +'</div>';
   var sc=_matrixScorecard(d);
   var he=document.getElementById('track-head'); if(he) he.innerHTML=hdr+sc+tabs;
@@ -8368,6 +8393,103 @@ function _openProjEdgeStats(){
   var ov2=document.getElementById('pe-stats-modal');
   if(!ov2){ ov2=document.createElement('div'); ov2.id='pe-stats-modal'; ov2.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.85);z-index:10001;display:flex;align-items:center;justify-content:center;padding:16px'; ov2.onclick=function(e){ if(e.target===ov2) ov2.style.display='none'; }; document.body.appendChild(ov2); }
   _peStatsRender();
+  ov2.style.display='flex';
+}
+// ── HRR Special Record ───────────────────────────────────────────────────────
+// Forward-only record for the HRR Special confluence board (all 4 gates cleared).
+// Reads from the hrr_special key in the grade cache — kept out of main Track
+// Record to avoid double-counting with regular HRR overs.
+function _hrrspRowsForDate(date){
+  var d=window.__TRACK__||{}; var rows=[]; var have=false;
+  (d.detail||[]).forEach(function(r){ if(r.date===date&&r.category==='HRR Special'){ have=true; if(r.result==='WIN'||r.result==='LOSS') rows.push(r); } });
+  if(!have){
+    var g=(window.__TRK_GRADE_CACHE__||{})[date];
+    if(!g||g==='LOADING'||g.__error__||!g.all_final) return [];
+    (g.hrr_special||[]).forEach(function(r){ if(r.result==='WIN'||r.result==='LOSS') rows.push(r); });
+  }
+  rows.sort(function(a,b){ return (b.edge||0)-(a.edge||0); });
+  return rows;
+}
+function _hrrspStatsAllTime(){ window.__HRRSP_DATE__=''; _hrrspStatsRender(); }
+function _hrrspStatsSetDate(val){ if(!val){ _hrrspStatsAllTime(); return; } window.__HRRSP_DATE__=val; _hrrspLoadDay(val); }
+async function _hrrspLoadDay(date){
+  window.__TRK_GRADE_CACHE__=window.__TRK_GRADE_CACHE__||{};
+  var d=window.__TRACK__||{};
+  var inDetail=(d.detail||[]).some(function(r){ return r.date===date&&r.category==='HRR Special'; });
+  var cur=window.__TRK_GRADE_CACHE__[date];
+  if(inDetail||(cur&&cur!=='LOADING')){ _hrrspStatsRender(); return; }
+  var tok=localStorage.getItem('__mpa_token')||localStorage.getItem('hub_token')||'';
+  var adm=new URLSearchParams(location.search).get('admin')||'';
+  window.__TRK_GRADE_CACHE__[date]='LOADING'; _hrrspStatsRender();
+  try{ var res=await fetch('/api/grade/'+date+'?token='+encodeURIComponent(tok)+(adm?('&admin='+encodeURIComponent(adm)):'')); if(!res.ok){ var t=await res.text(); window.__TRK_GRADE_CACHE__[date]={__error__:(t||'No picks for this date')}; } else { window.__TRK_GRADE_CACHE__[date]=await res.json(); } }catch(e){ window.__TRK_GRADE_CACHE__[date]={__error__:String((e&&e.message)||e)}; }
+  _hrrspStatsRender();
+}
+function _hrrspStatsWrap(bodyHtml){
+  var ov2=document.getElementById('hrrsp-stats-modal'); if(!ov2) return;
+  var dateMode=!!window.__HRRSP_DATE__, date=window.__HRRSP_DATE__||'';
+  var sub=dateMode?('HRR Special &#xB7; all 4 confluence gates cleared &#xB7; '+_weekdayName(date)+' '+date):'HRR Special confluence picks &#xB7; all 4 gates cleared &#xB7; tap a day for that slate&#39;s plays';
+  ov2.innerHTML='<div style="background:#0e0919;border:1px solid #5b21b6;border-radius:18px;width:100%;max-width:460px;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 24px 80px rgba(0,0,0,.7)" onclick="event.stopPropagation()">'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #1e293b;flex-shrink:0">'
+    +'<div><div style="font-weight:900;color:#a78bfa;font-size:1rem">&#11088; HRR Special Record</div>'
+    +'<div style="color:#64748b;font-size:.71rem;margin-top:2px">'+sub+'</div></div>'
+    +'<button onclick="document.getElementById(&#39;hrrsp-stats-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem;flex-shrink:0">&#215;</button>'
+    +'</div>'
+    +'<div style="overflow-y:auto;flex:1">'+bodyHtml+'</div>'
+    +'</div>';
+}
+function _hrrspStatsRender(){
+  var ov2=document.getElementById('hrrsp-stats-modal'); if(!ov2) return;
+  var d=window.__TRACK__||{}, stake=_trkStake();
+  var dateMode=!!window.__HRRSP_DATE__, date=window.__HRRSP_DATE__||'';
+  var today=window.__TRK_TODAY__||_trkTodayISO();
+  var loadingMsg='', pool=[];
+  if(dateMode){
+    var cache=window.__TRK_GRADE_CACHE__||{};
+    var inDetail=(d.detail||[]).some(function(r){ return r.date===date&&r.category==='HRR Special'; });
+    var g=cache[date];
+    if(!inDetail && (g===undefined||g==='LOADING')) loadingMsg='Loading\u2026';
+    else if(!inDetail && g&&g.__error__) loadingMsg=g.__error__||'No picks for this date.';
+    else if(!inDetail && g && !g.all_final) loadingMsg='This slate is not final yet. The HRR Special Record fills in once every game on '+date+' goes Final.';
+    else pool=_hrrspRowsForDate(date);
+  } else {
+    _edgeAllDates().forEach(function(dt){ var t=_hrrspRowsForDate(dt); for(var i=0;i<t.length;i++){ var rr=t[i]; if(!rr.date){ var cc={}; for(var kk in rr) cc[kk]=rr[kk]; cc.date=dt; rr=cc; } pool.push(rr); } });
+  }
+  var ov={w:0,l:0,net:0,counted:0};
+  pool.forEach(function(r){
+    var win=r.result==='WIN', od=_effOdds(r);
+    var pl=_amProfit(od,stake,win); if(pl===null) return;
+    if(win) ov.w++; else ov.l++; ov.net+=pl; ov.counted++;
+  });
+  var roiClr=ov.net>=0?'#4ade80':'#f87171';
+  var roiStr=ov.counted?(((ov.net/(ov.counted*stake))*100).toFixed(1)+'%'):'&#x2014;';
+  var netStr='$'+(ov.net>=0?'+':'')+ov.net.toFixed(2);
+  var body='<div style="padding:14px 16px">';
+  body+='<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px">';
+  body+='<button onclick="_hrrspStatsAllTime()" style="background:'+(dateMode?'#1e293b':'#4c1d95')+';color:'+(dateMode?'#cbd5e1':'#fff')+';border:none;border-radius:7px;padding:6px 12px;font-size:.78rem;font-weight:700;cursor:pointer">All-time</button>';
+  body+='<label style="font-size:.78rem;color:#94a3b8;display:inline-flex;align-items:center;gap:6px">Day <input type="date" value="'+date+'" max="'+today+'" onchange="_hrrspStatsSetDate(this.value)" style="background:#020617;border:1px solid #334155;color:#fff;border-radius:6px;padding:5px 8px;font-size:.78rem"></label>';
+  if(dateMode) body+='<span style="font-weight:800;color:#c4b5fd;font-size:.85rem">'+_weekdayName(date)+'</span>';
+  body+='</div>';
+  if(dateMode && loadingMsg){
+    body+='<div style="color:#64748b;padding:24px;text-align:center">'+_esc(loadingMsg)+'</div></div>';
+    _hrrspStatsWrap(body); return;
+  }
+  body+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px">';
+  body+='<div style="background:#0c1622;border-radius:8px;padding:11px;text-align:center"><div style="font-size:.63rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">Record</div><div style="font-weight:900;color:#e2e8f0;font-size:1.1rem">'+ov.w+'-'+ov.l+'</div></div>';
+  body+='<div style="background:#0c1622;border-radius:8px;padding:11px;text-align:center"><div style="font-size:.63rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">ROI</div><div style="font-weight:900;color:'+roiClr+';font-size:1.1rem">'+roiStr+'</div></div>';
+  body+='<div style="background:#0c1622;border-radius:8px;padding:11px;text-align:center"><div style="font-size:.63rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">Net @ $'+stake+'</div><div style="font-weight:900;color:'+roiClr+';font-size:1.05rem">'+netStr+'</div></div>';
+  body+='</div>';
+  var _plays=pool.slice().sort(_recPlaySort);
+  if(_plays.length) body+=_recSecHdr('ALL PLAYS &#xB7; '+_plays.length)+_recPlaysRows(_plays,'EV','#a78bfa',function(r){ return r.ev!=null?((r.ev>0?'+':'')+((r.ev*100).toFixed(1))+'%'):'&#x2014;'; },function(c){ return c; },!dateMode);
+  else body+='<div style="color:#64748b;padding:20px;text-align:center">No HRR Special plays graded'+(dateMode?' on this date.':' yet.<br><span style="font-size:.74rem">This fills in automatically as each day&#39;s HRR Special picks go Final.</span>')+'</div>';
+  body+='</div>';
+  _hrrspStatsWrap(body);
+}
+function _openHrrSpStats(){
+  var d=window.__TRACK__; if(!d){ alert('Open Track Record first.'); return; }
+  if(window.__HRRSP_DATE__===undefined) window.__HRRSP_DATE__='';
+  var ov2=document.getElementById('hrrsp-stats-modal');
+  if(!ov2){ ov2=document.createElement('div'); ov2.id='hrrsp-stats-modal'; ov2.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.85);z-index:10001;display:flex;align-items:center;justify-content:center;padding:16px'; ov2.onclick=function(e){ if(e.target===ov2) ov2.style.display='none'; }; document.body.appendChild(ov2); }
+  _hrrspStatsRender();
   ov2.style.display='flex';
 }
 function _trkRenderActive(){ var be=document.getElementById('track-body'); if(!be) return; var stake=_trkStake(); var t=window.__TRK_TAB__||'daily'; if(t==='daily') _trkRenderDailyTab(be,stake); else _trkRenderRangeTab(be,stake,t); }
