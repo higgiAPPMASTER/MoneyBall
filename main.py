@@ -5604,9 +5604,11 @@ function onOddsRangeChange(){
   if(window._lastResult) showResults(window._lastResult);
 }
 
+function _srchOpen(k){ var e=(window.__SRCH_REG__||{})[k]; if(e&&e.fn){ try{ e.fn(e.p); }catch(err){} } }
 function runPlayerSearch(raw){
   var box = document.getElementById('player-search-result');
   var q = (raw||'').trim().toLowerCase();
+  clearTimeout(window.__lkTimer__);
   if(!q){ box.innerHTML=''; return; }
   if(q.length < 2){ box.innerHTML='<div class="text-slate-500 text-sm">Keep typing…</div>'; return; }
   var r = window._lastResult;
@@ -5640,26 +5642,46 @@ function runPlayerSearch(raw){
   dqAll.forEach(function(p){
     if(_matchName(p,q)) hits.push({bucket:'Did Not Qualify', rank:'—', kind:'HITTER-DQ', p:p});
   });
+  // 6) Prop-market picks (RBI / HR / Runs / Walks / TB / HRR) — full card on click
+  function _addCat(arr, market, fn, oddsFn, lineFn){
+    (arr||[]).forEach(function(p,i){
+      if(_matchName(p,q)) hits.push({bucket:market, rank:'#'+(i+1), kind:'CAT', p:p, fn:fn,
+        market:market, side:(p.pick||''), line:lineFn(p), odds:oddsFn(p)});
+    });
+  }
+  _addCat(r.rbi_picks,     'RBI',          _rbiForm,    function(p){return p.pick==='OVER'?p.over_odds:p.under_odds;}, function(p){return p.line!=null?p.line:0.5;});
+  _addCat(r.hr_picks,      'HR',           _hrForm,     function(p){return p.pick==='OVER'?p.over_odds:p.under_odds;}, function(p){return p.line!=null?p.line:0.5;});
+  _addCat(r.runs_picks,    'Runs',         _runsForm,   function(p){return p.pick==='OVER'?p.over_odds:p.under_odds;}, function(p){return p.line!=null?p.line:0.5;});
+  _addCat(r.walks_picks,   'Batter Walks', _walksForm,  function(p){return p.pick==='OVER'?p.over_odds:p.under_odds;}, function(p){return p.line!=null?p.line:0.5;});
+  _addCat(r.tb_over_picks, 'TB Over',      _tbOverForm, function(p){return p.tb_over_odds;}, function(){return 1.5;});
+  _addCat(r.tb_picks,      'TB Under',     _tbForm,     function(p){return p.tb_under_odds;}, function(){return 1.5;});
+  _addCat(r.hrr_picks,     'HRR',          _hrrForm,    function(p){return p.pick==='UNDER'?p.hrr_under_odds:p.hrr_over_odds;}, function(){return 1.5;});
 
   if(!hits.length){
-    box.innerHTML='<div class="text-slate-500 text-sm" style="margin-bottom:10px">"<strong>'+raw+'</strong>" is not in today&#39;s analyzed picks. Check any hitter in today&#39;s games for a quick hit verdict:</div>'
-      +'<button onclick="lookupAnyPlayer()" style="background:#fbbf24;color:#111;border:none;border-radius:8px;padding:8px 16px;font-weight:700;cursor:pointer">Look up this player →</button>'
+    box.innerHTML='<div class="text-slate-500 text-sm" style="margin-bottom:10px">"<strong>'+raw+'</strong>" isn&#39;t one of today&#39;s ranked picks &#8212; pulling whatever data we have&#8230;</div>'
+      +'<button onclick="lookupAnyPlayer()" style="background:#fbbf24;color:#111;border:none;border-radius:8px;padding:8px 16px;font-weight:700;cursor:pointer">Look up this player &#8594;</button>'
       +'<div class="text-slate-600 text-xs" style="margin-top:8px">Searching a pitcher? Expand "All today&#39;s pitchers" below the K Picks table.</div>'
       +'<div id="lookup-any-result" style="margin-top:12px"></div>';
+    if(q.length>=3){ window.__lkTimer__=setTimeout(function(){ lookupAnyPlayer(); }, 500); }
     return;
   }
 
   box.innerHTML = hits.map(function(h){
     var p=h.p, kind=h.kind;
-    var color = h.bucket==='Top Picks'?'#fbbf24':
+    var fn = h.fn || (kind==='PITCHER'?_pkForm:_hitForm);
+    window.__SRCH_REG__=window.__SRCH_REG__||{};
+    var sk='sr'+(window.__SRCH_N__=(window.__SRCH_N__||0)+1);
+    window.__SRCH_REG__[sk]={p:p, fn:fn};
+    var color = kind==='CAT'?'#a78bfa':
+                h.bucket==='Top Picks'?'#fbbf24':
                 h.bucket==='Money Ball Picks'?'#94a3b8':
                 h.bucket==='Under Picks'?'#ef4444':
                 h.bucket==='Pitcher K Picks'?'#63cab7':
                 h.bucket==='Did Not Qualify'?'#6b7280':'#9ca3af';
-    var html='<div style="background:#0f0f0f;border:1px solid #262626;border-left:4px solid '+color+';border-radius:10px;padding:14px 18px;margin-bottom:10px">';
+    var html='<div onclick="_srchOpen(&#39;'+sk+'&#39;)" style="background:#0f0f0f;border:1px solid #262626;border-left:4px solid '+color+';border-radius:10px;padding:14px 18px;margin-bottom:10px;cursor:pointer">';
     html+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
-    html+='<div><span style="color:#fff;font-weight:700;font-size:1.05rem">'+_nameSpan(p,(p.full_name||p.name||''))+'</span>';
-    html+=' <span style="color:'+color+';font-weight:700;margin-left:8px">'+h.bucket+' '+h.rank+'</span></div>';
+    html+='<div><span style="color:#fff;font-weight:700;font-size:1.05rem">'+_esc(p.full_name||p.name||'')+'</span>';
+    html+=' <span style="color:'+color+';font-weight:700;margin-left:8px">'+h.bucket+((h.rank&&h.rank.charAt(0)==='#')?(' '+h.rank):'')+'</span></div>';
     if(p.side) html+='<span class="badge '+(p.side==='HOME'?'badge-home':'badge-away')+'">'+p.side+' vs '+(p.opp||'')+'</span>';
     html+='</div>';
 
@@ -5694,7 +5716,15 @@ function runPlayerSearch(raw){
       if(p.pick) html+='<span><strong style="color:#63cab7">Pick</strong> '+p.pick+'</span>';
       html+='</div>';
       if(p.pick_note) html+='<div style="margin-top:8px;color:#cbd5e1;font-size:.82rem">'+p.pick_note+'</div>';
+    } else if(kind==='CAT'){
+      var oddTxt=(h.odds!=null)?((h.odds>0?'+':'')+h.odds):'';
+      html+='<div style="display:flex;flex-wrap:wrap;gap:14px;font-size:.82rem;color:#cbd5e1">';
+      html+='<span><strong style="color:#94a3b8">Market</strong> '+h.market+'</span>';
+      if(h.side) html+='<span><strong style="color:#94a3b8">Pick</strong> '+h.side+' '+h.line+'</span>';
+      if(oddTxt) html+='<span><strong style="color:#94a3b8">Odds</strong> '+oddTxt+'</span>';
+      html+='</div>';
     }
+    html+='<div style="margin-top:10px;color:'+color+';font-size:.8rem;font-weight:700">View full card &#8594;</div>';
     html+='</div>';
     return html;
   }).join('');
