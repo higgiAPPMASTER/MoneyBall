@@ -3984,17 +3984,29 @@ function _gpCard(g,i){
       +'</div>';
   }
   var drivers=(g.drivers||[]).map(function(d){return _esc(d);}).join(' &#183; ');
-  return '<div onclick="_openGamePred('+i+')" style="background:#0a1120;border:1px solid #1e293b;border-radius:14px;padding:13px 15px;cursor:pointer" onmouseover="this.style.borderColor=&#39;#3b2c63&#39;" onmouseout="this.style.borderColor=&#39;#1e293b&#39;">'
+  var vb=g.value_flag?('<span style="background:#166534;color:#fff;font-weight:900;font-size:.62rem;border-radius:6px;padding:2px 7px;letter-spacing:.04em">VALUE +'+g.mkt_edge+'%</span>'):'';
+  return '<div onclick="_openGamePred('+i+')" style="background:#0a1120;border:1px solid '+(g.value_flag?'#166534':'#1e293b')+';border-radius:14px;padding:13px 15px;cursor:pointer" onmouseover="this.style.borderColor=&#39;#3b2c63&#39;" onmouseout="this.style.borderColor=&#39;'+(g.value_flag?'#166534':'#1e293b')+'&#39;">'
     +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px">'
     +'<div style="font-weight:800;color:#94a3b8;font-size:.72rem;letter-spacing:.04em">'+_esc(g.away_abbr)+' @ '+_esc(g.home_abbr)+'</div>'
     +'<div style="display:flex;gap:6px;align-items:center">'
+    +vb
     +'<span style="background:'+cc+';color:#fff;font-weight:900;font-size:.62rem;border-radius:6px;padding:2px 7px;letter-spacing:.04em">'+_esc(g.conf)+'</span>'
     +'<span style="background:rgba(167,139,250,.15);color:#c4b5fd;font-weight:900;font-size:.68rem;border-radius:6px;padding:2px 8px">PICK '+_esc(g.pick_abbr)+'</span>'
     +'</div></div>'
     +teamRow(g.away_abbr,g.away_sp,g.proj_away,g.win_away,!g.pick_home)
     +teamRow(g.home_abbr,g.home_sp,g.proj_home,g.win_home,g.pick_home)
     +_gpTotalRow(g)
+    +_gpMktRow(g)
     +'<div style="margin-top:6px;font-size:.66rem;color:#94a3b8;line-height:1.5"><span style="color:#7c3aed;font-weight:800">Why:</span> '+drivers+'</div>'
+    +'</div>';
+}
+function _gpMktRow(g){
+  if(g.mkt_edge==null) return '';
+  var mp=(g.pick_home?g.mkt_home_pct:g.mkt_away_pct), md=(g.pick_home?g.win_home:g.win_away);
+  var col=(g.mkt_edge>0?'#166534':(g.mkt_edge<0?'#7f1d1d':'#334155')), sign=(g.mkt_edge>0?'+':'');
+  return '<div style="margin-top:6px;padding-top:6px;border-top:1px solid #111c2e;display:flex;align-items:center;justify-content:space-between">'
+    +'<span style="font-size:.66rem;color:#64748b;font-weight:700">MARKET '+_esc(g.pick_abbr)+' <span style="color:#cbd5e1">'+mp+'%</span> vs model '+md+'%</span>'
+    +'<span style="background:'+col+';color:#fff;font-weight:900;font-size:.62rem;border-radius:6px;padding:2px 8px">EDGE '+sign+g.mkt_edge+'%</span>'
     +'</div>';
 }
 function g_gpFix(v){ return (v==null||v==='')?'&#8212;':(Math.round(Number(v)*10)/10).toFixed(1); }
@@ -4060,6 +4072,11 @@ function _openGamePred(i){
       +'<div style="color:#e2e8f0;font-size:.8rem;margin-top:2px">proj <b>'+g_gpFix(g.proj_total)+'</b>'+(g.total_line!=null?(' &#183; book line <b>'+g_gpFix(g.total_line)+'</b>'):' &#183; no line posted')+'</div></div>'
       +(g.total_line!=null?('<span style="background:'+(g.total_pick==='OVER'?'#166534':'#7f1d1d')+';color:#fff;font-weight:900;font-size:.74rem;border-radius:8px;padding:4px 11px">'+g.total_pick+' '+(g.total_edge>0?'+':'')+g_gpFix(g.total_edge)+'</span>'):'')
       +'</div></div>'
+    +(g.mkt_edge!=null?('<div style="padding:0 20px 12px"><div style="background:#0a1120;border:1px solid '+(g.value_flag?'#166534':'#1e293b')+';border-radius:10px;padding:10px 12px;display:flex;align-items:center;justify-content:space-between">'
+      +'<div><div style="font-size:.62rem;color:#475569;font-weight:800;letter-spacing:.05em">MARKET vs MODEL</div>'
+      +'<div style="color:#e2e8f0;font-size:.8rem;margin-top:2px">model <b>'+_esc(g.pick_abbr)+' '+(g.pick_home?g.win_home:g.win_away)+'%</b> &#183; market <b>'+(g.pick_home?g.mkt_home_pct:g.mkt_away_pct)+'%</b></div></div>'
+      +'<span style="background:'+(g.mkt_edge>0?'#166534':(g.mkt_edge<0?'#7f1d1d':'#334155'))+';color:#fff;font-weight:900;font-size:.74rem;border-radius:8px;padding:4px 11px">'+(g.value_flag?'VALUE ':'EDGE ')+(g.mkt_edge>0?'+':'')+g.mkt_edge+'%</span>'
+      +'</div></div>'):'')
     +hdrCols+rows
     +'<div style="padding:14px 20px;color:#cbd5e1;font-size:.78rem;line-height:1.6"><span style="color:#a78bfa;font-weight:800">Verdict &#183; </span>'+_esc(g.verdict)+'</div>'
     +'</div></div>';
