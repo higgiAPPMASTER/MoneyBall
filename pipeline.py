@@ -626,6 +626,39 @@ def _recent_hit_log(player_id, n: int = 5) -> list:
         return []
 
 
+def _last10_ha_ba(player_id, side: str, n: int = 10):
+    """BA over the player's last n games at today's home/away site (matching
+       `side`), current + prior season, newest-first. Returns (ba, ab, games)."""
+    if not player_id:
+        return (None, 0, 0)
+    try:
+        from mlb_stats_splits import _get_game_logs
+        from datetime import date as _dt
+        want_home = (side or "").upper() == "HOME"
+        cy = _dt.today().year
+        _h = _ab = _g = 0
+        for season in range(cy, cy - 2, -1):
+            for sp in reversed(_get_game_logs(player_id, season)):
+                if bool(sp.get("isHome")) != want_home:
+                    continue
+                stat = sp.get("stat", {}) or {}
+                ab = int(stat.get("atBats", 0) or 0)
+                if ab < 1:
+                    continue
+                _h  += int(stat.get("hits", 0) or 0)
+                _ab += ab
+                _g  += 1
+                if _g >= n:
+                    break
+            if _g >= n:
+                break
+        if _ab < 1:
+            return (None, 0, 0)
+        return (round(_h / _ab, 3), _ab, _g)
+    except Exception:
+        return (None, 0, 0)
+
+
 def fetch_series_splits(player_id, today_opp: str, run_date: str, side: str = "") -> dict:
     """G1/G2/G3+ BA splits — current season only, filtered by home/away."""
     _EMPTY = {"today_pos": 1, "g1_ba": None, "g1_ab": 0,
@@ -3271,6 +3304,14 @@ def run_pipeline(run_date: str, emit=None) -> dict:
             _bid = _ts.get("batter_id")
             if not _bid:
                 continue
+            # 5 Star EXTRA gate — last-10 Home/Away BA > .275 (Triple Split Club
+            # itself stays on full-season home/away; only this board tightens the
+            # location check to the player's last 10 games at today's site).
+            _fss_hav, _fss_hab, _fss_hg = _last10_ha_ba(int(_bid), _ts.get("side", ""))
+            if _fss_hav is None or _fss_hav <= 0.275:
+                continue
+            _fss_hadisp = "%.3f" % _fss_hav
+            _fss_hadisp = _fss_hadisp[1:] if _fss_hadisp.startswith("0.") else _fss_hadisp
             try:
                 _gl_raw = _fss_logs(int(_bid), _FSS_CY) or []
             except Exception:
@@ -3344,8 +3385,8 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                 "series_gno": _ts.get("series_gno"),
                 "game_start": _ts.get("game_start"),
                 "recent_hit_log": _ts.get("recent_hit_log"),
-                # 5 gate values (all pass)
-                "ha_ba": _ts.get("ha_ba"), "ha_disp": _ts.get("ha_disp"),
+                # gate values (all pass) — Home/Away shown is the FSS last-10 split
+                "ha_ba": _fss_hav, "ha_disp": _fss_hadisp,
                 "dn_ba": _ts.get("dn_ba"), "dn_disp": _ts.get("dn_disp"),
                 "series_ba": _ts.get("series_ba"), "series_disp": _ts.get("series_disp"),
                 "vt_pct": round(_vt_pct), "vt_g": len(_vt), "vt_hit_g": _vt_hit,
@@ -3368,8 +3409,8 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         five_star_split_list.sort(key=lambda x: (x["pick_rate"], x["l10_hit_pct"]), reverse=True)
         five_star_split_list = five_star_split_list[:20]
         emit({"type": "log",
-              "msg": f"  ⭐ 5 Star Split: {len(five_star_split_list)} hitters clear all 5 "
-                     f"gates (Triple Split + vs-team≥60% + L10≥60%)"})
+              "msg": f"  ⭐ 5 Star Split: {len(five_star_split_list)} hitters clear all "
+                     f"gates (Triple Split + last-10 H/A>.275 + vs-team≥60% + L10≥60%)"})
     except Exception as _exc:
         five_star_split_list = []
         emit({"type": "log", "msg": f"⚠️ 5 Star Split skipped: {_exc}"})
