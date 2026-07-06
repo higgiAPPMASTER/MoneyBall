@@ -43,6 +43,7 @@ LEAGUE_KRATE   = 22.0    # pitcher strikeout rate (K%) league average
 LEAGUE_AVG_PITCH_WOBA = 0.310  # MLB avg batter wOBA vs any pitch type, ~2024-2025
 _GB_XWOBA_CACHE: dict = {}     # {year: {player_id: {gb_pct, xwoba}}}
 _GAME_TOTALS:   dict = {}      # {(norm_home, norm_away): total_line}
+_GAME_MONEYLINES: dict = {}    # {(norm_home, norm_away): (home_american, away_american)}
 _EVENTS_CACHE:  dict = {}      # {run_date: [event, ...]} — shared across K + props fetch
 _VELO_CACHE:    dict = {}      # {year: {player_id: avg_release_speed_mph}}
 _KRATE_CACHE:   dict = {}      # {year: {player_id: k_percent}}
@@ -1015,6 +1016,61 @@ def _lookup_game_total(pitcher_team: str, opp: str) -> float | None:
             return total
         if (pt in at or at in pt) and (op in ht or ht in op):
             return total
+    return None
+
+
+def _fetch_game_moneylines(run_date: str) -> dict:
+    """Fetch today's MLB moneyline (h2h) prices from the Odds API.
+    Returns {(norm_home, norm_away): (home_american, away_american)}. Cached
+    for the run. Silent on failure (-> {}); the Game Predictor treats a missing
+    line as 'no market' and shows model-only."""
+    global _GAME_MONEYLINES
+    if _GAME_MONEYLINES:
+        return _GAME_MONEYLINES
+    try:
+        r = requests.get(f"{ODDS_BASE}/sports/baseball_mlb/odds",
+            params={"apiKey": ODDS_API_KEY, "regions": "us,us2,ca", "markets": "h2h",
+                    "dateFormat": "iso", "oddsFormat": "american"},
+            timeout=15)
+        out = {}
+        for ev in r.json():
+            ht = _normalize(ev.get("home_team", ""))
+            at = _normalize(ev.get("away_team", ""))
+            home_full = ev.get("home_team", "")
+            away_full = ev.get("away_team", "")
+            for bk in ev.get("bookmakers", []):
+                hp = ap = None
+                for mkt in bk.get("markets", []):
+                    if mkt.get("key") != "h2h":
+                        continue
+                    for oc in mkt.get("outcomes", []):
+                        try:
+                            price = float(oc.get("price"))
+                        except Exception:
+                            continue
+                        nm = oc.get("name", "")
+                        if nm == home_full:
+                            hp = price
+                        elif nm == away_full:
+                            ap = price
+                if hp is not None and ap is not None:
+                    out[(ht, at)] = (hp, ap)
+                    break
+        _GAME_MONEYLINES = out
+    except Exception:
+        pass
+    return _GAME_MONEYLINES
+
+
+def _lookup_game_ml(home: str, away: str):
+    """Return (home_american, away_american) moneyline for this matchup, or None."""
+    hn = _normalize(home)
+    an = _normalize(away)
+    for (ht, at), prices in _GAME_MONEYLINES.items():
+        if (hn in ht or ht in hn) and (an in at or at in an):
+            return prices
+        if (hn in at or at in hn) and (an in ht or ht in an):
+            return (prices[1], prices[0])
     return None
 
 
