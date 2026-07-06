@@ -3566,7 +3566,7 @@ _HTML = """
         </div>
         <div class="card p-6 hidden" id="five-star-card" style="border-color:rgba(167,139,250,.5)">
           <div class="section-hdr" style="color:#a78bfa">⭐ 5 Star Split</div>
-          <div style="font-size:.72rem;color:#94a3b8;margin:-4px 0 8px;line-height:1.6">Triple Split hitters (over .275 in Home/Away, Day/Night &amp; series-game splits) who ALSO clear 60%+ games with a hit vs today&#39;s opponent AND 60%+ over their last 10 games. Each carries its single best production market by last-10 over-rate. Fully tracked. Click any card for recent history.</div>
+          <div style="font-size:.72rem;color:#94a3b8;margin:-4px 0 8px;line-height:1.6">Triple Split hitters (over .275 in last-10 Home/Away, Day/Night &amp; series-game splits) who ALSO clear 60%+ games with a hit vs today&#39;s opponent AND 60%+ over their last 10 games. Each carries its single best production market by last-10 over-rate. Fully tracked. Click any card for recent history.</div>
           <div id="five-star-body" class="mlb-picks-grid"></div>
           <div id="five-star-more"></div>
         </div>
@@ -9029,7 +9029,7 @@ function _fssCard(p, rank, pfx) {
       </div>
       <div style="margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
         <div style="font-size:.6rem;font-weight:800;letter-spacing:.07em;color:#a78bfa;text-transform:uppercase">All 3 Splits &gt; .275</div>
-        ${_g((p.side==='HOME'?'Home':'Away')+' BA', p.ha_disp||'—')}
+        ${_g((p.side==='HOME'?'Home':'Away')+' BA (L10)', p.ha_disp||'—')}
         ${_g(dnLbl+' BA', p.dn_disp||'—')}
         ${_g('Series G'+(gno||'?')+' BA', p.series_disp||'—')}
       </div>
