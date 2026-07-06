@@ -2733,6 +2733,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     # so only Home/Away needs a fetch — and only for hitters who already clear
     # the first two gates (one small batched statSplits sitCodes=[h,a] call).
     triple_split_list = []
+    _fss_stage = []  # 5 Star Split pool: day/night + series survivors, PRE-home-gate
     try:
         _TSC_MIN = 0.275
         _tsc_hit_ids = set()
@@ -2807,6 +2808,32 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         def _tsc_d3(v):
             _d = "%.3f" % v
             return _d[1:] if _d.startswith("0.") else _d
+
+        # 5 Star Split draws from the day/night + series survivors BEFORE the
+        # full-season home/away gate below (that gate is Triple-Split-ONLY).
+        # 5 Star runs its OWN last-10 home/away location gate later, so it must
+        # NOT be pre-filtered by the season home gate.
+        for _b, _r, _dn, _sb, _gno in _tsc_stage:
+            _fss_stage.append({
+                "name": _r.get("name", ""),
+                "full_name": _r.get("full_name", _r.get("name", "")),
+                "batter_id": _b,
+                "player_id": _r.get("player_id"),
+                "team": _r.get("team", ""),
+                "opp": _r.get("opp", ""),
+                "pitcher": _r.get("pitcher", ""),
+                "side": (_r.get("side") or "").upper(),
+                "dn_label": _r.get("dn_label", ""),
+                "s5": _r.get("s5"),
+                "series_splits": _r.get("series_splits"),
+                "series_game": _r.get("series_game"),
+                "series_of": _r.get("series_of"),
+                "series_gno": _gno,
+                "game_start": _r.get("game_start"),
+                "recent_hit_log": _r.get("recent_hit_log"),
+                "dn_ba": _dn, "dn_disp": _tsc_d3(_dn),
+                "series_ba": _sb, "series_disp": _tsc_d3(_sb),
+            })
 
         for _b, _r, _dn, _sb, _gno in _tsc_stage:
             _side = (_r.get("side") or "").upper()
@@ -3300,13 +3327,13 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         _FSS_LINE = {"tb": 1.5, "runs": 0.5, "rbi": 0.5, "hrr": 1.5}
         _FSS_TIE = {"hrr": 0, "tb": 1, "runs": 2, "rbi": 3}
 
-        for _ts in triple_split_list:
+        for _ts in _fss_stage:
             _bid = _ts.get("batter_id")
             if not _bid:
                 continue
-            # 5 Star EXTRA gate — last-10 Home/Away BA > .275 (Triple Split Club
-            # itself stays on full-season home/away; only this board tightens the
-            # location check to the player's last 10 games at today's site).
+            # 5 Star location gate — last-10 Home/Away BA > .275 (its OWN gate;
+            # Triple Split Club uses full-season home/away, 5 Star uses the
+            # player's last 10 games at today's site instead).
             _fss_hav, _fss_hab, _fss_hg = _last10_ha_ba(int(_bid), _ts.get("side", ""))
             if _fss_hav is None or _fss_hav <= 0.275:
                 continue
@@ -3410,7 +3437,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         five_star_split_list = five_star_split_list[:20]
         emit({"type": "log",
               "msg": f"  ⭐ 5 Star Split: {len(five_star_split_list)} hitters clear all "
-                     f"gates (Triple Split + last-10 H/A>.275 + vs-team≥60% + L10≥60%)"})
+                     f"gates (day/night + series + last-10 H/A>.275 + vs-team≥60% + L10≥60%)"})
     except Exception as _exc:
         five_star_split_list = []
         emit({"type": "log", "msg": f"⚠️ 5 Star Split skipped: {_exc}"})
