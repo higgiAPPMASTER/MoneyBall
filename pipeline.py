@@ -3216,6 +3216,164 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     except Exception as _exc:
         emit({"type": "log", "msg": f"⚠️ Batter-vs-pitcher line skipped: {_exc}"})
 
+    # ── 5 Star Split — Triple Split qualifiers (>.275 in all three of today's
+    # splits: Home/Away + Day/Night + Series-game) that ALSO clear two
+    # consistency gates: vs-team ≥60% of season games with a hit AND last-10
+    # games ≥60% with a hit. For each qualifier we pick the single best
+    # PRODUCTION market off its last-10 over-rate (TB O1.5 / Runs O0.5 /
+    # RBI O0.5 / HRR O1.5; tiebreak HRR>TB>Runs>RBI). Own forward-only W/L
+    # record; the batter's career line vs today's starter (vs_pit, stamped
+    # above) rides along as DISPLAY-ONLY reference — never a gate or pick factor.
+    five_star_split_list = []
+    try:
+        from mlb_stats_splits import _get_game_logs as _fss_logs
+        from under_picks import _team_match as _fss_tm
+        from datetime import date as _fss_dt
+        _FSS_CY = _fss_dt.today().year
+
+        # id -> original pick (carries vs_pit + pitcher name stamped above)
+        _fss_orig = {}
+        for _lst in (top9, also_ran, under_picks_list, runs_picks_list,
+                     tb_picks_list, tb_over_picks_list, rbi_picks_list,
+                     walks_picks_list, hrr_picks_list, hr_picks_list):
+            for _r in _lst:
+                _b = _r.get("batter_id") or _r.get("player_id")
+                if _b and int(_b) not in _fss_orig:
+                    _fss_orig[int(_b)] = _r
+
+        # per-market OVER odds for the chosen play (best-effort; None when the
+        # player isn't a pick on that market's own board)
+        _fss_odds = {"tb": {}, "runs": {}, "rbi": {}, "hrr": {}}
+
+        def _fss_fill(_lst, _mkt, _oddkey, _over_only):
+            for _r in _lst:
+                _b = _r.get("batter_id") or _r.get("player_id")
+                if not _b:
+                    continue
+                if _over_only and (_r.get("pick") or "OVER").upper() != "OVER":
+                    continue
+                # carry the market's own EV (already stamped by the EV pass above)
+                # so the 5 Star Split record shows EV like every sibling board
+                _fss_odds[_mkt][int(_b)] = {
+                    "odds": _r.get(_oddkey), "book": _r.get("book", ""),
+                    "ev": _r.get("ev"), "ev_prob": _r.get("ev_prob"), "edge": _r.get("edge"),
+                }
+        _fss_fill(tb_over_picks_list, "tb", "tb_over_odds", False)
+        _fss_fill(runs_picks_list, "runs", "over_odds", True)
+        _fss_fill(rbi_picks_list, "rbi", "over_odds", True)
+        _fss_fill(hrr_picks_list, "hrr", "hrr_over_odds", True)
+
+        _FSS_LBL = {"tb": "Total Bases", "runs": "Runs", "rbi": "RBI", "hrr": "H+R+RBI"}
+        _FSS_LINE = {"tb": 1.5, "runs": 0.5, "rbi": 0.5, "hrr": 1.5}
+        _FSS_TIE = {"hrr": 0, "tb": 1, "runs": 2, "rbi": 3}
+
+        for _ts in triple_split_list:
+            _bid = _ts.get("batter_id")
+            if not _bid:
+                continue
+            try:
+                _gl_raw = _fss_logs(int(_bid), _FSS_CY) or []
+            except Exception:
+                _gl_raw = []
+            _gl = []
+            for _sp in _gl_raw:
+                _st = _sp.get("stat", {}) or {}
+                if int(_st.get("atBats", 0) or 0) < 1:
+                    continue
+                _gd = (_sp.get("date") or "")[:10]
+                if not _gd:
+                    continue
+                _gl.append({
+                    "date": _gd,
+                    "opp": (_sp.get("opponent", {}) or {}).get("name", ""),
+                    "h":   int(_st.get("hits", 0) or 0),
+                    "tb":  int(_st.get("totalBases", 0) or 0),
+                    "r":   int(_st.get("runs", 0) or 0),
+                    "rbi": int(_st.get("rbi", 0) or 0),
+                })
+            _gl.sort(key=lambda g: g["date"])
+            if not _gl:
+                continue
+
+            # Gate 4 — vs-team season: ≥60% of games with ≥1 hit
+            _opp = _ts.get("opp", "")
+            _vt = [g for g in _gl if _opp and _fss_tm(g["opp"], _opp)]
+            if not _vt:
+                continue
+            _vt_hit = sum(1 for g in _vt if g["h"] >= 1)
+            _vt_pct = 100.0 * _vt_hit / len(_vt)
+            if _vt_pct < 60:
+                continue
+
+            # Gate 5 — last-10 overall: ≥60% of games with ≥1 hit
+            _l10 = _gl[-10:]
+            _n = len(_l10)
+            if _n == 0:
+                continue
+            _l10_hit = sum(1 for g in _l10 if g["h"] >= 1)
+            _l10_pct = 100.0 * _l10_hit / _n
+            if _l10_pct < 60:
+                continue
+
+            # Pick — highest last-10 over-rate; tiebreak HRR>TB>Runs>RBI
+            _rates = {
+                "tb":   100.0 * sum(1 for g in _l10 if g["tb"] >= 2) / _n,
+                "runs": 100.0 * sum(1 for g in _l10 if g["r"] >= 1) / _n,
+                "rbi":  100.0 * sum(1 for g in _l10 if g["rbi"] >= 1) / _n,
+                "hrr":  100.0 * sum(1 for g in _l10 if (g["h"] + g["r"] + g["rbi"]) >= 2) / _n,
+            }
+            _pk = sorted(_rates.items(), key=lambda kv: (-kv[1], _FSS_TIE[kv[0]]))[0][0]
+            _meta = _fss_odds[_pk].get(int(_bid), {})
+            _od, _bk = _meta.get("odds"), _meta.get("book", "")
+            _orig = _fss_orig.get(int(_bid), {})
+
+            five_star_split_list.append({
+                "name": _ts.get("name", ""),
+                "full_name": _ts.get("full_name", _ts.get("name", "")),
+                "batter_id": _bid,
+                "player_id": _ts.get("player_id"),
+                "team": _ts.get("team", ""),
+                "opp": _opp,
+                "pitcher": _ts.get("pitcher", "") or _orig.get("pitcher", ""),
+                "side": _ts.get("side", ""),
+                "dn_label": _ts.get("dn_label", ""),
+                "s5": _ts.get("s5"),
+                "series_splits": _ts.get("series_splits"),
+                "series_game": _ts.get("series_game"),
+                "series_of": _ts.get("series_of"),
+                "series_gno": _ts.get("series_gno"),
+                "game_start": _ts.get("game_start"),
+                "recent_hit_log": _ts.get("recent_hit_log"),
+                # 5 gate values (all pass)
+                "ha_ba": _ts.get("ha_ba"), "ha_disp": _ts.get("ha_disp"),
+                "dn_ba": _ts.get("dn_ba"), "dn_disp": _ts.get("dn_disp"),
+                "series_ba": _ts.get("series_ba"), "series_disp": _ts.get("series_disp"),
+                "vt_pct": round(_vt_pct), "vt_g": len(_vt), "vt_hit_g": _vt_hit,
+                "l10_hit_pct": round(_l10_pct), "l10_g": _n, "l10_hit_g": _l10_hit,
+                # chosen production pick (side is always OVER) + all L10 rates
+                "pick_market": _pk,
+                "stat_label": _FSS_LBL[_pk],
+                "line": _FSS_LINE[_pk],
+                "bet_side": "OVER",
+                "pick_rate": round(_rates[_pk]),
+                "rates": {_k: round(_v) for _k, _v in _rates.items()},
+                "odds": _od, "book": _bk,
+                # EV carried from the chosen market's own board (None when the
+                # player isn't a posted pick on that market)
+                "ev": _meta.get("ev"), "ev_prob": _meta.get("ev_prob"), "edge": _meta.get("edge"),
+                # vs-pitcher career line — DISPLAY-ONLY reference
+                "vs_pit": _orig.get("vs_pit"),
+            })
+
+        five_star_split_list.sort(key=lambda x: (x["pick_rate"], x["l10_hit_pct"]), reverse=True)
+        five_star_split_list = five_star_split_list[:20]
+        emit({"type": "log",
+              "msg": f"  ⭐ 5 Star Split: {len(five_star_split_list)} hitters clear all 5 "
+                     f"gates (Triple Split + vs-team≥60% + L10≥60%)"})
+    except Exception as _exc:
+        five_star_split_list = []
+        emit({"type": "log", "msg": f"⚠️ 5 Star Split skipped: {_exc}"})
+
     # ── Phase B: combined env + umpire RE-RANKING (reorder only) ──
     # Offense axis = weather/park env × umpire RUN factor (a wide strike zone
     # suppresses offense; a tight zone inflates it). Pitcher Walks uses the
@@ -3405,7 +3563,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     elapsed = round(time.time() - t_start, 1)
     result = {
         "date": run_date, "top9": top9, "also_ran": also_ran,
-        "under_picks": under_picks_list, "runs_picks": runs_picks_list, "tb_picks": tb_picks_list, "tb_over_picks": tb_over_picks_list, "rbi_picks": rbi_picks_list, "walks_picks": walks_picks_list, "hrr_picks": hrr_picks_list, "hrr_special_picks": hrr_special_list, "triple_split_picks": triple_split_list, "hr_picks": hr_picks_list,
+        "under_picks": under_picks_list, "runs_picks": runs_picks_list, "tb_picks": tb_picks_list, "tb_over_picks": tb_over_picks_list, "rbi_picks": rbi_picks_list, "walks_picks": walks_picks_list, "hrr_picks": hrr_picks_list, "hrr_special_picks": hrr_special_list, "triple_split_picks": triple_split_list, "five_star_split_picks": five_star_split_list, "hr_picks": hr_picks_list,
         "all_qualified": era_qualified,
         "game_predictions": game_predictions,
         "dq_s1_s3": [x for x in results if x["dq"] and x not in dn_dq and x not in era_dq and x not in dq_lineup and x not in s4_dq],
@@ -3422,6 +3580,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                   "hrr_count": len(hrr_picks_list),
                   "hrr_special_count": len(hrr_special_list),
                   "triple_split_count": len(triple_split_list),
+                  "five_star_count": len(five_star_split_list),
                   "hr_count": len(hr_picks_list),
                   "pitcher_k_count": len(pitcher_k_result.get("picks", [])),
                   "prop_counts": {m: len(b.get("picks", [])) for m, b in pitcher_props.items()},
