@@ -1194,6 +1194,36 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "edge": p.get("edge"),
         })
 
+    # 5 Star Split — Triple Split qualifiers that ALSO clear vs-team >=60% and
+    # last-10 >=60%, each carrying its single best production play (TB/Runs/RBI/
+    # HRR OVER). Own forward-only record (own button + modal); kept OUT of the
+    # main Track Record (_TRK_KEYS) so it never double-counts with the per-market
+    # boards. Career-vs-pitcher line rides along as display-only reference.
+    _FSS_BOX = {"tb": "total_bases", "runs": "runs", "rbi": "rbi", "hrr": "hrr"}
+    five_star_split_rows = []
+    for p in (picks.get("five_star_split_picks") or [])[:20]:
+        st = _lookup(p.get("batter_id"), p.get("name"))
+        _mk = p.get("pick_market", "tb")
+        _bf = _FSS_BOX.get(_mk, "total_bases")
+        actual = st[_bf] if (st and _bf in st) else None
+        _line = p.get("line") if p.get("line") is not None else 1.5
+        _slabel = p.get("stat_label", "Total Bases")
+        five_star_split_rows.append({
+            "name": p.get("name", ""),
+            "team": p.get("team", ""),
+            "category": "5 Star Split", "side": "OVER",
+            "pick": f"OVER {_line} {_slabel}",
+            "odds": p.get("odds"),
+            "line": _line,
+            "actual": actual,
+            "stat": _slabel,
+            "result": _grade("OVER", _line, actual, (st or {}).get("final", False)),
+            "game_status": (st or {}).get("status", "—"),
+            "ev": p.get("ev"),
+            "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
+            "edge": p.get("edge"),
+        })
+
     # Pitcher Ks — top 10 PER SIDE for Track Record (Over and Under each get
     # their own top 10 so a side with <10 picks never spills into overflow)
     pitcher_ks = []
@@ -1433,51 +1463,6 @@ def _grade_date(date_str: str, picks: dict) -> dict:
              f"{c['side']} {c['line']} {c['stat_label']}", c.get("odds"),
              c.get("line"), actual, c.get("stat_label"), st)
 
-    # ── Top 10 Batter (NEW) — A/B challenger rule ───────────────────────────
-    # Base pipeline like Current (Wilson-EV rank, dedup, one per team) but with
-    # the NEW filter layered on: PLUS-money only AND (hot hand OR positive
-    # Wilson-EV edge). UNLIKE Current it does NOT drop ace-faced (red) plays —
-    # this mirrors the approved example (surfaces Joe Mack / Goldschmidt etc.).
-    # Banked beside Current so the Track Record can show both records side by
-    # side. Kept OUT of the combined grand total (a parallel experiment).
-    _new_cands = [c for c in _bat_raw
-                  if c.get("odds") is not None and c.get("odds") > 0
-                  and ((c.get("hot") or 0) > 0 or (c.get("_t10sc") or -999.0) > 0)]
-    _new_cands = _t10_rank(_new_cands, drop_red=False)
-    # Cap the NEW list to at most 3 picks of any one category (stat_key) so a
-    # single market (e.g. Walks) can't dominate the headline. Order is already
-    # Wilson-EV desc, so this keeps the 3 best of each. Mirrors the frontend
-    # _buildTop10All NEW per-category cap; feeds both the top 10 and its overflow.
-    _new_capped = []; _ncat = {}
-    for c in _new_cands:
-        _ck = c.get("stat_key") or "?"
-        if _ncat.get(_ck, 0) >= 3:
-            continue
-        _ncat[_ck] = _ncat.get(_ck, 0) + 1
-        _new_capped.append(c)
-    _new_cands = _new_capped
-    top10_batter_new = []
-    for c in _new_cands[:10]:
-        st = _lookup(c.get("pid"), c.get("fname") or c["name"])
-        actual = st[c["stat_key"]] if (st and c["stat_key"] in st) else None
-        top10_batter_new.append({
-            "name": c["name"], "team": c["team"],
-            "category": "Top 10 Batter (NEW)", "side": c["side"],
-            "pick": f"{c['side']} {c['line']} {c['stat_label']}",
-            "odds": c["odds"], "line": c["line"], "actual": actual, "stat": c["stat_label"],
-            "result": _grade(c["side"], c["line"], actual, (st or {}).get("final", False)),
-            "game_status": (st or {}).get("status", "—"),
-            "ev": c.get("ev"),
-            "ev_prob": (c.get("ev_prob") if c.get("ev_prob") is not None else c.get("matchup_prob")),
-            "edge": c.get("edge"),
-        })
-    for c in _new_cands[10:20]:
-        st = _lookup(c.get("pid"), c.get("fname") or c["name"])
-        actual = st[c["stat_key"]] if (st and c["stat_key"] in st) else None
-        _ovf(c, c.get("name", ""), c.get("team", ""), "Top 10 Batter NEW (OVF)", c["side"],
-             f"{c['side']} {c['line']} {c['stat_label']}", c.get("odds"),
-             c.get("line"), actual, c.get("stat_label"), st)
-
     # Top 10 Pitcher — combine Ks + all pitcher props, rank by EV (mirrors the live
     # _buildPitchDay card builder), take top 10
     _pit_cands = []
@@ -1645,10 +1630,10 @@ def _grade_date(date_str: str, picks: dict) -> dict:
         "hrr":           hrr_rows,
         "hrr_special":   hrr_special_rows,
         "triple_split":  triple_split_rows,
+        "five_star_split": five_star_split_rows,
         "pitcher_ks":    pitcher_ks,
         "pitcher_props": pitcher_props,
         "top10_batter":  top10_batter,
-        "top10_batter_new": top10_batter_new,
         "top10_pitcher": top10_pitcher,
         "overflow":      overflow,
         "value_plays":   value_plays,
@@ -1673,7 +1658,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
     _harvest_pos(picks)
     for _key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over",
                  "rbi", "hr", "batter_walks", "hrr", "pitcher_ks", "pitcher_props",
-                 "top10_batter", "top10_batter_new", "top10_pitcher", "overflow", "value_plays"):
+                 "top10_batter", "top10_pitcher", "overflow", "value_plays"):
         for _r in (result.get(_key) or []):
             if isinstance(_r, dict):
                 _r["series_pos"] = _pos_by_name.get(
@@ -1684,7 +1669,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
 # ── Track Record: permanent W/L ledger across all graded days ────────────
 _TRACK_LEDGER_PATH = os.path.join(_CACHE_DIR, "_track_record.json")
 _TRACK_CAT_ORDER = [
-    "Top 10 Batter", "Top 10 Batter (NEW)", "Top 10 Pitcher", "Value Plays",
+    "Top 10 Batter", "Top 10 Pitcher", "Value Plays",
     "Hitter Hits", "Hitter Hits (More)", "Runs", "TB Under", "TB Over", "RBI", "HR", "Batter Walks", "HRR", "Pitcher Ks",
     "Pitcher Hits Allowed", "Pitcher Outs", "Pitcher Earned Runs", "Pitcher Walks",
 ]
@@ -1784,7 +1769,7 @@ def _aggregate_graded(graded: dict) -> dict:
     """Collapse a graded day into {category: {side: [W, L]}} counting only decided picks
     that had odds posted — no-odds picks are excluded from the record."""
     agg: dict = {}
-    for key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "hr", "batter_walks", "hrr", "hrr_special", "triple_split", "pitcher_ks", "pitcher_props", "top10_batter", "top10_batter_new", "top10_pitcher", "overflow", "value_plays"):
+    for key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "hr", "batter_walks", "hrr", "hrr_special", "triple_split", "five_star_split", "pitcher_ks", "pitcher_props", "top10_batter", "top10_pitcher", "overflow", "value_plays"):
         for r in graded.get(key, []):
             res = r.get("result")
             if res not in ("WIN", "LOSS"):
@@ -1809,7 +1794,7 @@ def _detail_graded(graded: dict) -> list:
     fields an earnings sheet needs: player, team, category, side, pick, odds,
     line, result. No-odds picks are excluded — they don't count in the record."""
     out = []
-    for key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "hr", "batter_walks", "hrr", "hrr_special", "triple_split", "pitcher_ks", "pitcher_props", "top10_batter", "top10_batter_new", "top10_pitcher", "overflow", "value_plays"):
+    for key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "hr", "batter_walks", "hrr", "hrr_special", "triple_split", "five_star_split", "pitcher_ks", "pitcher_props", "top10_batter", "top10_pitcher", "overflow", "value_plays"):
         for r in graded.get(key, []):
             res = r.get("result")
             if res not in ("WIN", "LOSS"):
@@ -2606,7 +2591,7 @@ async def track_record(request: Request, token: str = "", admin: str = ""):
         for cat, sides in (led[ds] or {}).items():
             if cat == "__ovf_v1__" or _is_ovf_cat(cat) or _is_hr_cat(cat):
                 continue   # overflow, HR, + version sentinel never count toward the main record
-            _chal = (cat == "Top 10 Batter (NEW)" or cat == "Value Plays")   # curated dup: own row, NOT in grand total
+            _chal = (cat == "Value Plays")   # curated dup: own row, NOT in grand total
             for side, wl in sides.items():
                 rec = alltime.setdefault(cat, {}).setdefault(side, [0, 0])
                 rec[0] += wl[0]; rec[1] += wl[1]
@@ -3489,6 +3474,7 @@ _HTML = """
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="HRR_U" checked onchange="_catChanged()"> H+R+RBI Under 1.5</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="HRR_SP" checked onchange="_catChanged()"> ⭐ HRR Special (Over)</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="TSC" checked onchange="_catChanged()"> 🔱 Triple Split Club</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="FSS" checked onchange="_catChanged()"> ⭐ 5 Star Split</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="BWALK_O" checked onchange="_catChanged()"> Batter Walks Over</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="BWALK_U" checked onchange="_catChanged()"> Batter Walks Under</label>
                 <div class="parlay-cat-section">Pitchers</div>
@@ -3535,14 +3521,8 @@ _HTML = """
       <!-- SECTION 1: HITTERS -->
         <div class="section-hdr" style="color:#facc15;font-size:1.05rem;margin-top:8px">⚾ HITTERS</div>
         <div class="card p-6 hidden" id="top10-plays-card" style="border-color:rgba(250,204,21,.35)">
-          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
-            <div class="section-hdr" style="color:#facc15;margin:0">⭐ Top 10 Hitter Plays of the Day</div>
-            <div style="display:inline-flex;border:1px solid #3a3a1a;border-radius:9px;overflow:hidden;flex:0 0 auto">
-              <button id="t10-tog-cur" onclick="_setT10View(&#39;current&#39;)" style="border:none;padding:6px 16px;font-size:.8rem;font-weight:800;cursor:pointer;background:#facc15;color:#000">Current <span id="t10-cur-cnt"></span></button>
-              <button id="t10-tog-new" onclick="_setT10View(&#39;new&#39;)" style="border:none;padding:6px 16px;font-size:.8rem;font-weight:800;cursor:pointer;background:#1e1e1e;color:#facc15">New <span id="t10-new-cnt"></span></button>
-            </div>
-          </div>
-          <p class="text-xs text-slate-400 mb-3" style="margin-top:6px">A/B test &middot; <b style="color:#facc15">Current</b> = all categories ranked by Expected Value (Wilson edge × odds). <b style="color:#facc15">New</b> = plus-money only, must be hot OR carry a value edge. Both are recorded daily in Track Record. Click any card for recent history.</p>
+          <div class="section-hdr" style="color:#facc15;margin:0">⭐ Top 10 Hitter Plays of the Day</div>
+          <p class="text-xs text-slate-400 mb-3" style="margin-top:6px">All categories ranked by Expected Value (Wilson edge × odds). Recorded daily in Track Record. Click any card for recent history.</p>
           <div id="top10-plays-body" class="mlb-picks-grid"></div>
           <div id="top10-more-wrap"></div>
         </div>
@@ -3583,6 +3563,12 @@ _HTML = """
           <div style="font-size:.72rem;color:#94a3b8;margin:-4px 0 8px;line-height:1.6">Hitters batting over .275 in ALL THREE of today&#39;s splits: Home/Away &middot; Day/Night &middot; Game of series. Bet: to record a hit.</div>
           <div id="triple-split-body" class="mlb-picks-grid"></div>
           <div id="triple-split-more"></div>
+        </div>
+        <div class="card p-6 hidden" id="five-star-card" style="border-color:rgba(167,139,250,.5)">
+          <div class="section-hdr" style="color:#a78bfa">⭐ 5 Star Split</div>
+          <div style="font-size:.72rem;color:#94a3b8;margin:-4px 0 8px;line-height:1.6">Triple Split hitters (over .275 in Home/Away, Day/Night &amp; series-game splits) who ALSO clear 60%+ games with a hit vs today&#39;s opponent AND 60%+ over their last 10 games. Each carries its single best production market by last-10 over-rate. Fully tracked. Click any card for recent history.</div>
+          <div id="five-star-body" class="mlb-picks-grid"></div>
+          <div id="five-star-more"></div>
         </div>
         <div class="card p-6 hidden" id="hrr-over-card" style="border-color:rgba(251,146,60,.25)">
           <div class="section-hdr" style="color:#fb923c">🔥 Top 10 Over 1.5 HRR</div>
@@ -3949,7 +3935,7 @@ function _filterStarted(result){
   if(!result) return result;
   var r=Object.assign({},result);
   function f(a){return (a||[]).filter(function(p){return !_started(p);});}
-  r.top9=f(r.top9); r.also_ran=f(r.also_ran); r.under_picks=f(r.under_picks); r.runs_picks=f(r.runs_picks); r.tb_picks=f(r.tb_picks); r.tb_over_picks=f(r.tb_over_picks||[]); r.hrr_picks=f(r.hrr_picks||[]); r.hrr_special_picks=f(r.hrr_special_picks||[]); r.triple_split_picks=f(r.triple_split_picks||[]); r.rbi_picks=f(r.rbi_picks||[]); r.hr_picks=f(r.hr_picks||[]); r.walks_picks=f(r.walks_picks||[]);
+  r.top9=f(r.top9); r.also_ran=f(r.also_ran); r.under_picks=f(r.under_picks); r.runs_picks=f(r.runs_picks); r.tb_picks=f(r.tb_picks); r.tb_over_picks=f(r.tb_over_picks||[]); r.hrr_picks=f(r.hrr_picks||[]); r.hrr_special_picks=f(r.hrr_special_picks||[]); r.triple_split_picks=f(r.triple_split_picks||[]); r.five_star_split_picks=f(r.five_star_split_picks||[]); r.rbi_picks=f(r.rbi_picks||[]); r.hr_picks=f(r.hr_picks||[]); r.walks_picks=f(r.walks_picks||[]);
   if(r.pitcher_k){
     r.pitcher_k=Object.assign({},r.pitcher_k);
     r.pitcher_k.picks=f(r.pitcher_k.picks);
@@ -4089,7 +4075,7 @@ function showResults(result) {
   if(typeof _renderGamePredictor==='function') _renderGamePredictor(result);
   // Hide all section cards FIRST — before any filtering — so stale cards from a
   // previous render can never persist if the filter or any later code throws.
-  ['top10-plays-card','value-plays-card','under-picks-card','tb-picks-card','tb-over-picks-card','hrr-special-card','triple-split-card','hrr-over-card','hrr-under-card','rbi-over-card','rbi-under-card','hr-over-card','hr-under-card','runs-over-card','runs-under-card','bwalk-over-card','bwalk-under-card','pitch-day-card','pitcher-all-card','k-over-card','k-under-card','prop-ha-over-card','prop-ha-under-card','prop-outs-over-card','prop-outs-under-card','prop-er-over-card','prop-er-under-card','prop-bb-over-card','prop-bb-under-card'].forEach(hide);
+  ['top10-plays-card','value-plays-card','under-picks-card','tb-picks-card','tb-over-picks-card','hrr-special-card','triple-split-card','five-star-card','hrr-over-card','hrr-under-card','rbi-over-card','rbi-under-card','hr-over-card','hr-under-card','runs-over-card','runs-under-card','bwalk-over-card','bwalk-under-card','pitch-day-card','pitcher-all-card','k-over-card','k-under-card','prop-ha-over-card','prop-ha-under-card','prop-outs-over-card','prop-outs-under-card','prop-er-over-card','prop-er-under-card','prop-bb-over-card','prop-bb-under-card'].forEach(hide);
   // Odds-range filter: self-contained, uses the EXACT field each card displays.
   // Applied directly to the source data before _vBase / EV-filter so every
   // category is covered and there is nothing to guess or chain.
@@ -4141,6 +4127,7 @@ function showResults(result) {
         also_ran: [],
         hrr_special_picks: [],
         triple_split_picks: [],
+        five_star_split_picks: [],
         pitcher_k: _renderSrc.pitcher_k ? Object.assign({}, _renderSrc.pitcher_k, {
           all: (_renderSrc.pitcher_k.all || []).filter(p => p.pick === 'UNDER'),
           picks: (_renderSrc.pitcher_k.picks || []).filter(p => p.pick === 'UNDER'),
@@ -4165,13 +4152,9 @@ function showResults(result) {
   document.getElementById('stats-row').innerHTML = _renderCatBar(view);
   if(!window.__CATMENU_DOC__){ window.__CATMENU_DOC__=true; document.addEventListener('click',function(e){ if(!(e.target.closest&&e.target.closest('.catmenu-wrap'))) _catClose(); }); }
 
-  // A/B test: build BOTH the Current ranking and the NEW challenger ranking,
-  // stash them, then paint whichever the toggle is set to. Both are recorded
-  // server-side in Track Record so the two records can be compared.
+  // Top 10 Hitter Plays — all categories ranked by Wilson-EV (Current model only).
   window.__T10_CUR__ = _buildTop10All(view);
-  window.__T10_NEW__ = _buildTop10All(view, true);
-  if (window.__T10_VIEW__ !== 'new') window.__T10_VIEW__ = 'current';
-  var _t10Has = ((window.__T10_CUR__||[]).length > 0 || (window.__T10_NEW__||[]).length > 0);
+  var _t10Has = ((window.__T10_CUR__||[]).length > 0);
   if (_t10Has && !(window.UNDERS_ONLY && (window.IS_ADMIN||window.IS_TESTER))) {
     show('top10-plays-card');
     _renderT10Section();
@@ -4305,6 +4288,8 @@ function showResults(result) {
     window.__TSC_REG__={};
     const tripleSplit = (view.triple_split_picks||[]).filter(function(p){ return _oddsOk(p.hit_odds); });
     _fillCard('triple-split-card','triple-split-body','triple-split-more',tripleSplit,function(p,r){return _tscCard(p,r,'tsc');},'Triple Split Club','#22d3ee');
+    window.__FSS_REG__={};
+    _fillCard('five-star-card','five-star-body','five-star-more',(view.five_star_split_picks||[]),function(p,r){return _fssCard(p,r,'fss');},'5 Star Split','#a78bfa');
 
   renderPitcherProps(view);
   renderByGame(view);
@@ -5148,6 +5133,10 @@ function _mlbPool(){
   (r.triple_split_picks||[]).forEach(function(p,i){
     cands.push({type:'TSC',dir:'OVER',player:(p.full_name||p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'Hits',line:0.5,odds:(p.hit_odds!=null?p.hit_odds:''),conf:clampConf(94,i),reason:'🔱 Triple Split · >.275 H/A, D/N & series · to record a hit vs '+(p.opp||''),src:p});
   });
+  (r.five_star_split_picks||[]).forEach(function(p,i){
+    var _fb={tb:'TBO',runs:'RUN',rbi:'RBI',hrr:'HRR'}[p.pick_market]||'TBO';
+    cands.push({type:'FSS',_fssBase:_fb,dir:'OVER',player:(p.full_name||p.name||''),team:(p.team||''),opp:(p.opp||''),stat:(p.stat_label||'Total Bases'),line:(p.line!=null?p.line:1.5),odds:(p.odds!=null?p.odds:''),conf:clampConf(95,i),reason:'⭐ 5 Star Split · '+(p.pick_rate!=null?(p.pick_rate+'% L10 '+(p.stat_label||'')):'')+' vs '+(p.opp||''),src:p});
+  });
   // Pitcher prop legs (Hits Allowed / Outs / Earned Runs) — one type per market.
   var _pp=(r.pitcher_props)||{};
   PROP_ORDER.forEach(function(mkt){
@@ -5193,7 +5182,7 @@ function _mlbPool(){
   // supply a Hits leg + a Total Bases leg — so the new prop categories actually
   // deepen the parlay pool instead of being collapsed into a single leg.
   var byKey={};
-  cands.forEach(function(c){ if(!c.player) return; var _ty=(c.type==='HRRSP'?'HRR':(c.type==='TSC'?'HIT':c.type)); var k=c.player+'|'+_ty+'|'+c.stat; var cur=byKey[k]; if(!cur||_legScoreP(c)>_legScoreP(cur)) byKey[k]=c; });
+  cands.forEach(function(c){ if(!c.player) return; var _ty=(c.type==='HRRSP'?'HRR':(c.type==='TSC'?'HIT':(c.type==='FSS'?(c._fssBase||'TBO'):c.type))); var k=c.player+'|'+_ty+'|'+c.stat; var cur=byKey[k]; if(!cur||_legScoreP(c)>_legScoreP(cur)) byKey[k]=c; });
   return Object.keys(byKey).map(function(k){return byKey[k];}).sort(function(a,b){return _legScoreP(b)-_legScoreP(a);});
 }
 function closeParlay(){ var o=document.getElementById('parlayResult'); if(o) o.innerHTML=''; }
@@ -5240,9 +5229,9 @@ function _paintParlay(){
   var am = priced? _decToAm(dec) : null;
   var payout = priced? (100*dec) : null;
   var dirColor=function(d){return d==='OVER'?'#63cab7':d==='UNDER'?'#ff8a65':'#9ca3af';};
-  var tagBg={HIT:'rgba(245,158,11,.16)',UNDER:'rgba(255,138,101,.16)',K:'rgba(99,202,183,.16)',RUN:'rgba(96,165,250,.16)',RBI:'rgba(251,191,36,.16)',HR:'rgba(244,63,94,.16)',HRR:'rgba(251,146,60,.16)',TB:'rgba(167,139,250,.16)',TBO:'rgba(74,222,128,.16)',BWALK:'rgba(52,211,153,.16)',pitcher_hits_allowed:'rgba(248,113,113,.16)',pitcher_outs:'rgba(167,139,250,.16)',pitcher_earned_runs:'rgba(251,146,60,.16)',pitcher_walks:'rgba(52,211,153,.16)'};
-  var tagFg={HIT:'#f59e0b',UNDER:'#ff8a65',K:'#63cab7',RUN:'#60a5fa',RBI:'#fbbf24',HR:'#f43f5e',HRR:'#fb923c',TB:'#a78bfa',TBO:'#4ade80',BWALK:'#34d399',pitcher_hits_allowed:'#f87171',pitcher_outs:'#a78bfa',pitcher_earned_runs:'#fb923c',pitcher_walks:'#34d399'};
-  var tagLbl={HIT:'HIT',UNDER:'U1.5',K:'K',RUN:'RUNS',RBI:'RBI',HR:'HR',HRR:'HRR',TB:'U1.5 TB',TBO:'O1.5 TB',BWALK:'BB (BAT)',pitcher_hits_allowed:'H ALLOW',pitcher_outs:'OUTS',pitcher_earned_runs:'ER',pitcher_walks:'BB (PIT)'};
+  var tagBg={HIT:'rgba(245,158,11,.16)',UNDER:'rgba(255,138,101,.16)',K:'rgba(99,202,183,.16)',RUN:'rgba(96,165,250,.16)',RBI:'rgba(251,191,36,.16)',HR:'rgba(244,63,94,.16)',HRR:'rgba(251,146,60,.16)',TB:'rgba(167,139,250,.16)',TBO:'rgba(74,222,128,.16)',BWALK:'rgba(52,211,153,.16)',FSS:'rgba(167,139,250,.16)',pitcher_hits_allowed:'rgba(248,113,113,.16)',pitcher_outs:'rgba(167,139,250,.16)',pitcher_earned_runs:'rgba(251,146,60,.16)',pitcher_walks:'rgba(52,211,153,.16)'};
+  var tagFg={HIT:'#f59e0b',UNDER:'#ff8a65',K:'#63cab7',RUN:'#60a5fa',RBI:'#fbbf24',HR:'#f43f5e',HRR:'#fb923c',TB:'#a78bfa',TBO:'#4ade80',BWALK:'#34d399',FSS:'#a78bfa',pitcher_hits_allowed:'#f87171',pitcher_outs:'#a78bfa',pitcher_earned_runs:'#fb923c',pitcher_walks:'#34d399'};
+  var tagLbl={HIT:'HIT',UNDER:'U1.5',K:'K',RUN:'RUNS',RBI:'RBI',HR:'HR',HRR:'HRR',TB:'U1.5 TB',TBO:'O1.5 TB',BWALK:'BB (BAT)',FSS:'5 STAR',pitcher_hits_allowed:'H ALLOW',pitcher_outs:'OUTS',pitcher_earned_runs:'ER',pitcher_walks:'BB (PIT)'};
   var rows=legs.map(function(l,idx){var fo=_fmtOdds(l.odds);return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #1a1a1a">'
     +'<div style="min-width:0">'
     +'<div style="font-weight:800;color:#fff;font-size:.85rem">'+(idx+1)+'. '+_nameSpan(l.src,l.player)+' <span style="color:#777;font-size:.7rem">'+(l.team?l.team+' ':'')+'vs '+l.opp+'</span> <span style="background:'+(tagBg[l.type]||'#222')+';color:'+(tagFg[l.type]||'#aaa')+';padding:1px 6px;border-radius:4px;font-size:.6rem;font-weight:800">'+(tagLbl[l.type]||l.type)+'</span></div>'
@@ -5273,10 +5262,10 @@ function _replaceParlayLeg(idx){
   var legs=window._parlayLegs; if(!legs||!legs[idx]) return;
   _syncParlayCats();  // swap must respect exactly what is checked, too
   var cur=legs[idx];
-  var _aty=function(t){return t==='HRRSP'?'HRR':(t==='TSC'?'HIT':t);};
-  var curKey=cur.player+'|'+_aty(cur.type)+'|'+cur.stat;
-  var used={}; legs.forEach(function(l,i){ if(i!==idx) used[l.player+'|'+_aty(l.type)+'|'+l.stat]=1; });
-  var pool=_mlbPool().filter(function(c){ var k=c.player+'|'+_aty(c.type)+'|'+c.stat; return k!==curKey && !used[k]; });
+  var _aty=function(c){return c.type==='HRRSP'?'HRR':(c.type==='TSC'?'HIT':(c.type==='FSS'?(c._fssBase||'TBO'):c.type));};
+  var curKey=cur.player+'|'+_aty(cur)+'|'+cur.stat;
+  var used={}; legs.forEach(function(l,i){ if(i!==idx) used[l.player+'|'+_aty(l)+'|'+l.stat]=1; });
+  var pool=_mlbPool().filter(function(c){ var k=c.player+'|'+_aty(c)+'|'+c.stat; return k!==curKey && !used[k]; });
   if(!pool.length){ _flashNoSwapP(idx); return; }
   legs[idx]=pool[Math.floor(Math.random()*pool.length)];
   window._lastParlayPlayers=legs.map(function(l){return l.player;});
@@ -5308,7 +5297,7 @@ window.PARLAY_MINUS = false;
 window.PARLAY_PLUS = false;
 window.PARLAY_ODDS_RANGE = 'all';
 // Parlay category checkboxes — which pick categories feed the parlay pool (all on by default).
-window.PARLAY_CATS = {HIT_O:true,HIT_U:true,TB_O:true,TB_U:true,RUN_O:true,RUN_U:true,RBI_O:true,RBI_U:true,HR_O:true,HR_U:true,HRR_O:true,HRR_U:true,HRR_SP:true,TSC:true,BWALK_O:true,BWALK_U:true,K_O:true,K_U:true,PHA_O:true,PHA_U:true,POUT_O:true,POUT_U:true,PER_O:true,PER_U:true,PWK_O:true,PWK_U:true};
+window.PARLAY_CATS = {HIT_O:true,HIT_U:true,TB_O:true,TB_U:true,RUN_O:true,RUN_U:true,RBI_O:true,RBI_U:true,HR_O:true,HR_U:true,HRR_O:true,HRR_U:true,HRR_SP:true,TSC:true,FSS:true,BWALK_O:true,BWALK_U:true,K_O:true,K_U:true,PHA_O:true,PHA_U:true,POUT_O:true,POUT_U:true,PER_O:true,PER_U:true,PWK_O:true,PWK_U:true};
 // Parlay game filter — which games feed the parlay pool. Empty = all games allowed; a
 // game is excluded only when explicitly set false. Keyed by the same gameKey() label as
 // the "By Game" card. Repopulated each run from the day's slate (_buildGamesMenu).
@@ -5378,6 +5367,7 @@ function _legCat(c){
   var dir=(c.dir||'').split(' ')[0]==='OVER'?'O':'U';
   if(c.type==='HIT') return 'HIT_O';
   if(c.type==='TSC') return 'TSC';
+  if(c.type==='FSS') return 'FSS';
   if(c.type==='UNDER') return c.stat==='Total Bases'?'TB_U':'HIT_U';
   if(c.type==='TBO') return 'TB_O';
   if(c.type==='RUN') return 'RUN_'+dir;
@@ -7376,7 +7366,7 @@ function _buildPitchDay(view){
   });
   return dayList;
 }
-function _buildTop10All(view, newRule) {
+function _buildTop10All(view) {
   var plays = [];
   function _add(arr, kind) {
     (arr||[]).forEach(function(p){
@@ -7384,8 +7374,6 @@ function _buildTop10All(view, newRule) {
       if(od==null) return;
       var ev = _t10Score(p, kind);
       if(ev<=-999) return;
-      // NEW challenger rule: plus-money only AND (hot hand OR positive edge).
-      if(newRule && !(od>0 && (((p.hot_bonus||0)>0) || ev>0))) return;
       plays.push(Object.assign({}, p, {_t10kind:kind, _t10ev:ev}));
     });
   }
@@ -7399,17 +7387,12 @@ function _buildTop10All(view, newRule) {
   plays.sort(function(a,b){ return b._t10ev - a._t10ev; });
   var _t10seen={};
   plays=plays.filter(function(p){ var k=(p.name||p.full_name||'').trim().toLowerCase(); if(_t10seen[k]) return false; _t10seen[k]=true; return true; });
-  // Current: green/amber lights only (drop ace-faced). NEW: keep ace-faced so it
-  // mirrors the approved example (surfaces Joe Mack / Goldschmidt etc.).
-  if(!newRule){ plays=plays.filter(function(p){ return !_t10DotIsRed(p,'O',false,0); }); }
+  // green/amber lights only (drop ace-faced).
+  plays=plays.filter(function(p){ return !_t10DotIsRed(p,'O',false,0); });
   // One pick per team — keep only the best (highest Wilson-EV) play per club so
   // teammates don't crowd the Top 10. plays is already sorted by _t10ev desc.
   var _t10teams={};
   plays=plays.filter(function(p){ var t=((p.team||'')+'').trim().toUpperCase(); if(!t) return true; if(_t10teams[t]) return false; _t10teams[t]=true; return true; });
-  // NEW only: cap at 3 picks of any one category so a single market (e.g. Walks)
-  // can't dominate. plays is Wilson-EV desc, so this keeps the best 3 of each.
-  // Mirrors the server top10_batter_new per-category cap.
-  if(newRule){ var _t10cat={}; plays=plays.filter(function(p){ var c=p._t10kind||'?'; if((_t10cat[c]||0)>=3) return false; _t10cat[c]=(_t10cat[c]||0)+1; return true; }); }
   return plays;
 }
 // Top 10 (ranks 1-10). Ranks 11-20 render in the "More Hitter Plays" pulldown via
@@ -7417,33 +7400,20 @@ function _buildTop10All(view, newRule) {
 function _buildTop10(view) {
   return _buildTop10All(view).slice(0, 10);
 }
-var _T10_TOG_BASE='border:none;padding:6px 16px;font-size:.8rem;font-weight:800;cursor:pointer;';
-// A/B toggle between the Current ranking and the NEW challenger rule. Repaints
-// just the Top 10 body + overflow + toggle chrome; the underlying lists are
-// built once per render() into __T10_CUR__ / __T10_NEW__.
+// Paints the Top 10 body + overflow from __T10_CUR__ (Current model only).
 function _renderT10Section(){
-  var isNew=window.__T10_VIEW__==='new';
-  var v=isNew?(window.__T10_NEW__||[]):(window.__T10_CUR__||[]);
+  var v=window.__T10_CUR__||[];
   var plays=v.slice(0,10), more=v.slice(10,20);
   window.__T10_REG__={};
   var body=document.getElementById('top10-plays-body'); if(!body) return;
   body.innerHTML = plays.length
     ? plays.map(function(p,i){ return _top10Card(p, i+1); }).join('')
-    : '<p class="text-slate-500 text-center" style="padding:16px">No '+(isNew?'NEW-rule ':'')+'plays today</p>';
+    : '<p class="text-slate-500 text-center" style="padding:16px">No plays today</p>';
   var mw=document.getElementById('top10-more-wrap');
   if(mw) mw.innerHTML = more.length>0
-    ? _moreWrap(more, function(p,r){ return _top10Card(p, r); }, 11, (isNew?'NEW ':'')+'Hitter Plays', '#facc15')
+    ? _moreWrap(more, function(p,r){ return _top10Card(p, r); }, 11, 'Hitter Plays', '#facc15')
     : '';
-  var tc=document.getElementById('t10-tog-cur'), tn=document.getElementById('t10-tog-new');
-  if(tc&&tn){
-    tc.style.cssText=_T10_TOG_BASE+(isNew?'background:#1e1e1e;color:#facc15':'background:#facc15;color:#000');
-    tn.style.cssText=_T10_TOG_BASE+(isNew?'background:#facc15;color:#000':'background:#1e1e1e;color:#facc15');
-  }
-  var cc=document.getElementById('t10-cur-cnt'), nc=document.getElementById('t10-new-cnt');
-  if(cc) cc.textContent=(window.__T10_CUR__||[]).slice(0,10).length;
-  if(nc) nc.textContent=(window.__T10_NEW__||[]).slice(0,10).length;
 }
-function _setT10View(v){ window.__T10_VIEW__=v; _renderT10Section(); }
 function _top10BetBtn(p, kind) {
   switch(kind) {
     case 'HITTER':  return _betBtn(p,'Top 10 Batter','OVER','hits','Hits',0.5,p.hit_odds);
@@ -7943,6 +7913,7 @@ function _renderCatBar(view){
     {icon:'⬇️',label:'TB Under',count:(view.tb_picks||[]).length,target:'tb-picks-card',tone:'under'},
     {icon:'⭐',label:'HRR SP',count:(view.hrr_special_picks||[]).length,target:'hrr-special-card'},
     {icon:'🔱',label:'Triple Split',count:(view.triple_split_picks||[]).length,target:'triple-split-card'},
+    {icon:'⭐',label:'5 Star Split',count:(view.five_star_split_picks||[]).length,target:'five-star-card'},
     {icon:'🔥',label:'HRR',count:(view.hrr_picks||[]).length,target:'hrr-over-card'},
     {icon:'💥',label:'RBI',count:(view.rbi_picks||[]).length,target:'rbi-over-card'},
     {icon:'💣',label:'HR',count:(view.hr_picks||[]).length,target:'hr-over-card'},
@@ -8241,8 +8212,6 @@ function _trkBuildCfg(){
   var CAT_CFG={
     'Top 10 Batter|OVER':        {lbl:'Top 10 Hitter Plays',  icon:'⭐', abbr:'T10B+'},
     'Top 10 Batter|UNDER':       {lbl:'Top 10 Hitter Plays (Under)', icon:'⭐', abbr:'T10B-'},
-    'Top 10 Batter (NEW)|OVER':  {lbl:'Top 10 Hitter Plays (NEW)',       icon:'🆕', abbr:'T10N+'},
-    'Top 10 Batter (NEW)|UNDER': {lbl:'Top 10 Hitter Plays (NEW Under)', icon:'🆕', abbr:'T10N-'},
     'Top 10 Pitcher|OVER':       {lbl:'Top 10 Pitcher Props (Over)', icon:'🎯', abbr:'T10P+'},
     'Top 10 Pitcher|UNDER':      {lbl:'Top 10 Pitcher Props (Under)',icon:'🎯', abbr:'T10P-'},
     'Value Plays|OVER':          {lbl:'Top 10 Value Plays', icon:'💎', abbr:'Val'},
@@ -8296,16 +8265,14 @@ function _trkBuildCfg(){
     'Pitcher Walks (OVF)|UNDER': {lbl:'Walks Allowed Overflow (Under)', icon:'🚶'},
     'Top 10 Batter (OVF)|OVER':  {lbl:'Top 10 Hitter Plays (OVF)',      icon:'⭐'},
     'Top 10 Batter (OVF)|UNDER': {lbl:'Top 10 Hitter Plays (OVF Under)', icon:'⭐'},
-    'Top 10 Batter NEW (OVF)|OVER':  {lbl:'Top 10 Hitter Plays NEW (OVF)',       icon:'🆕'},
-    'Top 10 Batter NEW (OVF)|UNDER': {lbl:'Top 10 Hitter Plays NEW (OVF Under)', icon:'🆕'},
   };
-  var CAT_ORDER=['Top 10 Batter|OVER','Top 10 Batter|UNDER','Top 10 Batter (NEW)|OVER','Top 10 Batter (NEW)|UNDER','Top 10 Pitcher|OVER','Top 10 Pitcher|UNDER','Value Plays|OVER',
+  var CAT_ORDER=['Top 10 Batter|OVER','Top 10 Batter|UNDER','Top 10 Pitcher|OVER','Top 10 Pitcher|UNDER','Value Plays|OVER',
     'Hitter Hits|OVER','Hitter Hits|UNDER','Runs|OVER','Runs|UNDER',
     'TB Under|UNDER','TB Over|OVER','RBI|OVER','RBI|UNDER','HR|OVER','HR|UNDER','Batter Walks|OVER','Batter Walks|UNDER','HRR|OVER','HRR|UNDER',
     'Pitcher Ks|OVER','Pitcher Ks|UNDER','Pitcher Hits Allowed|OVER','Pitcher Hits Allowed|UNDER',
     'Pitcher Outs|OVER','Pitcher Outs|UNDER','Pitcher Earned Runs|OVER','Pitcher Earned Runs|UNDER',
     'Pitcher Walks|OVER','Pitcher Walks|UNDER'];
-  var OVF_ORDER=['Top 10 Batter (OVF)|OVER','Top 10 Batter (OVF)|UNDER','Top 10 Batter NEW (OVF)|OVER','Top 10 Batter NEW (OVF)|UNDER','Hitter Hits (More)|OVER','Hitter Hits (More)|UNDER','Runs (OVF)|OVER','Runs (OVF)|UNDER',
+  var OVF_ORDER=['Top 10 Batter (OVF)|OVER','Top 10 Batter (OVF)|UNDER','Hitter Hits (More)|OVER','Hitter Hits (More)|UNDER','Runs (OVF)|OVER','Runs (OVF)|UNDER',
     'TB Under (OVF)|UNDER','TB Over (OVF)|OVER','RBI (OVF)|OVER','RBI (OVF)|UNDER',
     'Batter Walks (OVF)|OVER','Batter Walks (OVF)|UNDER','HRR (OVF)|OVER','HRR (OVF)|UNDER',
     'Pitcher Ks (OVF)|OVER','Pitcher Ks (OVF)|UNDER','Pitcher Hits Allowed (OVF)|OVER','Pitcher Hits Allowed (OVF)|UNDER',
@@ -8334,6 +8301,7 @@ function renderTrackRecord(d){
     +'<button onclick="_openProjEdgeStats()" title="W/L record and ROI for Proj Edge plays (pitchers: projection beats the line; hitters: positive edge), tracked forward each day &#x2014; separate from Track Record" style="background:#0c4a6e;color:#7dd3fc;border:1px solid #0ea5e9;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">&#9650; Proj Edge Record</button>'
     +'<button onclick="_openHrrSpStats()" title="W/L record for HRR Special confluence picks (all 4 gates cleared) &#x2014; separate from main Track Record" style="background:#1a0e2e;color:#c4b5fd;border:1px solid #7c3aed;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">&#11088; HRR SP Record</button>'
     +'<button onclick="_openTscStats()" title="W/L record for Triple Split Club picks (over .275 in all three of today&#39;s splits) &#x2014; to record a hit, separate from main Track Record" style="background:#04141c;color:#67e8f9;border:1px solid #0e7490;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">&#128305; Triple Split Record</button>'
+    +'<button onclick="_openFssStats()" title="W/L record and ROI for 5 Star Split picks (Triple Split + 60%+ games with a hit vs team + 60%+ last 10) &#x2014; separate from main Track Record" style="background:#0c0a1a;color:#c4b5fd;border:1px solid #7c3aed;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">&#11088; 5 Star Split Record</button>'
     +'</div>';
   var sc=_matrixScorecard(d);
   var he=document.getElementById('track-head'); if(he) he.innerHTML=hdr+sc+tabs;
@@ -8623,7 +8591,7 @@ function _trkRenderDaily(stake){
   de.innerHTML=daily.length?'<details open style="margin-top:0"><summary style="cursor:pointer;font-weight:700;color:#a78bfa;padding:10px 0;border-bottom:1px solid #1f2937">📅 Daily \u2014 every pick by category ('+daily.length+' day'+(daily.length===1?'':'s')+')</summary><div style="margin-top:6px">'+dayBlocks+'</div></details>':'';
 }
 // ===== Track Record tabs: Daily / Weekly (last 7 days) / Monthly =====
-var _TRK_KEYS=['top10_batter','top10_batter_new','top10_pitcher','hitter_overs','hitter_unders','runs','tb_under','tb_over','rbi','batter_walks','hrr','pitcher_ks','pitcher_props'];
+var _TRK_KEYS=['top10_batter','top10_pitcher','hitter_overs','hitter_unders','runs','tb_under','tb_over','rbi','batter_walks','hrr','pitcher_ks','pitcher_props'];
 // Main Track Record flatten ALSO pulls in Value Plays so it surfaces in the daily/
 // weekly/monthly views. Overflow (ranks 11-20) is deliberately NOT here — it lives
 // ONLY in the Overflow tab. Kept SEPARATE from _TRK_KEYS so Best Bets (which shares
@@ -8676,7 +8644,7 @@ function _recPlaysRows(plays,lastHdr,lastClr,lastFn,catFn,showDate){
 // Pitcher rows now carry a `proj` field (banked going forward), so this fills in
 // from the day the build ships. Reuses the shared grade cache. Edge / Best Bets
 // records untouched.
-var _PE_KEYS=['top10_batter','top10_batter_new','top10_pitcher','hitter_overs','hitter_more','hitter_unders','runs','tb_under','tb_over','rbi','batter_walks','hrr','pitcher_ks','pitcher_props','overflow'];
+var _PE_KEYS=['top10_batter','top10_pitcher','hitter_overs','hitter_more','hitter_unders','runs','tb_under','tb_over','rbi','batter_walks','hrr','pitcher_ks','pitcher_props','overflow'];
 function _peFlatten(g){ var out=[]; if(!g||g==='LOADING'||g.__error__) return out; _PE_KEYS.forEach(function(k){ (g[k]||[]).forEach(function(r){ out.push(r); }); }); return out; }
 function _peBaseCat(c){ c=c||'?'; if(c==='Hitter Hits (More)') return 'Hitter Hits'; if(c.slice(-6)===' (OVF)') return c.slice(0,-6); return c; }
 function _peIsPitcher(cat){ return (cat||'').indexOf('Pitcher')===0; }
@@ -9022,6 +8990,160 @@ function _openTscStats(){
   var ov2=document.getElementById('tsc-stats-modal');
   if(!ov2){ ov2=document.createElement('div'); ov2.id='tsc-stats-modal'; ov2.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.85);z-index:10001;display:flex;align-items:center;justify-content:center;padding:16px'; ov2.onclick=function(e){ if(e.target===ov2) ov2.style.display='none'; }; document.body.appendChild(ov2); }
   _tscStatsRender();
+  ov2.style.display='flex';
+}
+// ── 5 Star Split card + record ───────────────────────────────────────────────
+// 5 Star Split = Triple Split qualifiers that ALSO clear 60%+ games with a hit
+// vs today's opponent AND 60%+ over their last 10 games, each carrying its single
+// best production market (TB/Runs/RBI/HRR OVER). Career-vs-pitcher rides along as
+// display-only reference. Own forward-only record (own button + modal), kept out
+// of the main Track Record so it never double-counts with the per-market boards.
+function _fssBoxKey(p){ return ({tb:'total_bases',runs:'runs',rbi:'rbi',hrr:'hrr'})[p.pick_market]||'total_bases'; }
+function _fssCard(p, rank, pfx) {
+  pfx = pfx || 'fss';
+  const abbr = _mlbTeamAbbr(p.team);
+  const teamLogo = abbr ? `https://a.espncdn.com/i/teamlogos/mlb/500/${abbr}.png` : '';
+  const rnkColors = rank===1?['#c4b5fd','#000']:rank===2?['#a78bfa','#000']:rank===3?['#8b5cf6','#fff']:['#1e1b3a','#a78bfa'];
+  const sideCls = p.side==='HOME'?'badge-home':'badge-away';
+  const od = p.odds;
+  const odDisp = od!=null?(od>0?'+':'')+od:'—';
+  const dnLbl = p.dn_label||'Day/Night';
+  const gno = p.series_gno||p.series_game||'';
+  const vp = p.vs_pit||{};
+  window.__FSS_REG__=window.__FSS_REG__||{}; window.__FSS_REG__[pfx+rank]=p;
+  function _g(lbl,val){
+    return '<div style="display:flex;align-items:center;justify-content:space-between;font-size:.72rem;margin-top:4px">'
+      +'<span style="color:#94a3b8"><span style="color:#a78bfa">&#10003;</span> '+lbl+'</span>'
+      +'<span style="color:#ddd6fe;font-weight:700;font-family:monospace">'+val+'</span></div>';
+  }
+  var vpRow = (vp && (vp.ab||0)>0)
+    ? ('<div style="display:flex;align-items:center;justify-content:space-between;font-size:.68rem;margin-top:6px;padding-top:6px;border-top:1px dashed #2a2440"><span style="color:#64748b">vs '+_esc(p.pitcher||'pitcher')+' (career)</span><span style="color:#94a3b8;font-family:monospace">'+_esc(vp.display||'—')+' <span style="color:#475569">ref</span></span></div>')
+    : '';
+  return `<div class="mlb-pick-card" onclick="_hitForm(window.__FSS_REG__['${pfx}${rank}'])" title="Click for recent form" style="cursor:pointer;border:1px solid rgba(167,139,250,.5)">
+    <div class="mlb-card-header" style="background:linear-gradient(135deg,#1e1b3a 0%,#0c0a1a 100%)">${_cardHdr(rank,rnkColors,_catLbl('5 STAR','#a78bfa'),teamLogo,p.team,_seriesTag(p,'O',false,2))}</div>
+    ${_nameBar(rank,rnkColors,p.batter_id,p.name)}
+    <div class="mlb-card-body">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <span style="font-size:.82rem;color:#94a3b8">vs <strong style="color:#fff">${p.opp||'—'}</strong></span>
+        <span class="badge ${sideCls}">${p.side}</span>
+      </div>
+      <div style="margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
+        <div style="font-size:.6rem;font-weight:800;letter-spacing:.07em;color:#a78bfa;text-transform:uppercase">All 3 Splits &gt; .275</div>
+        ${_g((p.side==='HOME'?'Home':'Away')+' BA', p.ha_disp||'—')}
+        ${_g(dnLbl+' BA', p.dn_disp||'—')}
+        ${_g('Series G'+(gno||'?')+' BA', p.series_disp||'—')}
+      </div>
+      <div style="margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
+        <div style="font-size:.6rem;font-weight:800;letter-spacing:.07em;color:#a78bfa;text-transform:uppercase">Consistency</div>
+        ${_g('vs '+(p.opp||'opp')+' hit%', (p.vt_pct!=null?p.vt_pct+'%':'—')+' ('+(p.vt_hit_g||0)+'/'+(p.vt_g||0)+')')}
+        ${_g('Last 10 hit%', (p.l10_hit_pct!=null?p.l10_hit_pct+'%':'—')+' ('+(p.l10_hit_g||0)+'/'+(p.l10_g||0)+')')}
+      </div>
+      <div style="margin-top:8px;padding-top:8px;border-top:1px solid #1f1f1f">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <span style="font-size:.62rem;font-weight:800;letter-spacing:.06em;color:#a78bfa;text-transform:uppercase">Best Production Play</span>
+          <span style="font-size:.62rem;color:#64748b">${p.pick_rate!=null?p.pick_rate+'% L10':''}</span>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
+          <span style="font-size:.85rem;color:#c4b5fd;font-weight:900">OVER ${p.line} ${p.stat_label||''}</span>
+          <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.9rem">${odDisp}${_bookTag(p)}</span>
+        </div>
+      </div>
+      ${vpRow}
+    </div>
+  ${_betBtn(p,'5 Star Split','OVER',_fssBoxKey(p),(p.stat_label||'Total Bases'),(p.line!=null?p.line:1.5),od)}
+  </div>`;
+}
+function _fssRowsForDate(date){
+  var d=window.__TRACK__||{}; var rows=[]; var have=false;
+  (d.detail||[]).forEach(function(r){ if(r.date===date&&r.category==='5 Star Split'){ have=true; if(r.result==='WIN'||r.result==='LOSS') rows.push(r); } });
+  if(!have){
+    var g=(window.__TRK_GRADE_CACHE__||{})[date];
+    if(!g||g==='LOADING'||g.__error__||!g.all_final) return [];
+    (g.five_star_split||[]).forEach(function(r){ if(r.result==='WIN'||r.result==='LOSS') rows.push(r); });
+  }
+  rows.sort(function(a,b){ return (b.edge||0)-(a.edge||0); });
+  return rows;
+}
+function _fssStatsAllTime(){ window.__FSS_DATE__=''; _fssStatsRender(); }
+function _fssStatsSetDate(val){ if(!val){ _fssStatsAllTime(); return; } window.__FSS_DATE__=val; _fssLoadDay(val); }
+async function _fssLoadDay(date){
+  window.__TRK_GRADE_CACHE__=window.__TRK_GRADE_CACHE__||{};
+  var d=window.__TRACK__||{};
+  var inDetail=(d.detail||[]).some(function(r){ return r.date===date&&r.category==='5 Star Split'; });
+  var cur=window.__TRK_GRADE_CACHE__[date];
+  if(inDetail||(cur&&cur!=='LOADING')){ _fssStatsRender(); return; }
+  var tok=localStorage.getItem('__mpa_token')||localStorage.getItem('hub_token')||'';
+  var adm=new URLSearchParams(location.search).get('admin')||'';
+  window.__TRK_GRADE_CACHE__[date]='LOADING'; _fssStatsRender();
+  try{ var res=await fetch('/api/grade/'+date+'?token='+encodeURIComponent(tok)+(adm?('&admin='+encodeURIComponent(adm)):'')); if(!res.ok){ var t=await res.text(); window.__TRK_GRADE_CACHE__[date]={__error__:(t||'No picks for this date')}; } else { window.__TRK_GRADE_CACHE__[date]=await res.json(); } }catch(e){ window.__TRK_GRADE_CACHE__[date]={__error__:String((e&&e.message)||e)}; }
+  _fssStatsRender();
+}
+function _fssStatsWrap(bodyHtml){
+  var ov2=document.getElementById('fss-stats-modal'); if(!ov2) return;
+  var dateMode=!!window.__FSS_DATE__, date=window.__FSS_DATE__||'';
+  var sub=dateMode?('5 Star Split &#xB7; all 5 gates cleared &#xB7; '+_weekdayName(date)+' '+date):'5 Star Split &#xB7; Triple Split + &ge;60% vs team + &ge;60% last 10 &#xB7; tap a day for that slate&#39;s plays';
+  ov2.innerHTML='<div style="background:#0c0a1a;border:1px solid #7c3aed;border-radius:18px;width:100%;max-width:460px;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 24px 80px rgba(0,0,0,.7)" onclick="event.stopPropagation()">'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #1e293b;flex-shrink:0">'
+    +'<div><div style="font-weight:900;color:#a78bfa;font-size:1rem">&#11088; 5 Star Split Record</div>'
+    +'<div style="color:#64748b;font-size:.71rem;margin-top:2px">'+sub+'</div></div>'
+    +'<button onclick="document.getElementById(&#39;fss-stats-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem;flex-shrink:0">&#215;</button>'
+    +'</div>'
+    +'<div style="overflow-y:auto;flex:1">'+bodyHtml+'</div>'
+    +'</div>';
+}
+function _fssStatsRender(){
+  var ov2=document.getElementById('fss-stats-modal'); if(!ov2) return;
+  var d=window.__TRACK__||{}, stake=_trkStake();
+  var dateMode=!!window.__FSS_DATE__, date=window.__FSS_DATE__||'';
+  var today=window.__TRK_TODAY__||_trkTodayISO();
+  var loadingMsg='', pool=[];
+  if(dateMode){
+    var cache=window.__TRK_GRADE_CACHE__||{};
+    var inDetail=(d.detail||[]).some(function(r){ return r.date===date&&r.category==='5 Star Split'; });
+    var g=cache[date];
+    if(!inDetail && (g===undefined||g==='LOADING')) loadingMsg='Loading\u2026';
+    else if(!inDetail && g&&g.__error__) loadingMsg=g.__error__||'No picks for this date.';
+    else if(!inDetail && g && !g.all_final) loadingMsg='This slate is not final yet. The 5 Star Split Record fills in once every game on '+date+' goes Final.';
+    else pool=_fssRowsForDate(date);
+  } else {
+    _edgeAllDates().forEach(function(dt){ var t=_fssRowsForDate(dt); for(var i=0;i<t.length;i++){ var rr=t[i]; if(!rr.date){ var cc={}; for(var kk in rr) cc[kk]=rr[kk]; cc.date=dt; rr=cc; } pool.push(rr); } });
+  }
+  var ov={w:0,l:0,net:0,counted:0};
+  pool.forEach(function(r){
+    var win=r.result==='WIN', od=_effOdds(r);
+    var pl=_amProfit(od,stake,win); if(pl===null) return;
+    if(win) ov.w++; else ov.l++; ov.net+=pl; ov.counted++;
+  });
+  var roiClr=ov.net>=0?'#4ade80':'#f87171';
+  var roiStr=ov.counted?(((ov.net/(ov.counted*stake))*100).toFixed(1)+'%'):'&#x2014;';
+  var netStr='$'+(ov.net>=0?'+':'')+ov.net.toFixed(2);
+  var body='<div style="padding:14px 16px">';
+  body+='<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px">';
+  body+='<button onclick="_fssStatsAllTime()" style="background:'+(dateMode?'#1e293b':'#7c3aed')+';color:'+(dateMode?'#cbd5e1':'#fff')+';border:none;border-radius:7px;padding:6px 12px;font-size:.78rem;font-weight:700;cursor:pointer">All-time</button>';
+  body+='<label style="font-size:.78rem;color:#94a3b8;display:inline-flex;align-items:center;gap:6px">Day <input type="date" value="'+date+'" max="'+today+'" onchange="_fssStatsSetDate(this.value)" style="background:#020617;border:1px solid #334155;color:#fff;border-radius:6px;padding:5px 8px;font-size:.78rem"></label>';
+  if(dateMode) body+='<span style="font-weight:800;color:#c4b5fd;font-size:.85rem">'+_weekdayName(date)+'</span>';
+  body+='</div>';
+  if(dateMode && loadingMsg){
+    body+='<div style="color:#64748b;padding:24px;text-align:center">'+_esc(loadingMsg)+'</div></div>';
+    _fssStatsWrap(body); return;
+  }
+  body+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px">';
+  body+='<div style="background:#0c1622;border-radius:8px;padding:11px;text-align:center"><div style="font-size:.63rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">Record</div><div style="font-weight:900;color:#e2e8f0;font-size:1.1rem">'+ov.w+'-'+ov.l+'</div></div>';
+  body+='<div style="background:#0c1622;border-radius:8px;padding:11px;text-align:center"><div style="font-size:.63rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">ROI</div><div style="font-weight:900;color:'+roiClr+';font-size:1.1rem">'+roiStr+'</div></div>';
+  body+='<div style="background:#0c1622;border-radius:8px;padding:11px;text-align:center"><div style="font-size:.63rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">Net @ $'+stake+'</div><div style="font-weight:900;color:'+roiClr+';font-size:1.05rem">'+netStr+'</div></div>';
+  body+='</div>';
+  var _plays=pool.slice().sort(_recPlaySort);
+  if(_plays.length) body+=_recSecHdr('ALL PLAYS &#xB7; '+_plays.length)+_recPlaysRows(_plays,'EV','#a78bfa',function(r){ return r.ev!=null?((r.ev>0?'+':'')+((r.ev*100).toFixed(1))+'%'):'&#x2014;'; },function(c){ return c; },!dateMode);
+  else body+='<div style="color:#64748b;padding:20px;text-align:center">No 5 Star Split plays graded'+(dateMode?' on this date.':' yet.<br><span style="font-size:.74rem">This fills in automatically as each day&#39;s 5 Star Split picks go Final.</span>')+'</div>';
+  body+='</div>';
+  _fssStatsWrap(body);
+}
+function _openFssStats(){
+  var d=window.__TRACK__; if(!d){ alert('Open Track Record first.'); return; }
+  if(window.__FSS_DATE__===undefined) window.__FSS_DATE__='';
+  var ov2=document.getElementById('fss-stats-modal');
+  if(!ov2){ ov2=document.createElement('div'); ov2.id='fss-stats-modal'; ov2.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.85);z-index:10001;display:flex;align-items:center;justify-content:center;padding:16px'; ov2.onclick=function(e){ if(e.target===ov2) ov2.style.display='none'; }; document.body.appendChild(ov2); }
+  _fssStatsRender();
   ov2.style.display='flex';
 }
 function _trkRenderActive(){ var be=document.getElementById('track-body'); if(!be) return; var stake=_trkStake(); var t=window.__TRK_TAB__||'daily'; if(t==='daily') _trkRenderDailyTab(be,stake); else _trkRenderRangeTab(be,stake,t); }
@@ -9867,7 +9989,7 @@ function renderHRTracker(d){
 function _amDec(o){ if(o==null||o==='') return null; o=Number(o); if(!isFinite(o)||o===0) return null; return o>0?(1+o/100):(1+100/Math.abs(o)); }
 // Meta-ranking buckets duplicate the per-category picks — exclude them so CLV
 // and calibration never double-count the same bet.
-function _trkSkipMeta(r){ return r.category==='Top 10 Batter'||r.category==='Top 10 Batter (NEW)'||r.category==='Top 10 Pitcher'||r.category==='Value Plays'; }
+function _trkSkipMeta(r){ return r.category==='Top 10 Batter'||r.category==='Top 10 Pitcher'||r.category==='Value Plays'; }
 function _trkAmOdds(o){ o=Number(o); return (o>0?'+':'')+o; }
 
 // CLOSING LINE VALUE — did you get a better price than the market settled at?
