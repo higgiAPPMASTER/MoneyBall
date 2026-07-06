@@ -1287,6 +1287,66 @@ def _gp_num(v, d=None):
         return d
 
 
+# MLB team id -> rough timezone as HOURS WEST of Eastern (ET 0 / CT 1 / MT 2 / PT 3).
+# Used only to gauge travel timezone shift for the Game Predictor's rest factor.
+_TEAM_TZ = {
+    108: 3, 109: 2, 110: 0, 111: 0, 112: 1, 113: 0, 114: 0, 115: 2, 116: 0, 117: 1,
+    118: 1, 119: 3, 120: 0, 121: 0, 133: 3, 134: 0, 135: 3, 136: 3, 137: 3, 138: 1,
+    139: 0, 140: 1, 141: 0, 142: 1, 143: 0, 144: 0, 145: 1, 146: 0, 147: 0, 158: 1,
+}
+
+
+def _fetch_team_rest(run_date: str) -> dict:
+    """ONE MLB Stats API schedule call over the trailing week. For each team,
+    find its most recent game BEFORE run_date and derive: days rest, whether it
+    changed ballparks since (travel), and the timezone shift of that move.
+    Returns {team_name: {days_rest, traveled, tz_shift}}. Free; silent on
+    failure (-> {}). The predictor degrades to neutral when a team is missing."""
+    import datetime
+    try:
+        d0 = datetime.date.fromisoformat(run_date[:10])
+    except Exception:
+        return {}
+    start = (d0 - datetime.timedelta(days=7)).isoformat()
+    end   = d0.isoformat()
+    try:
+        j = requests.get("https://statsapi.mlb.com/api/v1/schedule",
+            params={"sportId": 1, "startDate": start, "endDate": end},
+            timeout=15).json()
+    except Exception:
+        return {}
+    games = {}   # team_name -> [(date, home_team_id, tz), ...]
+    for day in (j.get("dates", []) or []):
+        gdate = day.get("date", "")
+        for g in (day.get("games", []) or []):
+            teams = g.get("teams", {}) or {}
+            home = ((teams.get("home", {}) or {}).get("team", {}) or {})
+            away = ((teams.get("away", {}) or {}).get("team", {}) or {})
+            hid  = home.get("id")
+            tz   = _TEAM_TZ.get(hid)
+            for tm in (home, away):
+                nm = tm.get("name", "")
+                if nm and gdate:
+                    games.setdefault(nm, []).append((gdate, hid, tz))
+    out = {}
+    today = d0.isoformat()
+    for nm, lst in games.items():
+        prev    = sorted([x for x in lst if x[0] <  today])
+        tonight = [x for x in lst if x[0] == today]
+        if not prev or not tonight:
+            continue
+        pdate, phome, ptz = prev[-1]
+        _, thome, ttz = tonight[-1]
+        try:
+            days = (datetime.date.fromisoformat(today) - datetime.date.fromisoformat(pdate)).days
+        except Exception:
+            days = None
+        tz_shift = (abs(ttz - ptz) if (ttz is not None and ptz is not None) else 0)
+        traveled = (phome is not None and thome is not None and phome != thome)
+        out[nm] = {"days_rest": days, "traveled": traveled, "tz_shift": tz_shift}
+    return out
+
+
 def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, emit=None):
     """Game Predictor — team win model. Aggregates the SAME player-level signals
     the app already computes for props into two team run projections, then turns
@@ -1330,6 +1390,13 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
         except Exception:
             return None
         return (100.0 / (o + 100.0)) if o > 0 else ((-o) / ((-o) + 100.0))
+
+    # travel & rest — one MLB schedule call over the trailing week (free)
+    rest_by_team = {}
+    try:
+        rest_by_team = _fetch_team_rest(run_date)
+    except Exception:
+        rest_by_team = {}
 
     LEAGUE_RPG = 4.40      # league runs per game per team
     LG_SP_ERA  = 4.15      # league starter ERA baseline
@@ -1454,6 +1521,35 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
                         "taxed": taxed, "fatigue": fatigue}
         return {"mult": 1.0, "era": None, "ip": None, "taxed": False, "fatigue": 0.0}
 
+    def _rest_info(team):
+        return _lookup(team, rest_by_team) or {}
+
+    def _rest_mult(ri):
+        """Small offense multiplier for travel/rest. An off-day helps; a
+        doubleheader nightcap and a ballpark change (esp. crossing time zones)
+        hurt. Capped tight (0.96-1.02) — the edge here is real but small."""
+        m = 1.0
+        dr = ri.get("days_rest")
+        if dr is not None:
+            if dr >= 2:   m += 0.015
+            elif dr == 0: m -= 0.020
+        if ri.get("traveled"):
+            tz = ri.get("tz_shift", 0) or 0
+            m -= (0.010 + (0.015 if tz >= 2 else (0.005 if tz == 1 else 0.0)))
+        return max(0.96, min(1.02, m))
+
+    def _rest_s(ri):
+        dr = ri.get("days_rest")
+        parts = []
+        if dr is None:
+            parts.append("n/a")
+        else:
+            parts.append("off-day" if dr >= 2 else ("DH legs" if dr == 0 else "1d"))
+        if ri.get("traveled"):
+            tz = ri.get("tz_shift", 0) or 0
+            parts.append("cross-country" if tz >= 2 else (("+%d tz" % tz) if tz == 1 else "travel"))
+        return " · ".join(parts) if parts else "n/a"
+
     def _game_const(picks):
         env = ump = 1.0
         for h in picks:
@@ -1487,9 +1583,11 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
             h_sp,  a_sp  = _starter(home), _starter(away)   # each team's OWN starter
             away_pen = _pen(home)   # away team's pen (home hitters face it)
             home_pen = _pen(away)   # home team's pen (away hitters face it)
+            h_rest, a_rest = _rest_info(home), _rest_info(away)
+            h_rm,   a_rm   = _rest_mult(h_rest), _rest_mult(a_rest)
 
-            projH = LEAGUE_RPG * h_off["mult"] * a_sp["mult"] * away_pen["mult"] * env * ump * HFA
-            projA = LEAGUE_RPG * a_off["mult"] * h_sp["mult"] * home_pen["mult"] * env * ump
+            projH = LEAGUE_RPG * h_off["mult"] * a_sp["mult"] * away_pen["mult"] * env * ump * HFA * h_rm
+            projA = LEAGUE_RPG * a_off["mult"] * h_sp["mult"] * home_pen["mult"] * env * ump * a_rm
             projH = max(1.5, min(9.0, projH)); projA = max(1.5, min(9.0, projA))
 
             ph, pa = projH ** EXP, projA ** EXP
@@ -1557,6 +1655,7 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
             mag_fat = (away_pen["fatigue"] - home_pen["fatigue"])   # >0 home benefits
             mag_lin = (a_off["out_n"] - h_off["out_n"])             # >0 home healthier
             mag_plat = ((h_off["plat_ba"] or 0) - (a_off["plat_ba"] or 0))
+            mag_rest = (h_rm - a_rm)   # >0 home fresher
 
             def _pct(v):  return (str(round(v * 100)) + "% hit prob") if v is not None else "—"
             def _era(v):  return ("%.2f ERA" % v) if v is not None else "n/a"
@@ -1607,6 +1706,8 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
                  "edge": _eabbr(mag_lin) if abs(mag_lin) >= 1 else "even"},
                 {"name": "Platoon vs starter", "home": _plat(h_off), "away": _plat(a_off),
                  "edge": _eabbr(mag_plat) if abs(mag_plat) >= 0.010 else "even"},
+                {"name": "Travel & rest", "home": _rest_s(h_rest), "away": _rest_s(a_rest),
+                 "edge": _eabbr(mag_rest) if abs(mag_rest) >= 0.005 else "even"},
                 {"name": "Park & weather",
                  "home": ("run factor %.2f" % env), "away": ("run factor %.2f" % env), "edge": "even"},
                 {"name": "Home-plate umpire",
@@ -1650,6 +1751,9 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
             if abs(mag_plat) >= 0.010 and _eabbr(mag_plat) == pick_abbr:
                 po = h_off if fav_home else a_off
                 cands.append((abs(mag_plat) * 40, pick_abbr + " lineup " + _plat(po)))
+            if abs(mag_rest) >= 0.005 and _eabbr(mag_rest) == pick_abbr:
+                lo = a_rest if fav_home else h_rest
+                cands.append((abs(mag_rest) * 25, loser_abbr + " " + _rest_s(lo)))
             if env >= 1.05:
                 cands.append((0.5, "hitter-friendly park lifts both"))
             elif env <= 0.95:
