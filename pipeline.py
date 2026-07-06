@@ -1315,6 +1315,22 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
     except Exception:
         _lookup_total = None
 
+    # game moneylines — market win% baseline (de-vig h2h; cached for the run)
+    _lookup_ml = None
+    try:
+        from pitcher_k import _fetch_game_moneylines, _lookup_game_ml
+        _fetch_game_moneylines(run_date)
+        _lookup_ml = _lookup_game_ml
+    except Exception:
+        _lookup_ml = None
+
+    def _amer_prob(o):
+        try:
+            o = float(o)
+        except Exception:
+            return None
+        return (100.0 / (o + 100.0)) if o > 0 else ((-o) / ((-o) + 100.0))
+
     LEAGUE_RPG = 4.40      # league runs per game per team
     LG_SP_ERA  = 4.15      # league starter ERA baseline
     LG_PK      = 4.80      # league mean projected K for a start
@@ -1327,11 +1343,15 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
         t = (sp.get("team") or "").strip()
         if not t:
             continue
-        d = sp_by_team.setdefault(t, {"era": None, "proj_k": None, "name": ""})
+        d = sp_by_team.setdefault(t, {"era": None, "proj_k": None, "name": "",
+                                      "r_er": None, "r_outs": None})
         e = _gp_num(sp.get("era")); pk = _gp_num(sp.get("proj_k"))
-        if d["era"]    is None and e  is not None: d["era"]    = e
-        if d["proj_k"] is None and pk is not None: d["proj_k"] = pk
-        if not d["name"] and sp.get("name"):       d["name"]   = sp.get("name")
+        rer = _gp_num(sp.get("recent_avg_er")); rou = _gp_num(sp.get("recent_avg_outs"))
+        if d["era"]    is None and e   is not None: d["era"]    = e
+        if d["proj_k"] is None and pk  is not None: d["proj_k"] = pk
+        if d["r_er"]   is None and rer is not None: d["r_er"]   = rer
+        if d["r_outs"] is None and rou is not None: d["r_outs"] = rou
+        if not d["name"] and sp.get("name"):        d["name"]   = sp.get("name")
 
     # ── hitters per team + slate-mean matchup prob (self-calibrating baseline) ──
     hit_by_team, all_mp = {}, []
@@ -1364,28 +1384,75 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
         else:
             avg, tilt = None, 1.0
         tilt *= (1.0 + max(-0.06, min(0.06, (hot - cold) * 0.015)))
+        # lineup availability: dock offense when projected regulars are OUT
+        out_n = len({(h.get("player_id"), h.get("name")) for h in hs
+                     if h.get("lineup_status") == "NOT_IN_LINEUP"})
+        lin_pen = min(0.08, out_n * 0.02)
+        tilt *= (1.0 - lin_pen)
+        # platoon: team hitters' BA vs the starter hand they face tonight
+        p_bas, p_adv, seen_pl = [], 0, set()
+        for h in hs:
+            pid = h.get("player_id")
+            if pid in seen_pl:
+                continue
+            pl = h.get("platoon") or {}
+            ba = _gp_num(pl.get("ba"))
+            if ba is not None and (pl.get("ab") or 0) >= 10:
+                p_bas.append(ba)
+                if pl.get("adv"):
+                    p_adv += 1
+                seen_pl.add(pid)
+        if p_bas:
+            plat_ba = sum(p_bas) / len(p_bas)
+            plat_tilt = max(-0.05, min(0.05, (plat_ba - 0.245) * 0.60))
+        else:
+            plat_ba, plat_tilt = None, 0.0
+        tilt *= (1.0 + plat_tilt)
         return {"mult": max(0.85, min(1.18, tilt)), "avg": avg,
-                "hot": hot, "cold": cold, "n": len(hs)}
+                "hot": hot, "cold": cold, "n": len(hs),
+                "out_n": out_n, "plat_ba": plat_ba,
+                "plat_n": len(p_bas), "plat_adv": p_adv}
 
     def _starter(team):
         s = _lookup(team, sp_by_team) or {}
         era = s.get("era"); pk = s.get("proj_k")
-        m = (era / LG_SP_ERA) if era is not None else 1.0
+        # recent form: turn recent ER + outs into a recent ERA, blend with season
+        r_er = s.get("r_er"); r_outs = s.get("r_outs")
+        recent_era = None
+        if r_er is not None and r_outs is not None and r_outs >= 6:
+            recent_era = round(r_er * 9.0 / (r_outs / 3.0), 2)
+        eff_era = era
+        if era is not None and recent_era is not None:
+            eff_era = 0.65 * era + 0.35 * recent_era
+        elif era is None and recent_era is not None:
+            eff_era = recent_era
+        m = (eff_era / LG_SP_ERA) if eff_era is not None else 1.0
         if pk is not None:
             m *= (1.0 + (LG_PK - pk) * 0.010)   # more Ks -> lower run environment
-        return {"mult": max(0.80, min(1.22, m)), "era": era,
+        return {"mult": max(0.80, min(1.22, m)), "era": era, "recent_era": recent_era,
+                "eff_era": (round(eff_era, 2) if eff_era is not None else None),
                 "proj_k": pk, "name": s.get("name", "")}
 
     def _pen(team):
-        """Opponent bullpen the given team's hitters face (bp_opp)."""
+        """Opponent bullpen the given team's hitters face (bp_opp). mult
+        multiplies the FACING team's runs — a gassed pen lifts it."""
         for h in (_lookup(team, hit_by_team) or []):
             b = h.get("bp_opp")
             if b:
                 f = _gp_num(b.get("factor"), 1.0)
-                return {"mult": (f if (f and f > 0) else 1.0),
-                        "era": _gp_num(b.get("era")), "ip": _gp_num(b.get("bp_ip")),
-                        "taxed": bool(b.get("taxed"))}
-        return {"mult": 1.0, "era": None, "ip": None, "taxed": False}
+                mult = f if (f and f > 0) else 1.0
+                ip = _gp_num(b.get("bp_ip"))
+                taxed = bool(b.get("taxed"))
+                # fatigue: taxed pen (>=9 IP last 3d) or heavy usage bumps runs
+                fatigue = 0.0
+                if taxed:
+                    fatigue = 0.05
+                elif ip is not None and ip >= 6:
+                    fatigue = min(0.04, (ip - 6) * 0.008)
+                mult *= (1.0 + fatigue)
+                return {"mult": mult, "era": _gp_num(b.get("era")), "ip": ip,
+                        "taxed": taxed, "fatigue": fatigue}
+        return {"mult": 1.0, "era": None, "ip": None, "taxed": False, "fatigue": 0.0}
 
     def _game_const(picks):
         env = ump = 1.0
@@ -1452,6 +1519,28 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
                 _ae = abs(total_edge)
                 total_conf = "STRONG" if _ae >= 1.5 else ("MODERATE" if _ae >= 0.75 else "LEAN")
 
+            # ── market moneyline (de-vig h2h) vs model win% ──
+            mkt_home_pct = mkt_away_pct = None
+            mkt_edge = None          # model% - market% for the PICK side (>0 = value)
+            mkt_pick_abbr = ""       # market's favourite
+            value_flag = False
+            try:
+                if _lookup_ml:
+                    _ml = _lookup_ml(home, away)
+                    if _ml:
+                        _hpr = _amer_prob(_ml[0]); _apr = _amer_prob(_ml[1])
+                        if _hpr and _apr and (_hpr + _apr) > 0:
+                            _mh = _hpr / (_hpr + _apr)
+                            mkt_home_pct = round(_mh * 100)
+                            mkt_away_pct = round((1 - _mh) * 100)
+                            mkt_pick_abbr = h_abbr if _mh >= 0.5 else a_abbr
+                            _model_pk = winH_pct if fav_home else winA_pct
+                            _mkt_pk   = mkt_home_pct if fav_home else mkt_away_pct
+                            mkt_edge  = _model_pk - _mkt_pk
+                            value_flag = mkt_edge >= 4
+            except Exception:
+                pass
+
             LG = LG_SP_ERA
             def _eabbr(mag):
                 return "even" if abs(mag) < 1e-9 else (h_abbr if mag > 0 else a_abbr)
@@ -1462,6 +1551,12 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
             mag_form = (hp - ap)
             mag_pen  = ((away_pen["era"] if away_pen["era"] is not None else LG)
                         - (home_pen["era"] if home_pen["era"] is not None else LG))
+            # new factors
+            r_h = h_sp["recent_era"]; r_a = a_sp["recent_era"]
+            mag_recent = ((r_a if r_a is not None else LG) - (r_h if r_h is not None else LG))
+            mag_fat = (away_pen["fatigue"] - home_pen["fatigue"])   # >0 home benefits
+            mag_lin = (a_off["out_n"] - h_off["out_n"])             # >0 home healthier
+            mag_plat = ((h_off["plat_ba"] or 0) - (a_off["plat_ba"] or 0))
 
             def _pct(v):  return (str(round(v * 100)) + "% hit prob") if v is not None else "—"
             def _era(v):  return ("%.2f ERA" % v) if v is not None else "n/a"
@@ -1469,6 +1564,28 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
                 s = _era(p["era"])
                 if p["taxed"]: s += " · taxed"
                 return s
+            def _rform(sp):
+                if sp["recent_era"] is None:
+                    return "n/a"
+                s = "%.2f ERA L5" % sp["recent_era"]
+                if sp["era"] is not None:
+                    d = sp["recent_era"] - sp["era"]
+                    s += (" hot" if d <= -0.5 else (" cold" if d >= 0.5 else ""))
+                return s
+            def _fat(p):
+                if p["taxed"]:
+                    return "taxed %.0f IP/3d" % (p["ip"] or 0)
+                if p["ip"] is not None:
+                    return "%.0f IP/3d" % p["ip"]
+                return "rested"
+            def _lin(o):
+                return "full" if o["out_n"] == 0 else ("%d regular%s out" % (o["out_n"], "" if o["out_n"] == 1 else "s"))
+            def _plat(o):
+                if o["plat_ba"] is None:
+                    return "n/a"
+                return ".%03d vs hand (%d)" % (int(o["plat_ba"] * 1000), o["plat_n"])
+            def _mlpct(v):
+                return (str(v) + "% ML") if v is not None else "n/a"
 
             factors = [
                 {"name": "Lineup vs starter", "home": _pct(h_off["avg"]),
@@ -1477,21 +1594,33 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
                  "home": (_era(h_sp["era"]) + (" · %d K" % round(h_sp["proj_k"]) if h_sp["proj_k"] is not None else "")),
                  "away": (_era(a_sp["era"]) + (" · %d K" % round(a_sp["proj_k"]) if a_sp["proj_k"] is not None else "")),
                  "edge": _eabbr(mag_sp) if abs(mag_sp) >= 0.15 else "even"},
+                {"name": "Starter recent form", "home": _rform(h_sp), "away": _rform(a_sp),
+                 "edge": (_eabbr(mag_recent) if (r_h is not None and r_a is not None and abs(mag_recent) >= 0.40) else "even")},
                 {"name": "Recent form (L10)", "home": ("%d up / %d down" % (h_off["hot"], h_off["cold"])),
                  "away": ("%d up / %d down" % (a_off["hot"], a_off["cold"])),
                  "edge": _eabbr(mag_form) if abs(mag_form) >= 1 else "even"},
                 {"name": "Bullpen quality", "home": _pen_s(home_pen), "away": _pen_s(away_pen),
                  "edge": _eabbr(mag_pen) if abs(mag_pen) >= 0.15 else "even"},
+                {"name": "Bullpen fatigue", "home": _fat(home_pen), "away": _fat(away_pen),
+                 "edge": _eabbr(mag_fat) if abs(mag_fat) >= 0.01 else "even"},
+                {"name": "Lineup availability", "home": _lin(h_off), "away": _lin(a_off),
+                 "edge": _eabbr(mag_lin) if abs(mag_lin) >= 1 else "even"},
+                {"name": "Platoon vs starter", "home": _plat(h_off), "away": _plat(a_off),
+                 "edge": _eabbr(mag_plat) if abs(mag_plat) >= 0.010 else "even"},
                 {"name": "Park & weather",
                  "home": ("run factor %.2f" % env), "away": ("run factor %.2f" % env), "edge": "even"},
                 {"name": "Home-plate umpire",
                  "home": ("run factor %.2f" % ump), "away": ("run factor %.2f" % ump), "edge": "even"},
+                {"name": "Market (de-vig)", "home": _mlpct(mkt_home_pct), "away": _mlpct(mkt_away_pct),
+                 "edge": (mkt_pick_abbr if mkt_home_pct is not None else "even")},
             ]
 
-            # ── top-3 drivers (buckets 1-4, favouring the pick) ──
+            # ── top-3 drivers (favouring the pick) ──
             loser_abbr = a_abbr if fav_home else h_abbr
             sign = 1 if fav_home else -1
             cands = []
+            if value_flag and mkt_edge is not None:
+                cands.append((100 + abs(mkt_edge), "value: model +%d%% vs market on %s" % (mkt_edge, pick_abbr)))
             if abs(mag_line) >= 0.005:
                 strong = h_off if fav_home else a_off
                 cands.append((abs(mag_line) * 50 * (1 if sign * mag_line > 0 else 0.01),
@@ -1500,6 +1629,9 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
                 sp = h_sp if fav_home else a_sp
                 cands.append((abs(mag_sp) * 3 * (1 if sign * mag_sp > 0 else 0.01),
                               pick_abbr + " arm " + _era(sp["era"]) + " suppresses " + loser_abbr))
+            if r_h is not None and r_a is not None and abs(mag_recent) >= 0.40 and _eabbr(mag_recent) == pick_abbr:
+                sp2 = h_sp if fav_home else a_sp
+                cands.append((abs(mag_recent) * 4, pick_abbr + " starter hot (%.2f ERA L5)" % sp2["recent_era"]))
             if abs(mag_form) >= 1:
                 nhot = (h_off["hot"] if fav_home else a_off["hot"])
                 ncold = (a_off["cold"] if fav_home else h_off["cold"])
@@ -1509,6 +1641,15 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
                 wp = away_pen if fav_home else home_pen   # the loser's pen the winner attacks
                 lab = "weak " + loser_abbr + " pen (" + _era(wp["era"]) + ")" + (" taxed" if wp["taxed"] else "")
                 cands.append((abs(mag_pen) * 3 * (1 if sign * mag_pen > 0 else 0.01), lab))
+            if abs(mag_fat) >= 0.01 and _eabbr(mag_fat) == pick_abbr:
+                tp = away_pen if fav_home else home_pen   # the tired pen the winner attacks
+                cands.append((abs(mag_fat) * 60, "gassed " + loser_abbr + " pen (" + _fat(tp) + ")"))
+            if abs(mag_lin) >= 1 and _eabbr(mag_lin) == pick_abbr:
+                lo = a_off if fav_home else h_off   # loser's missing bats
+                cands.append((abs(mag_lin) * 3, loser_abbr + " " + _lin(lo)))
+            if abs(mag_plat) >= 0.010 and _eabbr(mag_plat) == pick_abbr:
+                po = h_off if fav_home else a_off
+                cands.append((abs(mag_plat) * 40, pick_abbr + " lineup " + _plat(po)))
             if env >= 1.05:
                 cands.append((0.5, "hitter-friendly park lifts both"))
             elif env <= 0.95:
@@ -1517,10 +1658,14 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
             drivers = [c[1] for c in cands[:3]] or ["near coin-flip · thin edge"]
 
             fav_ct = sum(1 for f in factors if f["edge"] == pick_abbr)
-            verdict = ("%d of 6 buckets favour %s, %d even. Model lands on %s %d%%, projected %.1f \u2013 %.1f "
+            verdict = ("%d of %d buckets favour %s, %d even. Model lands on %s %d%%, projected %.1f \u2013 %.1f "
                        "\u2014 a %s-tier call.") % (
-                fav_ct, pick_name, sum(1 for f in factors if f["edge"] == "even"),
+                fav_ct, len(factors), pick_name, sum(1 for f in factors if f["edge"] == "even"),
                 pick_name, favw, (projH if fav_home else projA), (projA if fav_home else projH), conf)
+            if mkt_edge is not None:
+                verdict += (" Market implies %s %d%% \u2014 model %s it by %d%%." % (
+                    pick_name, (mkt_home_pct if fav_home else mkt_away_pct),
+                    ("beats" if mkt_edge > 0 else ("trails" if mkt_edge < 0 else "matches")), abs(mkt_edge)))
 
             out.append({
                 "away": away, "away_abbr": a_abbr, "home": home, "home_abbr": h_abbr,
@@ -1531,6 +1676,8 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
                 "conf": conf, "edge_runs": edge_runs, "game_start": sched.get("game_start", ""),
                 "proj_total": proj_total, "total_line": total_line,
                 "total_pick": total_pick, "total_edge": total_edge, "total_conf": total_conf,
+                "mkt_home_pct": mkt_home_pct, "mkt_away_pct": mkt_away_pct,
+                "mkt_edge": mkt_edge, "mkt_pick_abbr": mkt_pick_abbr, "value_flag": value_flag,
                 "drivers": drivers, "factors": factors, "verdict": verdict,
             })
         except Exception as _exc:
