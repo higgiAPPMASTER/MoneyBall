@@ -479,23 +479,41 @@ def career_ha_ks_vs_opp(pitcher_id: int, side: str, opp_name: str) -> dict:
     k_list    = []
     ip_list   = []
     era_list  = []
-    h_list    = []          # hits allowed per start vs opp
-    er_list   = []          # earned runs per start vs opp
-    outs_list = []          # outs recorded per start vs opp (IP×3)
-    bb_list   = []          # walks allowed per start vs opp
-    vs_log    = []          # dated per-start log vs opp (K + hits + ER + outs + BB)
+    h_list    = []          # hits allowed per start vs opp (H/A-matched)
+    er_list   = []          # earned runs per start vs opp (H/A-matched)
+    outs_list = []          # outs recorded per start vs opp (H/A-matched)
+    bb_list   = []          # walks allowed per start vs opp (H/A-matched)
+    vs_log    = []          # dated per-start log vs opp (H/A-matched)
+    # all-venue fallback — ERA only; used when H/A-matched starts are sparse
+    # (e.g. all career starts vs this opp happened at the other venue).
+    # K projection stays H/A-filtered; only ERA/display uses this fallback.
+    era_all_list = []
+    vs_log_all   = []
     for season in reversed(K_SEASONS):
         splits = _get_pitching_logs(pitcher_id, season)
         time.sleep(0.08)
         for sp in reversed(splits):
             if sp.get("opponent", {}).get("id") != opp_id: continue
+            stat_a = sp.get("stat", {})
+            if int(stat_a.get("gamesStarted", 0) or 0) < 1: continue
+            # collect all-venue ERA before the home/away filter
+            ip_a  = _ip_to_float(stat_a.get("inningsPitched", "0"))
+            er_a  = int(stat_a.get("earnedRuns", 0) or 0)
+            if ip_a > 0:
+                era_all_list.append(round(er_a / ip_a * 9, 2))
+            vs_log_all.append({"d": (sp.get("date") or ""),
+                               "k": stat_a.get("strikeOuts", 0),
+                               "h": int(stat_a.get("hits", 0) or 0),
+                               "er": er_a,
+                               "bb": int(stat_a.get("baseOnBalls", 0) or 0),
+                               "outs": round(ip_a * 3),
+                               "ip": stat_a.get("inningsPitched", "")})
             if sp.get("isHome") != is_home: continue
-            stat = sp.get("stat", {})
-            if int(stat.get("gamesStarted", 0) or 0) < 1: continue
-            ip = _ip_to_float(stat.get("inningsPitched", "0"))
+            stat = stat_a
+            ip = ip_a
             k = stat.get("strikeOuts", 0)
             h = int(stat.get("hits", 0) or 0)   # "hits" in pitching gameLog = hits ALLOWED
-            er = int(stat.get("earnedRuns", 0) or 0)
+            er = er_a
             bb = int(stat.get("baseOnBalls", 0) or 0)   # walks ALLOWED
             outs = round(ip * 3)
             k_list.append(k)
@@ -512,12 +530,19 @@ def career_ha_ks_vs_opp(pitcher_id: int, side: str, opp_name: str) -> dict:
     vs_log.sort(key=lambda e: e["d"], reverse=True)
     for e in vs_log:
         e["d"] = (e["d"] or "")[2:]
+    vs_log_all.sort(key=lambda e: e["d"], reverse=True)
+    for e in vs_log_all:
+        e["d"] = (e["d"] or "")[2:]
     if len(k_list) < MIN_STARTS:
+        # K projection unavailable (H/A-matched starts too sparse). Fall back to
+        # all-venue ERA so Game Predictor doesn't show blank for the starter row.
+        era_fb = round(sum(era_all_list) / len(era_all_list), 2) if era_all_list else None
         return {"avg_k": None, "starts": len(k_list), "k_list": k_list,
-                "min_k": None, "max_k": None, "avg_ip": None, "era": None,
+                "min_k": None, "max_k": None, "avg_ip": None, "era": era_fb,
                 "avg_hits": None, "h_list": h_list, "avg_er": None, "er_list": er_list,
                 "avg_outs": None, "outs_list": outs_list,
-                "avg_bb": None, "bb_list": bb_list, "vs_opp_log": vs_log}
+                "avg_bb": None, "bb_list": bb_list,
+                "vs_opp_log": vs_log_all if vs_log_all else vs_log}
     avg_k    = round(sum(k_list) / len(k_list), 1)
     avg_ip   = round(sum(ip_list) / len(ip_list), 1) if ip_list else None
     era      = round(sum(era_list) / len(era_list), 2) if era_list else None
