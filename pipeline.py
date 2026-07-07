@@ -3339,12 +3339,16 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                 continue
             _fss_hadisp = "%.3f" % _fss_hav
             _fss_hadisp = _fss_hadisp[1:] if _fss_hadisp.startswith("0.") else _fss_hadisp
-            try:
-                _gl_raw = _fss_logs(int(_bid), _FSS_CY) or []
-            except Exception:
-                _gl_raw = []
+            # fetch 3 seasons so vs-team hit% reflects real career history,
+            # not just today's partial season (e.g. Buxton 3/3 CLE = only 2026)
+            _gl_raw_all = []
+            for _fss_yr in range(_FSS_CY, _FSS_CY - 3, -1):
+                try:
+                    _gl_raw_all.extend(_fss_logs(int(_bid), _fss_yr) or [])
+                except Exception:
+                    pass
             _gl = []
-            for _sp in _gl_raw:
+            for _sp in _gl_raw_all:
                 _st = _sp.get("stat", {}) or {}
                 if int(_st.get("atBats", 0) or 0) < 1:
                     continue
@@ -3352,8 +3356,9 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                 if not _gd:
                     continue
                 _gl.append({
-                    "date": _gd,
-                    "opp": (_sp.get("opponent", {}) or {}).get("name", ""),
+                    "date":    _gd,
+                    "opp":     (_sp.get("opponent", {}) or {}).get("name", ""),
+                    "is_home": bool(_sp.get("isHome")),
                     "h":   int(_st.get("hits", 0) or 0),
                     "tb":  int(_st.get("totalBases", 0) or 0),
                     "r":   int(_st.get("runs", 0) or 0),
@@ -3363,9 +3368,12 @@ def run_pipeline(run_date: str, emit=None) -> dict:
             if not _gl:
                 continue
 
-            # Gate 4 — vs-team season: ≥60% of games with ≥1 hit
+            # Gate 4 — vs-team at today's venue, last 10 games: ≥60% with a hit.
+            # Venue-matched + capped at 10 so away hot streaks don't pass a home gate.
             _opp = _ts.get("opp", "")
-            _vt = [g for g in _gl if _opp and _fss_tm(g["opp"], _opp)]
+            _want_home = (_ts.get("side", "").upper() == "HOME")
+            _vt = [g for g in _gl if _opp and _fss_tm(g["opp"], _opp)
+                   and g["is_home"] == _want_home][-10:]
             if not _vt:
                 continue
             _vt_hit = sum(1 for g in _vt if g["h"] >= 1)
@@ -3373,8 +3381,11 @@ def run_pipeline(run_date: str, emit=None) -> dict:
             if _vt_pct < 60:
                 continue
 
-            # Gate 5 — last-10 overall: ≥60% of games with ≥1 hit
-            _l10 = _gl[-10:]
+            # Gate 5 — last 10 venue-matched games THIS SEASON: ≥60% with a hit.
+            # Current season only, venue-matched (home games for home players, etc.)
+            _cy_str = str(_FSS_CY)
+            _l10 = [g for g in _gl if g["date"][:4] == _cy_str
+                    and g["is_home"] == _want_home][-10:]
             _n = len(_l10)
             if _n == 0:
                 continue
