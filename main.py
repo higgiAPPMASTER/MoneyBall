@@ -9035,8 +9035,8 @@ function _fssCard(p, rank, pfx) {
       </div>
       <div style="margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
         <div style="font-size:.6rem;font-weight:800;letter-spacing:.07em;color:#a78bfa;text-transform:uppercase">Consistency</div>
-        ${_g('vs '+(p.opp||'opp')+' hit%', (p.vt_pct!=null?p.vt_pct+'%':'—')+' ('+(p.vt_hit_g||0)+'/'+(p.vt_g||0)+')')}
-        ${_g('Last 10 hit%', (p.l10_hit_pct!=null?p.l10_hit_pct+'%':'—')+' ('+(p.l10_hit_g||0)+'/'+(p.l10_g||0)+')')}
+        ${_g('vs '+(p.opp||'opp')+' '+(p.side==='HOME'?'home':'away')+' hit% (L10)', (p.vt_pct!=null?p.vt_pct+'%':'—')+' ('+(p.vt_hit_g||0)+'/'+(p.vt_g||0)+')')}
+        ${_g('Last 10 '+(p.side==='HOME'?'home':'away')+' hit% (season)', (p.l10_hit_pct!=null?p.l10_hit_pct+'%':'—')+' ('+(p.l10_hit_g||0)+'/'+(p.l10_g||0)+')')}
       </div>
       <div style="margin-top:8px;padding-top:8px;border-top:1px solid #1f1f1f">
         <div style="display:flex;align-items:center;justify-content:space-between">
