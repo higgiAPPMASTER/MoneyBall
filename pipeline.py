@@ -1380,7 +1380,7 @@ def _fetch_team_rest(run_date: str) -> dict:
     return out
 
 
-def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, emit=None):
+def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, emit=None, mlb_probable=None):
     """Game Predictor — team win model. Aggregates the SAME player-level signals
     the app already computes for props into two team run projections, then turns
     the run gap into a win probability. Six buckets:
@@ -1444,14 +1444,36 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
         if not t:
             continue
         d = sp_by_team.setdefault(t, {"era": None, "proj_k": None, "name": "",
-                                      "r_er": None, "r_outs": None})
+                                      "r_er": None, "r_outs": None,
+                                      "era_home": None, "era_away": None})
         e = _gp_num(sp.get("era")); pk = _gp_num(sp.get("proj_k"))
         rer = _gp_num(sp.get("recent_avg_er")); rou = _gp_num(sp.get("recent_avg_outs"))
-        if d["era"]    is None and e   is not None: d["era"]    = e
-        if d["proj_k"] is None and pk  is not None: d["proj_k"] = pk
-        if d["r_er"]   is None and rer is not None: d["r_er"]   = rer
-        if d["r_outs"] is None and rou is not None: d["r_outs"] = rou
-        if not d["name"] and sp.get("name"):        d["name"]   = sp.get("name")
+        eh  = _gp_num(sp.get("era_home")); ea = _gp_num(sp.get("era_away"))
+        if d["era"]      is None and e   is not None: d["era"]      = e
+        if d["proj_k"]   is None and pk  is not None: d["proj_k"]   = pk
+        if d["r_er"]     is None and rer is not None: d["r_er"]     = rer
+        if d["r_outs"]   is None and rou is not None: d["r_outs"]   = rou
+        if d["era_home"] is None and eh  is not None: d["era_home"] = eh
+        if d["era_away"] is None and ea  is not None: d["era_away"] = ea
+        if not d["name"] and sp.get("name"):          d["name"]     = sp.get("name")
+    # Fill in name from mlb_probable for any team whose starter didn't appear in
+    # the pitcher_k pool (e.g. no odds posted today → no K line → Wheeler shows TBD).
+    if mlb_probable:
+        for tn, pi in (mlb_probable or {}).items():
+            nm = (pi.get("name") or "").strip()
+            if not nm:
+                continue
+            matched = False
+            for k in list(sp_by_team.keys()):
+                if _team_match(k, tn):
+                    if not sp_by_team[k].get("name"):
+                        sp_by_team[k]["name"] = nm
+                    matched = True
+                    break
+            if not matched:
+                sp_by_team[tn] = {"era": None, "proj_k": None, "name": nm,
+                                  "r_er": None, "r_outs": None,
+                                  "era_home": None, "era_away": None}
 
     # ── hitters per team + slate-mean matchup prob (self-calibrating baseline) ──
     hit_by_team, all_mp = {}, []
@@ -1513,9 +1535,11 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
                 "out_n": out_n, "plat_ba": plat_ba,
                 "plat_n": len(p_bas), "plat_adv": p_adv}
 
-    def _starter(team):
+    def _starter(team, is_home=True):
         s = _lookup(team, sp_by_team) or {}
-        era = s.get("era"); pk = s.get("proj_k")
+        # Prefer lifetime home/away ERA; fall back to career-vs-opp ERA from pitcher_k
+        era = s.get("era_home" if is_home else "era_away") or s.get("era")
+        pk = s.get("proj_k")
         # recent form: turn recent ER + outs into a recent ERA, blend with season
         r_er = s.get("r_er"); r_outs = s.get("r_outs")
         recent_era = None
@@ -1613,7 +1637,7 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
             env, ump = _game_const(list(home_hs) + list(away_hs))
 
             h_off, a_off = _offense(home), _offense(away)
-            h_sp,  a_sp  = _starter(home), _starter(away)   # each team's OWN starter
+            h_sp,  a_sp  = _starter(home, True), _starter(away, False)   # each team's OWN starter; home uses era_home, away uses era_away
             away_pen = _pen(home)   # away team's pen (home hitters face it)
             home_pen = _pen(away)   # home team's pen (away hitters face it)
             h_rest, a_rest = _rest_info(home), _rest_info(away)
@@ -3771,7 +3795,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         _gp_pit = (list(pitcher_k_result.get("all", [])) + list(pitcher_k_result.get("picks", [])))
         for _bk in pitcher_props.values():
             _gp_pit += list(_bk.get("all", [])) + list(_bk.get("picks", []))
-        game_predictions = _build_game_predictions(team_schedule, _gp_hit, _gp_pit, run_date, emit)
+        game_predictions = _build_game_predictions(team_schedule, _gp_hit, _gp_pit, run_date, emit, mlb_probable=mlb_probable)
         emit({"type": "log", "msg": f"  ✅ Game Predictor: {len(game_predictions)} game(s) modeled"})
     except Exception as _exc:
         emit({"type": "log", "msg": f"⚠️ Game Predictor skipped: {_exc}"})
