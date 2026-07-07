@@ -2652,6 +2652,11 @@ _LOOKUP_TEAMS: dict = {}     # season -> {team_id: name}
 _LOOKUP_ABBR: dict = {}      # season -> {team_id: abbrev}
 
 
+def _norm_name(s: str) -> str:
+    """Lowercase + strip diacritics so 'García' == 'Garcia' in lookups."""
+    return ''.join(c for c in _ud.normalize('NFD', s) if _ud.category(c) != 'Mn').lower()
+
+
 def _load_lookup_index(season: str):
     import requests as _rq
     MLB = "https://statsapi.mlb.com/api/v1"
@@ -2672,7 +2677,7 @@ def _load_lookup_index(season: str):
                 nm  = (p.get("fullName") or "").strip()
                 tid = (p.get("currentTeam") or {}).get("id")
                 if nm and tid:
-                    idx[nm.lower()] = {"id": p["id"], "team_id": tid, "full": nm}
+                    idx[_norm_name(nm)] = {"id": p["id"], "team_id": tid, "full": nm}
         except Exception:
             pass
         _LOOKUP_PLAYERS[season] = idx
@@ -2685,7 +2690,7 @@ def api_lookup(name: str, date_str: str):
     # API calls below never stall the event loop / SSE progress stream.
     import requests as _rq
     MLB = "https://statsapi.mlb.com/api/v1"
-    q = (name or "").strip().lower()
+    q = _norm_name((name or "").strip())
     if len(q) < 3:
         return {"found": False, "msg": "Type at least 3 letters of a name."}
 
@@ -2821,7 +2826,7 @@ def api_lookup_matches(name: str, date_str: str):
     # Lightweight: EVERY player whose name matches `name` AND is in a game today
     # (identity + game info only, no per-player stat calls). Lets the search show
     # both same-name players (e.g. the Contreras brothers), not just the one pick.
-    q = (name or "").strip().lower()
+    q = _norm_name((name or "").strip())
     if len(q) < 3:
         return {"players": []}
     season = (date_str or "")[:4] or "2026"
@@ -2856,7 +2861,7 @@ def api_player_deep(name: str = "", date_str: str = ""):
     # search pop-up can show one consolidated card. One MLB gameLog call.
     import requests as _rq
     MLB = "https://statsapi.mlb.com/api/v1"
-    q = (name or "").strip().lower()
+    q = _norm_name((name or "").strip())
     if len(q) < 3:
         return {"found": False, "msg": "Type at least 3 letters."}
     season = (date_str or "")[:4] or "2026"
