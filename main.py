@@ -2941,11 +2941,14 @@ def api_player_deep(name: str = "", date_str: str = ""):
         # season series-game split (G1/G2/G3+) from full regular-season gameLog:
         # walk chronologically, numbering games within each run vs the same opp+venue
         buckets = {"g1": [0, 0], "g2": [0, 0], "g3": [0, 0]}  # [ab, hits]
+        want_home = (side == "HOME") if side else None
         prev_key = None; cnt = 0
         for sp in splits:
             if (sp.get("gameType") or "R") != "R":
                 continue
-            key = ((sp.get("opponent") or {}).get("id"), bool(sp.get("isHome")))
+            if want_home is not None and bool(sp.get("isHome")) != want_home:
+                continue
+            key = (sp.get("opponent") or {}).get("id")
             cnt = 1 if key != prev_key else cnt + 1
             prev_key = key
             bk = "g1" if cnt == 1 else ("g2" if cnt == 2 else "g3")
@@ -6194,7 +6197,7 @@ function _deepCard(d){
     +'</div>'):'';
   var sr=d.series||{};
   var hasSeries=(sr.g1&&sr.g1.ab)||(sr.g2&&sr.g2.ab)||(sr.g3&&sr.g3.ab);
-  var seriesRow=hasSeries?('<div style="color:#fbbf24;font-weight:700;font-size:.76rem;letter-spacing:.04em;margin-bottom:6px">SERIES SPLIT &#183; GAME OF SERIES</div>'
+  var seriesRow=hasSeries?('<div style="color:#fbbf24;font-weight:700;font-size:.76rem;letter-spacing:.04em;margin-bottom:6px">SERIES SPLIT &#183; '+(tside||'GAME OF SERIES')+'</div>'
     +'<div style="display:flex;gap:5px;flex-wrap:nowrap;margin-bottom:14px">'
     +_deepSplit('GAME 1',sr.g1,tsg==='g1')+_deepSplit('GAME 2',sr.g2,tsg==='g2')+_deepSplit('GAME 3+',sr.g3,tsg==='g3')
     +'</div>'):'';
