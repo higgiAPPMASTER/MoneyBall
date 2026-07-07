@@ -52,6 +52,7 @@ _PK_ARSENAL_CACHE: dict = {}   # {pitcher_id: {pitch_type: usage_pct}}
 _PK_BATTER_WOBA_CACHE: dict = {}  # {batter_id: {pitch_type: woba}}
 _PK_PITCH_LOADED:  set  = set()   # years fetched for pitch-type data
 _PK_LINEUP_MAP:    dict = {}      # {norm_team: [batter_id_int]} — tonight's lineups
+_CAREER_HA_ERA_CACHE: dict = {}  # {(pitcher_id, side): era | None}
 
 # ── Best-price book selection ──────────────────────────────────────────────
 # Show the BEST price across ALL sportsbooks; big US books win on ties.
@@ -557,6 +558,35 @@ def career_ha_ks_vs_opp(pitcher_id: int, side: str, opp_name: str) -> dict:
             "avg_er": avg_er, "er_list": er_list,
             "avg_outs": avg_outs, "outs_list": outs_list,
             "avg_bb": avg_bb, "bb_list": bb_list, "vs_opp_log": vs_log}
+
+
+def career_ha_era(pitcher_id: int, side: str) -> float | None:
+    """Lifetime ERA in home starts (side='HOME') or away starts (side='AWAY').
+    Sums ER + IP across K_SEASONS game logs filtered to that venue, returns
+    9*ER/IP. Requires at least 3 qualifying starts (MIN_IP_START each). Cached.
+    Game logs are already cached by _get_pitching_logs so these calls are cheap."""
+    key = (pitcher_id, side)
+    if key in _CAREER_HA_ERA_CACHE:
+        return _CAREER_HA_ERA_CACHE[key]
+    is_home = (side == "HOME")
+    tot_er = 0.0; tot_ip = 0.0; n_starts = 0
+    for season in reversed(K_SEASONS):
+        splits = _get_pitching_logs(pitcher_id, season)
+        for sp in splits:
+            stat = sp.get("stat", {})
+            if int(stat.get("gamesStarted", 0) or 0) < 1:
+                continue
+            if sp.get("isHome") != is_home:
+                continue
+            ip_f = _ip_to_float(stat.get("inningsPitched", "0"))
+            if ip_f < MIN_IP_START:
+                continue
+            tot_er += int(stat.get("earnedRuns", 0) or 0)
+            tot_ip += ip_f
+            n_starts += 1
+    result = round(tot_er / tot_ip * 9, 2) if n_starts >= 3 and tot_ip > 0 else None
+    _CAREER_HA_ERA_CACHE[key] = result
+    return result
 
 
 def _fetch_probable_starters(run_date: str) -> list:
@@ -1502,6 +1532,8 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                  "max_k": hist["max_k"] if hist else None,
                  "avg_ip": hist["avg_ip"] if hist else None,
                  "era":    hist["era"]    if hist else None,
+                 "era_home": career_ha_era(pid, "HOME"),
+                 "era_away": career_ha_era(pid, "AWAY"),
                  "avg_hits":   hist["avg_hits"]   if hist else None,
                  "avg_er":     hist["avg_er"]     if hist else None,
                  "avg_outs":   hist["avg_outs"]   if hist else None,
@@ -1605,6 +1637,8 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                 "max_k": max(k_list2) if k_list2 else None,
                 "avg_ip": hist2["avg_ip"] if hist2 else None,
                 "era": hist2["era"] if hist2 else None,
+                "era_home": career_ha_era(pid2, "HOME") if pid2 else None,
+                "era_away": career_ha_era(pid2, "AWAY") if pid2 else None,
                 "avg_hits": hist2["avg_hits"] if hist2 else None,
                 "avg_er":   hist2["avg_er"]   if hist2 else None,
                 "avg_outs": hist2["avg_outs"] if hist2 else None,
