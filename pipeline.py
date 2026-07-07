@@ -1394,10 +1394,11 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
     the whole thing is wrapped per-game in try/except so one bad game can't sink
     the slate. Returns a list of prediction dicts the frontend renders."""
     try:
-        from under_picks import _team_match
+        from under_picks import _team_match, _get_s1_vs_pitcher as _vsp_fn
     except Exception:
         def _team_match(a, b):
             return (a or "").strip().lower() == (b or "").strip().lower()
+        _vsp_fn = None
 
     # game O/U totals (reuse the pitcher_k fetch; cached for the run)
     _lookup_total = None
@@ -1622,6 +1623,59 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
     def _tier(favw):
         return "STRONG" if favw >= 60 else ("MODERATE" if favw >= 55 else "LEAN")
 
+    # ── Career vs starter (batter H2H vs today's specific pitcher) ────────────
+    _pit_id_by_team = {}
+    if mlb_probable:
+        for _tn, _pi in mlb_probable.items():
+            if _pi.get("id"):
+                _pit_id_by_team[_tn] = _pi["id"]
+
+    def _opp_pit_id(team):
+        """Return the MLB ID of today's probable starter for 'team', or None."""
+        for _tn, _pid in _pit_id_by_team.items():
+            if _team_match(_tn, team):
+                return _pid
+        return None
+
+    def _vsp_crush(team, opp_pit_id):
+        """How well the team's hitters have historically hit this specific starter.
+        Returns {count, avg_ba, mult, label}. mult nudges the team's run projection
+        (±5% cap). Requires ≥5 career AB per hitter to count. Cache-safe — the
+        _vsp_fn (_get_s1_vs_pitcher) is already warmed for hit-pool hitters."""
+        if not opp_pit_id or not _vsp_fn:
+            return {"count": 0, "avg_ba": None, "mult": 1.0, "label": "no H2H data"}
+        hs = _lookup(team, hit_by_team) or []
+        bas = []
+        seen: set = set()
+        for _h in hs:
+            _pid = _h.get("player_id")
+            if not _pid or _pid in seen:
+                continue
+            seen.add(_pid)
+            try:
+                _vsp = _vsp_fn(_pid, opp_pit_id)
+                if _vsp and (_vsp.get("ab") or 0) >= 5 and _vsp.get("ba") is not None:
+                    bas.append(_vsp["ba"])
+            except Exception:
+                continue
+        crushers = sum(1 for b in bas if b >= 0.300)
+        avg_ba   = round(sum(bas) / len(bas), 3) if bas else None
+        n        = len(bas)
+        if n == 0:
+            mult = 1.0
+        else:
+            # +1.2% per crusher; average BA quality nudges ±2% on top; cap ±5%
+            mult = max(0.95, min(1.05, 1.0 + crushers * 0.012))
+            if avg_ba is not None:
+                mult *= max(0.98, min(1.02, 1.0 + (avg_ba - 0.265) * 0.40))
+                mult  = max(0.95, min(1.05, mult))
+        if n == 0:
+            label = "no H2H history"
+        else:
+            label = ("%d crushing · .%03d avg (%d w/ H2H)"
+                     % (crushers, int((avg_ba or 0) * 1000), n))
+        return {"count": crushers, "avg_ba": avg_ba, "mult": mult, "label": label, "n": n}
+
     out = []
     for home, sched in (team_schedule or {}).items():
         if (sched or {}).get("side") != "HOME":
@@ -1638,13 +1692,15 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
 
             h_off, a_off = _offense(home), _offense(away)
             h_sp,  a_sp  = _starter(home, True), _starter(away, False)   # each team's OWN starter; home uses era_home, away uses era_away
+            h_vsp = _vsp_crush(home, _opp_pit_id(away))   # home hitters vs away starter
+            a_vsp = _vsp_crush(away, _opp_pit_id(home))   # away hitters vs home starter
             away_pen = _pen(home)   # away team's pen (home hitters face it)
             home_pen = _pen(away)   # home team's pen (away hitters face it)
             h_rest, a_rest = _rest_info(home), _rest_info(away)
             h_rm,   a_rm   = _rest_mult(h_rest), _rest_mult(a_rest)
 
-            projH = LEAGUE_RPG * h_off["mult"] * a_sp["mult"] * away_pen["mult"] * env * ump * HFA * h_rm
-            projA = LEAGUE_RPG * a_off["mult"] * h_sp["mult"] * home_pen["mult"] * env * ump * a_rm
+            projH = LEAGUE_RPG * h_off["mult"] * a_sp["mult"] * away_pen["mult"] * h_vsp["mult"] * env * ump * HFA * h_rm
+            projA = LEAGUE_RPG * a_off["mult"] * h_sp["mult"] * home_pen["mult"] * a_vsp["mult"] * env * ump * a_rm
             projH = max(1.5, min(9.0, projH)); projA = max(1.5, min(9.0, projA))
 
             ph, pa = projH ** EXP, projA ** EXP
@@ -1713,6 +1769,7 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
             mag_lin = (a_off["out_n"] - h_off["out_n"])             # >0 home healthier
             mag_plat = ((h_off["plat_ba"] or 0) - (a_off["plat_ba"] or 0))
             mag_rest = (h_rm - a_rm)   # >0 home fresher
+            mag_vsp  = h_vsp["count"] - a_vsp["count"]   # >0 home crushes opp starter more
 
             def _pct(v):  return (str(round(v * 100)) + "% hit prob") if v is not None else "—"
             def _era(v):  return ("%.2f ERA" % v) if v is not None else "n/a"
@@ -1752,6 +1809,8 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
                  "edge": _eabbr(mag_sp) if abs(mag_sp) >= 0.15 else "even"},
                 {"name": "Starter recent form", "home": _rform(h_sp), "away": _rform(a_sp),
                  "edge": (_eabbr(mag_recent) if (r_h is not None and r_a is not None and abs(mag_recent) >= 0.40) else "even")},
+                {"name": "Career vs starter", "home": h_vsp["label"], "away": a_vsp["label"],
+                 "edge": _eabbr(mag_vsp) if abs(mag_vsp) >= 2 else "even"},
                 {"name": "Recent form (L10)", "home": ("%d up / %d down" % (h_off["hot"], h_off["cold"])),
                  "away": ("%d up / %d down" % (a_off["hot"], a_off["cold"])),
                  "edge": _eabbr(mag_form) if abs(mag_form) >= 1 else "even"},
@@ -1790,6 +1849,12 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
             if r_h is not None and r_a is not None and abs(mag_recent) >= 0.40 and _eabbr(mag_recent) == pick_abbr:
                 sp2 = h_sp if fav_home else a_sp
                 cands.append((abs(mag_recent) * 4, pick_abbr + " starter hot (%.2f ERA L5)" % sp2["recent_era"]))
+            if abs(mag_vsp) >= 2:
+                _cv = h_vsp if mag_vsp > 0 else a_vsp
+                _ca = h_abbr if mag_vsp > 0 else a_abbr
+                cands.append((abs(mag_vsp) * 5 * (1 if sign * (1 if mag_vsp > 0 else -1) > 0 else 0.01),
+                              "%s lineup owns opp starter (%d batting .300+, .%03d avg)"
+                              % (_ca, _cv["count"], int((_cv["avg_ba"] or 0) * 1000))))
             if abs(mag_form) >= 1:
                 nhot = (h_off["hot"] if fav_home else a_off["hot"])
                 ncold = (a_off["cold"] if fav_home else h_off["cold"])
