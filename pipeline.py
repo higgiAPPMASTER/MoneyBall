@@ -2734,6 +2734,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     # the first two gates (one small batched statSplits sitCodes=[h,a] call).
     triple_split_list = []
     _fss_stage = []  # 5 Star Split pool: day/night + series survivors, PRE-home-gate
+    _tsc_by_id = {}  # shared player pool; populated inside TSC try, reused by Hot Hitters
     try:
         _TSC_MIN = 0.275
         _tsc_hit_ids = set()
@@ -3453,6 +3454,142 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         five_star_split_list = []
         emit({"type": "log", "msg": f"⚠️ 5 Star Split skipped: {_exc}"})
 
+    # ── Triple Split Club Hot Hitters ──────────────────────────────────────────
+    # Last-10 version of TSC — ALL three splits use recent game logs:
+    #   Gate 1: last-10 H/A BA > .270 (venue-matched)
+    #   Gate 2: full-season day/night BA > .270 (reuses s5 already on pick)
+    #   Gate 3: last-10 G# H/A BA > .270 (same series position, game logs)
+    hot_split_list = []
+    try:
+        if _tsc_by_id:
+            from mlb_stats_splits import _get_game_logs as _tsch_gl
+            from datetime import datetime as _tsch_dt
+            _TSCH_MIN = 0.270
+            _TSCH_CY = int(str(run_date)[:4])
+
+            def _tsch_d3(v):
+                _d = "%.3f" % v
+                return _d[1:] if _d.startswith("0.") else _d
+
+            def _tsch_gno(_r):
+                _ss = _r.get("series_splits") or {}
+                _g = _r.get("series_game") or _ss.get("today_pos") or 1
+                try:
+                    _g = int(_g)
+                except Exception:
+                    _g = 1
+                return 1 if _g < 1 else (3 if _g > 3 else _g)
+
+            def _tsch_l10_ser(player_id, side, series_pos):
+                """Last-10 H/A games matching series position; returns (ba, games)."""
+                _want = (side == "HOME")
+                _all = []
+                for _yr in range(_TSCH_CY, _TSCH_CY - 2, -1):
+                    for _sp in _tsch_gl(player_id, _yr):
+                        if bool(_sp.get("isHome")) != _want:
+                            continue
+                        _st = _sp.get("stat", {}) or {}
+                        _ab = int(_st.get("atBats", 0) or 0)
+                        if _ab < 1:
+                            continue
+                        _all.append({
+                            "date": _sp.get("date", ""),
+                            "ab": _ab, "h": int(_st.get("hits", 0) or 0),
+                            "opp": (_sp.get("opponent", {}) or {}).get("name", ""),
+                        })
+                _all.sort(key=lambda x: x["date"])
+                # annotate series position
+                for _i, _gg in enumerate(_all):
+                    _pos = 1
+                    for _j in range(_i - 1, -1, -1):
+                        _prev = _all[_j]
+                        if _prev["opp"].lower() != _gg["opp"].lower():
+                            break
+                        try:
+                            _gap = (_tsch_dt.strptime(_gg["date"], "%Y-%m-%d") -
+                                    _tsch_dt.strptime(_prev["date"], "%Y-%m-%d")).days
+                        except Exception:
+                            break
+                        if _gap > 4:
+                            break
+                        _pos += 1
+                    _gg["spos"] = _pos
+                _match = [_gg for _gg in reversed(_all) if _gg["spos"] == series_pos][:10]
+                if not _match:
+                    return None, 0
+                _h2 = sum(_gg["h"] for _gg in _match)
+                _ab2 = sum(_gg["ab"] for _gg in _match)
+                return (round(_h2 / _ab2, 3) if _ab2 > 0 else None), len(_match)
+
+            for _b, _r in _tsc_by_id.items():
+                _side = (_r.get("side") or "").upper()
+                if _side not in ("HOME", "AWAY"):
+                    continue
+                # Gate 2: full-season D/N BA (already stamped on pick as s5.ba)
+                try:
+                    _dn = float((_r.get("s5") or {}).get("ba") or 0) or None
+                except Exception:
+                    _dn = None
+                if _dn is None or _dn <= _TSCH_MIN:
+                    continue
+                # Gate 1: last-10 H/A BA
+                _l10_hav, _l10_ab, _l10_hg = _last10_ha_ba(int(_b), _side)
+                if _l10_hav is None or _l10_hav <= _TSCH_MIN:
+                    continue
+                # Gate 3: last-10 G# H/A BA
+                _gno = _tsch_gno(_r)
+                _l10_ser, _l10_ser_g = _tsch_l10_ser(int(_b), _side, _gno)
+                if _l10_ser is None or _l10_ser <= _TSCH_MIN:
+                    continue
+                # Passed all gates — look up hit odds
+                _ho = _r.get("hit_odds")
+                _bk = _r.get("book", "") if _ho is not None else ""
+                if _ho is None:
+                    try:
+                        _mk = _lookup_odds(_r)
+                        if _mk:
+                            _ho = _HIT_ODDS.get(_mk)
+                            _bk = _hit_book_label(_HIT_ODDS_BOOK.get(_mk))
+                    except Exception:
+                        pass
+                _from_hit = int(_b) in _tsc_hit_ids
+                hot_split_list.append({
+                    "name": _r.get("name", ""),
+                    "full_name": _r.get("full_name", _r.get("name", "")),
+                    "batter_id": _b,
+                    "player_id": _r.get("player_id"),
+                    "team": _r.get("team", ""),
+                    "opp": _r.get("opp", ""),
+                    "pitcher": _r.get("pitcher", ""),
+                    "side": _side,
+                    "dn_label": _r.get("dn_label", ""),
+                    "s5": _r.get("s5"),
+                    "series_splits": _r.get("series_splits"),
+                    "series_game": _r.get("series_game"),
+                    "series_of": _r.get("series_of"),
+                    "series_gno": _gno,
+                    "game_start": _r.get("game_start"),
+                    "recent_hit_log": _r.get("recent_hit_log"),
+                    "hit_odds": _ho,
+                    "book": _bk,
+                    "ha_ba": _l10_hav, "ha_disp": _tsch_d3(_l10_hav), "ha_g": _l10_hg,
+                    "dn_ba": _dn,    "dn_disp": _tsch_d3(_dn),
+                    "ser_ba": _l10_ser, "ser_disp": _tsch_d3(_l10_ser), "ser_g": _l10_ser_g,
+                    "tsch_min": min(_l10_hav, _dn, _l10_ser),
+                    "matchup_prob": (_r.get("matchup_prob") if _from_hit else None),
+                    "ev":      (_r.get("ev")      if _from_hit else None),
+                    "ev_prob": (_r.get("ev_prob") if _from_hit else None),
+                    "edge":    (_r.get("edge")    if _from_hit else None),
+                })
+            hot_split_list.sort(key=lambda x: x["tsch_min"], reverse=True)
+            hot_split_list = hot_split_list[:20]
+            emit({"type": "log",
+                  "msg": f"  🔥 Hot Hitters: {len(hot_split_list)} hitters clear "
+                         f">.270 in L10 H/A, D/N full-season & L10 G#"})
+    except Exception as _exc:
+        hot_split_list = []
+        emit({"type": "log", "msg": f"⚠️ Hot Hitters skipped: {_exc}"})
+
     # ── Phase B: combined env + umpire RE-RANKING (reorder only) ──
     # Offense axis = weather/park env × umpire RUN factor (a wide strike zone
     # suppresses offense; a tight zone inflates it). Pitcher Walks uses the
@@ -3642,7 +3779,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     elapsed = round(time.time() - t_start, 1)
     result = {
         "date": run_date, "top9": top9, "also_ran": also_ran,
-        "under_picks": under_picks_list, "runs_picks": runs_picks_list, "tb_picks": tb_picks_list, "tb_over_picks": tb_over_picks_list, "rbi_picks": rbi_picks_list, "walks_picks": walks_picks_list, "hrr_picks": hrr_picks_list, "hrr_special_picks": hrr_special_list, "triple_split_picks": triple_split_list, "five_star_split_picks": five_star_split_list, "hr_picks": hr_picks_list,
+        "under_picks": under_picks_list, "runs_picks": runs_picks_list, "tb_picks": tb_picks_list, "tb_over_picks": tb_over_picks_list, "rbi_picks": rbi_picks_list, "walks_picks": walks_picks_list, "hrr_picks": hrr_picks_list, "hrr_special_picks": hrr_special_list, "triple_split_picks": triple_split_list, "five_star_split_picks": five_star_split_list, "hot_split_picks": hot_split_list, "hr_picks": hr_picks_list,
         "all_qualified": era_qualified,
         "game_predictions": game_predictions,
         "dq_s1_s3": [x for x in results if x["dq"] and x not in dn_dq and x not in era_dq and x not in dq_lineup and x not in s4_dq],
