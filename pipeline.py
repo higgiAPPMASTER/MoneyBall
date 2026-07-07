@@ -1446,7 +1446,8 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
             continue
         d = sp_by_team.setdefault(t, {"era": None, "proj_k": None, "name": "",
                                       "r_er": None, "r_outs": None,
-                                      "era_home": None, "era_away": None})
+                                      "era_home": None, "era_away": None,
+                                      "pitcher_id": None, "hand": None})
         e = _gp_num(sp.get("era")); pk = _gp_num(sp.get("proj_k"))
         rer = _gp_num(sp.get("recent_avg_er")); rou = _gp_num(sp.get("recent_avg_outs"))
         eh  = _gp_num(sp.get("era_home")); ea = _gp_num(sp.get("era_away"))
@@ -1454,9 +1455,12 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
         if d["proj_k"]   is None and pk  is not None: d["proj_k"]   = pk
         if d["r_er"]     is None and rer is not None: d["r_er"]     = rer
         if d["r_outs"]   is None and rou is not None: d["r_outs"]   = rou
-        if d["era_home"] is None and eh  is not None: d["era_home"] = eh
-        if d["era_away"] is None and ea  is not None: d["era_away"] = ea
-        if not d["name"] and sp.get("name"):          d["name"]     = sp.get("name")
+        if d["era_home"]   is None and eh  is not None: d["era_home"]   = eh
+        if d["era_away"]   is None and ea  is not None: d["era_away"]   = ea
+        if not d["name"] and sp.get("name"):            d["name"]       = sp.get("name")
+        if d["pitcher_id"] is None:
+            d["pitcher_id"] = (sp.get("pitcher_id") or sp.get("player_id")
+                               or sp.get("mlb_id"))
     # Fill in name from mlb_probable for any team whose starter didn't appear in
     # the pitcher_k pool (e.g. no odds posted today → no K line → Wheeler shows TBD).
     if mlb_probable:
@@ -1474,7 +1478,38 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
             if not matched:
                 sp_by_team[tn] = {"era": None, "proj_k": None, "name": nm,
                                   "r_er": None, "r_outs": None,
-                                  "era_home": None, "era_away": None}
+                                  "era_home": None, "era_away": None,
+                                  "pitcher_id": pi.get("id"), "hand": None}
+            else:
+                # backfill pitcher_id for starters already in pool from Odds API
+                for _k in list(sp_by_team.keys()):
+                    if _team_match(_k, tn) and not sp_by_team[_k].get("pitcher_id"):
+                        sp_by_team[_k]["pitcher_id"] = pi.get("id")
+                        break
+
+    # ── Fill missing recent-form + pitcher hands for non-Odds-API starters ─────
+    try:
+        from pitcher_k import fetch_recent_sp_form as _fetch_rform
+        _sp_no_form = [(k, v["pitcher_id"]) for k, v in sp_by_team.items()
+                       if v.get("r_er") is None and v.get("pitcher_id")]
+        if _sp_no_form:
+            with _TPEx(max_workers=6) as _ex:
+                _rfs = list(_ex.map(lambda x: _fetch_rform(x[1]), _sp_no_form))
+            for (_sk, _), _rf in zip(_sp_no_form, _rfs):
+                if _rf.get("r_er")   is not None: sp_by_team[_sk]["r_er"]   = _rf["r_er"]
+                if _rf.get("r_outs") is not None: sp_by_team[_sk]["r_outs"] = _rf["r_outs"]
+    except Exception:
+        pass
+    try:
+        _pids_hand = [(k, v["pitcher_id"]) for k, v in sp_by_team.items()
+                      if v.get("pitcher_id") and v.get("hand") is None]
+        if _pids_hand:
+            with _TPEx(max_workers=6) as _ex:
+                list(_ex.map(lambda x: _get_pitcher_hand(x[1]), _pids_hand))
+            for _sk, _pid in _pids_hand:
+                sp_by_team[_sk]["hand"] = _get_pitcher_hand(_pid)
+    except Exception:
+        pass
 
     # ── hitters per team + slate-mean matchup prob (self-calibrating baseline) ──
     hit_by_team, all_mp = {}, []
@@ -1496,7 +1531,7 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
                 return v
         return None
 
-    def _offense(team):
+    def _offense(team, opp_hand=None):
         hs = _lookup(team, hit_by_team) or []
         mps = [m for m in (_gp_num(h.get("matchup_prob")) for h in hs) if m is not None]
         hot  = sum(1 for h in hs if (_gp_num(h.get("hot_bonus"), 0) or 0) > 0 or h.get("hot"))
@@ -1508,23 +1543,41 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
             avg, tilt = None, 1.0
         tilt *= (1.0 + max(-0.06, min(0.06, (hot - cold) * 0.015)))
         # lineup availability: dock offense when projected regulars are OUT
-        out_n = len({(h.get("player_id"), h.get("name")) for h in hs
+        out_n = len({(h.get("player_id") or h.get("batter_id"), h.get("name")) for h in hs
                      if h.get("lineup_status") == "NOT_IN_LINEUP"})
         lin_pen = min(0.08, out_n * 0.02)
         tilt *= (1.0 - lin_pen)
         # platoon: team hitters' BA vs the starter hand they face tonight
+        # Hitters with a pre-stamped "platoon" field use it directly.
+        # Hitters missing it (non-hit categories) fall back to inline _get_batter_platoon.
         p_bas, p_adv, seen_pl = [], 0, set()
         for h in hs:
-            pid = h.get("player_id")
-            if pid in seen_pl:
+            pid = h.get("player_id") or h.get("batter_id")
+            if not pid or pid in seen_pl:
                 continue
+            seen_pl.add(pid)
             pl = h.get("platoon") or {}
             ba = _gp_num(pl.get("ba"))
             if ba is not None and (pl.get("ab") or 0) >= 10:
                 p_bas.append(ba)
                 if pl.get("adv"):
                     p_adv += 1
-                seen_pl.add(pid)
+            elif opp_hand and not pl:
+                # Compute platoon inline from cache (no new API call when already fetched)
+                try:
+                    _pr = _get_batter_platoon(pid)
+                    if _pr and opp_hand:
+                        _bh = _pr.get("bat_hand")
+                        _eff = ("L" if opp_hand == "R" else "R") if _bh == "S" else _bh
+                        _side = "vs_r" if opp_hand == "R" else "vs_l"
+                        _sp = _pr.get(_side) or {}
+                        _ba = _sp.get("ba"); _ab = _sp.get("ab", 0)
+                        if _ba is not None and _ab >= 10:
+                            p_bas.append(_ba)
+                            if _eff and _eff != opp_hand:
+                                p_adv += 1
+                except Exception:
+                    pass
         if p_bas:
             plat_ba = sum(p_bas) / len(p_bas)
             plat_tilt = max(-0.05, min(0.05, (plat_ba - 0.245) * 0.60))
@@ -1648,13 +1701,13 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
         bas = []
         seen: set = set()
         for _h in hs:
-            _pid = _h.get("player_id")
+            _pid = _h.get("player_id") or _h.get("batter_id")
             if not _pid or _pid in seen:
                 continue
             seen.add(_pid)
             try:
                 _vsp = _vsp_fn(_pid, opp_pit_id)
-                if _vsp and (_vsp.get("ab") or 0) >= 5 and _vsp.get("ba") is not None:
+                if _vsp and (_vsp.get("ab") or 0) >= 3 and _vsp.get("ba") is not None:
                     bas.append(_vsp["ba"])
             except Exception:
                 continue
@@ -1690,7 +1743,10 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
             away_hs = _lookup(away, hit_by_team) or []
             env, ump = _game_const(list(home_hs) + list(away_hs))
 
-            h_off, a_off = _offense(home), _offense(away)
+            _h_opp_sp = _lookup(away, sp_by_team) or {}
+            _a_opp_sp = _lookup(home, sp_by_team) or {}
+            h_off = _offense(home, opp_hand=_h_opp_sp.get("hand"))
+            a_off = _offense(away, opp_hand=_a_opp_sp.get("hand"))
             h_sp,  a_sp  = _starter(home, True), _starter(away, False)   # each team's OWN starter; home uses era_home, away uses era_away
             h_vsp = _vsp_crush(home, _opp_pit_id(away))   # home hitters vs away starter
             a_vsp = _vsp_crush(away, _opp_pit_id(home))   # away hitters vs home starter
