@@ -1171,6 +1171,28 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "edge": p.get("edge"),
         })
 
+    # Hot Hitters Split — last-10 version of TSC with .270 threshold; own record.
+    # Kept OUT of main Track Record (_TRK_KEYS). Has its own button + modal.
+    hot_split_rows = []
+    for p in (picks.get("hot_split_picks") or [])[:20]:
+        st = _lookup(p.get("batter_id"), p.get("name"))
+        actual = st["hits"] if st else None
+        hot_split_rows.append({
+            "name": p.get("name", ""),
+            "team": p.get("team", ""),
+            "category": "Hot Hitters", "side": "OVER",
+            "pick": "OVER 0.5 Hits (Hot Hitters)",
+            "odds": p.get("hit_odds"),
+            "line": 0.5,
+            "actual": actual,
+            "stat": "Hits",
+            "result": _grade("OVER", 0.5, actual, (st or {}).get("final", False)),
+            "game_status": (st or {}).get("status", "—"),
+            "ev": p.get("ev"),
+            "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
+            "edge": p.get("edge"),
+        })
+
     # Triple Split Club — "to record a hit", top 20 for its own forward-only
     # record. Kept OUT of main Track Record (_TRK_KEYS) to avoid double-counting
     # with the regular Hits board (same market). Has its own button + modal.
@@ -1629,6 +1651,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
         "batter_walks":  walks_rows,
         "hrr":           hrr_rows,
         "hrr_special":   hrr_special_rows,
+        "hot_split":     hot_split_rows,
         "triple_split":  triple_split_rows,
         "five_star_split": five_star_split_rows,
         "pitcher_ks":    pitcher_ks,
@@ -1769,7 +1792,7 @@ def _aggregate_graded(graded: dict) -> dict:
     """Collapse a graded day into {category: {side: [W, L]}} counting only decided picks
     that had odds posted — no-odds picks are excluded from the record."""
     agg: dict = {}
-    for key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "hr", "batter_walks", "hrr", "hrr_special", "triple_split", "five_star_split", "pitcher_ks", "pitcher_props", "top10_batter", "top10_pitcher", "overflow", "value_plays"):
+    for key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "hr", "batter_walks", "hrr", "hrr_special", "hot_split", "triple_split", "five_star_split", "pitcher_ks", "pitcher_props", "top10_batter", "top10_pitcher", "overflow", "value_plays"):
         for r in graded.get(key, []):
             res = r.get("result")
             if res not in ("WIN", "LOSS"):
@@ -1794,7 +1817,7 @@ def _detail_graded(graded: dict) -> list:
     fields an earnings sheet needs: player, team, category, side, pick, odds,
     line, result. No-odds picks are excluded — they don't count in the record."""
     out = []
-    for key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "hr", "batter_walks", "hrr", "hrr_special", "triple_split", "five_star_split", "pitcher_ks", "pitcher_props", "top10_batter", "top10_pitcher", "overflow", "value_plays"):
+    for key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "hr", "batter_walks", "hrr", "hrr_special", "hot_split", "triple_split", "five_star_split", "pitcher_ks", "pitcher_props", "top10_batter", "top10_pitcher", "overflow", "value_plays"):
         for r in graded.get(key, []):
             res = r.get("result")
             if res not in ("WIN", "LOSS"):
@@ -3558,6 +3581,12 @@ _HTML = """
           <div id="hrr-special-body" class="mlb-picks-grid"></div>
           <div id="hrr-special-more"></div>
         </div>
+        <div class="card p-6 hidden" id="hot-split-card" style="border-color:rgba(251,146,60,.4)">
+          <div class="section-hdr" style="color:#fb923c">🔥 Hot Hitters Split</div>
+          <div style="font-size:.72rem;color:#94a3b8;margin:-4px 0 8px;line-height:1.6">Hitters batting over .270 in ALL THREE recent splits: Last-10 H/A BA &middot; Full-season Day/Night BA &middot; Last-10 G# H/A BA. Bet: to record a hit.</div>
+          <div id="hot-split-body" class="mlb-picks-grid"></div>
+          <div id="hot-split-more"></div>
+        </div>
         <div class="card p-6 hidden" id="triple-split-card" style="border-color:rgba(34,211,238,.4)">
           <div class="section-hdr" style="color:#22d3ee">🔱 Triple Split Club</div>
           <div style="font-size:.72rem;color:#94a3b8;margin:-4px 0 8px;line-height:1.6">Hitters batting over .275 in ALL THREE of today&#39;s splits: Home/Away &middot; Day/Night &middot; Game of series. Bet: to record a hit.</div>
@@ -3935,7 +3964,7 @@ function _filterStarted(result){
   if(!result) return result;
   var r=Object.assign({},result);
   function f(a){return (a||[]).filter(function(p){return !_started(p);});}
-  r.top9=f(r.top9); r.also_ran=f(r.also_ran); r.under_picks=f(r.under_picks); r.runs_picks=f(r.runs_picks); r.tb_picks=f(r.tb_picks); r.tb_over_picks=f(r.tb_over_picks||[]); r.hrr_picks=f(r.hrr_picks||[]); r.hrr_special_picks=f(r.hrr_special_picks||[]); r.triple_split_picks=f(r.triple_split_picks||[]); r.five_star_split_picks=f(r.five_star_split_picks||[]); r.rbi_picks=f(r.rbi_picks||[]); r.hr_picks=f(r.hr_picks||[]); r.walks_picks=f(r.walks_picks||[]);
+  r.top9=f(r.top9); r.also_ran=f(r.also_ran); r.under_picks=f(r.under_picks); r.runs_picks=f(r.runs_picks); r.tb_picks=f(r.tb_picks); r.tb_over_picks=f(r.tb_over_picks||[]); r.hrr_picks=f(r.hrr_picks||[]); r.hrr_special_picks=f(r.hrr_special_picks||[]); r.hot_split_picks=f(r.hot_split_picks||[]); r.triple_split_picks=f(r.triple_split_picks||[]); r.five_star_split_picks=f(r.five_star_split_picks||[]); r.rbi_picks=f(r.rbi_picks||[]); r.hr_picks=f(r.hr_picks||[]); r.walks_picks=f(r.walks_picks||[]);
   if(r.pitcher_k){
     r.pitcher_k=Object.assign({},r.pitcher_k);
     r.pitcher_k.picks=f(r.pitcher_k.picks);
@@ -4075,7 +4104,7 @@ function showResults(result) {
   if(typeof _renderGamePredictor==='function') _renderGamePredictor(result);
   // Hide all section cards FIRST — before any filtering — so stale cards from a
   // previous render can never persist if the filter or any later code throws.
-  ['top10-plays-card','value-plays-card','under-picks-card','tb-picks-card','tb-over-picks-card','hrr-special-card','triple-split-card','five-star-card','hrr-over-card','hrr-under-card','rbi-over-card','rbi-under-card','hr-over-card','hr-under-card','runs-over-card','runs-under-card','bwalk-over-card','bwalk-under-card','pitch-day-card','pitcher-all-card','k-over-card','k-under-card','prop-ha-over-card','prop-ha-under-card','prop-outs-over-card','prop-outs-under-card','prop-er-over-card','prop-er-under-card','prop-bb-over-card','prop-bb-under-card'].forEach(hide);
+  ['top10-plays-card','value-plays-card','under-picks-card','tb-picks-card','tb-over-picks-card','hrr-special-card','hot-split-card','triple-split-card','five-star-card','hrr-over-card','hrr-under-card','rbi-over-card','rbi-under-card','hr-over-card','hr-under-card','runs-over-card','runs-under-card','bwalk-over-card','bwalk-under-card','pitch-day-card','pitcher-all-card','k-over-card','k-under-card','prop-ha-over-card','prop-ha-under-card','prop-outs-over-card','prop-outs-under-card','prop-er-over-card','prop-er-under-card','prop-bb-over-card','prop-bb-under-card'].forEach(hide);
   // Odds-range filter: self-contained, uses the EXACT field each card displays.
   // Applied directly to the source data before _vBase / EV-filter so every
   // category is covered and there is nothing to guess or chain.
@@ -4115,6 +4144,7 @@ function showResults(result) {
       walks_picks: (result.walks_picks||[]).filter(function(p){return p.pick==='OVER'?_rok(p.over_odds):_rok(p.under_odds);}),
       hrr_picks:   (result.hrr_picks||[]).filter(function(p){return p.pick==='UNDER'?_rok(p.hrr_under_odds):_rok(p.hrr_over_odds);}),
       hrr_special_picks: (result.hrr_special_picks||[]).filter(function(p){return _rok(p.hrr_over_odds);}),
+      hot_split_picks:    (result.hot_split_picks||[]).filter(function(p){return _rok(p.hit_odds);}),
       triple_split_picks: (result.triple_split_picks||[]).filter(function(p){return _rok(p.hit_odds);}),
       pitcher_k:   _rpk?Object.assign({},_rpk,{picks:(_rpk.picks||[]).filter(function(p){return _rok(p.odds);}),all:(_rpk.all||[]).filter(function(p){return _rok(p.odds);})}):_rpk,
       pitcher_props:(function(){var out={};Object.keys(_rpp).forEach(function(m){var b=_rpp[m]||{};out[m]={picks:(b.picks||[]).filter(function(p){return _rok(p.odds);}),all:(b.all||[]).filter(function(p){return _rok(p.odds);})}; });return out;})(),
@@ -4126,6 +4156,7 @@ function showResults(result) {
         top9: [],
         also_ran: [],
         hrr_special_picks: [],
+        hot_split_picks: [],
         triple_split_picks: [],
         five_star_split_picks: [],
         pitcher_k: _renderSrc.pitcher_k ? Object.assign({}, _renderSrc.pitcher_k, {
@@ -4285,6 +4316,9 @@ function showResults(result) {
     _fillCard('hrr-under-card','hrr-under-body','hrr-under-more',hrrUnder,function(p,r){return _hrrCard(p,r,'hru');},'HRR Under','#ff8a65');
     const hrrSpecial = (view.hrr_special_picks||[]).filter(function(p){ return _oddsOk(p.hrr_over_odds); });
     _fillCard('hrr-special-card','hrr-special-body','hrr-special-more',hrrSpecial,function(p,r){return _hrrSpCard(p,r,'hrsp');},'HRR Special','#a78bfa');
+    window.__TSCH_REG__={};
+    const hotSplit = (view.hot_split_picks||[]).filter(function(p){ return _oddsOk(p.hit_odds); });
+    _fillCard('hot-split-card','hot-split-body','hot-split-more',hotSplit,function(p,r){return _hotSplitCard(p,r,'tsch');},'Hot Hitters Split','#fb923c');
     window.__TSC_REG__={};
     const tripleSplit = (view.triple_split_picks||[]).filter(function(p){ return _oddsOk(p.hit_odds); });
     _fillCard('triple-split-card','triple-split-body','triple-split-more',tripleSplit,function(p,r){return _tscCard(p,r,'tsc');},'Triple Split Club','#22d3ee');
@@ -5129,6 +5163,9 @@ function _mlbPool(){
     if(_underOk(od)){
       cands.push({type:'HRRSP',dir:'OVER',player:(p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'H+R+RBI',line:1.5,odds:od,conf:clampConf(92,i),reason:'⭐ Special Over 1.5 HRR · BA '+(p.vsp_ba_disp||'')+' vs P · '+(p.vsteam_score!=null?p.vsteam_score+'% vs team':'')+' · '+(p.l10_score!=null?p.l10_score+'% L10':''),src:p});
     }
+  });
+  (r.hot_split_picks||[]).forEach(function(p,i){
+    cands.push({type:'TSCH',dir:'OVER',player:(p.full_name||p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'Hits',line:0.5,odds:(p.hit_odds!=null?p.hit_odds:''),conf:clampConf(93,i),reason:'🔥 Hot Hitters · >.270 L10 H/A, D/N & G# · to record a hit vs '+(p.opp||''),src:p});
   });
   (r.triple_split_picks||[]).forEach(function(p,i){
     cands.push({type:'TSC',dir:'OVER',player:(p.full_name||p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'Hits',line:0.5,odds:(p.hit_odds!=null?p.hit_odds:''),conf:clampConf(94,i),reason:'🔱 Triple Split · >.275 H/A, D/N & series · to record a hit vs '+(p.opp||''),src:p});
@@ -7702,6 +7739,45 @@ function _hrrSpCard(p, rank, pfx) {
   </div>`;
 }
 
+function _hotSplitCard(p, rank, pfx) {
+  pfx = pfx || 'tsch';
+  const abbr = _mlbTeamAbbr(p.team);
+  const teamLogo = abbr ? `https://a.espncdn.com/i/teamlogos/mlb/500/${abbr}.png` : '';
+  const rnkColors = rank===1?['#fdba74','#000']:rank===2?['#fb923c','#000']:rank===3?['#f97316','#fff']:['#2a1505','#fb923c'];
+  const sideCls = p.side==='HOME'?'badge-home':'badge-away';
+  const od = p.hit_odds;
+  const odDisp = od!=null?(od>0?'+':'')+od:'—';
+  const dnLbl = p.dn_label||'Day/Night';
+  const gno = p.series_gno||p.series_game||'';
+  window.__TSCH_REG__=window.__TSCH_REG__||{}; window.__TSCH_REG__[pfx+rank]=p;
+  function _g(lbl,val){
+    return '<div style="display:flex;align-items:center;justify-content:space-between;font-size:.72rem;margin-top:4px">'
+      +'<span style="color:#94a3b8"><span style="color:#fb923c">&#10003;</span> '+lbl+'</span>'
+      +'<span style="color:#fed7aa;font-weight:700;font-family:monospace">'+val+'</span></div>';
+  }
+  return `<div class="mlb-pick-card" onclick="_hitForm(window.__TSCH_REG__['${pfx}${rank}'])" title="Click for recent form" style="cursor:pointer;border:1px solid rgba(251,146,60,.4)">
+    <div class="mlb-card-header" style="background:linear-gradient(135deg,#431407 0%,#1c0a02 100%)">${_cardHdr(rank,rnkColors,_catLbl('HOT','#fb923c'),teamLogo,p.team,_seriesTag(p,'O',false,2))}</div>
+    ${_nameBar(rank,rnkColors,p.batter_id,p.name)}
+    <div class="mlb-card-body">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <span style="font-size:.82rem;color:#94a3b8">vs <strong style="color:#fff">${p.opp||'—'}</strong></span>
+        <span class="badge ${sideCls}">${p.side}</span>
+      </div>
+      <div style="margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
+        <div style="font-size:.6rem;font-weight:800;letter-spacing:.07em;color:#fb923c;text-transform:uppercase">All 3 Recent Splits &gt; .270</div>
+        ${_g((p.side==='HOME'?'Home':'Away')+' BA (L10)', (p.ha_disp||'—')+(p.ha_g?' ('+p.ha_g+'g)':''))}
+        ${_g(dnLbl+' BA (full season)', p.dn_disp||'—')}
+        ${_g('Series G'+(gno||'?')+' BA (L10)', (p.ser_disp||'—')+(p.ser_g?' ('+p.ser_g+'g)':''))}
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;padding-top:8px;border-top:1px solid #1f1f1f">
+        <span style="font-size:.8rem;color:#fb923c;font-weight:900">TO RECORD A HIT</span>
+        <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}${_bookTag(p)}</span>
+      </div>
+    </div>
+  ${_betBtn(p,'Hot Hitters','OVER','hits','Hits',0.5,od)}
+  </div>`;
+}
+
 function _tscCard(p, rank, pfx) {
   pfx = pfx || 'tsc';
   const abbr = _mlbTeamAbbr(p.team);
@@ -7912,6 +7988,7 @@ function _renderCatBar(view){
     {icon:'📈',label:'TB Over',count:(view.tb_over_picks||[]).length,target:'tb-over-picks-card',tone:'over'},
     {icon:'⬇️',label:'TB Under',count:(view.tb_picks||[]).length,target:'tb-picks-card',tone:'under'},
     {icon:'⭐',label:'HRR SP',count:(view.hrr_special_picks||[]).length,target:'hrr-special-card'},
+    {icon:'🌡️',label:'Hot Hitters',count:(view.hot_split_picks||[]).length,target:'hot-split-card'},
     {icon:'🔱',label:'Triple Split',count:(view.triple_split_picks||[]).length,target:'triple-split-card'},
     {icon:'⭐',label:'5 Star Split',count:(view.five_star_split_picks||[]).length,target:'five-star-card'},
     {icon:'🔥',label:'HRR',count:(view.hrr_picks||[]).length,target:'hrr-over-card'},
@@ -8215,6 +8292,7 @@ function _trkBuildCfg(){
     'Top 10 Pitcher|OVER':       {lbl:'Top 10 Pitcher Props (Over)', icon:'🎯', abbr:'T10P+'},
     'Top 10 Pitcher|UNDER':      {lbl:'Top 10 Pitcher Props (Under)',icon:'🎯', abbr:'T10P-'},
     'Value Plays|OVER':          {lbl:'Top 10 Value Plays', icon:'💎', abbr:'Val'},
+    'Hot Hitters|OVER':          {lbl:'Hot Hitters (Over 0.5 Hits)',icon:'🌡️', abbr:'Hot+'},
     'Hitter Hits|OVER':          {lbl:'Top Picks (Over 0.5 Hits)', icon:'🎯', abbr:'Hits'},
     'Hitter Hits|UNDER':         {lbl:'Under 1.5 Hits',            icon:'📉', abbr:'Unders'},
     'Runs|OVER':                 {lbl:'Runs (Over 0.5)',            icon:'🏃', abbr:'Runs+'},
@@ -8300,6 +8378,7 @@ function renderTrackRecord(d){
   var tabs='<div style="display:flex;gap:8px;margin-bottom:4px;flex-wrap:wrap">'+_trkTabBtn('daily','Daily')+_trkTabBtn('weekly','Weekly')+_trkTabBtn('monthly','Monthly')+_trkTabBtn('custom','Custom')
     +'<button onclick="_openProjEdgeStats()" title="W/L record and ROI for Proj Edge plays (pitchers: projection beats the line; hitters: positive edge), tracked forward each day &#x2014; separate from Track Record" style="background:#0c4a6e;color:#7dd3fc;border:1px solid #0ea5e9;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">&#9650; Proj Edge Record</button>'
     +'<button onclick="_openHrrSpStats()" title="W/L record for HRR Special confluence picks (all 4 gates cleared) &#x2014; separate from main Track Record" style="background:#1a0e2e;color:#c4b5fd;border:1px solid #7c3aed;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">&#11088; HRR SP Record</button>'
+    +'<button onclick="_openTschStats()" title="W/L record for Hot Hitters — hitters over .270 in last-10 H/A, full-season D/N &amp; last-10 G# splits &#x2014; to record a hit, separate from main Track Record" style="background:#1c0a02;color:#fb923c;border:1px solid #f97316;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">🌡️ Hot Hitters Record</button>'
     +'<button onclick="_openTscStats()" title="W/L record for Triple Split Club picks (over .275 in all three of today&#39;s splits) &#x2014; to record a hit, separate from main Track Record" style="background:#04141c;color:#67e8f9;border:1px solid #0e7490;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">&#128305; Triple Split Record</button>'
     +'<button onclick="_openFssStats()" title="W/L record and ROI for 5 Star Split picks (Triple Split + 60%+ games with a hit vs team + 60%+ last 10) &#x2014; separate from main Track Record" style="background:#0c0a1a;color:#c4b5fd;border:1px solid #7c3aed;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">&#11088; 5 Star Split Record</button>'
     +'</div>';
@@ -8990,6 +9069,103 @@ function _openTscStats(){
   var ov2=document.getElementById('tsc-stats-modal');
   if(!ov2){ ov2=document.createElement('div'); ov2.id='tsc-stats-modal'; ov2.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.85);z-index:10001;display:flex;align-items:center;justify-content:center;padding:16px'; ov2.onclick=function(e){ if(e.target===ov2) ov2.style.display='none'; }; document.body.appendChild(ov2); }
   _tscStatsRender();
+  ov2.style.display='flex';
+}
+// ── Hot Hitters Record ───────────────────────────────────────────────────────
+// Own forward-only W/L record for the Hot Hitters board (>.270 in all three
+// recent splits). Reads from the hot_split key in the grade cache — kept out
+// of main Track Record. Modeled after TSC record.
+function _tschRowsForDate(date){
+  var d=window.__TRACK__||{}; var rows=[]; var have=false;
+  (d.detail||[]).forEach(function(r){ if(r.date===date&&r.category==='Hot Hitters'){ have=true; if(r.result==='WIN'||r.result==='LOSS') rows.push(r); } });
+  if(!have){
+    var g=(window.__TRK_GRADE_CACHE__||{})[date];
+    if(!g||g==='LOADING'||g.__error__||!g.all_final) return [];
+    (g.hot_split||[]).forEach(function(r){ if(r.result==='WIN'||r.result==='LOSS') rows.push(r); });
+  }
+  rows.sort(function(a,b){ return (b.edge||0)-(a.edge||0); });
+  return rows;
+}
+function _tschStatsAllTime(){ window.__TSCH_DATE__=''; _tschStatsRender(); }
+function _tschStatsSetDate(val){ if(!val){ _tschStatsAllTime(); return; } window.__TSCH_DATE__=val; _tschLoadDay(val); }
+async function _tschLoadDay(date){
+  window.__TRK_GRADE_CACHE__=window.__TRK_GRADE_CACHE__||{};
+  var d=window.__TRACK__||{};
+  var inDetail=(d.detail||[]).some(function(r){ return r.date===date&&r.category==='Hot Hitters'; });
+  var cur=window.__TRK_GRADE_CACHE__[date];
+  if(inDetail||(cur&&cur!=='LOADING')){ _tschStatsRender(); return; }
+  var tok=localStorage.getItem('__mpa_token')||localStorage.getItem('hub_token')||'';
+  var adm=new URLSearchParams(location.search).get('admin')||'';
+  window.__TRK_GRADE_CACHE__[date]='LOADING'; _tschStatsRender();
+  try{ var res=await fetch('/api/grade/'+date+'?token='+encodeURIComponent(tok)+(adm?('&admin='+encodeURIComponent(adm)):'')); if(!res.ok){ var t=await res.text(); window.__TRK_GRADE_CACHE__[date]={__error__:(t||'No picks for this date')}; } else { window.__TRK_GRADE_CACHE__[date]=await res.json(); } }catch(e){ window.__TRK_GRADE_CACHE__[date]={__error__:String((e&&e.message)||e)}; }
+  _tschStatsRender();
+}
+function _tschStatsWrap(bodyHtml){
+  var ov2=document.getElementById('tsch-stats-modal'); if(!ov2) return;
+  var dateMode=!!window.__TSCH_DATE__, date=window.__TSCH_DATE__||'';
+  var sub=dateMode?('Hot Hitters &#xB7; &gt;.270 in all 3 recent splits &#xB7; '+_weekdayName(date)+' '+date):'Hot Hitters &#xB7; &gt;.270 L10 H/A, D/N &amp; G# &#xB7; tap a day for that slate&#39;s plays';
+  ov2.innerHTML='<div style="background:#1c0a02;border:1px solid #f97316;border-radius:18px;width:100%;max-width:460px;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 24px 80px rgba(0,0,0,.7)" onclick="event.stopPropagation()">'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #431407;flex-shrink:0">'
+    +'<div><div style="font-weight:900;color:#fb923c;font-size:1rem">🌡️ Hot Hitters Record</div>'
+    +'<div style="color:#64748b;font-size:.71rem;margin-top:2px">'+sub+'</div></div>'
+    +'<button onclick="document.getElementById(&#39;tsch-stats-modal&#39;).style.display=&#39;none&#39;" style="background:#431407;border:none;color:#fed7aa;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem;flex-shrink:0">&#215;</button>'
+    +'</div>'
+    +'<div style="overflow-y:auto;flex:1">'+bodyHtml+'</div>'
+    +'</div>';
+}
+function _tschStatsRender(){
+  var ov2=document.getElementById('tsch-stats-modal'); if(!ov2) return;
+  var d=window.__TRACK__||{}, stake=_trkStake();
+  var dateMode=!!window.__TSCH_DATE__, date=window.__TSCH_DATE__||'';
+  var today=window.__TRK_TODAY__||_trkTodayISO();
+  var loadingMsg='', pool=[];
+  if(dateMode){
+    var cache=window.__TRK_GRADE_CACHE__||{};
+    var inDetail=(d.detail||[]).some(function(r){ return r.date===date&&r.category==='Hot Hitters'; });
+    var g=cache[date];
+    if(!inDetail && (g===undefined||g==='LOADING')) loadingMsg='Loading\u2026';
+    else if(!inDetail && g&&g.__error__) loadingMsg=g.__error__||'No picks for this date.';
+    else if(!inDetail && g && !g.all_final) loadingMsg='This slate is not final yet. The Hot Hitters Record fills in once every game on '+date+' goes Final.';
+    else pool=_tschRowsForDate(date);
+  } else {
+    _edgeAllDates().forEach(function(dt){ var t=_tschRowsForDate(dt); for(var i=0;i<t.length;i++){ var rr=t[i]; if(!rr.date){ var cc={}; for(var kk in rr) cc[kk]=rr[kk]; cc.date=dt; rr=cc; } pool.push(rr); } });
+  }
+  var ov={w:0,l:0,net:0,counted:0};
+  pool.forEach(function(r){
+    var win=r.result==='WIN', od=_effOdds(r);
+    var pl=_amProfit(od,stake,win); if(pl===null) return;
+    if(win) ov.w++; else ov.l++; ov.net+=pl; ov.counted++;
+  });
+  var roiClr=ov.net>=0?'#4ade80':'#f87171';
+  var roiStr=ov.counted?(((ov.net/(ov.counted*stake))*100).toFixed(1)+'%'):'&#x2014;';
+  var netStr='$'+(ov.net>=0?'+':'')+ov.net.toFixed(2);
+  var body='<div style="padding:14px 16px">';
+  body+='<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px">';
+  body+='<button onclick="_tschStatsAllTime()" style="background:'+(dateMode?'#431407':'#c2410c')+';color:'+(dateMode?'#fed7aa':'#fff')+';border:none;border-radius:7px;padding:6px 12px;font-size:.78rem;font-weight:700;cursor:pointer">All-time</button>';
+  body+='<label style="font-size:.78rem;color:#94a3b8;display:inline-flex;align-items:center;gap:6px">Day <input type="date" value="'+date+'" max="'+today+'" onchange="_tschStatsSetDate(this.value)" style="background:#020617;border:1px solid #334155;color:#fff;border-radius:6px;padding:5px 8px;font-size:.78rem"></label>';
+  if(dateMode) body+='<span style="font-weight:800;color:#fdba74;font-size:.85rem">'+_weekdayName(date)+'</span>';
+  body+='</div>';
+  if(dateMode && loadingMsg){
+    body+='<div style="color:#64748b;padding:24px;text-align:center">'+_esc(loadingMsg)+'</div></div>';
+    _tschStatsWrap(body); return;
+  }
+  body+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px">';
+  body+='<div style="background:#2a1505;border-radius:8px;padding:11px;text-align:center"><div style="font-size:.63rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">Record</div><div style="font-weight:900;color:#e2e8f0;font-size:1.1rem">'+ov.w+'-'+ov.l+'</div></div>';
+  body+='<div style="background:#2a1505;border-radius:8px;padding:11px;text-align:center"><div style="font-size:.63rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">ROI</div><div style="font-weight:900;color:'+roiClr+';font-size:1.1rem">'+roiStr+'</div></div>';
+  body+='<div style="background:#2a1505;border-radius:8px;padding:11px;text-align:center"><div style="font-size:.63rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">Net @ $'+stake+'</div><div style="font-weight:900;color:'+roiClr+';font-size:1.05rem">'+netStr+'</div></div>';
+  body+='</div>';
+  var _plays=pool.slice().sort(_recPlaySort);
+  if(_plays.length) body+=_recSecHdr('ALL PLAYS &#xB7; '+_plays.length)+_recPlaysRows(_plays,'EV','#fb923c',function(r){ return r.ev!=null?((r.ev>0?'+':'')+((r.ev*100).toFixed(1))+'%'):'&#x2014;'; },function(c){ return c; },!dateMode);
+  else body+='<div style="color:#64748b;padding:20px;text-align:center">No Hot Hitters plays graded'+(dateMode?' on this date.':' yet.<br><span style="font-size:.74rem">This fills in automatically as each day&#39;s Hot Hitters picks go Final.</span>')+'</div>';
+  body+='</div>';
+  _tschStatsWrap(body);
+}
+function _openTschStats(){
+  var d=window.__TRACK__; if(!d){ alert('Open Track Record first.'); return; }
+  if(window.__TSCH_DATE__===undefined) window.__TSCH_DATE__='';
+  var ov2=document.getElementById('tsch-stats-modal');
+  if(!ov2){ ov2=document.createElement('div'); ov2.id='tsch-stats-modal'; ov2.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.85);z-index:10001;display:flex;align-items:center;justify-content:center;padding:16px'; ov2.onclick=function(e){ if(e.target===ov2) ov2.style.display='none'; }; document.body.appendChild(ov2); }
+  _tschStatsRender();
   ov2.style.display='flex';
 }
 // ── 5 Star Split card + record ───────────────────────────────────────────────
