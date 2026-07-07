@@ -589,6 +589,17 @@ def career_ha_era(pitcher_id: int, side: str) -> float | None:
     return result
 
 
+def fetch_recent_sp_form(pitcher_id: int) -> dict:
+    """Return {r_er, r_outs} from the last 5 starts for the GP recent-form row.
+    Reuses _get_recent_k_form's cached game logs — no extra API call when the
+    pitcher was already evaluated in the K pipeline."""
+    try:
+        d = _get_recent_k_form(int(pitcher_id))
+        return {"r_er": d.get("recent_avg_er"), "r_outs": d.get("recent_avg_outs")}
+    except Exception:
+        return {"r_er": None, "r_outs": None}
+
+
 def _fetch_probable_starters(run_date: str) -> list:
     """Fetch today's probable starting pitchers from MLB schedule API."""
     try:
