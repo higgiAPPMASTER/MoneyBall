@@ -1418,28 +1418,32 @@ def _fetch_h2h_last10(home, away, h_abbr, a_abbr, run_date, total_line, team_mat
         d0 = datetime.date.fromisoformat(run_date[:10])
     except Exception:
         return None
-    start = "%d-01-01" % (d0.year - 1)
+    # NOTE: the MLB schedule endpoint silently DROPS the newer season when a
+    # single startDate/endDate range spans two seasons — one call per season.
     end = (d0 - datetime.timedelta(days=1)).isoformat()
-    try:
-        j = requests.get("https://statsapi.mlb.com/api/v1/schedule",
-            params={"sportId": 1, "teamId": hid, "opponentId": aid,
-                    "startDate": start, "endDate": end, "gameType": "R"},
-            timeout=15).json()
-    except Exception:
-        return None
+    spans = [("%d-01-01" % d0.year, end),
+             ("%d-01-01" % (d0.year - 1), "%d-12-31" % (d0.year - 1))]
     rows = []
-    for day in (j.get("dates") or []):
-        for g in (day.get("games") or []):
-            if ((g.get("status") or {}).get("abstractGameState")) != "Final":
-                continue
-            t = g.get("teams") or {}
-            th, ta = (t.get("home") or {}), (t.get("away") or {})
-            hs, avs = th.get("score"), ta.get("score")
-            if hs is None or avs is None or hs == avs:
-                continue
-            rows.append({"date": day.get("date", ""),
-                         "site_home": ((th.get("team") or {}).get("id")),
-                         "h": hs, "a": avs})
+    for s_start, s_end in spans:
+        try:
+            j = requests.get("https://statsapi.mlb.com/api/v1/schedule",
+                params={"sportId": 1, "teamId": hid, "opponentId": aid,
+                        "startDate": s_start, "endDate": s_end, "gameType": "R"},
+                timeout=15).json()
+        except Exception:
+            continue
+        for day in (j.get("dates") or []):
+            for g in (day.get("games") or []):
+                if ((g.get("status") or {}).get("abstractGameState")) != "Final":
+                    continue
+                t = g.get("teams") or {}
+                th, ta = (t.get("home") or {}), (t.get("away") or {})
+                hs, avs = th.get("score"), ta.get("score")
+                if hs is None or avs is None or hs == avs:
+                    continue
+                rows.append({"date": day.get("date", ""),
+                             "site_home": ((th.get("team") or {}).get("id")),
+                             "h": hs, "a": avs})
     if not rows:
         return None
     rows.sort(key=lambda r: r["date"], reverse=True)
