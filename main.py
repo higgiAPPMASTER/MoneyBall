@@ -707,7 +707,9 @@ def _norm_name(s) -> str:
 
 # ── Grading core (shared by /api/grade and the Track Record ledger) ──────
 def _mlb_box_lookup(date_str: str):
-    """Fetch box scores for a date. Returns (player_stats, name_stats, any_game, all_final).
+    """Fetch box scores for a date.
+    Returns (player_stats, name_stats, any_game, all_final, game_scores).
+    game_scores = list of {away_abbr, home_abbr, away_runs, home_runs, final}.
     MLB's /schedule hydrate=boxscore stopped embedding player stats (returns 0 players),
     so we pull the schedule for game IDs + status, then fetch each started game's boxscore
     from the dedicated /game/{gamePk}/boxscore endpoint (in parallel)."""
@@ -720,14 +722,17 @@ def _mlb_box_lookup(date_str: str):
         }, timeout=30).json()
     except Exception as e:
         print(f"[box_lookup] schedule fetch failed {date_str}: {e}")
-        return {}, {}, False, True
+        return {}, {}, False, True, []
     player_stats: dict = {}
     name_stats: dict   = {}
+    game_scores: list  = []
     any_game = False
     all_final = True
     _NOT_STARTED = ("Scheduled", "Pre-Game", "Warmup", "Postponed",
                     "Cancelled", "Delayed Start")
     games = []
+    # Collect team abbreviations from schedule for game_scores
+    _sched_meta: dict = {}   # gamePk -> {away_abbr, home_abbr}
     for d in sched.get("dates", []):
         for game in d.get("games", []):
             any_game = True
@@ -742,8 +747,14 @@ def _mlb_box_lookup(date_str: str):
             if not final and not dead:
                 all_final = False
             pk = game.get("gamePk")
-            if pk and status not in _NOT_STARTED:
-                games.append((pk, status, final))
+            if pk:
+                tt = game.get("teams", {}) or {}
+                _sched_meta[pk] = {
+                    "away_abbr": ((tt.get("away") or {}).get("team") or {}).get("abbreviation", ""),
+                    "home_abbr": ((tt.get("home") or {}).get("team") or {}).get("abbreviation", ""),
+                }
+                if status not in _NOT_STARTED:
+                    games.append((pk, status, final))
 
     def _one(args):
         pk, status, final = args
@@ -751,7 +762,7 @@ def _mlb_box_lookup(date_str: str):
             bx = _rq.get(f"{MLB_BASE}/game/{pk}/boxscore", timeout=30).json()
         except Exception as e:
             print(f"[box_lookup] boxscore {pk} fetch failed: {e}")
-            return []
+            return (final, [], None)
         rows = []
         for sd in ("home", "away"):
             td = bx.get("teams", {}).get(sd, {})
@@ -785,7 +796,27 @@ def _mlb_box_lookup(date_str: str):
                     "final":  final,
                     "name":   full_name,
                 }))
-        return (final, rows)
+        # Team run totals from teamStats (fastest, always present in boxscore)
+        score_entry = None
+        if final:
+            try:
+                away_runs = (bx.get("teams", {}).get("away", {}).get("teamStats", {})
+                             .get("batting", {}).get("runs"))
+                home_runs = (bx.get("teams", {}).get("home", {}).get("teamStats", {})
+                             .get("batting", {}).get("runs"))
+                meta = _sched_meta.get(pk, {})
+                if away_runs is not None and home_runs is not None:
+                    score_entry = {
+                        "gamePk": pk,
+                        "away_abbr": meta.get("away_abbr", ""),
+                        "home_abbr": meta.get("home_abbr", ""),
+                        "away_runs": int(away_runs),
+                        "home_runs": int(home_runs),
+                        "final": True,
+                    }
+            except Exception:
+                pass
+        return (final, rows, score_entry)
 
     if games:
         try:
@@ -795,16 +826,18 @@ def _mlb_box_lookup(date_str: str):
             print(f"[box_lookup] parallel boxscore fetch failed {date_str}: {e}")
             results = [_one(g) for g in games]
         fetch_complete = True
-        for gfinal, rows in results:
+        for gfinal, rows, score_entry in results:
             if gfinal and not rows:
                 fetch_complete = False   # final game but boxscore fetch returned nothing
             for pid, full_name, entry in rows:
                 player_stats[pid] = entry
                 if full_name:
                     name_stats[_norm_name(full_name)] = entry
+            if score_entry:
+                game_scores.append(score_entry)
         if not fetch_complete:
             all_final = False            # defer locking until a clean pass grades it
-    return player_stats, name_stats, any_game, all_final
+    return player_stats, name_stats, any_game, all_final, game_scores
 
 
 # ── Top 10 Batter selection — MUST mirror the live page's _buildTop10All ────
@@ -889,7 +922,7 @@ def _t10_rank(cands, drop_red=True):
 def _grade_date(date_str: str, picks: dict) -> dict:
     """Grade every pick category for a date against actual box scores.
     Each row carries category + side so the Track Record ledger can tally O/U splits."""
-    player_stats, name_stats, any_game, all_final = _mlb_box_lookup(date_str)
+    player_stats, name_stats, any_game, all_final, _game_scores = _mlb_box_lookup(date_str)
 
     def _lookup(player_id, fallback_name=None):
         if player_id:
@@ -1955,6 +1988,178 @@ def _update_track_ledger() -> dict:
 # multi-user-ready; for now only the admin can read/write. Each bet self-
 # settles from box scores by player name, so it grades even after that date's
 # pick-cache file is gone.
+
+# ── Game Predictor Record ledger ─────────────────────────────────────────
+# Separate from the player-pick track record. Stored in mpa_track_ledger as
+# category="__gp__" rows (one per date, locked once all_final). Each row's
+# detail holds a list of graded GP game dicts.
+_GP_CAT = "__gp__"
+
+def _load_gp_ledger() -> dict:
+    """Returns {date_str: [graded_game, ...]} for all locked GP dates."""
+    if _SB_URL and _SB_KEY:
+        rows = _sb_get("mpa_track_ledger", {
+            "app": "eq.mlb", "category": f"eq.{_GP_CAT}", "locked": "eq.true",
+            "select": "date,detail", "limit": "500"})
+        if rows:
+            return {r["date"]: (r.get("detail") or []) for r in rows}
+    try:
+        p = os.path.join(_CACHE_DIR, "_gp_ledger.json")
+        if os.path.exists(p):
+            with open(p) as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+def _save_gp_ledger_local(data: dict):
+    try:
+        p = os.path.join(_CACHE_DIR, "_gp_ledger.json")
+        tmp = f"{p}.{os.getpid()}.tmp"
+        with open(tmp, "w") as f:
+            json.dump(data, f)
+        os.replace(tmp, p)
+    except Exception as e:
+        print(f"[gp_ledger] local save failed: {e}")
+
+def _grade_game_predictions(date_str: str, gp_list: list) -> list:
+    """Grade each GP game against actual box scores.
+    Returns list of graded dicts with team_result and ou_result."""
+    _, _, any_game, all_final, game_scores = _mlb_box_lookup(date_str)
+    if not game_scores:
+        return []
+    # Build a lookup by (away_abbr, home_abbr) → score
+    score_map: dict = {}
+    for gs in game_scores:
+        key = (gs.get("away_abbr", "").upper(), gs.get("home_abbr", "").upper())
+        score_map[key] = gs
+    out = []
+    for g in gp_list:
+        away = (g.get("away_abbr") or "").upper()
+        home = (g.get("home_abbr") or "").upper()
+        sc = score_map.get((away, home))
+        if not sc:
+            # Try reversed (data sometimes flipped)
+            sc = score_map.get((home, away))
+            if sc:
+                away_runs = sc.get("home_runs")
+                home_runs = sc.get("away_runs")
+            else:
+                continue
+        else:
+            away_runs = sc.get("away_runs")
+            home_runs = sc.get("home_runs")
+        if away_runs is None or home_runs is None:
+            continue
+        pick_home = g.get("pick_home", True)
+        picked_wins = (home_runs > away_runs) if pick_home else (away_runs > home_runs)
+        team_result = "WIN" if picked_wins else ("PUSH" if home_runs == away_runs else "LOSS")
+        # O/U
+        total_line = g.get("total_line")
+        total_pick = g.get("total_pick")
+        ou_result = None
+        if total_line is not None and total_pick in ("OVER", "UNDER"):
+            actual_total = away_runs + home_runs
+            if actual_total > total_line:
+                ou_result = "WIN" if total_pick == "OVER" else "LOSS"
+            elif actual_total < total_line:
+                ou_result = "WIN" if total_pick == "UNDER" else "LOSS"
+            else:
+                ou_result = "PUSH"
+        # Flat-bet earnings ($100/game)
+        def _flat_profit(result, odds):
+            if result not in ("WIN", "LOSS", "PUSH") or odds is None:
+                return None
+            try:
+                o = float(odds)
+                if result == "PUSH":
+                    return 0.0
+                if result == "LOSS":
+                    return -100.0
+                return round(o if o > 0 else 10000.0 / abs(o), 2)
+            except Exception:
+                return None
+        ml_pick_odds = g.get("ml_pick_odds")
+        total_pick_odds = g.get("total_pick_odds")
+        ml_earnings  = _flat_profit(team_result, ml_pick_odds)
+        ou_earnings  = _flat_profit(ou_result, total_pick_odds)
+        out.append({
+            "away": g.get("away", away), "home": g.get("home", home),
+            "away_abbr": away, "home_abbr": home,
+            "pick": g.get("pick_abbr", ""), "pick_home": pick_home,
+            "conf": g.get("conf", ""),
+            "away_runs": away_runs, "home_runs": home_runs,
+            "team_result": team_result,
+            "total_line": total_line, "total_pick": total_pick,
+            "actual_total": away_runs + home_runs,
+            "total_edge": g.get("total_edge"),
+            "ou_result": ou_result,
+            "ml_pick_odds": ml_pick_odds, "total_pick_odds": total_pick_odds,
+            "ml_earnings": ml_earnings, "ou_earnings": ou_earnings,
+        })
+    return out
+
+def _update_gp_ledger():
+    """Grade and lock any past GP dates not yet in the ledger."""
+    with _LEDGER_LOCK:
+        led = _load_gp_ledger()
+        today = date.today().isoformat()
+        try:
+            _today_d = date.fromisoformat(today)
+        except Exception:
+            _today_d = None
+        changed = False
+        cand = set()
+        try:
+            for fp in _glob.glob(os.path.join(_CACHE_DIR, "*.json")):
+                bn = os.path.basename(fp).replace(".json", "")
+                if not bn.startswith("_") and len(bn) == 10 and bn[4] == "-":
+                    cand.add(bn)
+        except Exception:
+            pass
+        for bn in _list_sb_pick_dates():
+            if len(bn) == 10 and bn[4] == "-":
+                cand.add(bn)
+        for bn in sorted(cand):
+            if bn >= today:
+                continue
+            if bn in led:
+                continue
+            picks = _load_grading_picks(bn)
+            if not picks:
+                continue
+            gp_list = picks.get("game_predictions") or []
+            if not gp_list:
+                continue
+            old_enough = False
+            if _today_d:
+                try:
+                    old_enough = (_today_d - date.fromisoformat(bn)).days >= 2
+                except Exception:
+                    pass
+            _, _, any_game, all_final, _ = _mlb_box_lookup(bn)
+            if not any_game:
+                continue
+            if not all_final and not old_enough:
+                continue
+            graded = _grade_game_predictions(bn, gp_list)
+            if not graded:
+                continue
+            led[bn] = graded
+            # Persist to Supabase
+            if _SB_URL and _SB_KEY:
+                import datetime as _dt2
+                row = {"app": "mlb", "date": bn, "category": _GP_CAT, "side": "ALL",
+                       "wins": 0, "losses": 0, "locked": True,
+                       "locked_at": _dt2.datetime.utcnow().isoformat() + "Z",
+                       "detail": graded}
+                _sb_upsert("mpa_track_ledger", [row], on_conflict="app,date,category,side", timeout=20)
+            changed = True
+        if changed:
+            _save_gp_ledger_local(led)
+        return led
+
+# pick-cache file is gone.
 _BET_LOG_PATH = os.path.join(_CACHE_DIR, "_bet_log.json")
 # Bets persist in the working mpa_track_ledger jsonb `detail` column. The
 # mpa_bet_log table's flat columns can't hold a full bet (name/team/stat_label
@@ -2146,7 +2351,7 @@ def _settle_bet(bet: dict) -> bool:
     if not bdate or bdate >= date.today().isoformat():
         return False
     try:
-        _ps, ns, _any, _af = _mlb_box_lookup(bdate)
+        _ps, ns, _any, _af, _gs = _mlb_box_lookup(bdate)
     except Exception as e:
         print(f"[bet_log] settle lookup failed {bdate}: {e}")
         return False
@@ -2200,7 +2405,7 @@ def _settle_parlay(parlay: dict) -> bool:
     af_cache: dict = {}
     for d in dates_needed:
         try:
-            _, ns, _, _af = _mlb_box_lookup(d)
+            _, ns, _, _af, _gs = _mlb_box_lookup(d)
             ns_cache[d] = ns
             af_cache[d] = _af
         except Exception:
@@ -2231,7 +2436,7 @@ def _settle_bets_batch(bets: list) -> bool:
     af_cache: dict = {}
     for d in sorted(dates_needed):
         try:
-            _ps, ns, _any, _af = _mlb_box_lookup(d)
+            _ps, ns, _any, _af, _gs = _mlb_box_lookup(d)
             ns_cache[d] = ns
             af_cache[d] = _af
         except Exception as e:
@@ -2641,6 +2846,55 @@ async def track_record(request: Request, token: str = "", admin: str = ""):
             detail.append(row)
 
     return {"alltime": rows, "daily": daily, "days": len(led), "detail": detail}
+
+
+@app.get("/api/gp-record")
+async def gp_record(request: Request, token: str = "", admin: str = ""):
+    """Admin-only. All-time + daily W/L record for Game Predictor (team win + O/U)."""
+    tok = token or request.headers.get("Authorization", "").replace("Bearer ", "").strip()
+    is_admin = _is_admin_token(tok) or _is_tester_token(tok) or (
+        bool(admin) and admin == os.environ.get("INTERNAL_API_TOKEN", "__none__")
+    )
+    if not is_admin:
+        raise HTTPException(status_code=403, detail="Admin only")
+    led = _update_gp_ledger()
+    team_all = [0, 0]   # [W, L]
+    ou_all   = [0, 0]
+    team_earn_all = 0.0
+    ou_earn_all   = 0.0
+    daily = []
+    for ds in sorted(led.keys()):
+        games = led[ds] or []
+        tw = tl = ouw = oul = 0
+        d_team_earn = d_ou_earn = 0.0
+        has_team_odds = has_ou_odds = False
+        rows_out = []
+        for g in games:
+            tr = g.get("team_result")
+            or_ = g.get("ou_result")
+            if tr == "WIN":  tw += 1
+            elif tr == "LOSS": tl += 1
+            if or_ == "WIN":  ouw += 1
+            elif or_ == "LOSS": oul += 1
+            me = g.get("ml_earnings")
+            oe = g.get("ou_earnings")
+            if me is not None:
+                d_team_earn += me; has_team_odds = True
+            if oe is not None:
+                d_ou_earn += oe; has_ou_odds = True
+            rows_out.append(g)
+        team_all[0] += tw; team_all[1] += tl
+        ou_all[0]   += ouw; ou_all[1]  += oul
+        if has_team_odds: team_earn_all += d_team_earn
+        if has_ou_odds:   ou_earn_all   += d_ou_earn
+        daily.append({"date": ds, "team_w": tw, "team_l": tl,
+                      "ou_w": ouw, "ou_l": oul, "games": rows_out,
+                      "team_earn": round(d_team_earn, 2) if has_team_odds else None,
+                      "ou_earn": round(d_ou_earn, 2) if has_ou_odds else None})
+    return {"team_all": team_all, "ou_all": ou_all,
+            "team_earn_all": round(team_earn_all, 2),
+            "ou_earn_all": round(ou_earn_all, 2),
+            "daily": daily, "days": len(daily)}
 
 
 # ── Any-player lookup ────────────────────────────────────────────────
@@ -3549,6 +3803,14 @@ _HTML = """
         <p class="text-xs text-slate-400 mb-3">Model picks each game&#39;s winner from the same signals that drive the props &#8212; lineup vs starter, bullpen, park, weather &amp; umpire. Tap a game for the full factor-by-factor breakdown.</p>
         <div id="game-pred-body"></div>
       </div>
+      <!-- GP Record card -->
+      <div class="card p-5 hidden" id="gp-record-card" style="border-color:rgba(167,139,250,.25);margin-top:0">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <div style="font-weight:800;color:#a78bfa;font-size:.9rem;letter-spacing:.03em">&#128302; Game Predictor Record</div>
+          <button onclick="_openGpRecordModal()" style="background:#1e293b;border:none;color:#a78bfa;font-size:.7rem;font-weight:700;padding:4px 12px;border-radius:8px;cursor:pointer;letter-spacing:.03em">ALL DAYS &#8594;</button>
+        </div>
+        <div id="gp-record-body"><div style="color:#475569;font-size:.8rem">Loading&#8230;</div></div>
+      </div>
       <!-- SECTION 1: HITTERS -->
         <div class="section-hdr" style="color:#facc15;font-size:1.05rem;margin-top:8px">⚾ HITTERS</div>
         <div class="card p-6 hidden" id="top10-plays-card" style="border-color:rgba(250,204,21,.35)">
@@ -4055,6 +4317,116 @@ function _renderGamePredictor(result){
   html+='</div>';
   body.innerHTML=html;
   card.classList.remove('hidden');
+  _loadGpRecord();
+}
+// ── GP Record ────────────────────────────────────────────────────────────────
+var __GP_REC__=null;
+function _pct(w,l){ var t=w+l; return t?Math.round(100*w/t)+'%':'—'; }
+function _wl(w,l){ return '<span style="color:#4ade80;font-weight:800">'+w+'W</span> <span style="color:#94a3b8">-</span> <span style="color:#f87171;font-weight:800">'+l+'L</span>'; }
+function _gpFmtEarn(v){
+  if(v==null) return '';
+  var s=(v>=0?'+':'')+v.toFixed(2);
+  var col=v>0?'#4ade80':(v<0?'#f87171':'#94a3b8');
+  return '<span style="color:'+col+';font-size:.7rem;font-weight:700;margin-left:6px">'+s+'</span>';
+}
+function _gpRecRow(label,wl,earn,col){
+  var w=wl[0],l=wl[1],t=w+l;
+  return '<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid #0f172a">'
+    +'<div style="font-size:.78rem;font-weight:700;color:'+col+'">'+label+'</div>'
+    +'<div style="display:flex;align-items:center;gap:12px">'
+    +_wl(w,l)
+    +'<span style="color:#94a3b8;font-size:.72rem;font-weight:600;min-width:28px;text-align:right">'+_pct(w,l)+'</span>'
+    +(earn!=null?_gpFmtEarn(earn):'')
+    +'</div></div>';
+}
+async function _loadGpRecord(){
+  var card=document.getElementById('gp-record-card');
+  var body=document.getElementById('gp-record-body');
+  if(!card||!body) return;
+  try{
+    var r=await fetch('/api/gp-record'+_betAuthQS());
+    var d=await r.json();
+    __GP_REC__=d;
+    var ta=d.team_all||[0,0], oa=d.ou_all||[0,0];
+    if((ta[0]+ta[1]+oa[0]+oa[1])===0){ card.classList.add('hidden'); return; }
+    var te=d.team_earn_all!=null?d.team_earn_all:null;
+    var oe=d.ou_earn_all!=null?d.ou_earn_all:null;
+    body.innerHTML=_gpRecRow('Team Win/Loss',ta,te,'#a78bfa')+_gpRecRow('Run Total O/U',oa,oe,'#38bdf8');
+    card.classList.remove('hidden');
+  }catch(e){ card.classList.add('hidden'); }
+}
+function _openGpRecordModal(){
+  var d=__GP_REC__; if(!d) return;
+  var daily=(d.daily||[]).slice().reverse();
+  var rows='';
+  function _fmtOdds(o){ if(o==null) return ''; return (o>0?'+':'')+o; }
+  daily.forEach(function(day){
+    var dt=day.date||''; var m=dt.split('-');
+    var dlbl=m.length===3?((['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][parseInt(m[1],10)-1]||'')+' '+parseInt(m[2],10)):dt;
+    var teamEarn=day.team_earn!=null?_gpFmtEarn(day.team_earn):'';
+    var ouEarn=day.ou_earn!=null?_gpFmtEarn(day.ou_earn):'';
+    rows+='<div style="padding:8px 14px;border-bottom:1px solid #0a1120;background:#050c18">'
+      +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px">'
+      +'<span style="color:#64748b;font-size:.72rem;font-weight:700">'+dlbl+'</span>'
+      +'<span style="display:flex;gap:14px;align-items:center">'
+      +'<span style="font-size:.68rem;color:#94a3b8">Team: '+_wl(day.team_w,day.team_l)+teamEarn+'</span>'
+      +'<span style="font-size:.68rem;color:#94a3b8">O/U: '+_wl(day.ou_w,day.ou_l)+ouEarn+'</span>'
+      +'</span></div>';
+    (day.games||[]).forEach(function(g){
+      var tr=g.team_result, or_=g.ou_result;
+      var trCol=tr==='WIN'?'#4ade80':(tr==='LOSS'?'#f87171':'#94a3b8');
+      var orCol=or_==='WIN'?'#4ade80':(or_==='LOSS'?'#f87171':'#94a3b8');
+      var score=g.away_runs!=null?(g.away_abbr+' '+g.away_runs+' @ '+g.home_abbr+' '+g.home_runs):'';
+      var ouLine=g.total_line!=null?(' · O/U '+g.total_line+' → '+(g.actual_total!=null?g.actual_total:'?')):' · no line';
+      var mlOdds=g.ml_pick_odds!=null?' ('+_fmtOdds(g.ml_pick_odds)+')':'';
+      var ouOdds=g.total_pick_odds!=null?' ('+_fmtOdds(g.total_pick_odds)+')':'';
+      var mlEarn=g.ml_earnings!=null?_gpFmtEarn(g.ml_earnings):'';
+      var ouEarnG=g.ou_earnings!=null?_gpFmtEarn(g.ou_earnings):'';
+      rows+='<div style="padding:4px 0 4px 8px;font-size:.72rem;border-bottom:1px solid rgba(15,23,42,.6)">'
+        +'<div style="display:flex;align-items:center;justify-content:space-between">'
+        +'<div style="color:#cbd5e1">PICK <b>'+_esc(g.pick||'')+'</b>'+(g.conf?' <span style="color:#64748b">'+g.conf+'</span>':'')+'</div>'
+        +'<div style="color:#94a3b8;font-size:.66rem">'+_esc(score)+'</div>'
+        +'</div>'
+        +'<div style="display:flex;align-items:center;justify-content:space-between;margin-top:2px">'
+        +'<div style="color:#64748b;font-size:.66rem">'+_esc(ouLine)+'</div>'
+        +'<div style="display:flex;gap:8px;align-items:center">'
+        +'<span style="color:'+trCol+';font-weight:800">'+_esc(tr||'—')+'</span>'
+        +'<span style="color:#475569;font-size:.65rem">ML'+mlOdds+'</span>'
+        +mlEarn
+        +(or_?'<span style="color:'+orCol+';font-weight:800;margin-left:4px">'+_esc(or_)+'</span>':'')
+        +(or_?'<span style="color:#475569;font-size:.65rem">O/U'+ouOdds+'</span>':'')
+        +(or_?ouEarnG:'')
+        +'</div></div></div>';
+    });
+    rows+='</div>';
+  });
+  var ta=d.team_all||[0,0],oa=d.ou_all||[0,0];
+  var te=d.team_earn_all!=null?d.team_earn_all:null;
+  var oe=d.ou_earn_all!=null?d.ou_earn_all:null;
+  var ov=document.getElementById('gp-rec-modal');
+  if(!ov){ ov=document.createElement('div'); ov.id='gp-rec-modal';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.85);z-index:10100;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; };
+    document.body.appendChild(ov); }
+  ov.innerHTML='<div style="background:#080f1e;border:1px solid #3b2c63;border-radius:18px;width:100%;max-width:560px;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 24px 80px rgba(0,0,0,.7)" onclick="event.stopPropagation()">'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid #1e293b;flex-shrink:0">'
+    +'<div><div style="font-weight:900;color:#a78bfa;font-size:1.05rem">&#128302; Game Predictor Record</div>'
+    +'<div style="color:#64748b;font-size:.72rem;margin-top:2px">All tiers &#183; '+d.days+' day'+(d.days===1?'':'s')+' graded &#183; $100 flat bets</div></div>'
+    +'<button onclick="document.getElementById(&#39;gp-rec-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:1.1rem;flex-shrink:0">&#215;</button>'
+    +'</div>'
+    +'<div style="padding:14px 20px;border-bottom:1px solid #111c2e;display:flex;gap:20px;flex-shrink:0">'
+    +'<div style="flex:1;text-align:center;background:#0a1120;border:1px solid #1e293b;border-radius:10px;padding:10px 8px">'
+    +'<div style="font-size:.6rem;color:#64748b;font-weight:800;letter-spacing:.05em;margin-bottom:4px">TEAM WIN/LOSS</div>'
+    +_wl(ta[0],ta[1])+'<div style="font-size:.7rem;color:#64748b;margin-top:2px">'+_pct(ta[0],ta[1])+'</div>'
+    +(te!=null?'<div style="margin-top:3px">'+_gpFmtEarn(te)+'</div>':'')+'</div>'
+    +'<div style="flex:1;text-align:center;background:#0a1120;border:1px solid #1e293b;border-radius:10px;padding:10px 8px">'
+    +'<div style="font-size:.6rem;color:#64748b;font-weight:800;letter-spacing:.05em;margin-bottom:4px">RUN TOTAL O/U</div>'
+    +_wl(oa[0],oa[1])+'<div style="font-size:.7rem;color:#64748b;margin-top:2px">'+_pct(oa[0],oa[1])+'</div>'
+    +(oe!=null?'<div style="margin-top:3px">'+_gpFmtEarn(oe)+'</div>':'')+'</div>'
+    +'</div>'
+    +'<div style="overflow-y:auto;flex:1">'+rows+'</div>'
+    +'</div>';
+  ov.style.display='flex';
 }
 function _openGamePred(i){
   var g=(window.__GAME_PRED__||[])[i]; if(!g) return;
