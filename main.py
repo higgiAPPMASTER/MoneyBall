@@ -6445,7 +6445,7 @@ function onOddsRangeChange(){
   if(window._lastResult) showResults(window._lastResult);
 }
 
-function _srchOpen(k){ var e=(window.__SRCH_REG__||{})[k]; if(!e) return; if(e.pitcher){ if(e.fn){ try{ e.fn(e.p); }catch(err){} } return; } if(e.p){ var p=e.p; if(p._prop){ _ppForm(p); } else if(p.recent_k_log!==undefined||p.avg_k!==undefined){ _pkForm(p); } else if(p.recent_tb_log!==undefined){ if(p.pick==='OVER'){ _tbOverForm(p); } else { _tbForm(p); } } else if(p.recent_hr_log!==undefined&&p.recent_hit_log===undefined&&p.recent_runs_log===undefined){ _hrForm(p); } else if(p.recent_rbi_log!==undefined&&p.recent_hit_log===undefined&&p.recent_runs_log===undefined){ _rbiForm(p); } else if(p.recent_runs_log!==undefined&&p.recent_hit_log===undefined){ _runsForm(p); } else if(p.recent_walks_log!==undefined){ _walksForm(p); } else { _hitForm(p); } return; } openPlayerDeep(e.name||(e.p&&(e.p.full_name||e.p.name))||''); }
+function _srchOpen(k){ var e=(window.__SRCH_REG__||{})[k]; if(!e) return; if(e.pitcher){ if(e.fn){ try{ e.fn(e.p); }catch(err){} } return; } openPlayerDeep((e.p&&(e.p.full_name||e.p.name))||e.name||''); }
 function runPlayerSearch(raw){
   var box = document.getElementById('player-search-result');
   var q = (raw||'').trim().toLowerCase();
