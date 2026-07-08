@@ -3441,7 +3441,7 @@ _HTML = """
       <button class="admin-only" id="ovf-btn" onclick="openOverflow()" title="Every pick beyond each category's top 10 — graded and banked in its own permanent record" style="background:#b45309;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">⭐ Overflow</button>
       <button class="admin-only" id="hrtrk-btn" onclick="openHRTracker()" title="Home Run Over/Under picks — their own permanent record, kept out of the main Track Record and Overflow" style="background:#be123c;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">💣 HR Tracker</button>
       <button class="admin-only" id="dow-btn" onclick="openDowReport()" title="Which weekdays actually produce winners, and whether the matrix lean matches reality" style="background:#0e7490;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">📅 By Day</button>
-      <button class="admin-only" id="gptrk-btn" onclick="__GP_REC__?_openGpRecordModal():_loadGpRecord().then(function(){_openGpRecordModal();})" title="Game Predictor win/loss record with $100 flat-bet earnings tracking" style="background:#065f46;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">📊 GP Record</button>
+      <button class="admin-only" id="gptrk-btn" onclick="openGPTracker()" title="Game Predictor win/loss record with $100 flat-bet earnings tracking" style="background:#065f46;color:#fff;border:none;border-radius:10px;padding:9px 18px;min-width:140px;text-align:center;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap">📊 GP Record</button>
     </div>
   </nav>
   <main class="flex-1 px-4 py-6 max-w-7xl mx-auto w-full space-y-6">
@@ -3814,7 +3814,7 @@ _HTML = """
       <div class="card p-5 hidden" id="gp-record-card" style="border-color:rgba(167,139,250,.25);margin-top:0">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
           <div style="font-weight:800;color:#a78bfa;font-size:.9rem;letter-spacing:.03em">&#128302; Game Predictor Record</div>
-          <button onclick="_openGpRecordModal()" style="background:#1e293b;border:none;color:#a78bfa;font-size:.7rem;font-weight:700;padding:4px 12px;border-radius:8px;cursor:pointer;letter-spacing:.03em">ALL DAYS &#8594;</button>
+          <button onclick="openGPTracker()" style="background:#1e293b;border:none;color:#a78bfa;font-size:.7rem;font-weight:700;padding:4px 12px;border-radius:8px;cursor:pointer;letter-spacing:.03em">FULL RECORD &#8594;</button>
         </div>
         <div id="gp-record-body"><div style="color:#475569;font-size:.8rem">Loading&#8230;</div></div>
       </div>
@@ -4362,14 +4362,6 @@ async function _loadGpRecord(){
     card.classList.remove('hidden');
   }catch(e){ card.classList.add('hidden'); }
 }
-function _gpRecOv(){
-  var ov=document.getElementById('gp-rec-modal');
-  if(!ov){ ov=document.createElement('div'); ov.id='gp-rec-modal';
-    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.85);z-index:10100;display:flex;align-items:center;justify-content:center;padding:16px';
-    ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; };
-    document.body.appendChild(ov); }
-  return ov;
-}
 function _gpFmtOdds(o){ if(o==null) return ''; return (o>0?'+':'')+o; }
 function _gpDayLbl(dt){
   var m=(dt||'').split('-');
@@ -4385,41 +4377,76 @@ function _gpTile(label,rec,pct,earn,minw){
     +(earn!=null?'<div style="margin-top:2px">'+_gpFmtEarn(earn)+'</div>':'')
     +'</div>';
 }
-function _openGpRecordModal(){
-  var d=__GP_REC__; if(!d) return;
-  var daily=d.daily||[];
-  var tiers={STRONG:[0,0,0,0],MODERATE:[0,0,0,0],LEAN:[0,0,0,0]};
-  var homeP=[0,0],awayP=[0,0],fav=[0,0],dog=[0,0],val=[0,0];
-  var overC=[0,0,0,0],underC=[0,0,0,0];
-  var tpush=0,opush=0;
-  daily.forEach(function(day){ (day.games||[]).forEach(function(g){
+// ── GP Tracker panel (same pattern as HR Tracker / Overflow) ────────────────
+function _gptStake(){ var inp=document.getElementById('gptBet'); var s=inp?Number(inp.value):NaN; if(!isFinite(s)||s<=0){ s=(window.__GPT_BET__!=null?window.__GPT_BET__:100); } if(!isFinite(s)||s<=0) s=100; return s; }
+function _gptBetInput(){ window.__GPT_BET__=_gptStake(); _gptRenderActive(); }
+function _gptTabBtn(id,label){ var active=(window.__GPT_TAB__||'daily')===id; return '<button onclick="_gptTab(&#39;'+id+'&#39;)" style="background:'+(active?'#065f46':'#1e293b')+';color:'+(active?'#fff':'#cbd5e1')+';border:none;border-radius:8px;padding:8px 20px;font-size:.86rem;font-weight:800;cursor:pointer">'+label+'</button>'; }
+function _gptTab(t){ window.__GPT_BET__=_gptStake(); window.__GPT_TAB__=t; renderGPTracker(); }
+function _gptMonthShift(n){ window.__GPT_BET__=_gptStake(); var m=window.__GPT_MONTH__||_trkTodayISO().slice(0,7); var y=parseInt(m.slice(0,4),10), mo=parseInt(m.slice(5,7),10)-1+n; while(mo<0){mo+=12;y--;} while(mo>11){mo-=12;y++;} var nm=y+'-'+((mo+1)<10?'0':'')+(mo+1); var cur=_trkTodayISO().slice(0,7); if(nm>cur) nm=cur; window.__GPT_MONTH__=nm; _gptRenderActive(); }
+function _gptGotoDay(dt){ window.__GPT_BET__=_gptStake(); window.__GPT_DAILY_DATE__=dt; window.__GPT_TAB__='daily'; renderGPTracker(); }
+function _gptDayByDate(dt){ var arr=(__GP_REC__&&__GP_REC__.daily)||[]; for(var i=0;i<arr.length;i++){ if(arr[i].date===dt) return arr[i]; } return null; }
+async function _gptRefresh(){ try{ var r=await fetch('/api/gp-record'+_betAuthQS()); if(r.ok){ __GP_REC__=await r.json(); } }catch(e){} renderGPTracker(); }
+function _gptAgg(games,stake){
+  var k=stake/100;
+  var A={tw:0,tl:0,tp:0,ow:0,ol:0,op:0,tEarn:0,tHas:0,oEarn:0,oHas:0,
+    tiers:{STRONG:[0,0,0,0],MODERATE:[0,0,0,0],LEAN:[0,0,0,0]},
+    homeP:[0,0],awayP:[0,0],fav:[0,0],dog:[0,0],val:[0,0],
+    overC:[0,0,0,0],underC:[0,0,0,0]};
+  games.forEach(function(g){
     var tr=g.team_result;
-    if(tr==='PUSH') tpush++;
+    if(tr==='PUSH') A.tp++;
     if(tr==='WIN'||tr==='LOSS'){
       var wi=tr==='WIN'?0:1;
-      var t=tiers[g.conf]; if(t){ t[wi]++; if(g.ml_earnings!=null){t[2]+=g.ml_earnings;t[3]=1;} }
-      (g.pick_home?homeP:awayP)[wi]++;
-      if(g.ml_pick_odds!=null)(g.ml_pick_odds<0?fav:dog)[wi]++;
-      if(g.value_flag) val[wi]++;
+      if(wi===0)A.tw++; else A.tl++;
+      if(g.ml_earnings!=null){ A.tEarn+=g.ml_earnings*k; A.tHas=1; }
+      var t=A.tiers[g.conf]; if(t){ t[wi]++; if(g.ml_earnings!=null){t[2]+=g.ml_earnings*k;t[3]=1;} }
+      (g.pick_home?A.homeP:A.awayP)[wi]++;
+      if(g.ml_pick_odds!=null)(g.ml_pick_odds<0?A.fav:A.dog)[wi]++;
+      if(g.value_flag) A.val[wi]++;
     }
     var or_=g.ou_result;
-    if(or_==='PUSH') opush++;
+    if(or_==='PUSH') A.op++;
     if(or_==='WIN'||or_==='LOSS'){
       var oi=or_==='WIN'?0:1;
-      var a=g.total_pick==='OVER'?overC:underC;
-      a[oi]++; if(g.ou_earnings!=null){a[2]+=g.ou_earnings;a[3]=1;}
+      if(oi===0)A.ow++; else A.ol++;
+      if(g.ou_earnings!=null){ A.oEarn+=g.ou_earnings*k; A.oHas=1; }
+      var a=g.total_pick==='OVER'?A.overC:A.underC;
+      a[oi]++; if(g.ou_earnings!=null){a[2]+=g.ou_earnings*k;a[3]=1;}
     }
-  });});
-  var ta=d.team_all||[0,0],oa=d.ou_all||[0,0];
-  var te=d.team_earn_all!=null?d.team_earn_all:null;
-  var oe=d.ou_earn_all!=null?d.ou_earn_all:null;
-  var range=daily.length?(_gpDayLbl(daily[0].date)+' - '+_gpDayLbl(daily[daily.length-1].date)):'';
-  var rows='';
-  for(var i=daily.length-1;i>=0;i--){
-    var day=daily[i];
-    var teamEarn=day.team_earn!=null?_gpFmtEarn(day.team_earn):'';
-    var ouEarn=day.ou_earn!=null?_gpFmtEarn(day.ou_earn):'';
-    rows+='<div onclick="_openGpDayDetail('+i+')" style="display:flex;align-items:center;justify-content:space-between;padding:9px 16px;border-bottom:1px solid #0a1120;background:'+(i%2?'#050c18':'#070e1b')+';cursor:pointer">'
+  });
+  return A;
+}
+function _gptSummaryTiles(A){
+  return '<div style="display:flex;gap:14px;margin-bottom:12px;flex-wrap:wrap">'
+    +'<div style="flex:1;min-width:200px;text-align:center;background:#0a1120;border:1px solid #1e293b;border-radius:10px;padding:10px 8px">'
+    +'<div style="font-size:.6rem;color:#64748b;font-weight:800;letter-spacing:.05em;margin-bottom:4px">TEAM WIN/LOSS (MONEYLINE)</div>'
+    +'<span style="font-size:1rem">'+_wl(A.tw,A.tl)+'</span>'+(A.tp?' <span style="color:#94a3b8;font-size:.7rem">'+A.tp+'P</span>':'')
+    +'<div style="font-size:.7rem;color:#64748b;margin-top:2px">'+_pct(A.tw,A.tl)+' win rate</div>'
+    +(A.tHas?'<div style="margin-top:3px;font-size:.85rem">'+_gpFmtEarn(A.tEarn)+'</div>':'')+'</div>'
+    +'<div style="flex:1;min-width:200px;text-align:center;background:#0a1120;border:1px solid #1e293b;border-radius:10px;padding:10px 8px">'
+    +'<div style="font-size:.6rem;color:#64748b;font-weight:800;letter-spacing:.05em;margin-bottom:4px">RUN TOTAL O/U</div>'
+    +'<span style="font-size:1rem">'+_wl(A.ow,A.ol)+'</span>'+(A.op?' <span style="color:#94a3b8;font-size:.7rem">'+A.op+'P</span>':'')
+    +'<div style="font-size:.7rem;color:#64748b;margin-top:2px">'+_pct(A.ow,A.ol)+' win rate</div>'
+    +(A.oHas?'<div style="margin-top:3px;font-size:.85rem">'+_gpFmtEarn(A.oEarn)+'</div>':'')+'</div>'
+    +'</div>';
+}
+function _gptSplitsHtml(A){
+  function tierT(n,t){ return _gpTile(n,_wl(t[0],t[1]),_pct(t[0],t[1]),t[3]?Math.round(t[2]*100)/100:null); }
+  function splitT(n,a){ return _gpTile(n,_wl(a[0],a[1]),_pct(a[0],a[1]),null,80); }
+  return '<div style="margin-bottom:4px"><div style="font-size:.62rem;color:#a78bfa;font-weight:800;letter-spacing:.05em;margin-bottom:6px">TEAM PICKS BY CONFIDENCE TIER</div>'
+    +'<div style="display:flex;gap:10px;flex-wrap:wrap">'+tierT('STRONG',A.tiers.STRONG)+tierT('MODERATE',A.tiers.MODERATE)+tierT('LEAN',A.tiers.LEAN)+'</div></div>'
+    +'<div style="margin:10px 0 4px"><div style="font-size:.62rem;color:#a78bfa;font-weight:800;letter-spacing:.05em;margin-bottom:6px">MORE SPLITS</div>'
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap">'+splitT('HOME PICKS',A.homeP)+splitT('AWAY PICKS',A.awayP)+splitT('FAVORITES',A.fav)+splitT('UNDERDOGS',A.dog)+splitT('VALUE FLAG',A.val)+'</div></div>'
+    +'<div style="margin:10px 0 12px"><div style="font-size:.62rem;color:#38bdf8;font-weight:800;letter-spacing:.05em;margin-bottom:6px">O/U SPLITS</div>'
+    +'<div style="display:flex;gap:10px;flex-wrap:wrap">'+_gpTile('OVER CALLS',_wl(A.overC[0],A.overC[1]),_pct(A.overC[0],A.overC[1]),A.overC[3]?Math.round(A.overC[2]*100)/100:null)+_gpTile('UNDER CALLS',_wl(A.underC[0],A.underC[1]),_pct(A.underC[0],A.underC[1]),A.underC[3]?Math.round(A.underC[2]*100)/100:null)+'</div></div>';
+}
+function _gptDayRowsHtml(days,stake){
+  var k=stake/100, rows='';
+  for(var i=days.length-1;i>=0;i--){
+    var day=days[i];
+    var teamEarn=day.team_earn!=null?_gpFmtEarn(day.team_earn*k):'';
+    var ouEarn=day.ou_earn!=null?_gpFmtEarn(day.ou_earn*k):'';
+    rows+='<div onclick="_gptGotoDay(&#39;'+day.date+'&#39;)" style="display:flex;align-items:center;justify-content:space-between;padding:9px 14px;border-bottom:1px solid #0a1120;background:'+(i%2?'#050c18':'#070e1b')+';cursor:pointer;border-radius:6px">'
       +'<div style="display:flex;align-items:center;gap:10px">'
       +'<span style="color:#e2e8f0;font-size:.76rem;font-weight:800;min-width:52px">'+_gpDayLbl(day.date)+'</span>'
       +'<span style="color:#475569;font-size:.64rem">'+(day.games||[]).length+' games</span>'
@@ -4430,102 +4457,159 @@ function _openGpRecordModal(){
       +'<span style="color:#a78bfa;font-size:.66rem;font-weight:800">VIEW &#8594;</span>'
       +'</div></div>';
   }
-  function tierT(n,t){ return _gpTile(n,_wl(t[0],t[1]),_pct(t[0],t[1]),t[3]?Math.round(t[2]*100)/100:null); }
-  function splitT(n,a){ return _gpTile(n,_wl(a[0],a[1]),_pct(a[0],a[1]),null,80); }
-  var ov=_gpRecOv();
-  ov.innerHTML='<div style="background:#080f1e;border:1px solid #3b2c63;border-radius:18px;width:100%;max-width:640px;max-height:92vh;display:flex;flex-direction:column;box-shadow:0 24px 80px rgba(0,0,0,.7)" onclick="event.stopPropagation()">'
-    +'<div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid #1e293b;flex-shrink:0">'
-    +'<div><div style="font-weight:900;color:#a78bfa;font-size:1.05rem">&#128302; Game Predictor Record</div>'
-    +'<div style="color:#64748b;font-size:.72rem;margin-top:2px">All tiers &#183; '+d.days+' day'+(d.days===1?'':'s')+' graded &#183; $100 flat bets'+(range?' &#183; '+range:'')+'</div></div>'
-    +'<button onclick="document.getElementById(&#39;gp-rec-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:1.1rem;flex-shrink:0">&#215;</button>'
-    +'</div>'
-    +'<div style="overflow-y:auto;flex:1">'
-    +'<div style="padding:14px 20px;display:flex;gap:14px">'
-    +'<div style="flex:1;text-align:center;background:#0a1120;border:1px solid #1e293b;border-radius:10px;padding:10px 8px">'
-    +'<div style="font-size:.6rem;color:#64748b;font-weight:800;letter-spacing:.05em;margin-bottom:4px">TEAM WIN/LOSS (MONEYLINE)</div>'
-    +'<span style="font-size:1rem">'+_wl(ta[0],ta[1])+'</span>'+(tpush?' <span style="color:#94a3b8;font-size:.7rem">'+tpush+'P</span>':'')
-    +'<div style="font-size:.7rem;color:#64748b;margin-top:2px">'+_pct(ta[0],ta[1])+' win rate</div>'
-    +(te!=null?'<div style="margin-top:3px;font-size:.85rem">'+_gpFmtEarn(te)+'</div>':'')+'</div>'
-    +'<div style="flex:1;text-align:center;background:#0a1120;border:1px solid #1e293b;border-radius:10px;padding:10px 8px">'
-    +'<div style="font-size:.6rem;color:#64748b;font-weight:800;letter-spacing:.05em;margin-bottom:4px">RUN TOTAL O/U</div>'
-    +'<span style="font-size:1rem">'+_wl(oa[0],oa[1])+'</span>'+(opush?' <span style="color:#94a3b8;font-size:.7rem">'+opush+'P</span>':'')
-    +'<div style="font-size:.7rem;color:#64748b;margin-top:2px">'+_pct(oa[0],oa[1])+' win rate</div>'
-    +(oe!=null?'<div style="margin-top:3px;font-size:.85rem">'+_gpFmtEarn(oe)+'</div>':'')+'</div>'
-    +'</div>'
-    +'<div style="padding:0 20px 4px"><div style="font-size:.62rem;color:#a78bfa;font-weight:800;letter-spacing:.05em;margin-bottom:6px">TEAM PICKS BY CONFIDENCE TIER</div>'
-    +'<div style="display:flex;gap:10px">'+tierT('STRONG',tiers.STRONG)+tierT('MODERATE',tiers.MODERATE)+tierT('LEAN',tiers.LEAN)+'</div></div>'
-    +'<div style="padding:10px 20px 4px"><div style="font-size:.62rem;color:#a78bfa;font-weight:800;letter-spacing:.05em;margin-bottom:6px">MORE SPLITS</div>'
-    +'<div style="display:flex;gap:8px;flex-wrap:wrap">'+splitT('HOME PICKS',homeP)+splitT('AWAY PICKS',awayP)+splitT('FAVORITES',fav)+splitT('UNDERDOGS',dog)+splitT('VALUE FLAG',val)+'</div></div>'
-    +'<div style="padding:10px 20px 12px"><div style="font-size:.62rem;color:#38bdf8;font-weight:800;letter-spacing:.05em;margin-bottom:6px">O/U SPLITS</div>'
-    +'<div style="display:flex;gap:10px">'+_gpTile('OVER CALLS',_wl(overC[0],overC[1]),_pct(overC[0],overC[1]),overC[3]?Math.round(overC[2]*100)/100:null)+_gpTile('UNDER CALLS',_wl(underC[0],underC[1]),_pct(underC[0],underC[1]),underC[3]?Math.round(underC[2]*100)/100:null)+'</div></div>'
-    +'<div style="padding:6px 20px 4px;border-top:1px solid #111c2e"><div style="font-size:.62rem;color:#a78bfa;font-weight:800;letter-spacing:.05em;padding:6px 0">DAILY RESULTS &mdash; tap any day for every game</div></div>'
-    +(rows||'<div style="padding:20px;color:#475569;font-size:.78rem;text-align:center">No graded days yet &mdash; results appear the morning after games finish.</div>')
-    +'</div>'
-    +'</div>';
-  ov.style.display='flex';
+  return rows;
 }
-function _openGpDayDetail(i){
-  var d=__GP_REC__; if(!d) return;
-  var day=(d.daily||[])[i]; if(!day) return;
-  var cards='';
-  (day.games||[]).forEach(function(g){
-    var tr=g.team_result, or_=g.ou_result;
-    var trCol=tr==='WIN'?'#4ade80':(tr==='LOSS'?'#f87171':'#94a3b8');
-    var orCol=or_==='WIN'?'#4ade80':(or_==='LOSS'?'#f87171':'#94a3b8');
-    var modelPct=g.pick_home?g.win_home:g.win_away;
-    var mktPct=g.pick_home?g.mkt_home_pct:g.mkt_away_pct;
-    var mm='';
-    if(modelPct!=null){ mm='model '+modelPct+'%'; if(mktPct!=null){ mm+=' vs market '+mktPct+'%'; if(g.mkt_edge!=null) mm+=' ('+(g.mkt_edge>0?'+':'')+g.mkt_edge+'%'+(g.value_flag?' value':'')+')'; } }
-    var sps=(g.away_sp||g.home_sp)?(_esc(g.away_sp||'?')+' vs '+_esc(g.home_sp||'?')):'';
-    var mlOdds=g.ml_pick_odds!=null?('ML '+_gpFmtOdds(g.ml_pick_odds)):'ML n/a';
-    var mlEarn=g.ml_earnings!=null?_gpFmtEarn(g.ml_earnings):'';
-    var ouRow;
-    if(g.total_pick&&g.total_line!=null){
-      var ouOdds=g.total_pick_odds!=null?(' ('+_gpFmtOdds(g.total_pick_odds)+')'):'';
-      var ouEarnG=g.ou_earnings!=null?_gpFmtEarn(g.ou_earnings):'';
-      ouRow='<div style="display:flex;align-items:center;justify-content:space-between;padding:5px 0;border-top:1px solid #0f172a;flex-wrap:wrap;gap:4px">'
-        +'<div><span style="font-size:.6rem;color:#64748b;font-weight:800;margin-right:8px">RUN TOTAL</span>'
-        +'<b style="color:#38bdf8;font-size:.78rem">'+g.total_pick+' '+g.total_line+'</b>'
-        +'<span style="color:#94a3b8;font-size:.7rem">'+ouOdds+'</span>'
-        +'<span style="color:#64748b;font-size:.68rem;margin-left:8px">proj '+(g.proj_total!=null?g.proj_total:'?')+' &#8594; actual '+(g.actual_total!=null?g.actual_total:'?')+'</span>'
-        +(g.total_conf?'<span style="color:#475569;font-size:.62rem;margin-left:6px">'+g.total_conf+'</span>':'')+'</div>'
-        +'<div style="display:flex;gap:8px;align-items:center">'
-        +'<span style="color:'+orCol+';font-weight:800;font-size:.78rem">'+_esc(or_||'—')+'</span>'+ouEarnG+'</div></div>';
-    } else {
-      ouRow='<div style="padding:5px 0;border-top:1px solid #0f172a"><span style="font-size:.6rem;color:#64748b;font-weight:800;margin-right:8px">RUN TOTAL</span><span style="color:#475569;font-size:.7rem">no line posted</span></div>';
-    }
-    var drv=(g.drivers&&g.drivers.length)?('<div style="color:#475569;font-size:.62rem;margin-top:4px">TOP DRIVERS: '+_esc(g.drivers.join(' · '))+'</div>'):'';
-    cards+='<div style="background:#0a1120;border:1px solid #1e293b;border-radius:12px;padding:10px 14px;margin:0 16px 10px">'
-      +'<div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:5px;border-bottom:1px solid #0f172a;flex-wrap:wrap;gap:4px">'
-      +'<b style="color:#e2e8f0;font-size:.82rem">'+_esc(g.away_abbr||'')+' @ '+_esc(g.home_abbr||'')+'</b>'
-      +'<span style="color:#fbbf24;font-size:.74rem;font-weight:800">FINAL: '+_esc(g.away_abbr||'')+' '+g.away_runs+' &mdash; '+_esc(g.home_abbr||'')+' '+g.home_runs+'</span>'
-      +(sps?'<span style="color:#64748b;font-size:.64rem">'+sps+'</span>':'<span></span>')
-      +'</div>'
-      +'<div style="display:flex;align-items:center;justify-content:space-between;padding:5px 0;flex-wrap:wrap;gap:4px">'
-      +'<div><span style="font-size:.6rem;color:#64748b;font-weight:800;margin-right:8px">TEAM PICK</span>'
-      +'<b style="color:#a78bfa;font-size:.8rem">'+_esc(g.pick||'')+'</b>'
-      +(g.conf?' <span style="color:#94a3b8;font-size:.66rem">'+g.conf+'</span>':'')
-      +(mm?' <span style="color:#64748b;font-size:.66rem;margin-left:6px">'+mm+'</span>':'')+'</div>'
+function _gptGameCard(g,stake){
+  var k=stake/100;
+  var tr=g.team_result, or_=g.ou_result;
+  var trCol=tr==='WIN'?'#4ade80':(tr==='LOSS'?'#f87171':'#94a3b8');
+  var orCol=or_==='WIN'?'#4ade80':(or_==='LOSS'?'#f87171':'#94a3b8');
+  var modelPct=g.pick_home?g.win_home:g.win_away;
+  var mktPct=g.pick_home?g.mkt_home_pct:g.mkt_away_pct;
+  var mm='';
+  if(modelPct!=null){ mm='model '+modelPct+'%'; if(mktPct!=null){ mm+=' vs market '+mktPct+'%'; if(g.mkt_edge!=null) mm+=' ('+(g.mkt_edge>0?'+':'')+g.mkt_edge+'%'+(g.value_flag?' value':'')+')'; } }
+  var sps=(g.away_sp||g.home_sp)?(_esc(g.away_sp||'?')+' vs '+_esc(g.home_sp||'?')):'';
+  var mlOdds=g.ml_pick_odds!=null?('ML '+_gpFmtOdds(g.ml_pick_odds)):'ML n/a';
+  var mlEarn=g.ml_earnings!=null?_gpFmtEarn(g.ml_earnings*k):'';
+  var ouRow;
+  if(g.total_pick&&g.total_line!=null){
+    var ouOdds=g.total_pick_odds!=null?(' ('+_gpFmtOdds(g.total_pick_odds)+')'):'';
+    var ouEarnG=g.ou_earnings!=null?_gpFmtEarn(g.ou_earnings*k):'';
+    ouRow='<div style="display:flex;align-items:center;justify-content:space-between;padding:5px 0;border-top:1px solid #0f172a;flex-wrap:wrap;gap:4px">'
+      +'<div><span style="font-size:.6rem;color:#64748b;font-weight:800;margin-right:8px">RUN TOTAL</span>'
+      +'<b style="color:#38bdf8;font-size:.78rem">'+g.total_pick+' '+g.total_line+'</b>'
+      +'<span style="color:#94a3b8;font-size:.7rem">'+ouOdds+'</span>'
+      +'<span style="color:#64748b;font-size:.68rem;margin-left:8px">proj '+(g.proj_total!=null?g.proj_total:'?')+' &#8594; actual '+(g.actual_total!=null?g.actual_total:'?')+'</span>'
+      +(g.total_conf?'<span style="color:#475569;font-size:.62rem;margin-left:6px">'+g.total_conf+'</span>':'')+'</div>'
       +'<div style="display:flex;gap:8px;align-items:center">'
-      +'<span style="color:#94a3b8;font-size:.68rem">'+mlOdds+'</span>'
-      +'<span style="color:'+trCol+';font-weight:800;font-size:.78rem">'+_esc(tr||'—')+'</span>'+mlEarn+'</div></div>'
-      +ouRow+drv+'</div>';
-  });
-  var tSum='Team: '+day.team_w+'W-'+day.team_l+'L'+(day.team_earn!=null?' '+(day.team_earn>=0?'+':'')+day.team_earn.toFixed(2):'');
-  var oSum='O/U: '+day.ou_w+'W-'+day.ou_l+'L'+(day.ou_earn!=null?' '+(day.ou_earn>=0?'+':'')+day.ou_earn.toFixed(2):'');
-  var ov=_gpRecOv();
-  ov.innerHTML='<div style="background:#080f1e;border:1px solid #3b2c63;border-radius:18px;width:100%;max-width:640px;max-height:92vh;display:flex;flex-direction:column;box-shadow:0 24px 80px rgba(0,0,0,.7)" onclick="event.stopPropagation()">'
-    +'<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid #1e293b;flex-shrink:0">'
-    +'<div style="display:flex;align-items:center;gap:12px">'
-    +'<button onclick="_openGpRecordModal()" style="background:#1e293b;border:none;color:#a78bfa;font-size:.72rem;font-weight:800;padding:6px 12px;border-radius:8px;cursor:pointer;white-space:nowrap">&#8592; ALL DAYS</button>'
-    +'<div><div style="font-weight:900;color:#a78bfa;font-size:.95rem">'+_gpDayLbl(day.date)+', '+(day.date||'').slice(0,4)+'</div>'
-    +'<div style="color:#64748b;font-size:.68rem;margin-top:1px">'+(day.games||[]).length+' games graded &#183; '+tSum+' &#183; '+oSum+'</div></div>'
+      +'<span style="color:'+orCol+';font-weight:800;font-size:.78rem">'+_esc(or_||'—')+'</span>'+ouEarnG+'</div></div>';
+  } else {
+    ouRow='<div style="padding:5px 0;border-top:1px solid #0f172a"><span style="font-size:.6rem;color:#64748b;font-weight:800;margin-right:8px">RUN TOTAL</span><span style="color:#475569;font-size:.7rem">no line posted</span></div>';
+  }
+  var drv=(g.drivers&&g.drivers.length)?('<div style="color:#475569;font-size:.62rem;margin-top:4px">TOP DRIVERS: '+_esc(g.drivers.join(' · '))+'</div>'):'';
+  return '<div style="background:#0a1120;border:1px solid #1e293b;border-radius:12px;padding:10px 14px;margin-bottom:10px">'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:5px;border-bottom:1px solid #0f172a;flex-wrap:wrap;gap:4px">'
+    +'<b style="color:#e2e8f0;font-size:.82rem">'+_esc(g.away_abbr||'')+' @ '+_esc(g.home_abbr||'')+'</b>'
+    +'<span style="color:#fbbf24;font-size:.74rem;font-weight:800">FINAL: '+_esc(g.away_abbr||'')+' '+g.away_runs+' &mdash; '+_esc(g.home_abbr||'')+' '+g.home_runs+'</span>'
+    +(sps?'<span style="color:#64748b;font-size:.64rem">'+sps+'</span>':'<span></span>')
     +'</div>'
-    +'<button onclick="document.getElementById(&#39;gp-rec-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:1.1rem;flex-shrink:0">&#215;</button>'
-    +'</div>'
-    +'<div style="overflow-y:auto;flex:1;padding-top:12px">'+cards+'</div>'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;padding:5px 0;flex-wrap:wrap;gap:4px">'
+    +'<div><span style="font-size:.6rem;color:#64748b;font-weight:800;margin-right:8px">TEAM PICK</span>'
+    +'<b style="color:#a78bfa;font-size:.8rem">'+_esc(g.pick||'')+'</b>'
+    +(g.conf?' <span style="color:#94a3b8;font-size:.66rem">'+g.conf+'</span>':'')
+    +(mm?' <span style="color:#64748b;font-size:.66rem;margin-left:6px">'+mm+'</span>':'')+'</div>'
+    +'<div style="display:flex;gap:8px;align-items:center">'
+    +'<span style="color:#94a3b8;font-size:.68rem">'+mlOdds+'</span>'
+    +'<span style="color:'+trCol+';font-weight:800;font-size:.78rem">'+_esc(tr||'—')+'</span>'+mlEarn+'</div></div>'
+    +ouRow+drv+'</div>';
+}
+function _gptRenderDaily(be,stake){
+  var date=window.__GPT_DAILY_DATE__||_trkTodayISO();
+  var datesel='<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:12px"><label style="font-size:.82rem;color:#94a3b8">Day <input type="date" value="'+date+'" max="'+_trkTodayISO()+'" onchange="_gptGotoDay(this.value)" style="margin-left:6px;background:#020617;border:1px solid #334155;color:#fff;border-radius:6px;padding:6px 8px;font-size:.82rem"></label>'
+    +'<span style="display:flex;gap:6px;margin-left:auto">'
+    +'<button onclick="_gptRefresh()" title="Re-grade any newly finished days" style="background:#0e7490;color:#fff;border:none;border-radius:6px;padding:5px 11px;font-size:.78rem;font-weight:700;cursor:pointer">↻ Get Results</button>'
+    +'<button onclick="downloadGptDailyCSV()" style="background:#16a34a;color:#fff;border:none;border-radius:6px;padding:5px 11px;font-size:.78rem;font-weight:700;cursor:pointer">⬇ CSV</button>'
+    +'</span></div>';
+  var day=_gptDayByDate(date);
+  if(!day){ be.innerHTML=datesel+'<p style="color:#94a3b8;padding:12px">No graded Game Predictor slate for '+date+' &mdash; a day banks the morning after every game goes Final.</p>'; return; }
+  var A=_gptAgg(day.games||[],stake);
+  var cards='';
+  (day.games||[]).forEach(function(g){ cards+=_gptGameCard(g,stake); });
+  be.innerHTML=datesel+_gptSummaryTiles(A)+cards;
+}
+function _gptRenderRange(be,stake,which){
+  var from,to,label,nav='';
+  var all=(__GP_REC__&&__GP_REC__.daily)||[];
+  if(which==='weekly'){ to=_trkTodayISO(); from=_isoShift(to,-6); label='Last 7 days'; }
+  else if(which==='monthly'){ var m=window.__GPT_MONTH__||_trkTodayISO().slice(0,7); from=m+'-01'; to=m+'-31'; var mn=['January','February','March','April','May','June','July','August','September','October','November','December']; label=mn[parseInt(m.slice(5,7),10)-1]+' '+m.slice(0,4); var canNext=(m<_trkTodayISO().slice(0,7)); nav='<span style="display:flex;gap:6px;align-items:center;margin-left:10px"><button onclick="_gptMonthShift(-1)" style="background:#1e293b;color:#fff;border:none;border-radius:6px;padding:4px 11px;cursor:pointer;font-weight:800">◀</button><button onclick="_gptMonthShift(1)"'+(canNext?'':' disabled')+' style="background:'+(canNext?'#1e293b':'#0f172a')+';color:'+(canNext?'#fff':'#475569')+';border:none;border-radius:6px;padding:4px 11px;cursor:'+(canNext?'pointer':'default')+';font-weight:800">▶</button></span>'; }
+  else { from='0000-01-01'; to='9999-12-31'; label='All Time'+(all.length?(' · '+_gpDayLbl(all[0].date)+' - '+_gpDayLbl(all[all.length-1].date)):''); }
+  var days=all.filter(function(d){ return d.date>=from&&d.date<=to; });
+  var hdrBar='<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;background:#071f17;border:1px solid #065f46;border-radius:12px;padding:12px 16px;margin-bottom:12px"><div style="font-weight:800;color:#6ee7b7;display:flex;align-items:center">'+label+nav+'</div><span style="margin-left:auto;color:#94a3b8;font-size:.78rem">'+days.length+' graded day'+(days.length===1?'':'s')+'</span><button onclick="downloadGptRangeCSV(&#39;'+which+'&#39;)" style="background:#16a34a;color:#fff;border:none;border-radius:6px;padding:5px 11px;font-size:.78rem;font-weight:700;cursor:pointer">⬇ CSV</button></div>';
+  if(!days.length){ be.innerHTML=hdrBar+'<p style="color:#94a3b8;padding:12px">No graded GP days in this range yet &mdash; fills in as slates go Final.</p>'; return; }
+  var games=[]; days.forEach(function(d){ (d.games||[]).forEach(function(g){ games.push(g); }); });
+  var A=_gptAgg(games,stake);
+  var dayHdr='<div style="font-size:.62rem;color:#a78bfa;font-weight:800;letter-spacing:.05em;margin:4px 0 6px;border-top:1px solid #111c2e;padding-top:10px">DAILY RESULTS &mdash; tap any day for every game</div>';
+  be.innerHTML=hdrBar+_gptSummaryTiles(A)+_gptSplitsHtml(A)+dayHdr+_gptDayRowsHtml(days,stake);
+}
+function _gptRenderActive(){ var be=document.getElementById('gptrk-body'); if(!be) return; var stake=_gptStake(); var t=window.__GPT_TAB__||'daily'; if(t==='daily') _gptRenderDaily(be,stake); else _gptRenderRange(be,stake,t); }
+function renderGPTracker(){
+  if(!window.__GPT_TAB__) window.__GPT_TAB__='daily';
+  if(!window.__GPT_MONTH__) window.__GPT_MONTH__=_trkTodayISO().slice(0,7);
+  var bet=(window.__GPT_BET__!=null?window.__GPT_BET__:100);
+  var hdr='<div style="display:flex;flex-wrap:wrap;gap:14px;align-items:center;background:#071f17;border:1px solid #065f46;border-radius:12px;padding:14px 18px;margin-bottom:14px">'
+    +'<span style="font-weight:800;color:#6ee7b7;font-size:1rem">💰 Bet amount $</span>'
+    +'<input id="gptBet" type="number" min="1" step="1" value="'+bet+'" oninput="_gptBetInput()" style="width:104px;background:#020617;border:1px solid #334155;color:#fff;border-radius:8px;padding:8px 12px;font-size:1.05rem;font-weight:800;text-align:center">'
+    +'<span style="color:#94a3b8;font-size:.8rem">flat on every GP call (team pick + run total each)</span>'
     +'</div>';
-  ov.style.display='flex';
+  var tabs='<div style="display:flex;gap:8px;margin-bottom:4px;flex-wrap:wrap">'+_gptTabBtn('daily','Daily')+_gptTabBtn('weekly','Weekly')+_gptTabBtn('monthly','Monthly')+_gptTabBtn('alltime','All Time')+'</div>';
+  var he=document.getElementById('gptrk-head'); if(he) he.innerHTML=hdr+tabs;
+  var be=document.getElementById('gptrk-body'); if(be) be.innerHTML='';
+  _gptRenderActive();
+}
+async function openGPTracker(){
+  var btn=document.getElementById('gptrk-btn');
+  var lbl=btn?btn.textContent:''; if(btn){ btn.disabled=true; btn.textContent='Loading...'; }
+  show('gptrk-card');
+  document.getElementById('gptrk-card').scrollIntoView({behavior:'smooth',block:'start'});
+  document.getElementById('gptrk-spinner').classList.remove('hidden');
+  document.getElementById('gptrk-head').innerHTML='';
+  document.getElementById('gptrk-body').innerHTML='';
+  try{
+    var r=await fetch('/api/gp-record'+_betAuthQS());
+    if(!r.ok){ var t=await r.text(); throw new Error(t||('HTTP '+r.status)); }
+    __GP_REC__=await r.json();
+    if(!window.__GPT_DAILY_DATE__){
+      var arr=__GP_REC__.daily||[];
+      window.__GPT_DAILY_DATE__=arr.length?arr[arr.length-1].date:_trkTodayISO();
+    }
+    renderGPTracker();
+  }catch(e){
+    document.getElementById('gptrk-body').innerHTML='<p style="color:#f87171;padding:16px">'+(e.message||'Error loading GP record')+'</p>';
+  }finally{
+    if(btn){ btn.disabled=false; btn.textContent=lbl; }
+    document.getElementById('gptrk-spinner').classList.add('hidden');
+  }
+}
+function downloadGptDailyCSV(){
+  var date=window.__GPT_DAILY_DATE__||_trkTodayISO();
+  var day=_gptDayByDate(date);
+  if(!day||!(day.games||[]).length){ alert('No graded GP games to export for '+date+'.'); return; }
+  var stake=_gptStake(), k=stake/100;
+  var out=[['Date','Matchup','Final','Team Pick','Tier','Model %','Market %','ML Odds','ML Result','ML P/L','Total Pick','Line','Proj','Actual','O/U Odds','O/U Result','O/U P/L']];
+  var tn=0,on=0;
+  (day.games||[]).forEach(function(g){
+    var mp=g.pick_home?g.win_home:g.win_away, kp=g.pick_home?g.mkt_home_pct:g.mkt_away_pct;
+    var mpl=g.ml_earnings!=null?(g.ml_earnings*k):null; if(mpl!=null) tn+=mpl;
+    var opl=g.ou_earnings!=null?(g.ou_earnings*k):null; if(opl!=null) on+=opl;
+    out.push([date,(g.away_abbr||'')+' @ '+(g.home_abbr||''),(g.away_abbr||'')+' '+g.away_runs+' - '+(g.home_abbr||'')+' '+g.home_runs,
+      g.pick||'',g.conf||'',(mp!=null?mp:''),(kp!=null?kp:''),
+      (g.ml_pick_odds!=null?_gpFmtOdds(g.ml_pick_odds):''),g.team_result||'',(mpl!=null?mpl.toFixed(2):''),
+      g.total_pick||'',(g.total_line!=null?g.total_line:''),(g.proj_total!=null?g.proj_total:''),(g.actual_total!=null?g.actual_total:''),
+      (g.total_pick_odds!=null?_gpFmtOdds(g.total_pick_odds):''),g.ou_result||'',(opl!=null?opl.toFixed(2):'')]);
+  });
+  out.push([]);
+  out.push(['','','','','','','','','TEAM TOTAL',tn.toFixed(2),'','','','','','O/U TOTAL',on.toFixed(2)]);
+  _trkDownloadCSV(out,'mlb-gp-'+date+'-flat'+stake+'.csv');
+}
+function downloadGptRangeCSV(which){
+  var stake=_gptStake(), k=stake/100, from,to,tag;
+  var all=(__GP_REC__&&__GP_REC__.daily)||[];
+  if(which==='weekly'){ to=_trkTodayISO(); from=_isoShift(to,-6); tag='last7-'+from+'_'+to; }
+  else if(which==='monthly'){ var m=window.__GPT_MONTH__||_trkTodayISO().slice(0,7); from=m+'-01'; to=m+'-31'; tag='month-'+m; }
+  else { from='0000-01-01'; to='9999-12-31'; tag='alltime'; }
+  var days=all.filter(function(d){ return d.date>=from&&d.date<=to; });
+  if(!days.length){ alert('No graded GP days in this range yet.'); return; }
+  var out=[['Date','Games','Team W','Team L','Team P/L','O/U W','O/U L','O/U P/L']];
+  var tw=0,tl=0,ow=0,ol=0,tn=0,on=0;
+  days.forEach(function(d){
+    var te=d.team_earn!=null?d.team_earn*k:null, oe=d.ou_earn!=null?d.ou_earn*k:null;
+    tw+=d.team_w||0; tl+=d.team_l||0; ow+=d.ou_w||0; ol+=d.ou_l||0;
+    if(te!=null) tn+=te; if(oe!=null) on+=oe;
+    out.push([d.date,(d.games||[]).length,d.team_w||0,d.team_l||0,(te!=null?te.toFixed(2):''),d.ou_w||0,d.ou_l||0,(oe!=null?oe.toFixed(2):'')]);
+  });
+  out.push([]);
+  out.push(['TOTALS','',tw,tl,tn.toFixed(2),ow,ol,on.toFixed(2)]);
+  _trkDownloadCSV(out,'mlb-gp-'+tag+'-flat'+stake+'.csv');
 }
 function _openGamePred(i){
   var g=(window.__GAME_PRED__||[])[i]; if(!g) return;
@@ -11956,6 +12040,15 @@ function downloadMyBetsCSV(){
     <div id="ovf-spinner" class="hidden" style="color:#94a3b8;font-size:.9rem;margin-bottom:12px;display:flex;align-items:center;gap:8px"><span class="spinner"></span> Grading overflow history&hellip;</div>
     <div id="ovf-head"></div>
     <div id="ovf-body"></div>
+  </div>
+</div>
+<div id="gptrk-card" class="hidden space-y-6" style="max-width:960px;margin:0 auto 24px;padding:0 16px">
+  <div class="card p-6">
+    <div class="section-hdr" style="color:#a78bfa;margin-bottom:8px">🔮 Game Predictor Record</div>
+    <div style="font-size:.78rem;color:#94a3b8;margin:0 0 14px">Every Game Predictor call &mdash; team winner + run total O/U &mdash; graded &amp; banked permanently. Pick a day to see every game&#39;s score, pick, odds and profit.</div>
+    <div id="gptrk-spinner" class="hidden" style="color:#94a3b8;font-size:.9rem;margin-bottom:12px;display:flex;align-items:center;gap:8px"><span class="spinner"></span> Loading GP record&hellip;</div>
+    <div id="gptrk-head"></div>
+    <div id="gptrk-body"></div>
   </div>
 </div>
 <div id="hrtrk-card" class="hidden space-y-6" style="max-width:960px;margin:0 auto 24px;padding:0 16px">
