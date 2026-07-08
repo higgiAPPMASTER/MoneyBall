@@ -42,7 +42,8 @@ LEAGUE_VELO    = 93.3    # MLB avg fastball velocity (mph), 2024-2025
 LEAGUE_KRATE   = 22.0    # pitcher strikeout rate (K%) league average
 LEAGUE_AVG_PITCH_WOBA = 0.310  # MLB avg batter wOBA vs any pitch type, ~2024-2025
 _GB_XWOBA_CACHE: dict = {}     # {year: {player_id: {gb_pct, xwoba}}}
-_GAME_TOTALS:   dict = {}      # {(norm_home, norm_away): total_line}
+_GAME_TOTALS:     dict = {}    # {(norm_home, norm_away): total_line}
+_GAME_TOTAL_ODDS: dict = {}    # {(norm_home, norm_away): (over_price, under_price)}
 _GAME_MONEYLINES: dict = {}    # {(norm_home, norm_away): (home_american, away_american)}
 _EVENTS_CACHE:  dict = {}      # {run_date: [event, ...]} — shared across K + props fetch
 _VELO_CACHE:    dict = {}      # {year: {player_id: avg_release_speed_mph}}
@@ -1038,8 +1039,9 @@ def _arsenal_opp_adj(pitcher_id: int, opp_team: str) -> float:
 
 def _fetch_game_totals(run_date: str) -> dict:
     """Fetch today's MLB game O/U totals from the Odds API.
-    Returns {(norm_home, norm_away): total_line}. Cached for the run."""
-    global _GAME_TOTALS
+    Returns {(norm_home, norm_away): total_line}. Also populates
+    _GAME_TOTAL_ODDS with (over_price, under_price). Cached for the run."""
+    global _GAME_TOTALS, _GAME_TOTAL_ODDS
     if _GAME_TOTALS:
         return _GAME_TOTALS
     try:
@@ -1048,6 +1050,7 @@ def _fetch_game_totals(run_date: str) -> dict:
                     "dateFormat": "iso", "oddsFormat": "american"},
             timeout=15)
         out = {}
+        out_odds = {}
         for ev in r.json():
             ht = _normalize(ev.get("home_team", ""))
             at = _normalize(ev.get("away_team", ""))
@@ -1055,22 +1058,42 @@ def _fetch_game_totals(run_date: str) -> dict:
                 for mkt in bk.get("markets", []):
                     if mkt.get("key") != "totals":
                         continue
+                    ov_pt = ov_pr = un_pr = None
                     for oc in mkt.get("outcomes", []):
-                        if oc.get("name") == "Over":
-                            try:
-                                pt = float(oc.get("point", 0))
-                                if pt > 0:
-                                    out[(ht, at)] = pt
-                            except Exception:
-                                pass
+                        try:
+                            pr = float(oc.get("price", 0))
+                            pt = float(oc.get("point", 0))
+                        except Exception:
+                            continue
+                        if oc.get("name") == "Over" and pt > 0:
+                            ov_pt = pt; ov_pr = pr
+                        elif oc.get("name") == "Under":
+                            un_pr = pr
+                    if ov_pt:
+                        out[(ht, at)] = ov_pt
+                        if ov_pr is not None and un_pr is not None:
+                            out_odds[(ht, at)] = (int(round(ov_pr)), int(round(un_pr)))
                     if (ht, at) in out:
                         break
                 if (ht, at) in out:
                     break
         _GAME_TOTALS = out
+        _GAME_TOTAL_ODDS = out_odds
     except Exception:
         pass
     return _GAME_TOTALS
+
+
+def _lookup_game_total_odds(home: str, away: str):
+    """Return (over_price, under_price) American odds for this matchup, or None."""
+    hn = _normalize(home)
+    an = _normalize(away)
+    for (ht, at), prices in _GAME_TOTAL_ODDS.items():
+        if (hn in ht or ht in hn) and (an in at or at in an):
+            return prices
+        if (hn in at or at in hn) and (an in ht or ht in hn):
+            return (prices[1], prices[0])
+    return None
 
 
 def _lookup_game_total(pitcher_team: str, opp: str) -> float | None:
