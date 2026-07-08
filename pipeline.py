@@ -1380,6 +1380,130 @@ def _fetch_team_rest(run_date: str) -> dict:
     return out
 
 
+_H2H_TEAM_IDS = {}
+
+
+def _h2h_team_ids():
+    """Team name -> MLB team id, one /teams call cached per process."""
+    global _H2H_TEAM_IDS
+    if _H2H_TEAM_IDS:
+        return _H2H_TEAM_IDS
+    try:
+        j = requests.get("https://statsapi.mlb.com/api/v1/teams",
+                         params={"sportId": 1}, timeout=15).json()
+        _H2H_TEAM_IDS = {t.get("name", ""): t.get("id")
+                         for t in (j.get("teams") or [])
+                         if t.get("id") and t.get("name")}
+    except Exception:
+        _H2H_TEAM_IDS = {}
+    return _H2H_TEAM_IDS
+
+
+def _fetch_h2h_last10(home, away, h_abbr, a_abbr, run_date, total_line, team_match):
+    """Last 10 completed regular-season meetings between the two clubs
+    (current + prior season) via ONE MLB schedule call with opponentId.
+    Returns a dict the frontend renders in the Game Predictor modal, or
+    None (silent) when there is no history / any fetch failure."""
+    import datetime
+    ids = _h2h_team_ids()
+    hid = aid = None
+    for nm, tid in ids.items():
+        if hid is None and team_match(nm, home):
+            hid = tid
+        if aid is None and team_match(nm, away):
+            aid = tid
+    if not hid or not aid or hid == aid:
+        return None
+    try:
+        d0 = datetime.date.fromisoformat(run_date[:10])
+    except Exception:
+        return None
+    start = "%d-01-01" % (d0.year - 1)
+    end = (d0 - datetime.timedelta(days=1)).isoformat()
+    try:
+        j = requests.get("https://statsapi.mlb.com/api/v1/schedule",
+            params={"sportId": 1, "teamId": hid, "opponentId": aid,
+                    "startDate": start, "endDate": end, "gameType": "R"},
+            timeout=15).json()
+    except Exception:
+        return None
+    rows = []
+    for day in (j.get("dates") or []):
+        for g in (day.get("games") or []):
+            if ((g.get("status") or {}).get("abstractGameState")) != "Final":
+                continue
+            t = g.get("teams") or {}
+            th, ta = (t.get("home") or {}), (t.get("away") or {})
+            hs, avs = th.get("score"), ta.get("score")
+            if hs is None or avs is None or hs == avs:
+                continue
+            rows.append({"date": day.get("date", ""),
+                         "site_home": ((th.get("team") or {}).get("id")),
+                         "h": hs, "a": avs})
+    if not rows:
+        return None
+    rows.sort(key=lambda r: r["date"], reverse=True)
+    rows = rows[:10]
+    games = []
+    hw = aw = home_site_w = overs = 0
+    tot_sum = 0
+    for r in rows:
+        at_home_site = (r["site_home"] == hid)   # played at today's home club
+        hr = r["h"] if at_home_site else r["a"]  # today's HOME team runs
+        ar = r["a"] if at_home_site else r["h"]  # today's AWAY team runs
+        tot = r["h"] + r["a"]
+        tot_sum += tot
+        if hr > ar:
+            hw += 1
+            win_abbr, lose_abbr, w_r, l_r = h_abbr, a_abbr, hr, ar
+        else:
+            aw += 1
+            win_abbr, lose_abbr, w_r, l_r = a_abbr, h_abbr, ar, hr
+        if r["h"] > r["a"]:
+            home_site_w += 1                     # the hosting club won
+        ou = ""
+        if total_line is not None:
+            if tot > total_line:
+                ou = "OVER"
+                overs += 1
+            elif tot < total_line:
+                ou = "UNDER"
+            else:
+                ou = "PUSH"
+        try:
+            dd = datetime.date.fromisoformat(r["date"])
+            lab = dd.strftime("%b") + " " + str(dd.day)
+            if dd.year != d0.year:
+                lab += " '" + dd.strftime("%y")
+        except Exception:
+            lab = r["date"]
+        games.append({"d": lab,
+                      "site": h_abbr if at_home_site else a_abbr,
+                      "score": "%s %d - %s %d" % (win_abbr, w_r, lose_abbr, l_r),
+                      "w": win_abbr, "tot": tot, "ou": ou, "m": ar - hr})
+    n = len(rows)
+    avg_total = round(tot_sum / float(n), 1)
+    if hw > aw:
+        note = "%s has taken %d of the last %d meetings" % (h_abbr, hw, n)
+    elif aw > hw:
+        note = "%s has taken %d of the last %d meetings" % (a_abbr, aw, n)
+    else:
+        note = "The last %d meetings are split %d-%d" % (n, hw, aw)
+    at_site = [r for r in rows if r["site_home"] == hid][:5]
+    if len(at_site) >= 3:
+        sw = sum(1 for r in at_site if r["h"] > r["a"])
+        note += " - %s is %d-%d in the last %d at home in this matchup" % (
+            h_abbr, sw, len(at_site) - sw, len(at_site))
+    note += "."
+    if total_line is not None:
+        note += " %d of %d meetings cleared today's %s line." % (
+            overs, n, ("%g" % total_line))
+    return {"games": games, "home_w": hw, "away_w": aw, "n": n,
+            "avg_total": avg_total,
+            "overs": (overs if total_line is not None else None),
+            "line": total_line, "home_side_w": home_site_w, "note": note}
+
+
 def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, emit=None, mlb_probable=None):
     """Game Predictor — team win model. Aggregates the SAME player-level signals
     the app already computes for props into two team run projections, then turns
@@ -1796,6 +1920,14 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
                 except Exception:
                     pass
 
+            # ── last 10 head-to-head meetings (current + prior season) ──
+            h2h = None
+            try:
+                h2h = _fetch_h2h_last10(home, away, h_abbr, a_abbr,
+                                        run_date, total_line, _team_match)
+            except Exception:
+                h2h = None
+
             # ── market moneyline (de-vig h2h) vs model win% ──
             mkt_home_pct = mkt_away_pct = None
             mkt_edge = None          # model% - market% for the PICK side (>0 = value)
@@ -1966,6 +2098,14 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
                 verdict += (" Market implies %s %d%% \u2014 model %s it by %d%%." % (
                     pick_name, (mkt_home_pct if fav_home else mkt_away_pct),
                     ("beats" if mkt_edge > 0 else ("trails" if mkt_edge < 0 else "matches")), abs(mkt_edge)))
+            if h2h and h2h.get("n"):
+                _pw = h2h["home_w"] if fav_home else h2h["away_w"]
+                _lw = h2h["n"] - _pw
+                if _pw > _lw:
+                    verdict += " H2H backs the lean (%d-%d %s)." % (_pw, _lw, pick_abbr)
+                elif _pw < _lw:
+                    verdict += " H2H leans the other way (%d-%d %s)." % (
+                        _lw, _pw, (a_abbr if fav_home else h_abbr))
 
             out.append({
                 "away": away, "away_abbr": a_abbr, "home": home, "home_abbr": h_abbr,
@@ -1980,6 +2120,7 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
                 "mkt_edge": mkt_edge, "mkt_pick_abbr": mkt_pick_abbr, "value_flag": value_flag,
                 "ml_pick_odds": ml_pick_odds, "total_pick_odds": total_pick_odds,
                 "drivers": drivers, "factors": factors, "verdict": verdict,
+                "h2h": h2h,
             })
         except Exception as _exc:
             if emit:
