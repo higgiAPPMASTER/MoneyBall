@@ -717,8 +717,11 @@ def _mlb_box_lookup(date_str: str):
     from concurrent.futures import ThreadPoolExecutor as _TPE
     MLB_BASE = "https://statsapi.mlb.com/api/v1"
     try:
+        # hydrate=team is REQUIRED: the plain schedule's team objects carry NO
+        # "abbreviation" field, which left game_scores keyed ("","") and the
+        # Game Predictor grader matching zero games forever.
         sched = _rq.get(f"{MLB_BASE}/schedule", params={
-            "sportId": 1, "date": date_str, "gameType": "R",
+            "sportId": 1, "date": date_str, "gameType": "R", "hydrate": "team",
         }, timeout=30).json()
     except Exception as e:
         print(f"[box_lookup] schedule fetch failed {date_str}: {e}")
@@ -752,6 +755,7 @@ def _mlb_box_lookup(date_str: str):
                 _sched_meta[pk] = {
                     "away_abbr": ((tt.get("away") or {}).get("team") or {}).get("abbreviation", ""),
                     "home_abbr": ((tt.get("home") or {}).get("team") or {}).get("abbreviation", ""),
+                    "game_date": game.get("gameDate", ""),
                 }
                 if status not in _NOT_STARTED:
                     games.append((pk, status, final))
@@ -810,6 +814,7 @@ def _mlb_box_lookup(date_str: str):
                         "gamePk": pk,
                         "away_abbr": meta.get("away_abbr", ""),
                         "home_abbr": meta.get("home_abbr", ""),
+                        "game_date": meta.get("game_date", ""),
                         "away_runs": int(away_runs),
                         "home_runs": int(home_runs),
                         "final": True,
@@ -2022,30 +2027,48 @@ def _save_gp_ledger_local(data: dict):
     except Exception as e:
         print(f"[gp_ledger] local save failed: {e}")
 
+def _gp_norm_abbr(a) -> str:
+    """Normalize team abbreviations so ESPN-sourced GP picks (ARI/CHW/...)
+    match MLB statsapi box scores (AZ/CWS/...)."""
+    a = (a or "").upper().strip()
+    return {"ARI": "AZ", "CHW": "CWS", "OAK": "ATH", "WAS": "WSH",
+            "SFG": "SF", "TBR": "TB", "KCR": "KC", "SDP": "SD"}.get(a, a)
+
 def _grade_game_predictions(date_str: str, gp_list: list) -> list:
     """Grade each GP game against actual box scores.
     Returns list of graded dicts with team_result and ou_result."""
     _, _, any_game, all_final, game_scores = _mlb_box_lookup(date_str)
     if not game_scores:
         return []
-    # Build a lookup by (away_abbr, home_abbr) → score
+    # Group scores by matchup. A doubleheader gives the same pair TWO finals,
+    # so each key holds a LIST sorted by first pitch; grading pops one score
+    # per GP entry (processed in game_start order) — the same game is never
+    # graded twice, and a stray duplicate GP row simply finds no score left.
     score_map: dict = {}
     for gs in game_scores:
-        key = (gs.get("away_abbr", "").upper(), gs.get("home_abbr", "").upper())
-        score_map[key] = gs
-    out = []
-    for g in gp_list:
-        away = (g.get("away_abbr") or "").upper()
-        home = (g.get("home_abbr") or "").upper()
-        sc = score_map.get((away, home))
-        if not sc:
+        key = (_gp_norm_abbr(gs.get("away_abbr")), _gp_norm_abbr(gs.get("home_abbr")))
+        score_map.setdefault(key, []).append(gs)
+    for _lst in score_map.values():
+        _lst.sort(key=lambda s: s.get("game_date") or "")
+    order = sorted(range(len(gp_list)),
+                   key=lambda i: str((gp_list[i] or {}).get("game_start") or ""))
+    graded_by_idx: dict = {}
+    for _gi in order:
+        g = gp_list[_gi] or {}
+        away = _gp_norm_abbr(g.get("away_abbr"))
+        home = _gp_norm_abbr(g.get("home_abbr"))
+        lst = score_map.get((away, home))
+        flipped = False
+        if not lst:
             # Try reversed (data sometimes flipped)
-            sc = score_map.get((home, away))
-            if sc:
-                away_runs = sc.get("home_runs")
-                home_runs = sc.get("away_runs")
-            else:
-                continue
+            lst = score_map.get((home, away))
+            flipped = bool(lst)
+        if not lst:
+            continue
+        sc = lst.pop(0)
+        if flipped:
+            away_runs = sc.get("home_runs")
+            home_runs = sc.get("away_runs")
         else:
             away_runs = sc.get("away_runs")
             home_runs = sc.get("home_runs")
@@ -2083,7 +2106,7 @@ def _grade_game_predictions(date_str: str, gp_list: list) -> list:
         total_pick_odds = g.get("total_pick_odds")
         ml_earnings  = _flat_profit(team_result, ml_pick_odds)
         ou_earnings  = _flat_profit(ou_result, total_pick_odds)
-        out.append({
+        graded_by_idx[_gi] = {
             "away": g.get("away", away), "home": g.get("home", home),
             "away_abbr": away, "home_abbr": home,
             "pick": g.get("pick_abbr", ""), "pick_home": pick_home,
@@ -2102,8 +2125,9 @@ def _grade_game_predictions(date_str: str, gp_list: list) -> list:
             "mkt_edge": g.get("mkt_edge"), "value_flag": g.get("value_flag", False),
             "proj_total": g.get("proj_total"), "total_conf": g.get("total_conf", ""),
             "drivers": g.get("drivers") or [],
-        })
-    return out
+        }
+    # Return in the original gp_list (confidence) order
+    return [graded_by_idx[i] for i in sorted(graded_by_idx)]
 
 def _update_gp_ledger():
     """Grade and lock any past GP dates not yet in the ledger."""
