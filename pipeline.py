@@ -3197,6 +3197,11 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                 "ev": (_r.get("ev") if _from_hit else None),
                 "ev_prob": (_r.get("ev_prob") if _from_hit else None),
                 "edge": (_r.get("edge") if _from_hit else None),
+                # Career-vs-pitcher fields — shown in popup via _vsPitLine
+                "s1": _r.get("s1"),
+                "s1_ab": _r.get("s1_ab"),
+                "s1_disp": _r.get("s1_disp"),
+                "s1_tag": _r.get("s1_tag"),
             })
         triple_split_list.sort(key=lambda x: (x["tsc_min"], x["dn_ba"]), reverse=True)
         triple_split_list = triple_split_list[:20]
@@ -3889,6 +3894,11 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                     "ev":      (_r.get("ev")      if _from_hit else None),
                     "ev_prob": (_r.get("ev_prob") if _from_hit else None),
                     "edge":    (_r.get("edge")    if _from_hit else None),
+                    # Career-vs-pitcher fields — shown in popup via _vsPitLine
+                    "s1": _r.get("s1"),
+                    "s1_ab": _r.get("s1_ab"),
+                    "s1_disp": _r.get("s1_disp"),
+                    "s1_tag": _r.get("s1_tag"),
                 })
             hot_split_list.sort(key=lambda x: x["tsch_min"], reverse=True)
             hot_split_list = hot_split_list[:20]
