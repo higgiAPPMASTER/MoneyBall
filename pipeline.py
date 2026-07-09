@@ -1859,6 +1859,73 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
                      % (crushers, int((avg_ba or 0) * 1000), n))
         return {"count": crushers, "avg_ba": avg_ba, "mult": mult, "label": label, "n": n}
 
+    # ── Starter career vs opposing TEAM (lifetime vsTeamTotal, pitching) ──────
+    _team_ids = {}
+    try:
+        _tj = requests.get("https://statsapi.mlb.com/api/v1/teams",
+                           params={"sportId": 1}, timeout=15).json()
+        for _t in _tj.get("teams", []):
+            if _t.get("id") and _t.get("name"):
+                _team_ids[_t["name"]] = _t["id"]
+    except Exception:
+        _team_ids = {}
+
+    def _gp_team_id(team):
+        for _tn, _tid in _team_ids.items():
+            if _team_match(_tn, team):
+                return _tid
+        return None
+
+    _VST_CACHE = {}
+
+    LG_OPS_VS = 0.715   # league OPS-against baseline for a starter
+
+    def _sp_vs_team(team, opp_team):
+        """Today's starter's CAREER line vs the opposing TEAM (vsTeamTotal —
+        every regular-season meeting, all seasons, not just the last one). The
+        API returns a batting-against line (AVG/OPS against, no IP/ER), so the
+        signal is OPS-against vs the league baseline. mult nudges the OPPOSING
+        team's run projection: a low OPS-against suppresses their runs, a high
+        one inflates. PA-weighted (full weight at 150+ career PA) and capped
+        ±6% so one bad meeting can't swing a game call. Neutral (1.0 /
+        "no history") when the starter is TBD or has never faced them."""
+        _s = _lookup(team, sp_by_team) or {}
+        pid = _s.get("pitcher_id")
+        tid = _gp_team_id(opp_team)
+        out = {"mult": 1.0, "ops": None, "avg": None, "g": 0, "pa": 0,
+               "label": "no history"}
+        if not pid or not tid:
+            return out
+        _ck = (pid, tid)
+        if _ck in _VST_CACHE:
+            return _VST_CACHE[_ck]
+        try:
+            r = requests.get(
+                "https://statsapi.mlb.com/api/v1/people/%s/stats" % pid,
+                params={"stats": "vsTeamTotal", "group": "pitching",
+                        "opposingTeamId": tid}, timeout=10)
+            _spl = r.json().get("stats", [{}])[0].get("splits", [])
+            st = (_spl[0].get("stat") if _spl else None) or {}
+            pa = int(st.get("plateAppearances") or 0)
+            g  = int(st.get("gamesPlayed") or 0)
+            ops = float(st.get("ops")) if st.get("ops") not in (None, "", "-.--", ".---") else None
+            avg = float(st.get("avg")) if st.get("avg") not in (None, "", "-.--", ".---") else None
+            if pa <= 0 or ops is None:
+                _VST_CACHE[_ck] = out
+                return out
+            wgt = min(1.0, pa / 150.0)
+            m = 1.0 + max(-0.06, min(0.06, ((ops - LG_OPS_VS) / LG_OPS_VS) * 0.5 * wgt))
+            def _p3(v):
+                return ("%.3f" % v).lstrip("0") if v is not None else "n/a"
+            out = {"mult": m, "ops": ops, "avg": avg, "g": g, "pa": pa,
+                   "label": ("%s avg \u00b7 %s OPS \u00b7 %d G career"
+                             % (_p3(avg), _p3(ops), g))}
+        except Exception:
+            out = {"mult": 1.0, "ops": None, "avg": None, "g": 0, "pa": 0,
+                   "label": "no history"}
+        _VST_CACHE[_ck] = out
+        return out
+
     out = []
     for home, sched in (team_schedule or {}).items():
         if (sched or {}).get("side") != "HOME":
@@ -1880,13 +1947,15 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
             h_sp,  a_sp  = _starter(home, True), _starter(away, False)   # each team's OWN starter; home uses era_home, away uses era_away
             h_vsp = _vsp_crush(home, _opp_pit_id(away))   # home hitters vs away starter
             a_vsp = _vsp_crush(away, _opp_pit_id(home))   # away hitters vs home starter
+            h_vst = _sp_vs_team(home, away)   # home starter's career vs the away TEAM
+            a_vst = _sp_vs_team(away, home)   # away starter's career vs the home TEAM
             away_pen = _pen(home)   # away team's pen (home hitters face it)
             home_pen = _pen(away)   # home team's pen (away hitters face it)
             h_rest, a_rest = _rest_info(home), _rest_info(away)
             h_rm,   a_rm   = _rest_mult(h_rest), _rest_mult(a_rest)
 
-            projH = LEAGUE_RPG * h_off["mult"] * a_sp["mult"] * away_pen["mult"] * h_vsp["mult"] * env * ump * HFA * h_rm
-            projA = LEAGUE_RPG * a_off["mult"] * h_sp["mult"] * home_pen["mult"] * a_vsp["mult"] * env * ump * a_rm
+            projH = LEAGUE_RPG * h_off["mult"] * a_sp["mult"] * away_pen["mult"] * h_vsp["mult"] * a_vst["mult"] * env * ump * HFA * h_rm
+            projA = LEAGUE_RPG * a_off["mult"] * h_sp["mult"] * home_pen["mult"] * a_vsp["mult"] * h_vst["mult"] * env * ump * a_rm
             projH = max(1.5, min(9.0, projH)); projA = max(1.5, min(9.0, projA))
 
             ph, pa = projH ** EXP, projA ** EXP
@@ -1980,6 +2049,7 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
             mag_plat = ((h_off["plat_ba"] or 0) - (a_off["plat_ba"] or 0))
             mag_rest = (h_rm - a_rm)   # >0 home fresher
             mag_vsp  = h_vsp["count"] - a_vsp["count"]   # >0 home crushes opp starter more
+            mag_vst  = (a_vst["mult"] - h_vst["mult"])   # >0 home edge (away arm gets hit / home arm suppresses)
 
             def _pct(v):  return (str(round(v * 100)) + "% hit prob") if v is not None else "—"
             def _era(v):  return ("%.2f ERA" % v) if v is not None else "n/a"
@@ -2021,6 +2091,8 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
                  "edge": (_eabbr(mag_recent) if (r_h is not None and r_a is not None and abs(mag_recent) >= 0.40) else "even")},
                 {"name": "Career vs starter", "home": h_vsp["label"], "away": a_vsp["label"],
                  "edge": _eabbr(mag_vsp) if abs(mag_vsp) >= 2 else "even"},
+                {"name": "Starter career vs opp", "home": h_vst["label"], "away": a_vst["label"],
+                 "edge": _eabbr(mag_vst) if abs(mag_vst) >= 0.015 else "even"},
                 {"name": "Recent form (L10)", "home": ("%d up / %d down" % (h_off["hot"], h_off["cold"])),
                  "away": ("%d up / %d down" % (a_off["hot"], a_off["cold"])),
                  "edge": _eabbr(mag_form) if abs(mag_form) >= 1 else "even"},
@@ -2065,6 +2137,16 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
                 cands.append((abs(mag_vsp) * 5 * (1 if sign * (1 if mag_vsp > 0 else -1) > 0 else 0.01),
                               "%s lineup owns opp starter (%d batting .300+, .%03d avg)"
                               % (_ca, _cv["count"], int((_cv["avg_ba"] or 0) * 1000))))
+            if abs(mag_vst) >= 0.015 and _eabbr(mag_vst) == pick_abbr:
+                _own = h_vst if fav_home else a_vst   # pick's starter vs the loser
+                _oppv = a_vst if fav_home else h_vst  # loser's starter vs the pick's bats
+                def _ops3(v):
+                    return ("%.3f" % v).lstrip("0") if v is not None else "n/a"
+                if _own["ops"] is not None and (1.0 - _own["mult"]) >= (_oppv["mult"] - 1.0):
+                    lab = pick_abbr + " arm owns " + loser_abbr + " (" + _ops3(_own["ops"]) + " OPS against career)"
+                else:
+                    lab = pick_abbr + " bats own " + loser_abbr + " arm (" + _ops3(_oppv["ops"]) + " OPS against career)"
+                cands.append((abs(mag_vst) * 40, lab))
             if abs(mag_form) >= 1:
                 nhot = (h_off["hot"] if fav_home else a_off["hot"])
                 ncold = (a_off["cold"] if fav_home else h_off["cold"])
