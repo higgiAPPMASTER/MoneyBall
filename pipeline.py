@@ -3591,6 +3591,65 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     except Exception as _exc:
         emit({"type": "log", "msg": f"⚠️ Batter-vs-pitcher line skipped: {_exc}"})
 
+    # ── TSC / Hot Hitters popup backfill ─────────────────────────────────
+    # Triple Split + Hot Hitters entries are COPIES of picks from ten source
+    # lists; members sourced from non-hit boards (runs/RBI/TB/HRR/etc.) miss
+    # pitcher name, career-vs-pitcher line and recent hit log because those
+    # are stamped on the ORIGINALS after the copies were made (Triple Split
+    # is built before the stamping pass above). Backfill from the originals,
+    # falling back to a live lookup so every popup shows the head-to-head.
+    def _tsc_vsp_backfill(_lst, _label):
+        try:
+            from under_picks import _get_s1_vs_pitcher as _bf_vsp
+        except Exception:
+            return
+        _n = 0
+        for _ts in _lst:
+            try:
+                try:
+                    _orig = _tsc_by_id.get(int(_ts.get("batter_id") or 0)) or {}
+                except Exception:
+                    _orig = {}
+                if (not _ts.get("pitcher")) or _ts.get("pitcher") == "TBD":
+                    _pn = _orig.get("pitcher", "")
+                    if (not _pn) or _pn == "TBD":
+                        _pn = _opp_pit_name(_ts.get("opp", "")) or ""
+                    if _pn:
+                        _ts["pitcher"] = _pn
+                if not _ts.get("vs_pit"):
+                    _ts["vs_pit"] = _orig.get("vs_pit")
+                if not _ts.get("vs_pit"):
+                    _bid = _ts.get("batter_id") or _ts.get("player_id")
+                    _pid = _orig.get("pit_id") or _opp_pit_id(_ts.get("opp", ""))
+                    if _bid and _pid:
+                        _vp = _bf_vsp(_bid, _pid)
+                        if _vp:
+                            _ts["vs_pit"] = {"display": _vp.get("display", "N/A"),
+                                             "ab": _vp.get("ab", 0),
+                                             "hr": _vp.get("hr", 0)}
+                for _k in ("s1", "s1_ab", "s1_disp", "s1_tag"):
+                    if _ts.get(_k) in (None, ""):
+                        _ts[_k] = _orig.get(_k)
+                if not _ts.get("recent_hit_log"):
+                    _rl = _orig.get("recent_hit_log")
+                    if not _rl:
+                        try:
+                            _rl = _recent_hit_log(_ts.get("batter_id") or _ts.get("player_id"))
+                        except Exception:
+                            _rl = None
+                    if _rl:
+                        _ts["recent_hit_log"] = _rl
+                if _ts.get("vs_pit"):
+                    _n += 1
+            except Exception:
+                continue
+        emit({"type": "log", "msg": f"  ✅ {_label}: career-vs-pitcher backfilled on {_n}/{len(_lst)} entries"})
+
+    try:
+        _tsc_vsp_backfill(triple_split_list, "Triple Split")
+    except Exception as _exc:
+        emit({"type": "log", "msg": f"⚠️ Triple Split vs-pitcher backfill skipped: {_exc}"})
+
     # ── 5 Star Split — Triple Split qualifiers (>.275 in all three of today's
     # splits: Home/Away + Day/Night + Series-game) that ALSO clear two
     # consistency gates: vs-team ≥60% of season games with a hit AND last-10
@@ -3902,6 +3961,10 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                 })
             hot_split_list.sort(key=lambda x: x["tsch_min"], reverse=True)
             hot_split_list = hot_split_list[:20]
+            try:
+                _tsc_vsp_backfill(hot_split_list, "Hot Hitters")
+            except Exception as _bf_exc:
+                emit({"type": "log", "msg": f"⚠️ Hot Hitters vs-pitcher backfill skipped: {_bf_exc}"})
             emit({"type": "log",
                   "msg": f"  🔥 Hot Hitters: {len(hot_split_list)} hitters clear "
                          f">.270 in L10 H/A, D/N full-season & L10 G#"})
