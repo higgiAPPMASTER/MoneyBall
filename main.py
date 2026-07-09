@@ -2091,10 +2091,12 @@ def _grade_game_predictions(date_str: str, gp_list: list) -> list:
                 ou_result = "PUSH"
         # Flat-bet earnings ($100/game)
         def _flat_profit(result, odds):
-            if result not in ("WIN", "LOSS", "PUSH") or odds is None:
+            if result not in ("WIN", "LOSS", "PUSH"):
                 return None
             try:
-                o = float(odds)
+                # Fall back to even money (+100) when odds weren't stored
+                # (picks saved before ml_pick_odds/total_pick_odds were added)
+                o = float(odds) if odds is not None else 100.0
                 if result == "PUSH":
                     return 0.0
                 if result == "LOSS":
