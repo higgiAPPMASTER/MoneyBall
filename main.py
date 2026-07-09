@@ -5829,7 +5829,7 @@ function _mlbPool(){
     }
   });
   (r.hot_split_picks||[]).forEach(function(p,i){
-    cands.push({type:'TSCH',dir:'OVER',player:(p.full_name||p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'Hits',line:0.5,odds:(p.hit_odds!=null?p.hit_odds:''),conf:clampConf(93,i),reason:'🔥 Hot Hitters · >.270 L10 H/A, D/N & G# · to record a hit vs '+(p.opp||''),src:p});
+    cands.push({type:'TSCH',dir:'OVER',player:(p.full_name||p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'Hits',line:0.5,odds:(p.hit_odds!=null?p.hit_odds:''),conf:clampConf(93,i),reason:'🔥 Hot Hitters · >.270 L10 H/A, D/N & G# · hit in ≥60% of L10 · to record a hit vs '+(p.opp||''),src:p});
   });
   (r.triple_split_picks||[]).forEach(function(p,i){
     cands.push({type:'TSC',dir:'OVER',player:(p.full_name||p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'Hits',line:0.5,odds:(p.hit_odds!=null?p.hit_odds:''),conf:clampConf(94,i),reason:'🔱 Triple Split · >.275 H/A, D/N & series · to record a hit vs '+(p.opp||''),src:p});
@@ -8437,6 +8437,7 @@ function _hotSplitCard(p, rank, pfx) {
         ${_g((p.side==='HOME'?'Home':'Away')+' BA (L10)', (p.ha_disp||'—')+(p.ha_g?' ('+p.ha_g+'g)':''))}
         ${_g(dnLbl+' BA (full season)', p.dn_disp||'—')}
         ${_g('Series G'+(gno||'?')+' BA (L10)', (p.ser_disp||'—')+(p.ser_g?' ('+p.ser_g+'g)':''))}
+        ${p.l10_hit_pct!=null?_g('Hit in last 10 games', p.l10_hit_g+'/'+p.l10_g+'g &#183; '+p.l10_hit_pct+'%'):''}
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;padding-top:8px;border-top:1px solid #1f1f1f">
         <span style="font-size:.8rem;color:#fb923c;font-weight:900">TO RECORD A HIT</span>
@@ -9048,7 +9049,7 @@ function renderTrackRecord(d){
   var tabs='<div style="display:flex;gap:8px;margin-bottom:4px;flex-wrap:wrap">'+_trkTabBtn('daily','Daily')+_trkTabBtn('weekly','Weekly')+_trkTabBtn('monthly','Monthly')+_trkTabBtn('custom','Custom')
     +'<button onclick="_openProjEdgeStats()" title="W/L record and ROI for Proj Edge plays (pitchers: projection beats the line; hitters: positive edge), tracked forward each day &#x2014; separate from Track Record" style="background:#0c4a6e;color:#7dd3fc;border:1px solid #0ea5e9;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">&#9650; Proj Edge Record</button>'
     +'<button onclick="_openHrrSpStats()" title="W/L record for HRR Special confluence picks (all 4 gates cleared) &#x2014; separate from main Track Record" style="background:#1a0e2e;color:#c4b5fd;border:1px solid #7c3aed;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">&#11088; HRR SP Record</button>'
-    +'<button onclick="_openTschStats()" title="W/L record for Hot Hitters — hitters over .270 in last-10 H/A, full-season D/N &amp; last-10 G# splits &#x2014; to record a hit, separate from main Track Record" style="background:#1c0a02;color:#fb923c;border:1px solid #f97316;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">🌡️ Hot Hitters Record</button>'
+    +'<button onclick="_openTschStats()" title="W/L record for Hot Hitters — hitters over .270 in last-10 H/A, full-season D/N &amp; last-10 G# splits, plus a hit in at least 60% of their last 10 games &#x2014; to record a hit, separate from main Track Record" style="background:#1c0a02;color:#fb923c;border:1px solid #f97316;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">🌡️ Hot Hitters Record</button>'
     +'<button onclick="_openTscStats()" title="W/L record for Triple Split Club picks (over .275 in all three of today&#39;s splits) &#x2014; to record a hit, separate from main Track Record" style="background:#04141c;color:#67e8f9;border:1px solid #0e7490;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">&#128305; Triple Split Record</button>'
     +'<button onclick="_openFssStats()" title="W/L record and ROI for 5 Star Split picks (Triple Split + 60%+ games with a hit vs team + 60%+ last 10) &#x2014; separate from main Track Record" style="background:#0c0a1a;color:#c4b5fd;border:1px solid #7c3aed;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">&#11088; 5 Star Split Record</button>'
     +'<button onclick="_openClubStats()" title="W/L record and ROI for Club Plays (best production market from HRR Special + Triple Split + 5 Star Split members) &#x2014; separate from main Track Record" style="background:#180a12;color:#f9a8d4;border:1px solid #db2777;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">&#127942; Club Plays Record</button>'
@@ -9774,7 +9775,7 @@ async function _tschLoadDay(date){
 function _tschStatsWrap(bodyHtml){
   var ov2=document.getElementById('tsch-stats-modal'); if(!ov2) return;
   var dateMode=!!window.__TSCH_DATE__, date=window.__TSCH_DATE__||'';
-  var sub=dateMode?('Hot Hitters &#xB7; &gt;.270 in all 3 recent splits &#xB7; '+_weekdayName(date)+' '+date):'Hot Hitters &#xB7; &gt;.270 L10 H/A, D/N &amp; G# &#xB7; tap a day for that slate&#39;s plays';
+  var sub=dateMode?('Hot Hitters &#xB7; &gt;.270 in all 3 recent splits + hit in &#x2265;60% of L10 &#xB7; '+_weekdayName(date)+' '+date):'Hot Hitters &#xB7; &gt;.270 L10 H/A, D/N &amp; G# + &#x2265;60% L10 hit rate &#xB7; tap a day for that slate&#39;s plays';
   ov2.innerHTML='<div style="background:#1c0a02;border:1px solid #f97316;border-radius:18px;width:100%;max-width:460px;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 24px 80px rgba(0,0,0,.7)" onclick="event.stopPropagation()">'
     +'<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #431407;flex-shrink:0">'
     +'<div><div style="font-weight:900;color:#fb923c;font-size:1rem">🌡️ Hot Hitters Record</div>'
