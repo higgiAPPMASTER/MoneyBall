@@ -3909,6 +3909,158 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         five_star_split_list = []
         emit({"type": "log", "msg": f"⚠️ 5 Star Split skipped: {_exc}"})
 
+    # ── Club Plays — best production play from the three club boards ──────────
+    # Pool = union of today's HRR Special (Parlay), Triple Split Club and 5 Star
+    # Split members. Each player carries his SINGLE best market by TRUE last-10
+    # over-rate among RBI O0.5 / Runs O0.5 / HRR O1.5 / TB O1.5 / Walks O0.5
+    # (NO hits by design). Own card + own forward-only record; top 10 only.
+    club_plays_list = []
+    try:
+        from mlb_stats_splits import _get_game_logs as _cp_logs
+        from datetime import date as _cp_dt
+        _CP_CY = _cp_dt.today().year
+
+        # backfill map: id -> a richer original pick (vs_pit / recent_hit_log /
+        # series fields) for HRR-Special members that carry a slimmer dict
+        _cp_orig = {}
+        for _lst in (top9, also_ran, under_picks_list, runs_picks_list,
+                     tb_picks_list, tb_over_picks_list, rbi_picks_list,
+                     walks_picks_list, hrr_picks_list, hr_picks_list):
+            for _r in _lst:
+                _b = _r.get("batter_id") or _r.get("player_id")
+                if _b and int(_b) not in _cp_orig:
+                    _cp_orig[int(_b)] = _r
+
+        # union pool — FSS first (richest fields), then TSC, then HRR Special;
+        # first-seen dict wins, but every membership is recorded for the card
+        _cp_pool = {}
+        for _src, _tag in ((five_star_split_list, "5 STAR"),
+                           (triple_split_list, "TRIPLE SPLIT"),
+                           (hrr_special_list, "HRR SPECIAL")):
+            for _r in _src:
+                _b = _r.get("batter_id")
+                if not _b:
+                    continue
+                _b = int(_b)
+                if _b not in _cp_pool:
+                    _cp_pool[_b] = {"pick": _r, "clubs": []}
+                if _tag not in _cp_pool[_b]["clubs"]:
+                    _cp_pool[_b]["clubs"].append(_tag)
+
+        # per-market OVER odds + EV carried from each market's own board
+        _cp_odds = {"tb": {}, "runs": {}, "rbi": {}, "hrr": {}, "walks": {}}
+
+        def _cp_fill(_lst, _mkt, _oddkey, _over_only):
+            for _r in _lst:
+                _b = _r.get("batter_id") or _r.get("player_id")
+                if not _b:
+                    continue
+                if _over_only and (_r.get("pick") or "OVER").upper() != "OVER":
+                    continue
+                _cp_odds[_mkt][int(_b)] = {
+                    "odds": _r.get(_oddkey), "book": _r.get("book", ""),
+                    "ev": _r.get("ev"), "ev_prob": _r.get("ev_prob"), "edge": _r.get("edge"),
+                }
+        _cp_fill(tb_over_picks_list, "tb", "tb_over_odds", False)
+        _cp_fill(runs_picks_list, "runs", "over_odds", True)
+        _cp_fill(rbi_picks_list, "rbi", "over_odds", True)
+        _cp_fill(hrr_picks_list, "hrr", "hrr_over_odds", True)
+        _cp_fill(walks_picks_list, "walks", "over_odds", True)
+
+        _CP_LBL = {"tb": "Total Bases", "runs": "Runs", "rbi": "RBI",
+                   "hrr": "H+R+RBI", "walks": "Walks"}
+        _CP_LINE = {"tb": 1.5, "runs": 0.5, "rbi": 0.5, "hrr": 1.5, "walks": 0.5}
+        _CP_TIE = {"hrr": 0, "tb": 1, "runs": 2, "rbi": 3, "walks": 4}
+
+        for _bid, _ent in _cp_pool.items():
+            _src_pk = _ent["pick"]
+            _orig = _cp_orig.get(_bid, {})
+            # TRUE last 10 games (any venue/opponent) — current season first,
+            # reach back one season only when needed to fill 10
+            _gl_raw = []
+            for _cp_yr in (_CP_CY, _CP_CY - 1):
+                try:
+                    _gl_raw.extend(_cp_logs(_bid, _cp_yr) or [])
+                except Exception:
+                    pass
+            _gl = []
+            for _sp in _gl_raw:
+                _st = _sp.get("stat", {}) or {}
+                if int(_st.get("atBats", 0) or 0) < 1 and int(_st.get("plateAppearances", 0) or 0) < 1:
+                    continue
+                _gd = (_sp.get("date") or "")[:10]
+                if not _gd:
+                    continue
+                _gl.append({
+                    "date": _gd,
+                    "h":   int(_st.get("hits", 0) or 0),
+                    "tb":  int(_st.get("totalBases", 0) or 0),
+                    "r":   int(_st.get("runs", 0) or 0),
+                    "rbi": int(_st.get("rbi", 0) or 0),
+                    "bb":  int(_st.get("baseOnBalls", 0) or 0),
+                })
+            _gl.sort(key=lambda g: g["date"])
+            _l10 = _gl[-10:]
+            _n = len(_l10)
+            if _n == 0:
+                continue
+            _rates = {
+                "tb":    100.0 * sum(1 for g in _l10 if g["tb"] >= 2) / _n,
+                "runs":  100.0 * sum(1 for g in _l10 if g["r"] >= 1) / _n,
+                "rbi":   100.0 * sum(1 for g in _l10 if g["rbi"] >= 1) / _n,
+                "hrr":   100.0 * sum(1 for g in _l10 if (g["h"] + g["r"] + g["rbi"]) >= 2) / _n,
+                "walks": 100.0 * sum(1 for g in _l10 if g["bb"] >= 1) / _n,
+            }
+            _pk = sorted(_rates.items(), key=lambda kv: (-kv[1], _CP_TIE[kv[0]]))[0][0]
+            _meta = _cp_odds[_pk].get(_bid, {})
+
+            club_plays_list.append({
+                "name": _src_pk.get("name", ""),
+                "full_name": _src_pk.get("full_name", _src_pk.get("name", "")),
+                "batter_id": _bid,
+                "player_id": _src_pk.get("player_id") or _orig.get("player_id"),
+                "team": _src_pk.get("team", ""),
+                "opp": _src_pk.get("opp", ""),
+                "pitcher": _src_pk.get("pitcher", "") or _orig.get("pitcher", ""),
+                "side": _src_pk.get("side", ""),
+                "dn_label": _src_pk.get("dn_label", "") or _orig.get("dn_label", ""),
+                "s5": _src_pk.get("s5", _orig.get("s5")),
+                "dn_ba": _src_pk.get("dn_ba"), "dn_disp": _src_pk.get("dn_disp"),
+                "series_splits": _src_pk.get("series_splits") or _orig.get("series_splits"),
+                "series_game": _src_pk.get("series_game") or _orig.get("series_game"),
+                "series_of": _src_pk.get("series_of") or _orig.get("series_of"),
+                "series_gno": _src_pk.get("series_gno"),
+                "game_start": _src_pk.get("game_start") or _orig.get("game_start")
+                              or _game_start_for(_src_pk.get("team", "")),
+                "recent_hit_log": _src_pk.get("recent_hit_log") or _orig.get("recent_hit_log"),
+                # club memberships (badges on the card)
+                "clubs": _ent["clubs"],
+                "club_n": len(_ent["clubs"]),
+                # chosen production pick (side is always OVER) + all 5 L10 rates
+                "pick_market": _pk,
+                "stat_label": _CP_LBL[_pk],
+                "line": _CP_LINE[_pk],
+                "bet_side": "OVER",
+                "pick_rate": round(_rates[_pk]),
+                "rates": {_k: round(_v) for _k, _v in _rates.items()},
+                "l10_g": _n,
+                "odds": _meta.get("odds"), "book": _meta.get("book", ""),
+                # EV carried from the chosen market's own board (None when the
+                # player isn't a posted pick on that market)
+                "ev": _meta.get("ev"), "ev_prob": _meta.get("ev_prob"), "edge": _meta.get("edge"),
+                # vs-pitcher career line — DISPLAY-ONLY reference
+                "vs_pit": _src_pk.get("vs_pit") or _orig.get("vs_pit"),
+            })
+
+        club_plays_list.sort(key=lambda x: (x["pick_rate"], x["club_n"]), reverse=True)
+        club_plays_list = club_plays_list[:10]
+        emit({"type": "log",
+              "msg": f"  🏆 Club Plays: {len(club_plays_list)} best production plays "
+                     f"from {len(_cp_pool)} club members (HRR Special + Triple Split + 5 Star)"})
+    except Exception as _exc:
+        club_plays_list = []
+        emit({"type": "log", "msg": f"⚠️ Club Plays skipped: {_exc}"})
+
     # ── Triple Split Club Hot Hitters ──────────────────────────────────────────
     # Last-10 version of TSC — ALL three splits use recent game logs:
     #   Gate 1: last-10 H/A BA > .270 (venue-matched)
@@ -4243,7 +4395,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     elapsed = round(time.time() - t_start, 1)
     result = {
         "date": run_date, "top9": top9, "also_ran": also_ran,
-        "under_picks": under_picks_list, "runs_picks": runs_picks_list, "tb_picks": tb_picks_list, "tb_over_picks": tb_over_picks_list, "rbi_picks": rbi_picks_list, "walks_picks": walks_picks_list, "hrr_picks": hrr_picks_list, "hrr_special_picks": hrr_special_list, "triple_split_picks": triple_split_list, "five_star_split_picks": five_star_split_list, "hot_split_picks": hot_split_list, "hr_picks": hr_picks_list,
+        "under_picks": under_picks_list, "runs_picks": runs_picks_list, "tb_picks": tb_picks_list, "tb_over_picks": tb_over_picks_list, "rbi_picks": rbi_picks_list, "walks_picks": walks_picks_list, "hrr_picks": hrr_picks_list, "hrr_special_picks": hrr_special_list, "triple_split_picks": triple_split_list, "five_star_split_picks": five_star_split_list, "club_plays_picks": club_plays_list, "hot_split_picks": hot_split_list, "hr_picks": hr_picks_list,
         "all_qualified": era_qualified,
         "game_predictions": game_predictions,
         "dq_s1_s3": [x for x in results if x["dq"] and x not in dn_dq and x not in era_dq and x not in dq_lineup and x not in s4_dq],
@@ -4261,6 +4413,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                   "hrr_special_count": len(hrr_special_list),
                   "triple_split_count": len(triple_split_list),
                   "five_star_count": len(five_star_split_list),
+                  "club_plays_count": len(club_plays_list),
                   "hr_count": len(hr_picks_list),
                   "pitcher_k_count": len(pitcher_k_result.get("picks", [])),
                   "prop_counts": {m: len(b.get("picks", [])) for m, b in pitcher_props.items()},
