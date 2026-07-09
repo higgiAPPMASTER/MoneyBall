@@ -4128,6 +4128,24 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                 _ab2 = sum(_gg["ab"] for _gg in _match)
                 return (round(_h2 / _ab2, 3) if _ab2 > 0 else None), len(_match)
 
+            def _tsch_l10_overall(player_id):
+                """Consistency gate: TRUE last-10 games ANY venue (current season,
+                prior season fills to 10); returns (pct_games_with_hit, games, hit_games)."""
+                _all = []
+                for _yr in range(_TSCH_CY, _TSCH_CY - 2, -1):
+                    for _sp in _tsch_gl(player_id, _yr):
+                        _st = _sp.get("stat", {}) or {}
+                        _ab = int(_st.get("atBats", 0) or 0)
+                        if _ab < 1:
+                            continue
+                        _all.append((_sp.get("date", ""), int(_st.get("hits", 0) or 0)))
+                _all.sort(key=lambda x: x[0])
+                _l10o = _all[-10:]
+                if not _l10o:
+                    return None, 0, 0
+                _hg = sum(1 for _d, _h in _l10o if _h >= 1)
+                return 100.0 * _hg / len(_l10o), len(_l10o), _hg
+
             for _b, _r in _tsc_by_id.items():
                 _side = (_r.get("side") or "").upper()
                 if _side not in ("HOME", "AWAY"):
@@ -4147,6 +4165,11 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                 _gno = _tsch_gno(_r)
                 _l10_ser, _l10_ser_g = _tsch_l10_ser(int(_b), _side, _gno)
                 if _l10_ser is None or _l10_ser <= _TSCH_MIN:
+                    continue
+                # Gate 4: consistency — hit in >=60% of his TRUE last-10 games
+                # (any venue). Keeps out hitters whose "hot" is only 2 games deep.
+                _l10o_pct, _l10o_n, _l10o_hg = _tsch_l10_overall(int(_b))
+                if _l10o_pct is None or _l10o_pct < 60:
                     continue
                 # Passed all gates — look up hit odds
                 _ho = _r.get("hit_odds")
@@ -4182,6 +4205,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                     "ha_ba": _l10_hav, "ha_disp": _tsch_d3(_l10_hav), "ha_g": _l10_hg,
                     "dn_ba": _dn,    "dn_disp": _tsch_d3(_dn),
                     "ser_ba": _l10_ser, "ser_disp": _tsch_d3(_l10_ser), "ser_g": _l10_ser_g,
+                    "l10_hit_pct": round(_l10o_pct), "l10_g": _l10o_n, "l10_hit_g": _l10o_hg,
                     "tsch_min": min(_l10_hav, _dn, _l10_ser),
                     "matchup_prob": (_r.get("matchup_prob") if _from_hit else None),
                     "ev":      (_r.get("ev")      if _from_hit else None),
@@ -4201,7 +4225,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                 emit({"type": "log", "msg": f"⚠️ Hot Hitters vs-pitcher backfill skipped: {_bf_exc}"})
             emit({"type": "log",
                   "msg": f"  🔥 Hot Hitters: {len(hot_split_list)} hitters clear "
-                         f">.270 in L10 H/A, D/N full-season & L10 G#"})
+                         f">.270 in L10 H/A, D/N full-season & L10 G# + hit in ≥60% of L10"})
     except Exception as _exc:
         hot_split_list = []
         emit({"type": "log", "msg": f"⚠️ Hot Hitters skipped: {_exc}"})
