@@ -3998,6 +3998,8 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                     "r":   int(_st.get("runs", 0) or 0),
                     "rbi": int(_st.get("rbi", 0) or 0),
                     "bb":  int(_st.get("baseOnBalls", 0) or 0),
+                    "opp": (_sp.get("opponent", {}) or {}).get("name", ""),
+                    "ha":  "H" if _sp.get("isHome") else "A",
                 })
             _gl.sort(key=lambda g: g["date"])
             _l10 = _gl[-10:]
@@ -4032,7 +4034,10 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                 "series_gno": _src_pk.get("series_gno"),
                 "game_start": _src_pk.get("game_start") or _orig.get("game_start")
                               or _game_start_for(_src_pk.get("team", "")),
-                "recent_hit_log": _src_pk.get("recent_hit_log") or _orig.get("recent_hit_log"),
+                "recent_hit_log": _src_pk.get("recent_hit_log") or _orig.get("recent_hit_log")
+                                  or [{"d": g["date"][5:], "h": g["h"], "tb": g["tb"],
+                                       "opp": g["opp"], "ha": g["ha"]}
+                                      for g in reversed(_gl[-5:])],
                 # club memberships (badges on the card)
                 "clubs": _ent["clubs"],
                 "club_n": len(_ent["clubs"]),
