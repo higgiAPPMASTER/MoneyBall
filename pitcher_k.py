@@ -42,9 +42,10 @@ LEAGUE_VELO    = 93.3    # MLB avg fastball velocity (mph), 2024-2025
 LEAGUE_KRATE   = 22.0    # pitcher strikeout rate (K%) league average
 LEAGUE_AVG_PITCH_WOBA = 0.310  # MLB avg batter wOBA vs any pitch type, ~2024-2025
 _GB_XWOBA_CACHE: dict = {}     # {year: {player_id: {gb_pct, xwoba}}}
-_GAME_TOTALS:     dict = {}    # {(norm_home, norm_away): total_line}
-_GAME_TOTAL_ODDS: dict = {}    # {(norm_home, norm_away): (over_price, under_price)}
-_GAME_MONEYLINES: dict = {}    # {(norm_home, norm_away): (home_american, away_american)}
+_GAME_TOTALS:      dict = {}    # {(norm_home, norm_away): total_line}
+_GAME_TOTAL_ODDS:  dict = {}    # {(norm_home, norm_away): (over_price, under_price)}
+_GAME_MONEYLINES:  dict = {}    # {(norm_home, norm_away): (home_american, away_american)}
+_GAME_CACHE_DATE: str  = ""    # date the above three caches were populated; invalidate on change
 _EVENTS_CACHE:  dict = {}      # {run_date: [event, ...]} — shared across K + props fetch
 _VELO_CACHE:    dict = {}      # {year: {player_id: avg_release_speed_mph}}
 _KRATE_CACHE:   dict = {}      # {year: {player_id: k_percent}}
@@ -1040,10 +1041,13 @@ def _arsenal_opp_adj(pitcher_id: int, opp_team: str) -> float:
 def _fetch_game_totals(run_date: str) -> dict:
     """Fetch today's MLB game O/U totals from the Odds API.
     Returns {(norm_home, norm_away): total_line}. Also populates
-    _GAME_TOTAL_ODDS with (over_price, under_price). Cached for the run."""
-    global _GAME_TOTALS, _GAME_TOTAL_ODDS
-    if _GAME_TOTALS:
+    _GAME_TOTAL_ODDS with (over_price, under_price). Cached per date."""
+    global _GAME_TOTALS, _GAME_TOTAL_ODDS, _GAME_MONEYLINES, _GAME_CACHE_DATE
+    if _GAME_TOTALS and _GAME_CACHE_DATE == run_date:
         return _GAME_TOTALS
+    if _GAME_CACHE_DATE != run_date:
+        _GAME_TOTALS = {}; _GAME_TOTAL_ODDS = {}; _GAME_MONEYLINES = {}
+        _GAME_CACHE_DATE = run_date
     try:
         r = requests.get(f"{ODDS_BASE}/sports/baseball_mlb/odds",
             params={"apiKey": ODDS_API_KEY, "regions": "us,us2,ca", "markets": "totals",
@@ -1111,11 +1115,15 @@ def _lookup_game_total(pitcher_team: str, opp: str) -> float | None:
 def _fetch_game_moneylines(run_date: str) -> dict:
     """Fetch today's MLB moneyline (h2h) prices from the Odds API.
     Returns {(norm_home, norm_away): (home_american, away_american)}. Cached
-    for the run. Silent on failure (-> {}); the Game Predictor treats a missing
+    per date. Silent on failure (-> {}); the Game Predictor treats a missing
     line as 'no market' and shows model-only."""
-    global _GAME_MONEYLINES
-    if _GAME_MONEYLINES:
+    global _GAME_MONEYLINES, _GAME_CACHE_DATE
+    if _GAME_MONEYLINES and _GAME_CACHE_DATE == run_date:
         return _GAME_MONEYLINES
+    # date reset is handled by _fetch_game_totals; if totals weren't called first,
+    # do it here to keep the date sentinel consistent
+    if _GAME_CACHE_DATE != run_date:
+        _GAME_CACHE_DATE = run_date
     try:
         r = requests.get(f"{ODDS_BASE}/sports/baseball_mlb/odds",
             params={"apiKey": ODDS_API_KEY, "regions": "us,us2,ca", "markets": "h2h",
