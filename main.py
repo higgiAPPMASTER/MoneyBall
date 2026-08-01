@@ -2350,7 +2350,8 @@ def _resolve_stat_key(bet: dict) -> str:
     cat = (bet.get("category") or "").strip().lower()
     return _STAT_CAT_KEYS.get(cat, "")
 
-def _settle_bet_cached(bet: dict, name_stats: dict, all_final: bool = False) -> bool:
+def _settle_bet_cached(bet: dict, name_stats: dict, all_final: bool = False,
+                       game_scores: list = None) -> bool:
     """Grade a pending bet using pre-fetched name_stats (no extra API call).
     A player who never appears on a fully-Final, cleanly-fetched slate is VOID
     (no action: refunded, excluded from W/L and ROI) — never stuck pending, and a
@@ -2375,6 +2376,39 @@ def _settle_bet_cached(bet: dict, name_stats: dict, all_final: bool = False) -> 
         bet["result"] = res; bet["actual"] = actual
         bet["profit"] = prof; bet["settled_at"] = date.today().isoformat()
         return True
+
+    # ── Game Predictor bets (team ML / run total) ────────────────────────────
+    _sk0 = _resolve_stat_key(bet)
+    if _sk0 in ("gp_winner", "gp_total"):
+        ha = bet.get("home_abbr", ""); aa = bet.get("away_abbr", "")
+        sc = next((g for g in (game_scores or [])
+                   if g.get("home_abbr") == ha and g.get("away_abbr") == aa), None)
+        if not sc:
+            return _void() if all_final else False
+        if not sc.get("final"):
+            return False
+        away_r = sc.get("away_runs"); home_r = sc.get("home_runs")
+        if away_r is None or home_r is None:
+            return _void() if all_final else False
+        if _sk0 == "gp_winner":
+            side = (bet.get("side") or "HOME").upper()
+            if home_r == away_r:
+                return _apply("PUSH", 0)
+            picked_wins = (home_r > away_r) if side == "HOME" else (away_r > home_r)
+            return _apply("WIN" if picked_wins else "LOSS",
+                          home_r - away_r if side == "HOME" else away_r - home_r)
+        else:  # gp_total
+            try:
+                _tl = float(bet.get("line"))
+            except Exception:
+                return False
+            actual_total = away_r + home_r
+            side = (bet.get("side") or "OVER").upper()
+            if actual_total == _tl:
+                return _apply("PUSH", actual_total)
+            if side == "OVER":
+                return _apply("WIN" if actual_total > _tl else "LOSS", actual_total)
+            return _apply("WIN" if actual_total < _tl else "LOSS", actual_total)
 
     st = name_stats.get(_norm_name(bet.get("name")))
     if not st or not st.get("final"):
@@ -2418,9 +2452,10 @@ def _settle_bet(bet: dict) -> bool:
     except Exception as e:
         print(f"[bet_log] settle lookup failed {bdate}: {e}")
         return False
-    return _settle_bet_cached(bet, ns, _af)
+    return _settle_bet_cached(bet, ns, _af, game_scores=_gs)
 
-def _settle_parlay_cached(parlay: dict, ns_cache: dict, af_cache: dict = None) -> bool:
+def _settle_parlay_cached(parlay: dict, ns_cache: dict, af_cache: dict = None,
+                          gs_cache: dict = None) -> bool:
     """Grade a parlay using pre-fetched ns_cache. WIN=all legs win, LOSS=any leg
     loses. A VOID leg (player DNP / cancelled game) is no-action: it can't keep
     the parlay pending, and a parlay with no loser but a voided leg refunds
@@ -2437,7 +2472,8 @@ def _settle_parlay_cached(parlay: dict, ns_cache: dict, af_cache: dict = None) -
             continue
         bdate = lg.get("date")
         if bdate and bdate in ns_cache:
-            _settle_bet_cached(lg, ns_cache[bdate], (af_cache or {}).get(bdate, False))
+            _settle_bet_cached(lg, ns_cache[bdate], (af_cache or {}).get(bdate, False),
+                               game_scores=(gs_cache or {}).get(bdate, []))
     results = [lg.get("result") for lg in legs]
     pending = (not results) or any(r not in ("WIN", "LOSS", "PUSH", "VOID") for r in results)
     if any(r == "LOSS" for r in results):
@@ -2466,14 +2502,16 @@ def _settle_parlay(parlay: dict) -> bool:
         return False
     ns_cache: dict = {}
     af_cache: dict = {}
+    gs_cache: dict = {}
     for d in dates_needed:
         try:
             _, ns, _, _af, _gs = _mlb_box_lookup(d)
             ns_cache[d] = ns
             af_cache[d] = _af
+            gs_cache[d] = _gs
         except Exception:
             pass
-    return _settle_parlay_cached(parlay, ns_cache, af_cache)
+    return _settle_parlay_cached(parlay, ns_cache, af_cache, gs_cache=gs_cache)
 
 def _settle_bets_batch(bets: list) -> bool:
     """Settle all pending bets (single + parlay) with ONE box-score API call per
@@ -2497,22 +2535,25 @@ def _settle_bets_batch(bets: list) -> bool:
         return False
     ns_cache: dict = {}
     af_cache: dict = {}
+    gs_cache: dict = {}
     for d in sorted(dates_needed):
         try:
             _ps, ns, _any, _af, _gs = _mlb_box_lookup(d)
             ns_cache[d] = ns
             af_cache[d] = _af
+            gs_cache[d] = _gs
         except Exception as e:
             print(f"[bet_log] batch settle lookup failed {d}: {e}")
     changed = False
     for b in bets:
         if b.get("bet_type") == "parlay":
-            if _settle_parlay_cached(b, ns_cache, af_cache):
+            if _settle_parlay_cached(b, ns_cache, af_cache, gs_cache=gs_cache):
                 changed = True
         else:
             bdate = b.get("date")
             if bdate and bdate in ns_cache:
-                if _settle_bet_cached(b, ns_cache[bdate], af_cache.get(bdate, False)):
+                if _settle_bet_cached(b, ns_cache[bdate], af_cache.get(bdate, False),
+                                      game_scores=gs_cache.get(bdate, [])):
                     changed = True
     return changed
 
@@ -4341,6 +4382,32 @@ function _gpCard(g,i){
   }
   var drivers=(g.drivers||[]).map(function(d){return _esc(d);}).join(' &#183; ');
   var vb=g.value_flag?('<span style="background:#166534;color:#fff;font-weight:900;font-size:.62rem;border-radius:6px;padding:2px 7px;letter-spacing:.04em">VALUE +'+g.mkt_edge+'%</span>'):'';
+  // Register Track Bet sources for ML pick + O/U total (admin only)
+  var _gpBtns='';
+  if(window.IS_ADMIN||window.IS_TESTER){
+    window.__BET_SRC__=window.__BET_SRC__||{};
+    var _gd=(window._lastResult&&window._lastResult.date)||'';
+    var _ha=g.home_abbr||'', _aa=g.away_abbr||'';
+    var _btns='<div style="display:flex;flex-direction:row;border-top:1px solid #1e293b;margin-top:8px;margin-left:-15px;margin-right:-15px;margin-bottom:-13px;border-radius:0 0 14px 14px;overflow:hidden">';
+    if(g.ml_pick_odds!=null){
+      var _km='gpml'+i;
+      window.__BET_SRC__[_km]={name:_esc(g.pick_abbr)+' to Win',team:g.pick_abbr,
+        opp:g.pick_home?_aa:_ha,category:'Game Predictor',
+        side:g.pick_home?'HOME':'AWAY',stat_key:'gp_winner',stat_label:'ML',
+        line:null,odds:g.ml_pick_odds,home_abbr:_ha,away_abbr:_aa,date:_gd};
+      _btns+='<button onclick="event.stopPropagation();_betForm(\''+_km+'\')" style="flex:1;background:#1a1740;color:#a5b4fc;border:none;border-right:1px solid #1e293b;padding:6px 0;font-size:.7rem;font-weight:800;cursor:pointer;white-space:nowrap">🏆 '+_esc(g.pick_abbr)+' ML</button>';
+    }
+    if(g.total_line!=null&&g.total_pick_odds!=null){
+      var _kt='gptl'+i;
+      window.__BET_SRC__[_kt]={name:_aa+'@'+_ha+' Total',team:_aa+'@'+_ha,
+        opp:'',category:'Game Predictor',side:g.total_pick,stat_key:'gp_total',
+        stat_label:'Run Total',line:g.total_line,odds:g.total_pick_odds,
+        home_abbr:_ha,away_abbr:_aa,date:_gd};
+      _btns+='<button onclick="event.stopPropagation();_betForm(\''+_kt+'\')" style="flex:1;background:#0d2318;color:#6ee7b7;border:none;padding:6px 0;font-size:.7rem;font-weight:800;cursor:pointer;white-space:nowrap">⚖️ '+_esc(g.total_pick)+' '+g.total_line+'</button>';
+    }
+    _btns+='</div>';
+    if(_btns.indexOf('<button')>-1) _gpBtns=_btns;
+  }
   return '<div onclick="_openGamePred('+i+')" style="background:#0a1120;border:1px solid '+(g.value_flag?'#166534':'#1e293b')+';border-radius:14px;padding:13px 15px;cursor:pointer" onmouseover="this.style.borderColor=&#39;#3b2c63&#39;" onmouseout="this.style.borderColor=&#39;'+(g.value_flag?'#166534':'#1e293b')+'&#39;">'
     +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px">'
     +'<div style="font-weight:800;color:#94a3b8;font-size:.72rem;letter-spacing:.04em">'+_esc(g.away_abbr)+' @ '+_esc(g.home_abbr)+'</div>'
@@ -4354,6 +4421,7 @@ function _gpCard(g,i){
     +_gpTotalRow(g)
     +_gpMktRow(g)
     +'<div style="margin-top:6px;font-size:.66rem;color:#94a3b8;line-height:1.5"><span style="color:#7c3aed;font-weight:800">Why:</span> '+drivers+'</div>'
+    +_gpBtns
     +'</div>';
 }
 function _gpMktRow(g){
