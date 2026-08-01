@@ -4395,7 +4395,7 @@ function _gpCard(g,i){
         opp:g.pick_home?_aa:_ha,category:'Game Predictor',
         side:g.pick_home?'HOME':'AWAY',stat_key:'gp_winner',stat_label:'ML',
         line:null,odds:g.ml_pick_odds,home_abbr:_ha,away_abbr:_aa,date:_gd};
-      _btns+='<button onclick="event.stopPropagation();_betForm(\''+_km+'\')" style="flex:1;background:#1a1740;color:#a5b4fc;border:none;border-right:1px solid #1e293b;padding:6px 0;font-size:.7rem;font-weight:800;cursor:pointer;white-space:nowrap">🏆 '+_esc(g.pick_abbr)+' ML</button>';
+      _btns+='<button onclick="event.stopPropagation();_betForm(&#39;'+_km+'&#39;)" style="flex:1;background:#1a1740;color:#a5b4fc;border:none;border-right:1px solid #1e293b;padding:6px 0;font-size:.7rem;font-weight:800;cursor:pointer;white-space:nowrap">&#127942; '+_esc(g.pick_abbr)+' ML</button>';
     }
     if(g.total_line!=null&&g.total_pick_odds!=null){
       var _kt='gptl'+i;
@@ -4403,7 +4403,7 @@ function _gpCard(g,i){
         opp:'',category:'Game Predictor',side:g.total_pick,stat_key:'gp_total',
         stat_label:'Run Total',line:g.total_line,odds:g.total_pick_odds,
         home_abbr:_ha,away_abbr:_aa,date:_gd};
-      _btns+='<button onclick="event.stopPropagation();_betForm(\''+_kt+'\')" style="flex:1;background:#0d2318;color:#6ee7b7;border:none;padding:6px 0;font-size:.7rem;font-weight:800;cursor:pointer;white-space:nowrap">⚖️ '+_esc(g.total_pick)+' '+g.total_line+'</button>';
+      _btns+='<button onclick="event.stopPropagation();_betForm(&#39;'+_kt+'&#39;)" style="flex:1;background:#0d2318;color:#6ee7b7;border:none;padding:6px 0;font-size:.7rem;font-weight:800;cursor:pointer;white-space:nowrap">&#9878;&#65039; '+_esc(g.total_pick)+' '+g.total_line+'</button>';
     }
     _btns+='</div>';
     if(_btns.indexOf('<button')>-1) _gpBtns=_btns;
