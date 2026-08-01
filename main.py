@@ -4368,6 +4368,53 @@ function _filterStarted(result){
 // factor-by-factor breakdown + verdict. Reads the raw predictions (never the
 // odds/EV-filtered view) so it always shows the whole slate.
 function _gpConfClr(c){ return ({STRONG:'#7c3aed',MODERATE:'#2563eb',LEAN:'#64748b'})[c]||'#64748b'; }
+// ── GP bet panel: 4 rows (away ML / home ML / OVER / UNDER), each with
+// Track Bet + Parlay. Admin/tester only. Star marks the model pick.
+function _gpBetPanel(g,idx){
+  if(!(window.IS_ADMIN||window.IS_TESTER)) return '';
+  window.__BET_SRC__=window.__BET_SRC__||{};
+  var _gd=(window._lastResult&&window._lastResult.date)||'';
+  var _ha=g.home_abbr||'', _aa=g.away_abbr||'';
+  function _od(v){ return v!=null?(v>0?'+'+v:''+v):'—'; }
+  function _regML(abbr,side,odds,sfx){
+    var k='gpml'+idx+sfx;
+    window.__BET_SRC__[k]={name:_aa+' @ '+_ha+' \u2014 '+abbr+' to Win',
+      team:abbr,opp:(side==='HOME'?_aa:_ha),category:'Game Predictor',
+      side:side,stat_key:'gp_winner',stat_label:'to Win',
+      line:null,odds:odds,home_abbr:_ha,away_abbr:_aa,date:_gd};
+    return k;
+  }
+  function _regTot(dir,odds,sfx){
+    var k='gptl'+idx+sfx;
+    window.__BET_SRC__[k]={name:_aa+' @ '+_ha+' '+dir+' '+g.total_line,
+      team:_aa+'@'+_ha,opp:'',category:'Game Predictor',
+      side:dir,stat_key:'gp_total',stat_label:'Run Total',
+      line:g.total_line,odds:odds,home_abbr:_ha,away_abbr:_aa,date:_gd};
+    return k;
+  }
+  function _row(label,od,k,isPick){
+    if(od==null||!k) return '';
+    var star=isPick?'&#9733; ':'';
+    var lc=isPick?'#e9d5ff':'#94a3b8';
+    return '<div style="display:flex;align-items:center;gap:6px;padding:5px 12px;border-top:1px solid #111c2e">'
+      +'<div style="flex:1;font-size:.7rem;font-weight:800;color:'+lc+'">'+star+label+'</div>'
+      +'<div style="font-family:monospace;font-size:.7rem;font-weight:700;color:#fbbf24;min-width:36px;text-align:right">'+_od(od)+'</div>'
+      +'<button onclick="event.stopPropagation();_betForm(&#39;'+k+'&#39;)" style="background:#1a1740;color:#a5b4fc;border:none;border-radius:5px 0 0 5px;padding:4px 9px;font-size:.65rem;font-weight:800;cursor:pointer;white-space:nowrap">Track</button>'
+      +'<button onclick="event.stopPropagation();_addToCart(&#39;'+k+'&#39;)" style="background:#0d2318;color:#6ee7b7;border:none;border-radius:0 5px 5px 0;border-left:1px solid #064e3b;padding:4px 9px;font-size:.65rem;font-weight:800;cursor:pointer;white-space:nowrap">+Parlay</button>'
+      +'</div>';
+  }
+  var rows='';
+  if(g.away_ml_odds!=null) rows+=_row(_aa+' ML',g.away_ml_odds,_regML(_aa,'AWAY',g.away_ml_odds,'a'),!g.pick_home);
+  if(g.home_ml_odds!=null) rows+=_row(_ha+' ML',g.home_ml_odds,_regML(_ha,'HOME',g.home_ml_odds,'h'),g.pick_home);
+  if(g.total_line!=null){
+    if(g.total_over_odds!=null)  rows+=_row('OVER '+g.total_line, g.total_over_odds, _regTot('OVER',g.total_over_odds,'o'),  g.total_pick==='OVER');
+    if(g.total_under_odds!=null) rows+=_row('UNDER '+g.total_line,g.total_under_odds,_regTot('UNDER',g.total_under_odds,'u'), g.total_pick==='UNDER');
+  }
+  if(!rows) return '';
+  return '<div style="margin-top:8px;margin-left:-15px;margin-right:-15px;margin-bottom:-13px;border-top:1px solid #1e293b;border-radius:0 0 14px 14px;overflow:hidden;background:#070d1a">'
+    +'<div style="padding:4px 12px 3px;font-size:.58rem;font-weight:800;color:#7c3aed;letter-spacing:.07em;background:rgba(124,58,237,.1)">&#128203; TRACK / PARLAY &#9733; = model pick</div>'
+    +rows+'</div>';
+}
 function _gpCard(g,i){
   var cc=_gpConfClr(g.conf);
   function teamRow(abbr,sp,proj,win,isPick){
@@ -4382,32 +4429,6 @@ function _gpCard(g,i){
   }
   var drivers=(g.drivers||[]).map(function(d){return _esc(d);}).join(' &#183; ');
   var vb=g.value_flag?('<span style="background:#166534;color:#fff;font-weight:900;font-size:.62rem;border-radius:6px;padding:2px 7px;letter-spacing:.04em">VALUE +'+g.mkt_edge+'%</span>'):'';
-  // Register Track Bet sources for ML pick + O/U total (admin only)
-  var _gpBtns='';
-  if(window.IS_ADMIN||window.IS_TESTER){
-    window.__BET_SRC__=window.__BET_SRC__||{};
-    var _gd=(window._lastResult&&window._lastResult.date)||'';
-    var _ha=g.home_abbr||'', _aa=g.away_abbr||'';
-    var _btns='<div style="display:flex;flex-direction:row;border-top:1px solid #1e293b;margin-top:8px;margin-left:-15px;margin-right:-15px;margin-bottom:-13px;border-radius:0 0 14px 14px;overflow:hidden">';
-    if(g.ml_pick_odds!=null){
-      var _km='gpml'+i;
-      window.__BET_SRC__[_km]={name:_esc(g.pick_abbr)+' to Win',team:g.pick_abbr,
-        opp:g.pick_home?_aa:_ha,category:'Game Predictor',
-        side:g.pick_home?'HOME':'AWAY',stat_key:'gp_winner',stat_label:'ML',
-        line:null,odds:g.ml_pick_odds,home_abbr:_ha,away_abbr:_aa,date:_gd};
-      _btns+='<button onclick="event.stopPropagation();_betForm(&#39;'+_km+'&#39;)" style="flex:1;background:#1a1740;color:#a5b4fc;border:none;border-right:1px solid #1e293b;padding:6px 0;font-size:.7rem;font-weight:800;cursor:pointer;white-space:nowrap">&#127942; '+_esc(g.pick_abbr)+' ML</button>';
-    }
-    if(g.total_line!=null&&g.total_pick_odds!=null){
-      var _kt='gptl'+i;
-      window.__BET_SRC__[_kt]={name:_aa+'@'+_ha+' Total',team:_aa+'@'+_ha,
-        opp:'',category:'Game Predictor',side:g.total_pick,stat_key:'gp_total',
-        stat_label:'Run Total',line:g.total_line,odds:g.total_pick_odds,
-        home_abbr:_ha,away_abbr:_aa,date:_gd};
-      _btns+='<button onclick="event.stopPropagation();_betForm(&#39;'+_kt+'&#39;)" style="flex:1;background:#0d2318;color:#6ee7b7;border:none;padding:6px 0;font-size:.7rem;font-weight:800;cursor:pointer;white-space:nowrap">&#9878;&#65039; '+_esc(g.total_pick)+' '+g.total_line+'</button>';
-    }
-    _btns+='</div>';
-    if(_btns.indexOf('<button')>-1) _gpBtns=_btns;
-  }
   return '<div onclick="_openGamePred('+i+')" style="background:#0a1120;border:1px solid '+(g.value_flag?'#166534':'#1e293b')+';border-radius:14px;padding:13px 15px;cursor:pointer" onmouseover="this.style.borderColor=&#39;#3b2c63&#39;" onmouseout="this.style.borderColor=&#39;'+(g.value_flag?'#166534':'#1e293b')+'&#39;">'
     +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px">'
     +'<div style="font-weight:800;color:#94a3b8;font-size:.72rem;letter-spacing:.04em">'+_esc(g.away_abbr)+' @ '+_esc(g.home_abbr)+'</div>'
@@ -4421,7 +4442,7 @@ function _gpCard(g,i){
     +_gpTotalRow(g)
     +_gpMktRow(g)
     +'<div style="margin-top:6px;font-size:.66rem;color:#94a3b8;line-height:1.5"><span style="color:#7c3aed;font-weight:800">Why:</span> '+drivers+'</div>'
-    +_gpBtns
+    +_gpBetPanel(g,i)
     +'</div>';
 }
 function _gpMktRow(g){
@@ -11513,7 +11534,7 @@ function _updateCartBar(){
   var chips=window._cartLegs.map(function(l){
     return '<span style="display:inline-flex;align-items:center;gap:4px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);border-radius:6px;padding:3px 8px;font-size:.7rem;white-space:nowrap">'
       +'<span style="color:#e2e8f0;font-weight:700">'+_esc(l.player)+'</span>'
-      +'<span style="color:#a5b4fc">'+_esc(l.dir+' '+l.line)+'</span>'
+      +'<span style="color:#a5b4fc">'+_esc(l.dir+(l.line!=null?' '+l.line:''))+'</span>'
       +'<button onclick="event.stopPropagation();_removeFromCart(&#39;'+l._key+'&#39;)" style="background:none;border:none;color:#f87171;cursor:pointer;font-size:.75rem;padding:0 1px;line-height:1">\u2715</button>'
       +'</span>';
   }).join('');
@@ -11542,7 +11563,7 @@ function _betForm(key){
     ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; };
     document.body.appendChild(ov);
   }
-  var pickTxt=src.side+' '+src.line+' '+(src.stat_label||'');
+  var pickTxt=src.side+(src.line!=null?' '+src.line:'')+(src.stat_label?' '+src.stat_label:'');
   ov.innerHTML='<div style="background:#0f172a;border:1px solid #312e81;border-radius:16px;max-width:360px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.6)">'
     +'<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:16px 18px;border-bottom:1px solid #1e293b">'
       +'<div><div style="font-weight:800;color:#fff;font-size:1.02rem">'+_esc(src.name)+'</div>'
@@ -11712,7 +11733,7 @@ function _parlayBetForm(){
     var fo=l.odds!=null?((l.odds>0?'+':'')+l.odds):'—';
     return '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #1e293b;font-size:.78rem">'
       +'<span style="color:#e2e8f0;font-weight:700">'+(i+1)+'. '+_esc(l.player||'')+'</span>'
-      +'<span style="color:#94a3b8">'+_esc(l.dir+' '+l.line+' '+(l.stat||''))+'</span>'
+      +'<span style="color:#94a3b8">'+_esc(l.dir+(l.line!=null?' '+l.line:'')+(l.stat?' '+l.stat:''))+'</span>'
       +'<span style="font-family:monospace;color:#fbbf24;font-weight:700">'+fo+'</span>'
       +'</div>';
   }).join('');
