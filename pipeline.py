@@ -1979,7 +1979,7 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
                 total_line = None
             total_pick = total_conf = ""
             total_edge = None
-            total_pick_odds = None
+            total_pick_odds = total_over_odds = total_under_odds = None
             if total_line is not None:
                 total_edge = round(proj_total - total_line, 1)
                 total_pick = "OVER" if proj_total >= total_line else "UNDER"
@@ -1989,7 +1989,9 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
                     if _lookup_total_odds:
                         _to = _lookup_total_odds(home, away)
                         if _to:
-                            total_pick_odds = _to[0] if total_pick == "OVER" else _to[1]
+                            total_pick_odds   = _to[0] if total_pick == "OVER" else _to[1]
+                            total_over_odds   = int(round(_to[0])) if _to[0] is not None else None
+                            total_under_odds  = int(round(_to[1])) if _to[1] is not None else None
                 except Exception:
                     pass
 
@@ -2022,12 +2024,14 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
                             value_flag = mkt_edge >= 4
             except Exception:
                 pass
-            ml_pick_odds = None
+            ml_pick_odds = home_ml_odds = away_ml_odds = None
             try:
                 if _lookup_ml:
                     _mlr = _lookup_ml(home, away)
                     if _mlr:
-                        ml_pick_odds = int(round(_mlr[0] if fav_home else _mlr[1]))
+                        ml_pick_odds  = int(round(_mlr[0] if fav_home else _mlr[1]))
+                        home_ml_odds  = int(round(_mlr[0])) if _mlr[0] is not None else None
+                        away_ml_odds  = int(round(_mlr[1])) if _mlr[1] is not None else None
             except Exception:
                 pass
 
@@ -2204,7 +2208,8 @@ def _build_game_predictions(team_schedule, hitter_pool, pitcher_pool, run_date, 
                 "total_pick": total_pick, "total_edge": total_edge, "total_conf": total_conf,
                 "mkt_home_pct": mkt_home_pct, "mkt_away_pct": mkt_away_pct,
                 "mkt_edge": mkt_edge, "mkt_pick_abbr": mkt_pick_abbr, "value_flag": value_flag,
-                "ml_pick_odds": ml_pick_odds, "total_pick_odds": total_pick_odds,
+                "ml_pick_odds": ml_pick_odds, "home_ml_odds": home_ml_odds, "away_ml_odds": away_ml_odds,
+                "total_pick_odds": total_pick_odds, "total_over_odds": total_over_odds, "total_under_odds": total_under_odds,
                 "drivers": drivers, "factors": factors, "verdict": verdict,
                 "h2h": h2h,
             })
