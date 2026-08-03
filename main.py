@@ -4744,8 +4744,8 @@ function showResults(result) {
   _fillCard('bwalk-over-card','bwalk-over-body','bwalk-over-more',walksOver,function(p,r){return _walksCard(p,r,'bwo');},'Walks Over','#34d399');
   _fillCard('bwalk-under-card','bwalk-under-body','bwalk-under-more',walksUnder,function(p,r){return _walksCard(p,r,'bwu');},'Walks Under','#ff8a65');
   const batKPicks = view.batter_k_picks || [];
-  const batKOver  = batKPicks.filter(function(p){ return p.pick==='OVER'  && _oddsOk(p.over_odds); });
-  const batKUnder = batKPicks.filter(function(p){ return p.pick==='UNDER' && _oddsOk(p.under_odds); });
+  const batKOver  = batKPicks.filter(function(p){ return p.pick==='OVER'; });
+  const batKUnder = batKPicks.filter(function(p){ return p.pick==='UNDER'; });
   _fillCard('batter-k-over-card','batter-k-over-body','batter-k-over-more',batKOver,function(p,r){return _batKCard(p,r,'bko');},'Batter Ks Over','#a78bfa');
   _fillCard('batter-k-under-card','batter-k-under-body','batter-k-under-more',batKUnder,function(p,r){return _batKCard(p,r,'bku');},'Batter Ks Under','#ff8a65');
 
