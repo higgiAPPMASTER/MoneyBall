@@ -96,6 +96,10 @@ WALKS_ODDS: dict = {}
 # away_team, over, under} for the batter_home_runs (Over/Under 0.5) market.
 # Read by run_hr_picks. Cleared each call.
 HR_ODDS: dict = {}
+# Populated by _fetch_hits_lines: normalized name → {name, line, home_team,
+# away_team, over, under} for the batter_strikeouts (Over/Under 0.5) market.
+# Read by run_batter_k_picks. Cleared each call.
+BATTER_K_ODDS: dict = {}
 
 _BATTER_SAV_CACHE_UP: dict = {}  # {year: {player_id: {xba, hard_hit_pct}}}
 LEAGUE_HARD_HIT_UP   = 35.0      # MLB avg hard-hit rate %, 2024-2025
@@ -659,6 +663,7 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
     HRR_ODDS.clear()
     WALKS_ODDS.clear()
     HR_ODDS.clear()
+    BATTER_K_ODDS.clear()
     PREFERRED = ["draftkings", "fanduel", "betmgm", "williamhill_us", "caesars", "betrivers", "ballybet", "bet365", "espnbet", "bet99", "thescore", "fliff", "mybookieag", "betonlineag", "bovada"]
     tomorrow  = (time.strftime("%Y-%m-%d",
                   time.gmtime(time.mktime(time.strptime(run_date, "%Y-%m-%d")) + 86400)))
@@ -920,7 +925,32 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
                         elif side == "Under":
                             _take_odds(entry, "under", "under_book", price, bk)
 
-        _log(emit, f"  ✅ {len(seen)} players on 1.5 hits line | {len(HIT_ODDS)} players with 0.5 hit odds | {len(RUNS_ODDS)} with runs odds | {len(TB_ODDS)} with TB under odds | {len(RBI_ODDS)} with RBI odds | {len(HRR_ODDS)} with HRR odds | {len(WALKS_ODDS)} with walks odds | {len(HR_ODDS)} with HR odds")
+            # Batter Strikeouts (Over/Under 0.5) for the Batter Ks category.
+            # ZERO extra Odds API calls — market added to the same per-game request.
+            for book in ordered_books:
+                bk = book.get("key")
+                for mkt in book.get("markets", []):
+                    if mkt.get("key") != "batter_strikeouts": continue
+                    for oc in mkt.get("outcomes", []):
+                        player = oc.get("description", "").strip()
+                        pt     = oc.get("point")
+                        side   = oc.get("name", "")
+                        price  = oc.get("price")
+                        if not player or price is None: continue
+                        nk = _norm_name(player)
+                        entry = BATTER_K_ODDS.get(nk)
+                        if entry is None:
+                            entry = {"name": player, "line": pt if pt is not None else 0.5,
+                                     "home_team": home_team, "away_team": away_team,
+                                     "over": None, "under": None}
+                            BATTER_K_ODDS[nk] = entry
+                        if side == "Over":
+                            _take_odds(entry, "over", "over_book", price, bk)
+                            if pt is not None: entry["line"] = pt
+                        elif side == "Under":
+                            _take_odds(entry, "under", "under_book", price, bk)
+
+        _log(emit, f"  ✅ {len(seen)} players on 1.5 hits line | {len(HIT_ODDS)} players with 0.5 hit odds | {len(RUNS_ODDS)} with runs odds | {len(TB_ODDS)} with TB under odds | {len(RBI_ODDS)} with RBI odds | {len(HRR_ODDS)} with HRR odds | {len(WALKS_ODDS)} with walks odds | {len(HR_ODDS)} with HR odds | {len(BATTER_K_ODDS)} with batter K odds")
         # Scan ALL players who have any posted hit odds (the 0.5 set), not just
         # the ~57 with a 1.5 line. Players who DO have a 1.5 line keep their
         # Under 1.5 / total-bases odds; 0.5-only players are still evaluated as
@@ -2144,6 +2174,154 @@ def run_walks_picks(run_date: str, team_schedule: dict, emit=None) -> list:
     unders = [p for p in picks if p["pick"] == "UNDER"][:WALKS_TOP_N]
     picks = overs + unders
     _log(emit, f"✅ Batter Walks Picks: {len(picks)} "
+               f"({sum(1 for p in picks if p['pick']=='OVER')} over / "
+               f"{sum(1 for p in picks if p['pick']=='UNDER')} under)")
+    return picks
+
+
+# ─── Batter Strikeouts ────────────────────────────────────────────────────
+# Players frequently striking out (OVER 0.5 Ks) or rarely striking out
+# (UNDER 0.5 Ks). Model: % of recent H/A games with ≥1 K vs this opponent,
+# falling back to last-N overall. Odds from BATTER_K_ODDS (batter_strikeouts
+# market), zero extra Odds API calls.
+
+BATTER_K_OVER_CUT  = 65   # >= this % → likely to K (OVER)
+BATTER_K_UNDER_CUT = 35   # <= this % → unlikely to K (UNDER)
+BATTER_K_MIN_GAMES = 3    # minimum head-to-head games to qualify
+BATTER_K_TOP_N     = 20   # cap per side
+
+
+def _batter_k_rate(player_id, side: str, opp_name: str) -> dict:
+    """% of recent H/A games vs opp with ≥1 strikeout; falls back to overall."""
+    if not player_id:
+        return {"k_games": 0, "games": 0, "display": "N/A", "score": 0, "basis": ""}
+    try:
+        from mlb_stats_splits import _get_game_logs, _team_name_match
+        from datetime import date as _dt
+        cy = _dt.today().year
+        # vs-opp pass
+        vs_flags: list = []
+        for season in range(cy, cy - 5, -1):
+            splits = _get_game_logs(player_id, season)
+            for sp in reversed(splits):
+                is_home = sp.get("isHome", False)
+                if (side.upper() == "HOME") != is_home:
+                    continue
+                if opp_name:
+                    opp = sp.get("opponent", {}).get("name", "")
+                    if not _team_name_match(opp, opp_name):
+                        continue
+                stat = sp.get("stat", {})
+                pa = int(stat.get("plateAppearances", 0) or 0)
+                if pa < 1:
+                    continue
+                so = int(stat.get("strikeOuts", 0) or 0)
+                vs_flags.append(1 if so >= 1 else 0)
+                if len(vs_flags) >= 15:
+                    break
+            if len(vs_flags) >= 15:
+                break
+        if len(vs_flags) >= BATTER_K_MIN_GAMES:
+            g, k = len(vs_flags), sum(vs_flags)
+            return {"k_games": k, "games": g, "display": f"{k}/{g}",
+                    "score": round(k / g * 100), "basis": "vs opp"}
+        # overall fallback
+        all_flags: list = []
+        for season in range(cy, cy - 3, -1):
+            splits = _get_game_logs(player_id, season)
+            for sp in reversed(splits):
+                stat = sp.get("stat", {})
+                pa = int(stat.get("plateAppearances", 0) or 0)
+                if pa < 1:
+                    continue
+                so = int(stat.get("strikeOuts", 0) or 0)
+                all_flags.append(1 if so >= 1 else 0)
+                if len(all_flags) >= 20:
+                    break
+            if len(all_flags) >= 20:
+                break
+        g, k = len(all_flags), sum(all_flags)
+        if g == 0:
+            return {"k_games": 0, "games": 0, "display": "N/A", "score": 0, "basis": ""}
+        return {"k_games": k, "games": g, "display": f"{k}/{g}",
+                "score": round(k / g * 100), "basis": f"L{g}"}
+    except Exception:
+        return {"k_games": 0, "games": 0, "display": "ERR", "score": 0, "basis": ""}
+
+
+def run_batter_k_picks(run_date: str, team_schedule: dict, emit=None) -> list:
+    _log(emit, "", "log")
+    _log(emit, "▸ Batter Strikeout Picks — Batter Ks (Over/Under 0.5)", "section")
+    season = int(run_date[:4])
+
+    if not BATTER_K_ODDS:
+        _fetch_hits_lines(run_date, emit)   # populates BATTER_K_ODDS as side effect
+    candidates = list(BATTER_K_ODDS.values())
+    if not candidates:
+        _log(emit, "  No batter strikeout lines posted today.")
+        return []
+    _log(emit, f"  {len(candidates)} players with a batter-K line")
+
+    _build_player_map(season)
+    id_map = {}
+    for c in candidates:
+        pid = _resolve_id(c["name"])
+        if pid:
+            id_map[c["name"]] = pid
+    team_map = _get_teams_batch(list(id_map.values()))
+
+    def _eval(c):
+        name = c["name"]
+        batter_id = id_map.get(name)
+        player_team = team_map.get(batter_id, "") if batter_id else ""
+        if not batter_id or not player_team:
+            return None
+        if _team_match(player_team, c["home_team"]):
+            side, opp_name = "HOME", c["away_team"]
+        elif _team_match(player_team, c["away_team"]):
+            side, opp_name = "AWAY", c["home_team"]
+        else:
+            return None
+        rate = _batter_k_rate(batter_id, side, opp_name)
+        if rate["games"] < BATTER_K_MIN_GAMES:
+            return None
+        score = rate["score"]
+        if score >= BATTER_K_OVER_CUT:
+            pick = "OVER"
+        elif score <= BATTER_K_UNDER_CUT:
+            pick = "UNDER"
+        else:
+            return None
+        line = c.get("line", 0.5)
+        return {"name": name, "team": player_team, "side": side, "opp": opp_name,
+                "pick": pick, "line": line,
+                "rate_disp": rate["display"], "score": score,
+                "games": rate["games"], "basis": rate.get("basis", ""),
+                "wilson": round(_wilson_lb(rate["k_games"], rate["games"]), 4),
+                "over_odds": c.get("over"), "under_odds": c.get("under"),
+                "book": _book_label(c.get("over_book") if pick == "OVER" else c.get("under_book")),
+                "batter_id": batter_id}
+
+    picks = []
+    with ThreadPoolExecutor(max_workers=8) as _ex:
+        _futs = {_ex.submit(_eval, c): c for c in candidates}
+        for _fut in as_completed(_futs):
+            try:
+                pk = _fut.result()
+            except Exception:
+                pk = None
+            if pk:
+                picks.append(pk)
+
+    picks.sort(key=lambda p: (
+        0 if p["pick"] == "OVER" else 1,
+        -p["wilson"] if p["pick"] == "OVER" else p["score"],
+        -p["games"],
+    ))
+    overs  = [p for p in picks if p["pick"] == "OVER"][:BATTER_K_TOP_N]
+    unders = [p for p in picks if p["pick"] == "UNDER"][:BATTER_K_TOP_N]
+    picks = overs + unders
+    _log(emit, f"✅ Batter K Picks: {len(picks)} "
                f"({sum(1 for p in picks if p['pick']=='OVER')} over / "
                f"{sum(1 for p in picks if p['pick']=='UNDER')} under)")
     return picks
