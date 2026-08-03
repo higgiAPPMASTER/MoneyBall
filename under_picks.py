@@ -2185,9 +2185,9 @@ def run_walks_picks(run_date: str, team_schedule: dict, emit=None) -> list:
 # falling back to last-N overall. Odds from BATTER_K_ODDS (batter_strikeouts
 # market), zero extra Odds API calls.
 
-BATTER_K_OVER_CUT  = 65   # >= this % → likely to K (OVER)
-BATTER_K_UNDER_CUT = 35   # <= this % → unlikely to K (UNDER)
-BATTER_K_MIN_GAMES = 3    # minimum head-to-head games to qualify
+BATTER_K_OVER_CUT  = 60   # >= this % → likely to K (OVER);  MLB per-game K avg ~61%
+BATTER_K_UNDER_CUT = 40   # <= this % → unlikely to K (UNDER)
+BATTER_K_MIN_GAMES = 3    # minimum sample games to qualify (vs-opp or overall fallback)
 BATTER_K_TOP_N     = 20   # cap per side
 
 
@@ -2250,17 +2250,24 @@ def _batter_k_rate(player_id, side: str, opp_name: str) -> dict:
 
 
 def run_batter_k_picks(run_date: str, team_schedule: dict, emit=None) -> list:
+    """Generate batter strikeout picks using the HIT_ODDS player pool as candidates
+    (players known to be in today's lineups via the hit-line fetch).  Strikeout
+    odds from BATTER_K_ODDS are attached when posted but are NOT required — picks
+    are generated purely from historical K-rate data so the board is never empty
+    just because books haven't posted the batter_strikeouts market."""
     _log(emit, "", "log")
     _log(emit, "▸ Batter Strikeout Picks — Batter Ks (Over/Under 0.5)", "section")
     season = int(run_date[:4])
 
-    if not BATTER_K_ODDS:
-        _fetch_hits_lines(run_date, emit)   # populates BATTER_K_ODDS as side effect
-    candidates = list(BATTER_K_ODDS.values())
+    # Ensure both HIT_ODDS (candidate pool) and BATTER_K_ODDS (optional odds) are populated
+    if not HIT_ODDS:
+        _fetch_hits_lines(run_date, emit)
+    candidates = list(HIT_ODDS.values())
     if not candidates:
-        _log(emit, "  No batter strikeout lines posted today.")
+        _log(emit, "  No players found in hit pool today.")
         return []
-    _log(emit, f"  {len(candidates)} players with a batter-K line")
+    _log(emit, f"  {len(candidates)} players in hit pool → analyzing K rates "
+               f"({len(BATTER_K_ODDS)} with posted K odds)")
 
     _build_player_map(season)
     id_map = {}
@@ -2292,14 +2299,19 @@ def run_batter_k_picks(run_date: str, team_schedule: dict, emit=None) -> list:
             pick = "UNDER"
         else:
             return None
-        line = c.get("line", 0.5)
+        # Attach odds from BATTER_K_ODDS if the book posted this market; otherwise null
+        nk = _norm_name(name)
+        ko = BATTER_K_ODDS.get(nk, {})
+        line = ko.get("line", 0.5) if ko.get("line") is not None else 0.5
+        over_odds  = ko.get("over")
+        under_odds = ko.get("under")
         return {"name": name, "team": player_team, "side": side, "opp": opp_name,
                 "pick": pick, "line": line,
                 "rate_disp": rate["display"], "score": score,
                 "games": rate["games"], "basis": rate.get("basis", ""),
                 "wilson": round(_wilson_lb(rate["k_games"], rate["games"]), 4),
-                "over_odds": c.get("over"), "under_odds": c.get("under"),
-                "book": _book_label(c.get("over_book") if pick == "OVER" else c.get("under_book")),
+                "over_odds": over_odds, "under_odds": under_odds,
+                "book": _book_label(ko.get("over_book") if pick == "OVER" else ko.get("under_book")),
                 "batter_id": batter_id}
 
     picks = []
