@@ -2192,14 +2192,21 @@ BATTER_K_TOP_N     = 20   # cap per side
 
 
 def _batter_k_rate(player_id, side: str, opp_name: str) -> dict:
-    """% of recent H/A games vs opp with ≥1 strikeout; falls back to overall."""
+    """% of games with ≥1 strikeout.
+    Always computes BOTH vs-opp (h2h) and L10 overall so _rateRows can show
+    both rows on the card.  Primary score/basis drives ranking:
+      - 'vs opp' when ≥ BATTER_K_MIN_GAMES vs-opp games found
+      - 'L{n}'   when falling back to recent overall
+    Extra keys: h2h_disp, l10_disp (either may be 'N/A' when no data)."""
     if not player_id:
-        return {"k_games": 0, "games": 0, "display": "N/A", "score": 0, "basis": ""}
+        return {"k_games": 0, "games": 0, "display": "N/A", "score": 0,
+                "basis": "", "h2h_disp": "N/A", "l10_disp": "N/A"}
     try:
         from mlb_stats_splits import _get_game_logs, _team_name_match
         from datetime import date as _dt
         cy = _dt.today().year
-        # vs-opp pass
+
+        # ── vs-opp pass (H/A filtered) ──────────────────────────────────────
         vs_flags: list = []
         for season in range(cy, cy - 5, -1):
             splits = _get_game_logs(player_id, season)
@@ -2215,17 +2222,14 @@ def _batter_k_rate(player_id, side: str, opp_name: str) -> dict:
                 pa = int(stat.get("plateAppearances", 0) or 0)
                 if pa < 1:
                     continue
-                so = int(stat.get("strikeOuts", 0) or 0)
-                vs_flags.append(1 if so >= 1 else 0)
+                vs_flags.append(1 if int(stat.get("strikeOuts", 0) or 0) >= 1 else 0)
                 if len(vs_flags) >= 15:
                     break
             if len(vs_flags) >= 15:
                 break
-        if len(vs_flags) >= BATTER_K_MIN_GAMES:
-            g, k = len(vs_flags), sum(vs_flags)
-            return {"k_games": k, "games": g, "display": f"{k}/{g}",
-                    "score": round(k / g * 100), "basis": "vs opp"}
-        # overall fallback
+        h2h_disp = f"{sum(vs_flags)}/{len(vs_flags)}" if len(vs_flags) >= BATTER_K_MIN_GAMES else "N/A"
+
+        # ── L10 overall pass (any opp, any venue) ───────────────────────────
         all_flags: list = []
         for season in range(cy, cy - 3, -1):
             splits = _get_game_logs(player_id, season)
@@ -2234,19 +2238,31 @@ def _batter_k_rate(player_id, side: str, opp_name: str) -> dict:
                 pa = int(stat.get("plateAppearances", 0) or 0)
                 if pa < 1:
                     continue
-                so = int(stat.get("strikeOuts", 0) or 0)
-                all_flags.append(1 if so >= 1 else 0)
+                all_flags.append(1 if int(stat.get("strikeOuts", 0) or 0) >= 1 else 0)
                 if len(all_flags) >= 20:
                     break
             if len(all_flags) >= 20:
                 break
+        n_all = min(len(all_flags), 10)   # show as "Last 10"
+        l10_flags = all_flags[:n_all]
+        l10_disp = f"{sum(l10_flags)}/{n_all}" if n_all >= 1 else "N/A"
+
+        # ── primary score (drives ranking) ──────────────────────────────────
+        if len(vs_flags) >= BATTER_K_MIN_GAMES:
+            g, k = len(vs_flags), sum(vs_flags)
+            return {"k_games": k, "games": g, "display": f"{k}/{g}",
+                    "score": round(k / g * 100), "basis": "vs opp",
+                    "h2h_disp": h2h_disp, "l10_disp": l10_disp}
         g, k = len(all_flags), sum(all_flags)
         if g == 0:
-            return {"k_games": 0, "games": 0, "display": "N/A", "score": 0, "basis": ""}
+            return {"k_games": 0, "games": 0, "display": "N/A", "score": 0,
+                    "basis": "", "h2h_disp": "N/A", "l10_disp": "N/A"}
         return {"k_games": k, "games": g, "display": f"{k}/{g}",
-                "score": round(k / g * 100), "basis": f"L{g}"}
+                "score": round(k / g * 100), "basis": f"L{g}",
+                "h2h_disp": h2h_disp, "l10_disp": l10_disp}
     except Exception:
-        return {"k_games": 0, "games": 0, "display": "ERR", "score": 0, "basis": ""}
+        return {"k_games": 0, "games": 0, "display": "ERR", "score": 0,
+                "basis": "", "h2h_disp": "N/A", "l10_disp": "N/A"}
 
 
 def _recent_bk_log(player_id, n: int = 10) -> list:
@@ -2344,6 +2360,8 @@ def run_batter_k_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 "pick": pick, "line": line,
                 "rate_disp": rate["display"], "score": score,
                 "games": rate["games"], "basis": rate.get("basis", ""),
+                "h2h_disp": rate.get("h2h_disp", "N/A"),
+                "l10_disp": rate.get("l10_disp", "N/A"),
                 "wilson": round(_wilson_lb(rate["k_games"], rate["games"]), 4),
                 "over_odds": over_odds, "under_odds": under_odds,
                 "book": _book_label(ko.get("over_book") if pick == "OVER" else ko.get("under_book")),
