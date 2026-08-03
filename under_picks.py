@@ -2249,6 +2249,39 @@ def _batter_k_rate(player_id, side: str, opp_name: str) -> dict:
         return {"k_games": 0, "games": 0, "display": "ERR", "score": 0, "basis": ""}
 
 
+def _recent_bk_log(player_id, n: int = 10) -> list:
+    """Last n games (any opp), newest-first: date, PA, strikeouts, opp, H/A.
+    Mirrors _recent_walks_log; feeds the Batter K card popup."""
+    if not player_id:
+        return []
+    try:
+        from mlb_stats_splits import _get_game_logs
+        from datetime import date as _dt
+        cy = _dt.today().year
+        games = []
+        for season in range(cy, cy - 2, -1):
+            splits = _get_game_logs(player_id, season)
+            for sp in reversed(splits):
+                stat = sp.get("stat", {})
+                pa = int(stat.get("plateAppearances", 0) or 0)
+                if pa < 1:
+                    continue
+                games.append({
+                    "d":   (sp.get("date") or "")[5:],
+                    "k":   int(stat.get("strikeOuts", 0) or 0),
+                    "pa":  pa,
+                    "opp": (sp.get("opponent", {}) or {}).get("name", ""),
+                    "ha":  "H" if sp.get("isHome") else "A",
+                })
+                if len(games) >= n:
+                    break
+            if len(games) >= n:
+                break
+        return games
+    except Exception:
+        return []
+
+
 def run_batter_k_picks(run_date: str, team_schedule: dict, emit=None) -> list:
     """Generate batter strikeout picks using the HIT_ODDS player pool as candidates
     (players known to be in today's lineups via the hit-line fetch).  Strikeout
@@ -2259,10 +2292,12 @@ def run_batter_k_picks(run_date: str, team_schedule: dict, emit=None) -> list:
     _log(emit, "▸ Batter Strikeout Picks — Batter Ks (Over/Under 0.5)", "section")
     season = int(run_date[:4])
 
-    # Ensure both HIT_ODDS (candidate pool) and BATTER_K_ODDS (optional odds) are populated
-    if not HIT_ODDS:
+    # Ensure both HIT_TEAMS (candidate pool: name/home_team/away_team dicts)
+    # and BATTER_K_ODDS (optional odds) are populated. NOTE: HIT_ODDS maps
+    # name→price (a number) and is NOT usable as a candidate pool.
+    if not HIT_TEAMS:
         _fetch_hits_lines(run_date, emit)
-    candidates = list(HIT_ODDS.values())
+    candidates = list(HIT_TEAMS.values())
     if not candidates:
         _log(emit, "  No players found in hit pool today.")
         return []
@@ -2312,7 +2347,8 @@ def run_batter_k_picks(run_date: str, team_schedule: dict, emit=None) -> list:
                 "wilson": round(_wilson_lb(rate["k_games"], rate["games"]), 4),
                 "over_odds": over_odds, "under_odds": under_odds,
                 "book": _book_label(ko.get("over_book") if pick == "OVER" else ko.get("under_book")),
-                "batter_id": batter_id}
+                "batter_id": batter_id,
+                "recent_bk_log": _recent_bk_log(batter_id)}
 
     picks = []
     with ThreadPoolExecutor(max_workers=8) as _ex:
