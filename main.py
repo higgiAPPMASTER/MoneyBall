@@ -5444,6 +5444,7 @@ function _nameSpan(obj,label){
 function _playerForm(key){
   var p=(window.__NAME_REG__||{})[key]; if(!p) return;
   if(p._prop){ _ppForm(p); }
+  else if(p.recent_bk_log!==undefined){ _batKForm(p); }
   else if(p.recent_k_log!==undefined || p.avg_k!==undefined){ _pkForm(p); }
   else if(p.recent_tb_log!==undefined){ if(p.pick==='OVER'){ _tbOverForm(p); } else { _tbForm(p); } }
   else if(p.recent_hr_log!==undefined && p.recent_hit_log===undefined && p.recent_runs_log===undefined){ _hrForm(p); }
@@ -7588,6 +7589,19 @@ function _batKForm(key){
   var name=p.full_name||p.name||'';
   var pickClr=isOver?'#a78bfa':'#ff8a65';
   var scoreClr=p.score>=65?'#63cab7':p.score>=45?'#fbbf24':'#ff8a65';
+  var log=p.recent_bk_log||[];
+  var rows=log.length?log.map(function(g){
+    var struck=g.k>=1;
+    var good=isOver?struck:!struck;
+    var clr=good?'#63cab7':'#ff8a65';
+    var oppTxt=g.opp?((g.ha==='H'?'vs ':'@ ')+g.opp):'';
+    return `<tr>
+      <td style="padding:6px 10px;color:#94a3b8;font-family:monospace">${g.d||'—'}</td>
+      <td style="padding:6px 10px;color:#cbd5e1;font-size:.8rem">${oppTxt}</td>
+      <td style="padding:6px 10px;text-align:right;font-family:monospace;font-size:.8rem;color:#93c5fd">${g.pa} PA</td>
+      <td style="padding:6px 10px;text-align:right;font-family:monospace;font-weight:800;color:${clr}">${g.k} K</td>
+    </tr>`;
+  }).join(''):'<tr><td colspan="4" style="padding:14px;color:#64748b;text-align:center">No recent games on record</td></tr>';
   ov.innerHTML=`<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:640px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">
     <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid #1e293b">
       <div>
@@ -7607,6 +7621,7 @@ function _batKForm(key){
           <span style="color:${scoreClr};font-weight:700">${p.score!=null?p.score+'%':'—'}</span>
         </div>
       </div>
+      ${_twoBox(p,'K Rate','K Odds',(isOver?p.over_odds:p.under_odds),isOver,'Last '+(log.length||0)+' Games',rows)}
       ${_matrixWriteup(p,(isOver?'O':'U'),5,false,'Ks',goal)}
       <div style="margin-top:12px;border-top:1px solid #1e293b;padding-top:10px;color:${pickClr};font-weight:800;font-size:.85rem">Pick: ${goal}</div>
     </div>
