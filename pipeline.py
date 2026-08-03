@@ -2880,6 +2880,16 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         _wp["game_start"]    = _game_start_for(_wp.get("team", ""))
         _wp["series_splits"] = fetch_series_splits(_wp.get("batter_id"), _wp.get("opp", ""), run_date, _wp.get("side", ""))
 
+    # ── Batter Strikeout Picks (Batter Ks, Over/Under 0.5) ───────────────
+    try:
+        from under_picks import run_batter_k_picks
+        batter_k_picks_list = run_batter_k_picks(run_date, team_schedule, emit=emit)
+    except Exception as exc:
+        emit({"type": "log", "msg": f"⚠️ Batter K picks skipped: {exc}"})
+        batter_k_picks_list = []
+    for _kp in batter_k_picks_list:
+        _kp["game_start"] = _game_start_for(_kp.get("team", ""))
+
     # ── HRR Picks (Hits+Runs+RBI Over 1.5) ────────────────────────────────
     try:
         from under_picks import run_hrr_picks
@@ -4429,7 +4439,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     elapsed = round(time.time() - t_start, 1)
     result = {
         "date": run_date, "top9": top9, "also_ran": also_ran,
-        "under_picks": under_picks_list, "runs_picks": runs_picks_list, "tb_picks": tb_picks_list, "tb_over_picks": tb_over_picks_list, "rbi_picks": rbi_picks_list, "walks_picks": walks_picks_list, "hrr_picks": hrr_picks_list, "hrr_special_picks": hrr_special_list, "triple_split_picks": triple_split_list, "five_star_split_picks": five_star_split_list, "club_plays_picks": club_plays_list, "hot_split_picks": hot_split_list, "hr_picks": hr_picks_list,
+        "under_picks": under_picks_list, "runs_picks": runs_picks_list, "tb_picks": tb_picks_list, "tb_over_picks": tb_over_picks_list, "rbi_picks": rbi_picks_list, "walks_picks": walks_picks_list, "batter_k_picks": batter_k_picks_list, "hrr_picks": hrr_picks_list, "hrr_special_picks": hrr_special_list, "triple_split_picks": triple_split_list, "five_star_split_picks": five_star_split_list, "club_plays_picks": club_plays_list, "hot_split_picks": hot_split_list, "hr_picks": hr_picks_list,
         "all_qualified": era_qualified,
         "game_predictions": game_predictions,
         "dq_s1_s3": [x for x in results if x["dq"] and x not in dn_dq and x not in era_dq and x not in dq_lineup and x not in s4_dq],
@@ -4443,6 +4453,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                   "tb_over_count": len(tb_over_picks_list),
                   "rbi_count": len(rbi_picks_list),
                   "walks_count": len(walks_picks_list),
+                  "batter_k_count": len(batter_k_picks_list),
                   "hrr_count": len(hrr_picks_list),
                   "hrr_special_count": len(hrr_special_list),
                   "triple_split_count": len(triple_split_list),
