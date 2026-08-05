@@ -7626,6 +7626,71 @@ function _batKForm(key){
         </div>
       </div>
       ${_twoBox(p,'K Rate','K Odds',(isOver?p.over_odds:p.under_odds),isOver,'Last '+(log.length||0)+' Games',rows)}
+      ${(function(){
+        var pit=p.pitcher&&p.pitcher!=='TBD'?p.pitcher:'';
+        var vp=p.vs_pit||{};
+        var pa=vp.pa||0; var so=vp.so||0;
+        if(!pit||pa===0) return '';
+        var pct=Math.round(so/pa*100);
+        var good=isOver?(so>=1):(so===0);
+        var clr=good?'#63cab7':'#ff8a65';
+        return '<div style="margin-top:10px;background:#0b1220;border:1px solid #1e293b;border-radius:10px;padding:10px 14px">'
+          +'<div style="font-size:.62rem;letter-spacing:.06em;color:#64748b;text-transform:uppercase;margin-bottom:6px">Ks vs Today&#39;s Pitcher &middot; <span style="color:#cbd5e1">'+_esc(pit)+'</span></div>'
+          +'<div style="display:flex;align-items:center;justify-content:space-between">'
+          +'<span style="font-size:.82rem;color:#94a3b8">Career strikeouts vs '+_esc(pit)+'</span>'
+          +'<span style="font-family:monospace;font-weight:800;font-size:1rem;color:'+clr+'">'+so+' K / '+pa+' PA <span style="font-size:.72rem;color:#64748b">('+pct+'%)</span></span>'
+          +'</div></div>';
+      })()}
+      ${(function(){
+        /* Pitcher K projection block — same data as pitcher card popups.
+           Uses __PK_BY_NAME__ for K proj/line/pick/odds, then __PP_BY_NAME__
+           for last 5 starts (falls back gracefully when not posted). */
+        var pit=(p.pitcher&&p.pitcher!=='TBD')?p.pitcher:'';
+        if(!pit) return '';
+        var nm=pit.toLowerCase().trim();
+        function _byNm(idx){
+          var r=idx[nm]; if(!r){ var last=nm.split(/ +/).pop(); for(var k in idx){ if(k.split(/ +/).pop()===last){ r=idx[k]; break; } } } return r||null;
+        }
+        var kObj=_byNm(window.__PK_BY_NAME__||{});
+        if(!kObj) return '';
+        var kLine=kObj.sugg_line!=null?kObj.sugg_line:kObj.line;
+        var kProj=kObj.blended_avg_k!=null?kObj.blended_avg_k:kObj.avg_k;
+        var kPick=kObj.sugg_line!=null?'OVER':kObj.pick;
+        var kOd=kObj.sugg_line!=null?kObj.sugg_odds:(kObj.pick==='OVER'?kObj.over_odds:(kObj.pick==='UNDER'?kObj.under_odds:null));
+        var kOdStr=kOd!=null?((kOd>0?'+':'')+kOd):'—';
+        var kPkClr=kPick==='OVER'?'#63cab7':(kPick==='UNDER'?'#ff8a65':'#64748b');
+        var era=kObj.era!=null?(' · '+kObj.era+' ERA'):'';
+        /* last 5 starts K log from the pitcher K pick */
+        var kLog=(kObj.recent_log||[]).slice(0,5);
+        var logRows=kLog.length?kLog.map(function(g){
+          var v=g.v!=null?g.v:g.k;
+          var over=kLine!=null&&v!=null&&v>kLine;
+          var clr=over?'#63cab7':'#ff8a65';
+          return '<tr>'
+            +'<td style="padding:4px 8px;font-family:monospace;font-size:.74rem;color:#94a3b8">'+(g.d||'—')+'</td>'
+            +'<td style="padding:4px 8px;font-size:.74rem;color:#cbd5e1">'+(g.opp?'vs '+g.opp:'')+'</td>'
+            +'<td style="padding:4px 8px;text-align:right;font-family:monospace;font-weight:800;font-size:.74rem;color:'+clr+'">'+(v!=null?v+' K':'—')+'</td>'
+            +'</tr>';
+        }).join(''):'<tr><td colspan="3" style="padding:8px;color:#64748b;font-size:.74rem;text-align:center">No recent starts on record</td></tr>';
+        return '<div style="margin-top:10px;padding:10px 12px;background:#0c1622;border-radius:8px;border:1px solid #1e2f3a">'
+          +'<div style="font-size:.66rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Pitcher K Projection · <span style="color:#63cab7;font-weight:800">'+_esc(pit)+'</span><span style="color:#64748b;font-weight:600">'+era+'</span></div>'
+          +'<div style="display:flex;gap:18px;flex-wrap:wrap;align-items:flex-start">'
+            +'<div style="flex:1;min-width:180px">'
+              +'<table style="width:100%;border-collapse:collapse">'
+              +'<thead><tr><th style="text-align:left;padding:3px 8px;color:#64748b;font-size:.6rem">Line</th><th style="text-align:left;padding:3px 8px;color:#64748b;font-size:.6rem">Proj</th><th style="text-align:left;padding:3px 8px;color:#64748b;font-size:.6rem">Pick</th><th style="text-align:right;padding:3px 8px;color:#64748b;font-size:.6rem">Odds</th></tr></thead>'
+              +'<tbody><tr>'
+                +'<td style="padding:4px 8px;font-family:monospace;color:#fff;font-size:.82rem">'+(kLine!=null?kLine:'—')+'</td>'
+                +'<td style="padding:4px 8px;font-family:monospace;color:#7dd3fc;font-size:.82rem">'+(kProj!=null?kProj:'—')+'</td>'
+                +'<td style="padding:4px 8px;font-weight:800;font-size:.82rem;color:'+kPkClr+'">'+(kPick||'—')+'</td>'
+                +'<td style="padding:4px 8px;text-align:right;font-family:monospace;font-size:.82rem;color:#94a3b8">'+kOdStr+'</td>'
+              +'</tr></tbody></table>'
+            +'</div>'
+            +'<div style="flex:1;min-width:200px">'
+              +'<div style="font-size:.6rem;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Last '+kLog.length+' Starts · Strikeouts</div>'
+              +'<table style="width:100%;border-collapse:collapse"><tbody>'+logRows+'</tbody></table>'
+            +'</div>'
+          +'</div></div>';
+      })()}
       ${_matrixWriteup(p,(isOver?'O':'U'),5,false,'Ks',goal)}
       <div style="margin-top:12px;border-top:1px solid #1e293b;padding-top:10px;color:${pickClr};font-weight:800;font-size:.85rem">Pick: ${goal}</div>
     </div>
