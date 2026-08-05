@@ -497,9 +497,12 @@ def _get_s1_vs_pitcher_uncached(batter_id, pitcher_id) -> dict:
         ab = int(stat.get("atBats", 0) or 0)
         h  = int(stat.get("hits",   0) or 0)
         hr = int(stat.get("homeRuns", 0) or 0)
-        if ab == 0: return {"ba": None, "display": "N/A", "ab": 0, "hr": 0}
+        so = int(stat.get("strikeOuts", 0) or 0)
+        pa = int(stat.get("plateAppearances", 0) or 0) or ab
+        if ab == 0: return {"ba": None, "display": "N/A", "ab": 0, "hr": 0, "so": 0, "pa": 0}
         ba = h / ab
-        return {"ba": ba, "display": f".{int(ba*1000):03d} ({ab}AB)", "ab": ab, "hr": hr}
+        return {"ba": ba, "display": f".{int(ba*1000):03d} ({ab}AB)", "ab": ab, "hr": hr,
+                "so": so, "pa": pa}
     except Exception:
         return {"ba": None, "display": "N/A", "ab": 0}
 
