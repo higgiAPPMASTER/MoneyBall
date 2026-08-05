@@ -2328,6 +2328,22 @@ def run_batter_k_picks(run_date: str, team_schedule: dict, emit=None) -> list:
             id_map[c["name"]] = pid
     team_map = _get_teams_batch(list(id_map.values()))
 
+    pitchers = _get_probable_pitchers(run_date)
+    _log(emit, f"  {len(pitchers)} probable pitchers found")
+
+    # Pre-warm Statcast venue-split cache before the main executor fires
+    _pw_pairs = []
+    for _c in candidates:
+        _bid = id_map.get(_c["name"])
+        _pt  = team_map.get(_bid, "") if _bid else ""
+        if not _bid or not _pt: continue
+        if _team_match(_pt, _c["home_team"]):   _opp = _c["away_team"]
+        elif _team_match(_pt, _c["away_team"]): _opp = _c["home_team"]
+        else: continue
+        _pid = next((pi.get("id") for pt, pi in pitchers.items() if _team_match(pt, _opp)), None)
+        _pw_pairs.append((_bid, _pid))
+    _prewarm_s1_ha_cache(_pw_pairs)
+
     def _eval(c):
         name = c["name"]
         batter_id = id_map.get(name)
@@ -2340,6 +2356,16 @@ def run_batter_k_picks(run_date: str, team_schedule: dict, emit=None) -> list:
             side, opp_name = "AWAY", c["home_team"]
         else:
             return None
+        # Opposing pitcher lookup
+        pitcher_name, pitcher_id = "TBD", None
+        for pteam, pinfo in pitchers.items():
+            if _team_match(pteam, opp_name):
+                pitcher_name = pinfo["name"]
+                pitcher_id   = pinfo.get("id")
+                break
+        # Career vs pitcher + venue split (display only, same as hits/runs cards)
+        s1 = _get_s1_vs_pitcher(batter_id, pitcher_id)
+        s1_fields = _s1_ha_fields(batter_id, pitcher_id, side, s1)
         rate = _batter_k_rate(batter_id, side, opp_name)
         if rate["games"] < BATTER_K_MIN_GAMES:
             return None
@@ -2358,6 +2384,8 @@ def run_batter_k_picks(run_date: str, team_schedule: dict, emit=None) -> list:
         under_odds = ko.get("under")
         return {"name": name, "team": player_team, "side": side, "opp": opp_name,
                 "pick": pick, "line": line,
+                "pitcher": pitcher_name, "pit_id": pitcher_id,
+                "vs_pit": s1, **s1_fields,
                 "rate_disp": rate["display"], "score": score,
                 "games": rate["games"], "basis": rate.get("basis", ""),
                 "h2h_disp": rate.get("h2h_disp", "N/A"),
