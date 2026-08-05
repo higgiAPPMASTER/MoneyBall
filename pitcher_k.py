@@ -259,7 +259,7 @@ def _fetch_k_lines(run_date: str, emit=None) -> list:
             away_team = ev.get("away_team", "")
             r2 = requests.get(
                 f"{ODDS_BASE}/sports/baseball_mlb/events/{ev['id']}/odds",
-                params={"apiKey": ODDS_API_KEY, "regions": "us,us2,ca",
+                params={"apiKey": ODDS_API_KEY, "regions": "us,us2",
                         "markets": K_MARKETS,
                         "oddsFormat": "american"}, timeout=15)
             if not r2.ok: continue
@@ -320,7 +320,7 @@ def _fetch_pitcher_props(run_date: str, emit=None) -> None:
             away_team = ev.get("away_team", "")
             r2 = requests.get(
                 f"{ODDS_BASE}/sports/baseball_mlb/events/{ev['id']}/odds",
-                params={"apiKey": ODDS_API_KEY, "regions": "us,us2,ca",
+                params={"apiKey": ODDS_API_KEY, "regions": "us,us2",
                         "markets": ",".join(PROP_MARKETS),
                         "oddsFormat": "american"}, timeout=15)
             if not r2.ok: continue
