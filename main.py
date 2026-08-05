@@ -1585,14 +1585,16 @@ def _save_detail(det: dict):
 
 def _aggregate_graded(graded: dict) -> dict:
     """Collapse a graded day into {category: {side: [W, L]}} counting only decided picks
-    that had odds posted — no-odds picks are excluded from the record."""
+    that had odds posted — no-odds picks are excluded from the record.
+    Exception: batter_ks odds are rarely posted so they count regardless of odds."""
+    _ODDS_OPTIONAL = {"batter_ks"}
     agg: dict = {}
     for key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "hr", "batter_walks", "hrr", "hrr_special", "hot_split", "triple_split", "five_star_split", "club_plays", "pitcher_ks", "pitcher_props", "batter_ks", "overflow"):
         for r in graded.get(key, []):
             res = r.get("result")
             if res not in ("WIN", "LOSS"):
                 continue
-            if r.get("odds") is None or r.get("odds") == "":
+            if key not in _ODDS_OPTIONAL and (r.get("odds") is None or r.get("odds") == ""):
                 continue
             cat  = r.get("category") or key
             side = r.get("side") or "OVER"
@@ -1610,14 +1612,16 @@ def _aggregate_graded(graded: dict) -> dict:
 def _detail_graded(graded: dict) -> list:
     """Flatten a graded day into per-pick rows (decided picks only) carrying the
     fields an earnings sheet needs: player, team, category, side, pick, odds,
-    line, result. No-odds picks are excluded — they don't count in the record."""
+    line, result. No-odds picks are excluded — they don't count in the record.
+    Exception: batter_ks odds are rarely posted so they count regardless of odds."""
+    _ODDS_OPTIONAL = {"batter_ks"}
     out = []
     for key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "hr", "batter_walks", "hrr", "hrr_special", "hot_split", "triple_split", "five_star_split", "club_plays", "pitcher_ks", "pitcher_props", "batter_ks", "overflow"):
         for r in graded.get(key, []):
             res = r.get("result")
             if res not in ("WIN", "LOSS"):
                 continue
-            if r.get("odds") is None or r.get("odds") == "":
+            if key not in _ODDS_OPTIONAL and (r.get("odds") is None or r.get("odds") == ""):
                 continue
             out.append({
                 "name": r.get("name", ""),
