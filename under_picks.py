@@ -2191,7 +2191,7 @@ def run_walks_picks(run_date: str, team_schedule: dict, emit=None) -> list:
 BATTER_K_OVER_CUT  = 60   # >= this % → likely to K (OVER);  MLB per-game K avg ~61%
 BATTER_K_UNDER_CUT = 40   # <= this % → unlikely to K (UNDER)
 BATTER_K_MIN_GAMES = 3    # minimum sample games to qualify (vs-opp or overall fallback)
-BATTER_K_TOP_N     = 20   # cap per side
+BATTER_K_TOP_N     = 30   # cap per side (top 10 on card + 20 overflow)
 
 
 def _batter_k_rate(player_id, side: str, opp_name: str) -> dict:
