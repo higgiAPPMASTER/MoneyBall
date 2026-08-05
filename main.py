@@ -1434,9 +1434,9 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             _ovf(p, p.get("name", ""), p.get("team", ""), f"Pitcher {stat_label} (OVF)", pd,
                  f"{pd} {ln} {stat_label}", p.get("over_odds") if pd == "OVER" else p.get("under_odds"),
                  ln, actual, stat_label, st)
-    # Batter Ks overflow (ranks 11-20 per side)
-    for p in ([q for q in _bk_all if q.get("pick") == "OVER"][10:20] +
-              [q for q in _bk_all if q.get("pick") == "UNDER"][10:20]):
+    # Batter Ks overflow (ranks 11-30 per side)
+    for p in ([q for q in _bk_all if q.get("pick") == "OVER"][10:30] +
+              [q for q in _bk_all if q.get("pick") == "UNDER"][10:30]):
         st = _lookup(p.get("batter_id"), p.get("name"))
         actual = st["strikeOuts"] if (st and "strikeOuts" in st) else None
         pd = p.get("pick", "OVER")
