@@ -1434,6 +1434,16 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             _ovf(p, p.get("name", ""), p.get("team", ""), f"Pitcher {stat_label} (OVF)", pd,
                  f"{pd} {ln} {stat_label}", p.get("over_odds") if pd == "OVER" else p.get("under_odds"),
                  ln, actual, stat_label, st)
+    # Batter Ks overflow (ranks 11-20 per side)
+    for p in ([q for q in _bk_all if q.get("pick") == "OVER"][10:20] +
+              [q for q in _bk_all if q.get("pick") == "UNDER"][10:20]):
+        st = _lookup(p.get("batter_id"), p.get("name"))
+        actual = st["strikeOuts"] if (st and "strikeOuts" in st) else None
+        pd = p.get("pick", "OVER")
+        ln = p.get("line") if p.get("line") is not None else 0.5
+        _ovf(p, p.get("name", ""), p.get("team", ""), "Batter Ks (OVF)", pd,
+             f"{pd} {ln} Ks", p.get("over_odds") if pd == "OVER" else p.get("under_odds"),
+             ln, actual, "Ks", st)
 
     result = {
         "date": date_str,
@@ -8727,6 +8737,8 @@ function _trkBuildCfg(){
     'HRR (OVF)|UNDER':           {lbl:'HRR Overflow (Under 1.5)',   icon:'🔥'},
     'Pitcher Ks (OVF)|OVER':     {lbl:'Pitcher Ks Overflow (Over)', icon:'⚾'},
     'Pitcher Ks (OVF)|UNDER':    {lbl:'Pitcher Ks Overflow (Under)',icon:'⚾'},
+    'Batter Ks (OVF)|OVER':      {lbl:'Batter Ks Overflow (Over)',  icon:'🌀'},
+    'Batter Ks (OVF)|UNDER':     {lbl:'Batter Ks Overflow (Under)', icon:'🌀'},
     'Pitcher Hits Allowed (OVF)|OVER': {lbl:'Hits Allowed Overflow (Over)',  icon:'🎯'},
     'Pitcher Hits Allowed (OVF)|UNDER':{lbl:'Hits Allowed Overflow (Under)', icon:'🎯'},
     'Pitcher Outs (OVF)|OVER':   {lbl:'Pitcher Outs Overflow (Over)',  icon:'🔢'},
@@ -8748,6 +8760,7 @@ function _trkBuildCfg(){
   var OVF_ORDER=['Hitter Hits (More)|OVER','Hitter Hits (More)|UNDER','Runs (OVF)|OVER','Runs (OVF)|UNDER',
     'TB Under (OVF)|UNDER','TB Over (OVF)|OVER','RBI (OVF)|OVER','RBI (OVF)|UNDER',
     'Batter Walks (OVF)|OVER','Batter Walks (OVF)|UNDER','HRR (OVF)|OVER','HRR (OVF)|UNDER',
+    'Batter Ks (OVF)|OVER','Batter Ks (OVF)|UNDER',
     'Pitcher Ks (OVF)|OVER','Pitcher Ks (OVF)|UNDER','Pitcher Hits Allowed (OVF)|OVER','Pitcher Hits Allowed (OVF)|UNDER',
     'Pitcher Outs (OVF)|OVER','Pitcher Outs (OVF)|UNDER','Pitcher Earned Runs (OVF)|OVER','Pitcher Earned Runs (OVF)|UNDER',
     'Pitcher Walks (OVF)|OVER','Pitcher Walks (OVF)|UNDER'];
