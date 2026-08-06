@@ -7655,7 +7655,7 @@ function _batKForm(key){
       var vpct=Math.round(vso/vpa*100);
       var vspClr=(isOver?(vso>=1):(vso===0))?'#63cab7':'#ff8a65';
       vspBlock='<div style="background:#060d1a;border:1px solid #1e293b;border-radius:10px;overflow:hidden;margin-bottom:8px">'
-        +panHdr+"Ks vs Today's Pitcher · <span style=\"color:#cbd5e1\">"+pitLabel+"</span></div>"
+        +panHdr+'Ks vs Today&#39;s Pitcher · <span style="color:#cbd5e1">'+pitLabel+'</span></div>'
         +'<div style="display:flex;align-items:baseline;gap:5px;padding:8px 10px">'
           +'<span style="font-family:monospace;font-weight:800;font-size:1.1rem;color:'+vspClr+'">'+vso+' K</span>'
           +'<span style="color:#475569;font-size:.74rem">/ '+vpa+' PA</span>'
@@ -7663,7 +7663,7 @@ function _batKForm(key){
         +'</div></div>';
     } else {
       vspBlock='<div style="background:#060d1a;border:1px solid #1e293b;border-radius:10px;overflow:hidden;margin-bottom:8px">'
-        +panHdr+"Ks vs Today's Pitcher · <span style=\"color:#cbd5e1\">"+pitLabel+"</span></div>"
+        +panHdr+'Ks vs Today&#39;s Pitcher · <span style="color:#cbd5e1">'+pitLabel+'</span></div>'
         +'<div style="padding:8px 10px;color:#475569;font-size:.72rem">No prior at-bats vs this starter</div></div>';
     }
   }
@@ -7712,7 +7712,7 @@ function _batKForm(key){
         +'<div style="font-weight:800;font-size:1.05rem;color:#fff">'+_esc(name)+'</div>'
         +'<div style="color:#94a3b8;font-size:.74rem;margin-top:2px">'+_esc(p.side||'')+' vs '+_esc(p.opp||'')+' \u00b7 '+_esc(goal)+'</div>'
       +'</div>'
-      +'<button onclick="document.getElementById(\'bat-k-modal\').style.display=\'none\'" style="background:#1e293b;border:none;color:#cbd5e1;width:28px;height:28px;border-radius:8px;cursor:pointer;font-size:.9rem;flex-shrink:0">\u2715</button>'
+      +'<button onclick="document.getElementById(&#39;bat-k-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;width:28px;height:28px;border-radius:8px;cursor:pointer;font-size:.9rem;flex-shrink:0">\u2715</button>'
     +'</div>'
     +'<div style="display:grid;grid-template-columns:1fr 1fr 1fr;background:#1a2540;padding:10px 16px;gap:8px">'
       +'<div><div style="font-size:.58rem;color:#64748b;text-transform:uppercase;letter-spacing:.05em">K Rate ('+_esc(p.basis||'vs opp')+')</div><div style="font-family:monospace;font-weight:800;font-size:.95rem;color:'+scoreClr+';margin-top:2px">'+(p.rate_disp||'--')+'</div></div>'
