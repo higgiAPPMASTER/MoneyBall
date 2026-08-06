@@ -5527,6 +5527,12 @@ function downloadPicksCSV(){
     rows.push(['Batter Walks Pick', i+1, p.name||'', p.team||'', '', p.side||'', p.opp||'', '',
       (isOver?'Over':'Under')+' '+(p.line!=null?p.line:0.5)+' Walks', (p.line!=null?p.line:0.5), _csvOdds(od), '', (p.rate_disp||'')+(p.basis?(' '+p.basis):'')]);
   });
+  (r.batter_k_picks||[]).forEach(function(p,i){
+    var isOver=p.pick==='OVER';
+    var od=isOver?p.over_odds:p.under_odds;
+    rows.push(['Batter Ks Pick', i+1, p.name||'', p.team||'', '', p.side||'', p.opp||'', p.pitcher||'',
+      (isOver?'Over':'Under')+' '+(p.line!=null?p.line:0.5)+' Ks', (p.line!=null?p.line:0.5), _csvOdds(od), '', (p.rate_disp||'')+(p.basis?(' '+p.basis):'')]);
+  });
   var pk=(r.pitcher_k&&r.pitcher_k.all)||[];
   pk.filter(function(p){return p.pick;}).sort(function(a,b){
     var ga=Math.abs((a.avg_k||0)-(a.line||0)), gb=Math.abs((b.avg_k||0)-(b.line||0));
@@ -5945,6 +5951,7 @@ function _allGameKeys(){
   (r.under_picks||[]).forEach(function(p){all.push(p);});
   ((((r.pitcher_k||{}).all)||[]).filter(function(p){return p.pick;})).forEach(function(p){all.push(p);});
   (r.runs_picks||[]).forEach(function(p){all.push(p);});
+  (r.batter_k_picks||[]).forEach(function(p){all.push(p);});
   var _pp=(r.pitcher_props)||{};
   PROP_ORDER.forEach(function(mkt){ ((((_pp[mkt]||{}).picks))||[]).forEach(function(p){all.push(p);}); });
   var seen={}, out=[];
@@ -7596,7 +7603,7 @@ function _batKForm(key){
   if(!ov){
     ov=document.createElement('div');
     ov.id='bat-k-modal';
-    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.78);z-index:10050;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.82);z-index:10050;display:flex;align-items:center;justify-content:center;padding:16px';
     ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; };
     document.body.appendChild(ov);
   }
@@ -7605,110 +7612,125 @@ function _batKForm(key){
   var name=p.full_name||p.name||'';
   var pickClr=isOver?'#a78bfa':'#ff8a65';
   var scoreClr=p.score>=65?'#63cab7':p.score>=45?'#fbbf24':'#ff8a65';
+
+  // RIGHT: Last 10 batter K game log
   var log=p.recent_bk_log||[];
-  var rows=log.length?log.map(function(g){
+  var gameRows=log.length?log.map(function(g){
     var struck=g.k>=1;
     var good=isOver?struck:!struck;
-    var clr=good?'#63cab7':'#ff8a65';
+    var kClr=good?'#63cab7':'#ff8a65';
     var oppTxt=g.opp?((g.ha==='H'?'vs ':'@ ')+g.opp):'';
-    return `<tr>
-      <td style="padding:6px 10px;color:#94a3b8;font-family:monospace">${g.d||'—'}</td>
-      <td style="padding:6px 10px;color:#cbd5e1;font-size:.8rem">${oppTxt}</td>
-      <td style="padding:6px 10px;text-align:right;font-family:monospace;font-size:.8rem;color:#93c5fd">${g.pa} PA</td>
-      <td style="padding:6px 10px;text-align:right;font-family:monospace;font-weight:800;color:${clr}">${g.k} K</td>
-    </tr>`;
-  }).join(''):'<tr><td colspan="4" style="padding:14px;color:#64748b;text-align:center">No recent games on record</td></tr>';
-  ov.innerHTML=`<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:640px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">
-    <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid #1e293b">
-      <div>
-        <div style="font-weight:800;font-size:1.05rem;color:#fff">${name}</div>
-        <div style="color:#94a3b8;font-size:.78rem">${p.side||''} vs ${p.opp||''} · ${goal}</div>
-      </div>
-      <button onclick="document.getElementById('bat-k-modal').style.display='none'" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem">✕</button>
-    </div>
-    <div style="padding:14px 18px">
-      <div style="background:#1e293b;border-radius:10px;padding:12px 16px;margin-bottom:10px">
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <span style="color:#94a3b8;font-size:.82rem">K Rate (${p.basis||'vs opp'})</span>
-          <span style="color:${scoreClr};font-weight:800;font-size:.95rem">${p.rate_disp||'—'}</span>
-        </div>
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
-          <span style="color:#94a3b8;font-size:.82rem">Score</span>
-          <span style="color:${scoreClr};font-weight:700">${p.score!=null?p.score+'%':'—'}</span>
-        </div>
-      </div>
-      ${_twoBox(p,'K Rate','K Odds',(isOver?p.over_odds:p.under_odds),isOver,'Last '+(log.length||0)+' Games',rows)}
-      ${(function(){
-        var pit=p.pitcher&&p.pitcher!=='TBD'?p.pitcher:'';
-        var vp=p.vs_pit||{};
-        var pa=vp.pa||0; var so=vp.so||0;
-        if(!pit||pa===0) return '';
-        var pct=Math.round(so/pa*100);
-        var good=isOver?(so>=1):(so===0);
-        var clr=good?'#63cab7':'#ff8a65';
-        return '<div style="margin-top:10px;background:#0b1220;border:1px solid #1e293b;border-radius:10px;padding:10px 14px">'
-          +'<div style="font-size:.62rem;letter-spacing:.06em;color:#64748b;text-transform:uppercase;margin-bottom:6px">Ks vs Today&#39;s Pitcher &middot; <span style="color:#cbd5e1">'+_esc(pit)+'</span></div>'
-          +'<div style="display:flex;align-items:center;justify-content:space-between">'
-          +'<span style="font-size:.82rem;color:#94a3b8">Career strikeouts vs '+_esc(pit)+'</span>'
-          +'<span style="font-family:monospace;font-weight:800;font-size:1rem;color:'+clr+'">'+so+' K / '+pa+' PA <span style="font-size:.72rem;color:#64748b">('+pct+'%)</span></span>'
-          +'</div></div>';
-      })()}
-      ${(function(){
-        /* Pitcher K projection block — same data as pitcher card popups.
-           Uses __PK_BY_NAME__ for K proj/line/pick/odds, then __PP_BY_NAME__
-           for last 5 starts (falls back gracefully when not posted). */
-        var pit=(p.pitcher&&p.pitcher!=='TBD')?p.pitcher:'';
-        if(!pit) return '';
-        var nm=pit.toLowerCase().trim();
-        function _byNm(idx){
-          var r=idx[nm]; if(!r){ var last=nm.split(/ +/).pop(); for(var k in idx){ if(k.split(/ +/).pop()===last){ r=idx[k]; break; } } } return r||null;
-        }
-        var kObj=_byNm(window.__PK_BY_NAME__||{});
-        if(!kObj) return '';
-        var kLine=kObj.sugg_line!=null?kObj.sugg_line:kObj.line;
-        var kProj=kObj.blended_avg_k!=null?kObj.blended_avg_k:kObj.avg_k;
-        var kPick=kObj.sugg_line!=null?'OVER':kObj.pick;
-        var kOd=kObj.sugg_line!=null?kObj.sugg_odds:(kObj.pick==='OVER'?kObj.over_odds:(kObj.pick==='UNDER'?kObj.under_odds:null));
-        var kOdStr=kOd!=null?((kOd>0?'+':'')+kOd):'—';
-        var kPkClr=kPick==='OVER'?'#63cab7':(kPick==='UNDER'?'#ff8a65':'#64748b');
-        var era=kObj.era!=null?(' · '+kObj.era+' ERA'):'';
-        /* last 5 starts K log from the pitcher K pick */
-        var kLog=(kObj.recent_log||[]).slice(0,5);
-        var logRows=kLog.length?kLog.map(function(g){
-          var v=g.v!=null?g.v:g.k;
-          var over=kLine!=null&&v!=null&&v>kLine;
-          var clr=over?'#63cab7':'#ff8a65';
-          return '<tr>'
-            +'<td style="padding:4px 8px;font-family:monospace;font-size:.74rem;color:#94a3b8">'+(g.d||'—')+'</td>'
-            +'<td style="padding:4px 8px;font-size:.74rem;color:#cbd5e1">'+(g.opp?'vs '+g.opp:'')+'</td>'
-            +'<td style="padding:4px 8px;text-align:right;font-family:monospace;font-weight:800;font-size:.74rem;color:'+clr+'">'+(v!=null?v+' K':'—')+'</td>'
-            +'</tr>';
-        }).join(''):'<tr><td colspan="3" style="padding:8px;color:#64748b;font-size:.74rem;text-align:center">No recent starts on record</td></tr>';
-        return '<div style="margin-top:10px;padding:10px 12px;background:#0c1622;border-radius:8px;border:1px solid #1e2f3a">'
-          +'<div style="font-size:.66rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Pitcher K Projection · <span style="color:#63cab7;font-weight:800">'+_esc(pit)+'</span><span style="color:#64748b;font-weight:600">'+era+'</span></div>'
-          +'<div style="display:flex;gap:18px;flex-wrap:wrap;align-items:flex-start">'
-            +'<div style="flex:1;min-width:180px">'
-              +'<table style="width:100%;border-collapse:collapse">'
-              +'<thead><tr><th style="text-align:left;padding:3px 8px;color:#64748b;font-size:.6rem">Line</th><th style="text-align:left;padding:3px 8px;color:#64748b;font-size:.6rem">Proj</th><th style="text-align:left;padding:3px 8px;color:#64748b;font-size:.6rem">Pick</th><th style="text-align:right;padding:3px 8px;color:#64748b;font-size:.6rem">Odds</th></tr></thead>'
-              +'<tbody><tr>'
-                +'<td style="padding:4px 8px;font-family:monospace;color:#fff;font-size:.82rem">'+(kLine!=null?kLine:'—')+'</td>'
-                +'<td style="padding:4px 8px;font-family:monospace;color:#7dd3fc;font-size:.82rem">'+(kProj!=null?kProj:'—')+'</td>'
-                +'<td style="padding:4px 8px;font-weight:800;font-size:.82rem;color:'+kPkClr+'">'+(kPick||'—')+'</td>'
-                +'<td style="padding:4px 8px;text-align:right;font-family:monospace;font-size:.82rem;color:#94a3b8">'+kOdStr+'</td>'
-              +'</tr></tbody></table>'
-            +'</div>'
-            +'<div style="flex:1;min-width:200px">'
-              +'<div style="font-size:.6rem;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Last '+kLog.length+' Starts · Strikeouts</div>'
-              +'<table style="width:100%;border-collapse:collapse"><tbody>'+logRows+'</tbody></table>'
-            +'</div>'
-          +'</div></div>';
-      })()}
-      ${_matrixWriteup(p,(isOver?'O':'U'),5,false,'Ks',goal)}
-      <div style="margin-top:12px;border-top:1px solid #1e293b;padding-top:10px;color:${pickClr};font-weight:800;font-size:.85rem">Pick: ${goal}</div>
-    </div>
-  </div>`;
+    return '<tr style="border-bottom:1px solid #111d2e">'
+      +'<td style="padding:4px 6px;color:#64748b;font-family:monospace;font-size:.72rem;white-space:nowrap">'+(g.d||'\u2014')+'</td>'
+      +'<td style="padding:4px 6px;color:#94a3b8;font-size:.72rem">'+_esc(oppTxt)+'</td>'
+      +'<td style="padding:4px 6px;text-align:right;font-family:monospace;font-size:.72rem;color:#475569">'+g.pa+' PA</td>'
+      +'<td style="padding:4px 6px;text-align:right;font-family:monospace;font-weight:800;font-size:.78rem;color:'+kClr+'">'+g.k+' K</td>'
+      +'</tr>';
+  }).join(''):'<tr><td colspan="4" style="padding:12px;color:#475569;text-align:center;font-size:.73rem">No recent games on record</td></tr>';
+
+  // LEFT: Matchup signals panel
+  var pit=p.pitcher&&p.pitcher!=='TBD'?p.pitcher:'';
+  var pitLabel=pit?_esc(pit):'Today\'s Pitcher';
+  var panHdr='<div style="font-size:.58rem;font-weight:900;letter-spacing:.07em;color:#64748b;text-transform:uppercase;padding:6px 10px;border-bottom:1px solid #1e293b;background:#0a1220">';
+  function _cr(lbl,val,clr){
+    return '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid #111d2e">'
+      +'<span style="color:#64748b;font-size:.72rem">'+lbl+'</span>'
+      +'<span style="font-family:monospace;font-weight:700;font-size:.76rem;color:'+(clr||'#e2e8f0')+'">'+val+'</span>'
+      +'</div>';
+  }
+  var odds_disp=(function(){ var od=isOver?p.over_odds:p.under_odds; return od!=null?((od>0?'+':'')+od):'--'; })();
+  var careerRows=_cr('K Rate ('+_esc(p.basis||'vs opp')+')',p.rate_disp||'--',scoreClr)
+    +_cr('Last 10 games',(p.l10_disp&&p.l10_disp!=='N/A')?p.l10_disp:'--',(p.l10_disp&&p.l10_disp!=='N/A')?scoreClr:'#475569')
+    +_cr('K Odds (book)',odds_disp,'#94a3b8')
+    +_cr('Wilson LB',p.wilson!=null?String(p.wilson):'--',scoreClr);
+  var careerPanel='<div style="background:#060d1a;border:1px solid #1e293b;border-radius:10px;overflow:hidden;margin-bottom:8px">'
+    +panHdr+'Matchup Signals \u00b7 <span style="color:#a78bfa;font-weight:800">'+_esc(p.opp||'')+'</span></div>'
+    +'<div style="padding:6px 10px">'+careerRows+'</div></div>';
+
+  // LEFT: Ks vs Today's Pitcher
+  var vspBlock='';
+  if(pit){
+    var vp=p.vs_pit||{}; var vpa=vp.pa||0; var vso=vp.so||0;
+    if(vpa>0){
+      var vpct=Math.round(vso/vpa*100);
+      var vspClr=(isOver?(vso>=1):(vso===0))?'#63cab7':'#ff8a65';
+      vspBlock='<div style="background:#060d1a;border:1px solid #1e293b;border-radius:10px;overflow:hidden;margin-bottom:8px">'
+        +panHdr+'Ks vs Today\'s Pitcher \u00b7 <span style="color:#cbd5e1">'+pitLabel+'</span></div>'
+        +'<div style="display:flex;align-items:baseline;gap:5px;padding:8px 10px">'
+          +'<span style="font-family:monospace;font-weight:800;font-size:1.1rem;color:'+vspClr+'">'+vso+' K</span>'
+          +'<span style="color:#475569;font-size:.74rem">/ '+vpa+' PA</span>'
+          +'<span style="margin-left:auto;font-family:monospace;font-weight:700;font-size:.8rem;color:'+vspClr+'">'+vpct+'%</span>'
+        +'</div></div>';
+    } else {
+      vspBlock='<div style="background:#060d1a;border:1px solid #1e293b;border-radius:10px;overflow:hidden;margin-bottom:8px">'
+        +panHdr+'Ks vs Today\'s Pitcher \u00b7 <span style="color:#cbd5e1">'+pitLabel+'</span></div>'
+        +'<div style="padding:8px 10px;color:#475569;font-size:.72rem">No prior at-bats vs this starter</div></div>';
+    }
+  }
+
+  // LEFT: Pitcher K Projection
+  var projBlock='';
+  if(pit){
+    var nm2=pit.toLowerCase().trim();
+    function _byNm2(idx){
+      var r=idx[nm2]; if(!r){ var last2=nm2.split(/ +/).pop(); for(var kk in idx){ if(kk.split(/ +/).pop()===last2){ r=idx[kk]; break; } } } return r||null;
+    }
+    var kObj=_byNm2(window.__PK_BY_NAME__||{});
+    if(kObj){
+      var kLine=kObj.sugg_line!=null?kObj.sugg_line:kObj.line;
+      var kProj=kObj.blended_avg_k!=null?kObj.blended_avg_k:kObj.avg_k;
+      var kPick=kObj.sugg_line!=null?'OVER':kObj.pick;
+      var kOd=kObj.sugg_line!=null?kObj.sugg_odds:(kObj.pick==='OVER'?kObj.over_odds:(kObj.pick==='UNDER'?kObj.under_odds:null));
+      var kOdStr=kOd!=null?((kOd>0?'+':'')+kOd):'--';
+      var kPkClr=kPick==='OVER'?'#63cab7':(kPick==='UNDER'?'#ff8a65':'#64748b');
+      var era=kObj.era!=null?' \u00b7 '+kObj.era+' ERA':'';
+      var kLog=(kObj.recent_log||[]).slice(0,5);
+      var chips=kLog.length?kLog.map(function(g){
+        var v=g.v!=null?g.v:g.k;
+        var hit=kLine!=null&&v!=null&&v>kLine;
+        var cc=hit?'#63cab7':'#ff8a65';
+        return '<span style="background:#0f1e2e;border-radius:5px;padding:2px 8px;font-family:monospace;font-weight:800;font-size:.76rem;color:'+cc+'">'+(v!=null?v:'\u2014')+' K</span>';
+      }).join(''):'<span style="color:#475569;font-size:.72rem">No recent starts</span>';
+      projBlock='<div style="background:#060d1a;border:1px solid #1e293b;border-radius:10px;overflow:hidden">'
+        +panHdr+'Pitcher K Proj \u00b7 <span style="color:#63cab7;font-weight:800">'+pitLabel+'</span><span style="color:#475569;font-weight:400">'+era+'</span></div>'
+        +'<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;padding:7px 10px;border-bottom:1px solid #111d2e">'
+          +'<div><div style="font-size:.58rem;color:#64748b;text-transform:uppercase;letter-spacing:.04em">Line</div><div style="font-family:monospace;font-weight:700;font-size:.86rem;color:#fff;margin-top:2px">'+(kLine!=null?kLine:'--')+'</div></div>'
+          +'<div><div style="font-size:.58rem;color:#64748b;text-transform:uppercase;letter-spacing:.04em">Proj</div><div style="font-family:monospace;font-weight:700;font-size:.86rem;color:#7dd3fc;margin-top:2px">'+(kProj!=null?kProj:'--')+'</div></div>'
+          +'<div><div style="font-size:.58rem;color:#64748b;text-transform:uppercase;letter-spacing:.04em">Pick</div><div style="font-weight:800;font-size:.86rem;color:'+kPkClr+';margin-top:2px">'+(kPick||'--')+'</div></div>'
+          +'<div><div style="font-size:.58rem;color:#64748b;text-transform:uppercase;letter-spacing:.04em">Odds</div><div style="font-family:monospace;font-weight:700;font-size:.86rem;color:#94a3b8;margin-top:2px">'+kOdStr+'</div></div>'
+        +'</div>'
+        +'<div style="padding:6px 10px">'
+          +'<div style="font-size:.58rem;color:#475569;text-transform:uppercase;letter-spacing:.05em;font-weight:700;margin-bottom:5px">Last '+kLog.length+' Starts \u00b7 Ks</div>'
+          +'<div style="display:flex;gap:5px;flex-wrap:wrap">'+chips+'</div>'
+        +'</div></div>';
+    }
+  }
+
+  ov.innerHTML='<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:660px;width:100%;max-height:92vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.6)">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border-bottom:1px solid #1e293b">'
+      +'<div>'
+        +'<div style="font-weight:800;font-size:1.05rem;color:#fff">'+_esc(name)+'</div>'
+        +'<div style="color:#94a3b8;font-size:.74rem;margin-top:2px">'+_esc(p.side||'')+' vs '+_esc(p.opp||'')+' \u00b7 '+_esc(goal)+'</div>'
+      +'</div>'
+      +'<button onclick="document.getElementById(\'bat-k-modal\').style.display=\'none\'" style="background:#1e293b;border:none;color:#cbd5e1;width:28px;height:28px;border-radius:8px;cursor:pointer;font-size:.9rem;flex-shrink:0">\u2715</button>'
+    +'</div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr 1fr;background:#1a2540;padding:10px 16px;gap:8px">'
+      +'<div><div style="font-size:.58rem;color:#64748b;text-transform:uppercase;letter-spacing:.05em">K Rate ('+_esc(p.basis||'vs opp')+')</div><div style="font-family:monospace;font-weight:800;font-size:.95rem;color:'+scoreClr+';margin-top:2px">'+(p.rate_disp||'--')+'</div></div>'
+      +'<div style="text-align:center"><div style="font-size:.58rem;color:#64748b;text-transform:uppercase;letter-spacing:.05em">Score</div><div style="font-family:monospace;font-weight:800;font-size:.95rem;color:'+scoreClr+';margin-top:2px">'+(p.score!=null?p.score+'%':'--')+'</div></div>'
+      +'<div style="text-align:right"><div style="font-size:.58rem;color:#64748b;text-transform:uppercase;letter-spacing:.05em">Wilson LB</div><div style="font-family:monospace;font-weight:800;font-size:.95rem;color:#fbbf24;margin-top:2px">'+(p.wilson!=null?String(p.wilson):'--')+'</div></div>'
+    +'</div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:10px 14px">'
+      +'<div>'+careerPanel+vspBlock+projBlock+'</div>'
+      +'<div style="background:#060d1a;border:1px solid #1e293b;border-radius:10px;overflow:hidden">'
+        +panHdr+'Last '+log.length+' Games</div>'
+        +'<table style="width:100%;border-collapse:collapse"><tbody>'+gameRows+'</tbody></table>'
+      +'</div>'
+    +'</div>'
+    +'<div style="margin:0 14px 14px;border-top:1px solid #1e293b;padding-top:10px;color:'+pickClr+';font-weight:800;font-size:.85rem">Pick: '+_esc(goal)+'</div>'
+  +'</div>';
   ov.style.display='flex';
 }
+
 
 function _walksCard(p, rank, pfx) {
   pfx = pfx || 'bw';
