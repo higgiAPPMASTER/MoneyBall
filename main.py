@@ -791,7 +791,8 @@ def _mlb_box_lookup(date_str: str):
                     "walks_bat":    bat.get("baseOnBalls"),
                     "homeRuns":     bat.get("homeRuns"),
                     "hrr":          _hrr,
-                    "strikeOuts":   pit.get("strikeOuts"),
+                    "bat_strikeOuts": bat.get("strikeOuts"),  # batter Ks (batting stat)
+                    "strikeOuts":   pit.get("strikeOuts"),    # pitcher Ks (pitching stat)
                     "earnedRuns":   pit.get("earnedRuns"),
                     "outs":         pit.get("outs"),
                     "hits_allowed": pit.get("hits"),
@@ -1089,7 +1090,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
     batter_ks_rows = []
     for p in _bk_capped:
         st = _lookup(p.get("batter_id"), p.get("name"))
-        actual = st["strikeOuts"] if (st and "strikeOuts" in st) else None
+        actual = st.get("bat_strikeOuts") if st else None
         pick_dir = p.get("pick", "OVER")
         line = p.get("line") if p.get("line") is not None else 0.5
         batter_ks_rows.append({
@@ -1438,7 +1439,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
     for p in ([q for q in _bk_all if q.get("pick") == "OVER"][10:30] +
               [q for q in _bk_all if q.get("pick") == "UNDER"][10:30]):
         st = _lookup(p.get("batter_id"), p.get("name"))
-        actual = st["strikeOuts"] if (st and "strikeOuts" in st) else None
+        actual = st.get("bat_strikeOuts") if st else None
         pd = p.get("pick", "OVER")
         ln = p.get("line") if p.get("line") is not None else 0.5
         _ovf(p, p.get("name", ""), p.get("team", ""), "Batter Ks (OVF)", pd,
@@ -1972,7 +1973,7 @@ _BET_LOG_PATH = os.path.join(_CACHE_DIR, "_bet_log.json")
 _BETS_CAT = "__bets__"
 _BETS_DATE = "2000-01-01"
 _BET_LOCK = _trk_threading.Lock()
-_BET_STAT_KEYS = ("hits", "runs", "total_bases", "rbi", "homeRuns", "walks_bat", "hrr", "strikeOuts", "hits_allowed", "outs", "earnedRuns", "walks")
+_BET_STAT_KEYS = ("hits", "runs", "total_bases", "rbi", "homeRuns", "walks_bat", "hrr", "strikeOuts", "bat_strikeOuts", "hits_allowed", "outs", "earnedRuns", "walks")
 _BET_PITCH_STATS = ("strikeOuts", "hits_allowed", "outs", "earnedRuns", "walks")
 
 def _load_bets() -> dict:
@@ -2061,8 +2062,8 @@ def _recent_bet(d) -> bool:
 _STAT_LABEL_KEYS = {
     "hits": "hits", "runs": "runs", "total bases": "total_bases", "rbi": "rbi",
     "hr": "homeRuns", "home runs": "homeRuns", "walks": "walks_bat",
-    "batter walks": "walks_bat", "h+r+rbi": "hrr", "ks": "strikeOuts",
-    "strikeouts": "strikeOuts", "outs": "outs", "hits allowed": "hits_allowed",
+    "batter walks": "walks_bat", "h+r+rbi": "hrr", "ks": "bat_strikeOuts",
+    "strikeouts": "bat_strikeOuts", "outs": "outs", "hits allowed": "hits_allowed",
     "earned runs": "earnedRuns", "walks allowed": "walks",
 }
 _STAT_CAT_KEYS = {
@@ -2070,7 +2071,8 @@ _STAT_CAT_KEYS = {
     "runs": "runs", "rbi": "rbi", "hrr": "hrr", "hr": "homeRuns",
     "bwalk": "walks_bat", "batter walks": "walks_bat", "tb": "total_bases",
     "tbo": "total_bases", "tbu": "total_bases", "tb over": "total_bases",
-    "tb under": "total_bases", "k": "strikeOuts", "pitcher ks": "strikeOuts",
+    "tb under": "total_bases", "k": "bat_strikeOuts", "batter ks": "bat_strikeOuts",
+    "batter_ks": "bat_strikeOuts", "pitcher ks": "strikeOuts",
     "pitcher outs": "outs", "pitcher hits allowed": "hits_allowed",
     "pitcher_hits_allowed": "hits_allowed", "pitcher_outs": "outs",
     "pitcher_earned_runs": "earnedRuns", "pitcher_walks": "walks",
@@ -7584,7 +7586,7 @@ function _batKCard(p, rank, pfx) {
       ${_evBadge(p)}
       ${adminStats}
     </div>
-  ${_betBtn(p,'Batter Ks',p.pick,'strikeOuts','Ks',(p.line!=null?p.line:0.5),(p.pick==='OVER'?p.over_odds:p.under_odds))}
+  ${_betBtn(p,'Batter Ks',p.pick,'bat_strikeOuts','Ks',(p.line!=null?p.line:0.5),(p.pick==='OVER'?p.over_odds:p.under_odds))}
   </div>`;
 }
 
