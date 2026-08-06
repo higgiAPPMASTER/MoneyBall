@@ -7630,7 +7630,7 @@ function _batKForm(key){
 
   // LEFT: Matchup signals panel
   var pit=p.pitcher&&p.pitcher!=='TBD'?p.pitcher:'';
-  var pitLabel=pit?_esc(pit):'Today\'s Pitcher';
+  var pitLabel=pit?_esc(pit):"Today's Pitcher";
   var panHdr='<div style="font-size:.58rem;font-weight:900;letter-spacing:.07em;color:#64748b;text-transform:uppercase;padding:6px 10px;border-bottom:1px solid #1e293b;background:#0a1220">';
   function _cr(lbl,val,clr){
     return '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid #111d2e">'
@@ -7655,7 +7655,7 @@ function _batKForm(key){
       var vpct=Math.round(vso/vpa*100);
       var vspClr=(isOver?(vso>=1):(vso===0))?'#63cab7':'#ff8a65';
       vspBlock='<div style="background:#060d1a;border:1px solid #1e293b;border-radius:10px;overflow:hidden;margin-bottom:8px">'
-        +panHdr+'Ks vs Today\'s Pitcher \u00b7 <span style="color:#cbd5e1">'+pitLabel+'</span></div>'
+        +panHdr+"Ks vs Today's Pitcher · <span style=\"color:#cbd5e1\">"+pitLabel+"</span></div>"
         +'<div style="display:flex;align-items:baseline;gap:5px;padding:8px 10px">'
           +'<span style="font-family:monospace;font-weight:800;font-size:1.1rem;color:'+vspClr+'">'+vso+' K</span>'
           +'<span style="color:#475569;font-size:.74rem">/ '+vpa+' PA</span>'
@@ -7663,7 +7663,7 @@ function _batKForm(key){
         +'</div></div>';
     } else {
       vspBlock='<div style="background:#060d1a;border:1px solid #1e293b;border-radius:10px;overflow:hidden;margin-bottom:8px">'
-        +panHdr+'Ks vs Today\'s Pitcher \u00b7 <span style="color:#cbd5e1">'+pitLabel+'</span></div>'
+        +panHdr+"Ks vs Today's Pitcher · <span style=\"color:#cbd5e1\">"+pitLabel+"</span></div>"
         +'<div style="padding:8px 10px;color:#475569;font-size:.72rem">No prior at-bats vs this starter</div></div>';
     }
   }
