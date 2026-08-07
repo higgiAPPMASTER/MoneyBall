@@ -3523,7 +3523,7 @@ _HTML = """
         </select>
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-bottom:12px">
-        <button class="btn-primary admin-only admin-run-only" id="lock-btn" onclick="lockPicks()" style="background:#7c3aed;color:#fff" title="Lock these picks into the Track Record. Re-runs after locking won\'t affect grading.">&#128274; Lock Picks</button>
+        <button class="btn-primary admin-only admin-run-only" id="lock-btn" onclick="lockPicks()" style="background:#7c3aed;color:#fff" title="Lock these picks into the Track Record. Re-runs after locking won't affect grading.">&#128274; Lock Picks</button>
         <button class="btn-primary admin-only" id="unlock-btn" onclick="unlockPicks()" style="background:#b45309;color:#fff;display:none" title="Remove lock — re-runs will update Track Record again.">&#128275; Unlock Picks</button>
         <span id="lock-status-badge" style="font-size:.75rem;font-weight:700;padding:4px 10px;border-radius:9999px;display:none"></span>
       </div>
