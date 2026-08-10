@@ -3685,6 +3685,57 @@ def run_pipeline(run_date: str, emit=None) -> dict:
             _nh_enriched += 1
     emit({"type": "log", "msg": f"  ✅ Pitch/lineup adj attached to {_nh_enriched}/{len(_nonhit_all)} non-hits picks"})
 
+    # ── Platoon chip for non-hit picks ────────────────────────────────────────
+    # Hit picks (top9/also_ran) got platoon stamped earlier (line ~2587).
+    # All other hitter categories (runs/rbi/tb/walks/hrr/hr) are built in
+    # under_picks.py and never went through that loop, so their cards show no
+    # "LHB vs RHP" chip. Stamp them now using the already-cached handedness
+    # data; pre-fetch any that are missing (usually 0 — same pitchers as hits).
+    try:
+        _nh_all_plat = list(_nonhit_all) + list(hr_picks_list)
+        _need_bid = list({_np.get("batter_id") for _np in _nh_all_plat
+                          if _np.get("batter_id") and not _np.get("platoon")})
+        _need_pid = list({_opp_pit_id(_np.get("opp", "")) for _np in _nh_all_plat
+                          if _np.get("opp") and not _np.get("platoon")} - {None})
+        if _need_bid:
+            with _TPEx(max_workers=6) as _ex:
+                list(_ex.map(_get_batter_platoon, _need_bid))
+        if _need_pid:
+            with _TPEx(max_workers=6) as _ex:
+                list(_ex.map(_get_pitcher_hand, _need_pid))
+        _nh_plat = 0
+        for _np in _nh_all_plat:
+            if _np.get("platoon"):
+                continue
+            bid = _np.get("batter_id")
+            pit = _opp_pit_id(_np.get("opp", ""))
+            if not bid:
+                _np.setdefault("platoon", None)
+                continue
+            pl = _get_batter_platoon(bid)
+            bat_hand = pl.get("bat_hand")
+            pit_hand = _get_pitcher_hand(pit) if pit else None
+            if bat_hand and pit_hand:
+                eff   = ("L" if pit_hand == "R" else "R") if bat_hand == "S" else bat_hand
+                split = pl.get("vs_r" if pit_hand == "R" else "vs_l") or {}
+                ba    = split.get("ba")
+                ab    = split.get("ab", 0)
+                adv   = (eff == "L" and pit_hand == "R") or (eff == "R" and pit_hand == "L")
+                ba_d  = (".%03d" % int(ba * 1000)) if ba is not None else "N/A"
+                _np["platoon"] = {
+                    "bat_hand": bat_hand, "pit_hand": pit_hand,
+                    "ba": ba, "ab": ab, "adv": adv,
+                    "display": f"{ba_d} ({ab}AB)",
+                    "label": f"{'L' if bat_hand=='S' else bat_hand}HB vs {pit_hand}HP",
+                }
+                _nh_plat += 1
+            else:
+                _np["platoon"] = None
+        emit({"type": "log",
+              "msg": f"  ✅ Platoon stamped on {_nh_plat}/{len(_nh_all_plat)} non-hit picks"})
+    except Exception as _plat_exc:
+        emit({"type": "log", "msg": f"⚠️ Non-hit platoon skipped: {_plat_exc}"})
+
     # ── Rotation rank (SP1..SP5) — drives the card depth-chart dot ──────────
     # Rank each team's pitchers by season games-started (most-started = ace,
     # SP1). Hitters get opp_rot_rank (the arm they face); pitchers get rot_rank
@@ -3832,7 +3883,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                             _ts["vs_pit"] = {"display": _vp.get("display", "N/A"),
                                              "ab": _vp.get("ab", 0),
                                              "hr": _vp.get("hr", 0)}
-                for _k in ("s1", "s1_ab", "s1_disp", "s1_tag"):
+                for _k in ("s1", "s1_ab", "s1_disp", "s1_tag", "s1_career"):
                     if _ts.get(_k) in (None, ""):
                         _ts[_k] = _orig.get(_k)
                 if not _ts.get("recent_hit_log"):
