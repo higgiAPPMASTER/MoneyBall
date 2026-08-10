@@ -5196,8 +5196,11 @@ function _vsPitLine(p){
   if(!pit) return '';
   var vp=p&&p.vs_pit;
   var hasS1=!!(p.s1_tag&&(p.s1_ab||0)>0);
-  var hasVp=!!(vp&&(vp.ab||0)>0);
-  if(!hasS1&&!vp) return '';
+  // Career row: prefer Statcast combined (same source as venue split → always
+  // consistent); fall back to MLB Stats API vs_pit when Statcast has no data.
+  var sc=p.s1_career;
+  var career=(sc&&(sc.ab||0)>0)?sc:((vp&&(vp.ab||0)>0)?vp:null);
+  if(!hasS1&&!career) return '';
   // BOTH numbers, stacked and labeled: today's venue split (Home or Away —
   // whichever today's game is) on top, lifetime career total right under it.
   var rows='';
@@ -5206,11 +5209,11 @@ function _vsPitLine(p){
       +'<span style="font-size:.6rem;color:#7dd3fc;font-weight:700;text-transform:uppercase;letter-spacing:.05em;min-width:62px">'+_esc(p.s1_tag)+' today</span>'
       +'<span style="font-family:monospace;font-weight:800;color:#e2e8f0;font-size:1rem">'+_esc(p.s1_disp||'')+'</span></div>';
   }
-  if(hasVp){
-    var hr=vp.hr||0;
+  if(career){
+    var hr=(vp&&vp.hr)||0;  // HR still comes from MLB Stats API (Statcast CSV doesn't track it)
     rows+='<div style="display:flex;align-items:baseline;gap:8px'+(hasS1?';margin-top:3px':'')+'">'
       +'<span style="font-size:.6rem;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.05em;min-width:62px">Career</span>'
-      +'<span style="font-family:monospace;font-weight:800;color:'+(hasS1?'#94a3b8':'#e2e8f0')+';font-size:'+(hasS1?'.88rem':'1rem')+'">'+_esc(vp.display||'')+'</span>'
+      +'<span style="font-family:monospace;font-weight:800;color:'+(hasS1?'#94a3b8':'#e2e8f0')+';font-size:'+(hasS1?'.88rem':'1rem')+'">'+_esc(career.display||'')+'</span>'
       +(hr>0?('<span style="color:#fbbf24;font-weight:800;font-size:.72rem">'+hr+' HR</span>'):'')+'</div>';
   }
   if(!rows){
