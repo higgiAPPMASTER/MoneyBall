@@ -2377,16 +2377,93 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                   "opp": opp_name, "side": side, "total": total})
 
     # ── STEP 4 ────────────────────────────────────────────────────────
-    emit({"type": "section", "msg": "Step 4 — ESPN Day/Night BA filter"})
+    # Day/Night BA now comes from the MLB Stats API in ONE batched call
+    # (personIds + statSplits sitCodes=[d,n]) — the same source the later
+    # all-cards stamping pass uses. The old path did a per-player ESPN
+    # name-search + splits fetch, which rate-limited on busy slates and
+    # silently blanked S5 to "N/A" on SOME cards (and zeroed their S5
+    # ranking points). ESPN remains only as a last-resort per-player
+    # fallback when the batched MLB call misses someone.
+    emit({"type": "section", "msg": "Step 4 — Day/Night BA filter (MLB Stats API)"})
     qualified, dn_dq = [], []
-    for r in [x for x in results if not x["dq"]]:
+    _s4_pool = [x for x in results if not x["dq"]]
+
+    def _s4_gtype(team_name):
+        # Schedule-based first pitch (UTC hr>=21 or <=5 = night), same rule
+        # as the all-cards pass; legacy ESPN scoreboard only as fallback.
+        s = team_schedule.get(team_name)
+        if not s and team_name:
+            tl = team_name.lower()
+            for _k, _v in team_schedule.items():
+                if tl in _k.lower() or _k.lower() in tl:
+                    s = _v
+                    break
+        gs = (s or {}).get("game_start", "") or ""
+        if gs:
+            try:
+                from datetime import datetime as _DT4
+                _t = _DT4.fromisoformat(gs.replace("Z", "+00:00"))
+                return "night" if (_t.hour >= 21 or _t.hour <= 5) else "day"
+            except Exception:
+                pass
+        try:
+            return get_game_time_type(team_name, date_espn)
+        except Exception:
+            return "unknown"
+
+    _s4_dn_map = {}
+    _s4_ids = sorted({int(roster.get(x["name"], {}).get("player_id")
+                          or x.get("player_id") or 0)
+                      for x in _s4_pool} - {0})
+    _s4_season = str(run_date)[:4]
+    for _i in range(0, len(_s4_ids), 40):
+        _chunk = _s4_ids[_i:_i + 40]
+        try:
+            _u = ("https://statsapi.mlb.com/api/v1/people?personIds="
+                  + ",".join(str(x) for x in _chunk)
+                  + "&hydrate=stats(group=[hitting],type=[statSplits],"
+                  + "sitCodes=[d,n],season=" + _s4_season + ")")
+            _j = requests.get(_u, timeout=15).json()
+            for _per in _j.get("people", []):
+                _sp = {}
+                for _st in _per.get("stats", []):
+                    for _s in _st.get("splits", []):
+                        _code = (_s.get("split") or {}).get("code")
+                        _stat = _s.get("stat") or {}
+                        if _code in ("d", "n"):
+                            _sp[_code] = (_stat.get("avg"), _stat.get("atBats"))
+                if _per.get("id") is not None:
+                    _s4_dn_map[int(_per["id"])] = _sp
+        except Exception:
+            continue
+
+    for r in _s4_pool:
         team      = roster.get(r["name"], {}).get("team_name", "")
         full_name = r.get("full_name", r["name"])
-        gtype     = get_game_time_type(team, date_espn)
-        eid       = find_espn_player_id(full_name) or r.get("player_id")
-        dn = (fetch_day_night_ba(eid, gtype)
-              if eid and gtype != "unknown"
-              else {"display": "N/A", "flag": "❌ skip", "dq": False, "ba": None, "ab": None})
+        pid       = roster.get(r["name"], {}).get("player_id") or r.get("player_id")
+        gtype     = _s4_gtype(team)
+        dn = {"display": "N/A", "flag": "❌ skip", "dq": False, "ba": None, "ab": None}
+        if pid and gtype in ("day", "night"):
+            _avg, _ab = (_s4_dn_map.get(int(pid), {}).get("d" if gtype == "day" else "n")
+                         or (None, None))
+            try:
+                _ba = float(_avg)
+            except (TypeError, ValueError):
+                _ba = None
+            if _ba is not None:
+                _disp = "%.3f" % _ba
+                if _disp.startswith("0."):
+                    _disp = _disp[1:]
+                dn = {"ba": _ba, "ab": _ab, "display": _disp,
+                      "flag": "", "dq": _ba < 0.200}
+            else:
+                # Batched MLB call missed this player — legacy ESPN fallback.
+                try:
+                    eid = find_espn_player_id(full_name) or pid
+                    if eid:
+                        dn = fetch_day_night_ba(eid, gtype)
+                except Exception:
+                    pass
         label = "DAY" if gtype == "day" else "NIGHT"
         r["dn"] = dn
         r["dn_label"] = label
@@ -3687,6 +3764,37 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         emit({"type": "log", "msg": f"  ✅ Batter-vs-pitcher line stamped ({_vp_n} hitter picks)"})
     except Exception as _exc:
         emit({"type": "log", "msg": f"⚠️ Batter-vs-pitcher line skipped: {_exc}"})
+
+    # ── Venue-split vs-pitcher (s1_disp/s1_ab/s1_tag) for popup parity ───
+    # The popup's "vs <pitcher>" box must show the SAME number the card face
+    # shows. under_picks categories stamp these fields at build time, but the
+    # main hit list (top9/also_ran) plus HR and Batter Walks picks did not, so
+    # their popups silently fell back to the combined-career line (e.g. card
+    # "Away .500 vs C. Mize (4 AB)" vs popup ".666 (3AB)"). DISPLAY ONLY —
+    # no gate or score reads these fields; the Statcast venue cache is warmed
+    # in a small parallel pool, and each stamp falls back to nothing new when
+    # Statcast has no venue rows (s1_tag "" → popup keeps the career line,
+    # exactly like the card blurb's own fallback).
+    try:
+        from under_picks import _s1_ha_fields as _s1f, _prewarm_s1_ha_cache as _s1pw
+        _s1_need = []
+        for _p in list(top9) + list(also_ran) + _nonhit_all + list(hr_picks_list):
+            if _p.get("s1_disp"):
+                continue                      # already stamped at build time
+            _bid = _p.get("batter_id") or _p.get("player_id")
+            _pid = _p.get("pit_id") or _opp_pit_id(_p.get("opp", ""))
+            if _bid and _pid:
+                _s1_need.append((_p, _bid, _pid))
+        _s1pw([(b, pi) for _, b, pi in _s1_need])
+        _s1_n = 0
+        for _p, _bid, _pid in _s1_need:
+            _f = _s1f(_bid, _pid, _p.get("side", ""), _p.get("vs_pit") or {})
+            if _f.get("s1_tag"):              # only stamp real venue rows
+                _p.update(_f)
+                _s1_n += 1
+        emit({"type": "log", "msg": f"  ✅ Venue-split vs-pitcher stamped on {_s1_n}/{len(_s1_need)} picks missing it"})
+    except Exception as _exc:
+        emit({"type": "log", "msg": f"⚠️ Venue-split vs-pitcher stamp skipped: {_exc}"})
 
     # ── TSC / Hot Hitters popup backfill ─────────────────────────────────
     # Triple Split + Hot Hitters entries are COPIES of picks from ten source
