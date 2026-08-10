@@ -5195,30 +5195,30 @@ function _vsPitLine(p){
   var pit=(p.pitcher&&p.pitcher!=='TBD')?p.pitcher:'';
   if(!pit) return '';
   var vp=p&&p.vs_pit;
-  var inner, lbl;
-  if(p.s1_tag&&(p.s1_ab||0)>0){
-    lbl=(p.s1_tag||'Career')+' vs';
-    inner='<span style="font-family:monospace;font-weight:800;color:#e2e8f0;font-size:1rem">'+_esc(p.s1_disp||'')+'</span>';
-    if(vp&&(vp.ab||0)>0){
-      var hr=vp.hr||0;
-      inner+='<span style="color:#64748b;font-size:.66rem;margin-left:8px">'+_esc(vp.display||'')+' career'+(hr?(' \u00b7 '+hr+' HR'):'')+'</span>';
-    }
-  } else if(vp){
-    lbl='Career vs';
-    var ab=vp.ab||0;
-    if(ab>0){
-      var hr=vp.hr||0;
-      inner='<span style="font-family:monospace;font-weight:800;color:#e2e8f0;font-size:1rem">'+_esc(vp.display||'')+'</span>'
-        +(hr>0?('<span style="color:#fbbf24;font-weight:800;margin-left:8px;font-size:.82rem">'+hr+' HR</span>'):'');
-    } else {
-      inner='<span style="font-size:.72rem;color:#64748b">No prior at-bats vs this starter</span>';
-    }
-  } else {
-    return '';
+  var hasS1=!!(p.s1_tag&&(p.s1_ab||0)>0);
+  var hasVp=!!(vp&&(vp.ab||0)>0);
+  if(!hasS1&&!vp) return '';
+  // BOTH numbers, stacked and labeled: today's venue split (Home or Away —
+  // whichever today's game is) on top, lifetime career total right under it.
+  var rows='';
+  if(hasS1){
+    rows+='<div style="display:flex;align-items:baseline;gap:8px">'
+      +'<span style="font-size:.6rem;color:#7dd3fc;font-weight:700;text-transform:uppercase;letter-spacing:.05em;min-width:62px">'+_esc(p.s1_tag)+' today</span>'
+      +'<span style="font-family:monospace;font-weight:800;color:#e2e8f0;font-size:1rem">'+_esc(p.s1_disp||'')+'</span></div>';
+  }
+  if(hasVp){
+    var hr=vp.hr||0;
+    rows+='<div style="display:flex;align-items:baseline;gap:8px'+(hasS1?';margin-top:3px':'')+'">'
+      +'<span style="font-size:.6rem;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.05em;min-width:62px">Career</span>'
+      +'<span style="font-family:monospace;font-weight:800;color:'+(hasS1?'#94a3b8':'#e2e8f0')+';font-size:'+(hasS1?'.88rem':'1rem')+'">'+_esc(vp.display||'')+'</span>'
+      +(hr>0?('<span style="color:#fbbf24;font-weight:800;font-size:.72rem">'+hr+' HR</span>'):'')+'</div>';
+  }
+  if(!rows){
+    rows='<span style="font-size:.72rem;color:#64748b">No prior at-bats vs this starter</span>';
   }
   return '<div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #1f2937">'
-    +'<div style="font-size:.62rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">'+lbl+' &middot; <span style="color:#cbd5e1">'+_esc(pit)+'</span></div>'
-    +'<div>'+inner+'</div></div>';
+    +'<div style="font-size:.62rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">Vs &middot; <span style="color:#cbd5e1">'+_esc(pit)+'</span></div>'
+    +rows+'</div>';
 }
 // Full facing-starter block shown in EVERY hitter popup. Renders: the batter&#39;s
 // career H2H vs this starter (via _vsPitBlock), the starter name/team/hand/ERA,
@@ -5627,7 +5627,7 @@ function _mlbPool(){
     var od=isOver?p.over_odds:p.under_odds;
     cands.push({type:'BWALK',dir:p.pick,player:(p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'Walks',line:(p.line!=null?p.line:0.5),odds:(od!=null?od:''),conf:clampConf(80,i),reason:'🚶 '+p.pick+' '+(p.line!=null?p.line:0.5)+' walks · '+(p.rate_disp||'')+' vs '+(p.opp||''),src:p});
   });
-  (view.batter_k_picks||[]).forEach(function(p,i){
+  (r.batter_k_picks||[]).forEach(function(p,i){
     var od=p.pick==='OVER'?p.over_odds:p.under_odds; if(!_oddsOk(od)) return;
     cands.push({type:'BK',dir:p.pick,player:(p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'Ks',line:(p.line!=null?p.line:0.5),odds:(od!=null?od:''),conf:clampConf(75,i),reason:'🌀 '+p.pick+' '+(p.line!=null?p.line:0.5)+' Ks · '+(p.rate_disp||'')+' vs '+(p.opp||''),src:p});
   });
@@ -5724,6 +5724,7 @@ function _renderParlay(randomize){
   var n=parseInt(sel?sel.value:'3',10)||3;
   var out=document.getElementById('parlayResult'); if(!out) return;
   if(!window._lastResult){ out.innerHTML='<div style="color:#888;padding:10px">Run picks first, then build a parlay.</div>'; return; }
+  try{
   _syncParlayCats();  // re-read the live checkboxes so the build uses exactly what is checked
   var _anyCat=false; for(var _ck in window.PARLAY_CATS){ if(window.PARLAY_CATS[_ck]){ _anyCat=true; break; } }
   if(!_anyCat){ out.innerHTML='<div style="color:#f87171;padding:10px">Pick at least one category from the Categories menu.</div>'; return; }
@@ -5749,6 +5750,11 @@ function _renderParlay(randomize){
   window._parlayLegs=legs;
   window._parlayMode=randomize?'RANDOM MIX':'TOP PLAYS';
   _paintParlay();
+  }catch(_pe){
+    // Never fail silently: a runtime error here used to leave the button doing
+    // nothing at all. Surface it on the ticket so it is visible and reportable.
+    out.innerHTML='<div style="color:#f87171;padding:10px">Parlay builder error: '+_esc(String((_pe&&_pe.message)||_pe))+'</div>';
+  }
 }
 // Paints the parlay ticket from window._parlayLegs. Split out of _renderParlay so a
 // single-leg Replace (_replaceParlayLeg) can repaint without regenerating the slate.
