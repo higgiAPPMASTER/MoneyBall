@@ -557,17 +557,32 @@ def _get_s1_vs_pitcher_ha(batter_id, pitcher_id) -> dict:
 
 def _s1_ha_fields(batter_id, pitcher_id, side, fallback) -> dict:
     """Card fields for the "vs Today's Pitcher" box, venue-matched to today's
-    game (DISPLAY ONLY). Returns {"s1_disp","s1_ab","s1_tag"}; falls back to the
-    combined-career `fallback` dict (tag "") when Statcast has no rows for that
-    venue, so the card is never blank and gates/scoring stay on career."""
+    game (DISPLAY ONLY). Returns {"s1_disp","s1_ab","s1_tag","s1_career"}.
+    s1_career is the Statcast home+away combined total — same source as the
+    venue split — so the popup CAREER row is always consistent with AWAY/HOME
+    today. Falls back to the combined-career `fallback` dict (tag "") when
+    Statcast has no rows for that venue."""
     is_home = str(side).upper() == "HOME"
     sd = "home" if is_home else "away"
-    d  = _get_s1_vs_pitcher_ha(batter_id, pitcher_id).get(sd) or {}
+    ha_data = _get_s1_vs_pitcher_ha(batter_id, pitcher_id)
+    d = ha_data.get(sd) or {}
+    # Statcast career total = home + away combined (guaranteed consistent)
+    h_d = ha_data.get("home") or {}
+    a_d = ha_data.get("away") or {}
+    tot_ab = (h_d.get("ab") or 0) + (a_d.get("ab") or 0)
+    tot_h  = (h_d.get("h")  or 0) + (a_d.get("h")  or 0)
+    s1_career = None
+    if tot_ab > 0:
+        tot_ba = tot_h / tot_ab
+        s1_career = {"ab": tot_ab, "ba": tot_ba,
+                     "display": f".{int(tot_ba * 1000):03d} ({tot_ab}AB)"}
     if d.get("ab"):
         return {"s1_disp": f".{int(d['ba'] * 1000):03d} ({d['ab']}AB)",
-                "s1_ab": d["ab"], "s1_tag": ("Home" if is_home else "Away")}
+                "s1_ab": d["ab"], "s1_tag": ("Home" if is_home else "Away"),
+                "s1_career": s1_career}
     fb = fallback or {}
-    return {"s1_disp": fb.get("display", "N/A"), "s1_ab": fb.get("ab", 0), "s1_tag": ""}
+    return {"s1_disp": fb.get("display", "N/A"), "s1_ab": fb.get("ab", 0),
+            "s1_tag": "", "s1_career": s1_career}
 
 
 def _prewarm_s1_ha_cache(pairs: list) -> None:
