@@ -1458,7 +1458,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
                  f"{pd} {ln} {stat_label}", p.get("over_odds") if pd == "OVER" else p.get("under_odds"),
                  ln, actual, stat_label, st)
     # Cold Batters overflow (ranks 11-20 — the second page of cold hitters)
-    for p in (picks.get("cold_split_picks") or [])[10:20]:
+    for p in (picks.get("cold_split_picks") or [])[10:30]:
         st = _lookup(p.get("batter_id"), p.get("name"))
         actual = st["hits"] if st else None
         _ovf(p, p.get("name", ""), p.get("team", ""), "Cold Batters (OVF)", "UNDER",
