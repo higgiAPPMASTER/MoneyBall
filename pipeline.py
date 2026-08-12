@@ -4246,6 +4246,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     #   Gate 2: full-season day/night BA > .270 (reuses s5 already on pick)
     #   Gate 3: last-10 G# H/A BA > .270 (same series position, game logs)
     hot_split_list = []
+    cold_split_list = []
     try:
         if _tsc_by_id:
             from mlb_stats_splits import _get_game_logs as _tsch_gl
@@ -4405,9 +4406,90 @@ def run_pipeline(run_date: str, emit=None) -> dict:
             emit({"type": "log",
                   "msg": f"  🔥 Hot Hitters: {len(hot_split_list)} hitters clear "
                          f">.270 in L10 H/A, D/N full-season & L10 G# + hit in ≥60% of L10"})
+
+            # ── Cold Batters ──────────────────────────────────────────────────
+            # Hitters who are clearly cold: L10 H/A BA ≤ .220 AND hit in ≤40%
+            # of their true last-10 games. Informational fade board (no bet
+            # tracking — UNDER 0.5 hits is not a standard book market).
+            # Shares _tsch_d3, _tsch_l10_overall, _TSCH_CY from above.
+            _COLD_MAX_HA  = 0.220   # coldness ceiling at their venue
+            _COLD_MAX_L10 = 40      # max true-L10 hit % to qualify
+            _COLD_MIN_G   = 5       # minimum L10 H/A games for reliability
+            for _b, _r in _tsc_by_id.items():
+                _cside = (_r.get("side") or "").upper()
+                if _cside not in ("HOME", "AWAY"):
+                    continue
+                # Gate 1: L10 H/A BA ≤ .220, need at least 5 games
+                _cl10_hav, _cl10_ab, _cl10_hg = _last10_ha_ba(int(_b), _cside)
+                if _cl10_hav is None or _cl10_hg < _COLD_MIN_G or _cl10_hav > _COLD_MAX_HA:
+                    continue
+                # Gate 2: true last-10 hit consistency ≤ 40% (any venue)
+                _cl10o_pct, _cl10o_n, _cl10o_hg = _tsch_l10_overall(int(_b))
+                if _cl10o_pct is None or _cl10o_n < 5 or _cl10o_pct > _COLD_MAX_L10:
+                    continue
+                # Season BA from s5 for contrast
+                try:
+                    _cs5 = _r.get("s5") or {}
+                    _cssn_ba = float(_cs5.get("ba") or 0) or None
+                except Exception:
+                    _cssn_ba = None
+                # Hit odds lookup (same as Hot Hitters — needed for Track Bet + parlay)
+                _cho = _r.get("hit_odds")
+                _cbk = _r.get("book", "") if _cho is not None else ""
+                if _cho is None:
+                    try:
+                        _cmk = _lookup_odds(_r)
+                        if _cmk:
+                            _cho = _HIT_ODDS.get(_cmk)
+                            _cbk = _hit_book_label(_HIT_ODDS_BOOK.get(_cmk))
+                    except Exception:
+                        pass
+                cold_split_list.append({
+                    "name": _r.get("name", ""),
+                    "full_name": _r.get("full_name", _r.get("name", "")),
+                    "batter_id": _b,
+                    "player_id": _r.get("player_id"),
+                    "team": _r.get("team", ""),
+                    "opp": _r.get("opp", ""),
+                    "pitcher": _r.get("pitcher", ""),
+                    "side": _cside,
+                    "dn_label": _r.get("dn_label", ""),
+                    "s5": _r.get("s5"),
+                    "s4": _r.get("s4"),
+                    "game_start": _r.get("game_start"),
+                    "recent_hit_log": _r.get("recent_hit_log"),
+                    "ha_ba":  _cl10_hav,
+                    "ha_disp": _tsch_d3(_cl10_hav),
+                    "ha_g":   _cl10_hg,
+                    "l10_hit_pct": round(_cl10o_pct),
+                    "l10_g":       _cl10o_n,
+                    "l10_hit_g":   _cl10o_hg,
+                    "season_ba":   _cssn_ba,
+                    "season_disp": _tsch_d3(_cssn_ba) if _cssn_ba else None,
+                    # vs-pitcher fields for popup
+                    "s1":      _r.get("s1"),
+                    "s1_ab":   _r.get("s1_ab"),
+                    "s1_disp": _r.get("s1_disp"),
+                    "s1_tag":  _r.get("s1_tag"),
+                    "s1_career": _r.get("s1_career"),
+                    "vs_pit":  _r.get("vs_pit"),
+                    "hit_odds": _cho,
+                    "book":     _cbk,
+                })
+            # Coldest (lowest L10 H/A BA) at top
+            cold_split_list.sort(key=lambda x: x["ha_ba"])
+            cold_split_list = cold_split_list[:20]
+            try:
+                _tsc_vsp_backfill(cold_split_list, "Cold Batters")
+            except Exception as _bf_exc:
+                emit({"type": "log", "msg": f"⚠️ Cold Batters vs-pitcher backfill skipped: {_bf_exc}"})
+            emit({"type": "log",
+                  "msg": f"  ❄️ Cold Batters: {len(cold_split_list)} hitters "
+                         f"(L10 H/A ≤.220 + hit in ≤40% of L10)"})
     except Exception as _exc:
         hot_split_list = []
-        emit({"type": "log", "msg": f"⚠️ Hot Hitters skipped: {_exc}"})
+        cold_split_list = []
+        emit({"type": "log", "msg": f"⚠️ Hot/Cold Hitters skipped: {_exc}"})
 
     # ── Phase B: combined env + umpire RE-RANKING (reorder only) ──
     # Offense axis = weather/park env × umpire RUN factor (a wide strike zone
@@ -4598,7 +4680,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     elapsed = round(time.time() - t_start, 1)
     result = {
         "date": run_date, "top9": top9, "also_ran": also_ran,
-        "under_picks": under_picks_list, "runs_picks": runs_picks_list, "tb_picks": tb_picks_list, "tb_over_picks": tb_over_picks_list, "rbi_picks": rbi_picks_list, "walks_picks": walks_picks_list, "batter_k_picks": batter_k_picks_list, "hrr_picks": hrr_picks_list, "hrr_special_picks": hrr_special_list, "triple_split_picks": triple_split_list, "five_star_split_picks": five_star_split_list, "club_plays_picks": club_plays_list, "hot_split_picks": hot_split_list, "hr_picks": hr_picks_list,
+        "under_picks": under_picks_list, "runs_picks": runs_picks_list, "tb_picks": tb_picks_list, "tb_over_picks": tb_over_picks_list, "rbi_picks": rbi_picks_list, "walks_picks": walks_picks_list, "batter_k_picks": batter_k_picks_list, "hrr_picks": hrr_picks_list, "hrr_special_picks": hrr_special_list, "triple_split_picks": triple_split_list, "five_star_split_picks": five_star_split_list, "club_plays_picks": club_plays_list, "hot_split_picks": hot_split_list, "cold_split_picks": cold_split_list, "hr_picks": hr_picks_list,
         "all_qualified": era_qualified,
         "game_predictions": game_predictions,
         "dq_s1_s3": [x for x in results if x["dq"] and x not in dn_dq and x not in era_dq and x not in dq_lineup and x not in s4_dq],
