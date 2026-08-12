@@ -4478,7 +4478,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                 })
             # Coldest (lowest L10 H/A BA) at top
             cold_split_list.sort(key=lambda x: x["ha_ba"])
-            cold_split_list = cold_split_list[:20]
+            cold_split_list = cold_split_list[:30]
             try:
                 _tsc_vsp_backfill(cold_split_list, "Cold Batters")
             except Exception as _bf_exc:
