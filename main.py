@@ -7315,9 +7315,10 @@ function _underCard(p, rank) {
   const s5ValU = p.s5?.display||'—';
   var _ubParts=[];
   if(p.s1_disp && p.s1_ab){ _ubParts.push((p.s1_tag?(p.s1_tag+' '):'Career ')+p.s1_disp+(p.pitcher?(' vs '+p.pitcher):'')+' ('+p.s1_ab+' AB)'); }
-  if(p.s3 && p.s3.display){ _ubParts.push('L10 '+p.s3.display); }
+  var _sideTag = p.side ? p.side+' ' : '';
+  if(p.s3 && p.s3.display){ _ubParts.push(_sideTag+'L10 '+p.s3.display); }
   else if(p.l7 && p.l7.display){ _ubParts.push('L7 '+p.l7.display); }
-  if(p.s2 && p.s2.display){ _ubParts.push((p.opp?('vs '+p.opp+' '):'')+p.s2.display); }
+  if(p.s2 && p.s2.display){ _ubParts.push(_sideTag+(p.opp?('vs '+p.opp+' '):'')+p.s2.display); }
   if(p.s5 && s5ValU!=='—'){ _ubParts.push(s5LblU+' BA '+s5ValU); }
   const underBlurb = _ubParts.join(' &#183; ');
   window.__HIT_REG__=window.__HIT_REG__||{}; window.__HIT_REG__['u'+rank]=p;
