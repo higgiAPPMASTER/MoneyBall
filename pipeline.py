@@ -4678,41 +4678,83 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         emit({"type": "log", "msg": f"⚠️ Game Predictor skipped: {_exc}"})
 
     # ── 90-100% Locks: cross-category picks with ≥80% hit rate ─────────────
-    def _build_ninety_board(_t9, _ar, _runs, _rbi, _tb, _tbo, _hrr, _walks, _bk, _hr, _pk):
-        """Scan every category; collect picks with raw rate ≥80%, return top 30."""
+    # Scans EVERY category. No cap — returns ALL qualifying picks so every
+    # card in overflow can be tracked via its native bet button.
+    def _build_ninety_board(_t9, _ar, _runs, _rbi, _tb, _tbo, _hrr, _walks,
+                            _bk, _hr, _pk, _hs, _tsc, _fss, _club):
+        """All categories → picks with raw rate ≥80% (min 5g). No cap."""
         THRESH = 80
         cands = []
-        # Batter Hits: rate = s4['score'] (vs-opp H/A hit %)
+
+        # Batter Hits (main hit pool): rate = s4['score'] (vs-opp H/A hit %)
         for p in list(_t9) + list(_ar):
             s4 = p.get("s4") or {}
             raw = s4.get("score", 0)
             g   = s4.get("games", 0)
             if isinstance(raw, (int, float)) and raw >= THRESH and g >= 5:
                 cands.append({**p, "_90_cat": "Batter Hits", "_90_rate": int(raw),
-                              "_90_dir": "OVER", "_90_games": g,
+                              "_90_dir": "OVER", "_90_games": g, "_90_src": "hit",
                               "_90_basis": s4.get("display", f"{int(raw)}%")})
+
+        # Hot Split hit pool: opp_score (vs-opp H/A hit %)
+        for p in list(_hs):
+            raw = p.get("opp_score", 0)
+            g   = p.get("games", 0)
+            if isinstance(raw, (int, float)) and raw >= THRESH and g >= 5:
+                cands.append({**p, "_90_cat": "Batter Hits", "_90_rate": int(raw),
+                              "_90_dir": "OVER", "_90_games": g, "_90_src": "hotSplit",
+                              "_90_basis": p.get("rate_disp", f"{int(raw)}%")})
+
+        # Triple Split: l10_hit_pct (0-100), hit OVER picks
+        for p in list(_tsc):
+            raw = p.get("l10_hit_pct", 0)
+            g   = p.get("l10_g", 0)
+            if isinstance(raw, (int, float)) and raw >= THRESH and g >= 5:
+                cands.append({**p, "_90_cat": "Batter Hits", "_90_rate": int(raw),
+                              "_90_dir": "OVER", "_90_games": g, "_90_src": "tsc",
+                              "_90_basis": p.get("ha_disp", f"{int(raw)}%")})
+
+        # Five Star Split + Club Plays: pick_rate (0-100), pick_market → category
+        _MKTCAT = {"tb": "Batter TB", "runs": "Batter Runs", "rbi": "Batter RBI",
+                   "hrr": "Batter HRR", "walks": "Batter Walks"}
+        for lst, src_tag in [(_fss, "fss"), (_club, "club")]:
+            for p in lst:
+                raw = p.get("pick_rate", 0)
+                g   = p.get("l10_g", 0)
+                cat = _MKTCAT.get(p.get("pick_market", ""))
+                if not cat:
+                    continue
+                if isinstance(raw, (int, float)) and raw >= THRESH and g >= 5:
+                    cands.append({**p, "_90_cat": cat, "_90_rate": int(raw),
+                                  "_90_dir": "OVER", "_90_games": g, "_90_src": src_tag,
+                                  "_90_basis": p.get("rate_disp", f"{int(raw)}%")})
+
         # Opp-score categories (0-100 int)
-        for lst, cat in [(_runs, "Batter Runs"), (_rbi, "Batter RBI"),
-                         (_tb,  "Batter TB"),    (_tbo, "Batter TB"),
-                         (_hrr, "Batter HRR"),   (_hr,  "Batter HR")]:
+        for lst, cat, src in [
+            (_runs, "Batter Runs", "runs"), (_rbi, "Batter RBI",  "rbi"),
+            (_tb,  "Batter TB",   "tb"),   (_tbo, "Batter TB",   "tbo"),
+            (_hrr, "Batter HRR",  "hrr"),  (_hr,  "Batter HR",   "hr"),
+        ]:
             for p in lst:
                 raw = p.get("opp_score", 0)
                 g   = p.get("games", 0)
                 if isinstance(raw, (int, float)) and raw >= THRESH and g >= 5:
                     direction = p.get("pick", "OVER")
                     cands.append({**p, "_90_cat": cat, "_90_rate": int(raw),
-                                  "_90_dir": direction, "_90_games": g,
+                                  "_90_dir": direction, "_90_games": g, "_90_src": src,
                                   "_90_basis": p.get("rate_disp", f"{int(raw)}%")})
+
         # Score-field categories (batter Ks + Walks)
-        for lst, cat in [(_bk, "Batter Ks"), (_walks, "Batter Walks")]:
+        for lst, cat, src in [(_bk, "Batter Ks", "batk"), (_walks, "Batter Walks", "walks")]:
             for p in lst:
                 raw = p.get("score", 0)
                 g   = p.get("games", 0)
                 if isinstance(raw, (int, float)) and raw >= THRESH and g >= 5:
                     direction = p.get("pick", "OVER")
                     cands.append({**p, "_90_cat": cat, "_90_rate": int(raw),
-                                  "_90_dir": direction, "_90_games": g,
+                                  "_90_dir": direction, "_90_games": g, "_90_src": src,
                                   "_90_basis": p.get("rate_disp", f"{int(raw)}%")})
+
         # Pitcher Ks: k_hit_rate is "x/y" string
         for p in (_pk or {}).get("picks", []):
             khr = p.get("k_hit_rate", "—")
@@ -4723,24 +4765,29 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                     if den >= 5 and num / den >= 0.80:
                         raw = round(num / den * 100)
                         cands.append({**p, "_90_cat": "Pitcher Ks", "_90_rate": raw,
-                                      "_90_dir": "OVER", "_90_games": den,
+                                      "_90_dir": "OVER", "_90_games": den, "_90_src": "pk",
                                       "_90_basis": f"{khr} ({raw}%)"})
                 except Exception:
                     pass
+
         # Deduplicate: (player_id, category, direction) → keep highest rate
+        # (same player can appear from multiple source pools in the same market)
         seen = {}
         for c in cands:
             pid = str(c.get("player_id") or c.get("batter_id") or c.get("id") or c.get("name", ""))
             key = (pid, c["_90_cat"], c["_90_dir"])
             if key not in seen or c["_90_rate"] > seen[key]["_90_rate"]:
                 seen[key] = c
-        return sorted(seen.values(), key=lambda x: (-x["_90_rate"], -x["_90_games"]))[:30]
+
+        # NO CAP — return every qualifying pick so overflow cards can all be tracked
+        return sorted(seen.values(), key=lambda x: (-x["_90_rate"], -x["_90_games"]))
 
     ninety_pct_picks = _build_ninety_board(
         top9, also_ran, runs_picks_list, rbi_picks_list,
         tb_picks_list, tb_over_picks_list, hrr_picks_list,
         walks_picks_list, batter_k_picks_list, hr_picks_list,
-        pitcher_k_result)
+        pitcher_k_result, hot_split_list, triple_split_list,
+        five_star_split_list, club_plays_list)
 
     elapsed = round(time.time() - t_start, 1)
     result = {
