@@ -3729,7 +3729,7 @@ _HTML = """
         <div class="card p-6 hidden" id="ninety-pct-card" style="border-color:rgba(255,215,0,.35)">
           <div class="section-hdr" style="color:#fbbf24">💯 90-100% Locks</div>
           <div style="font-size:.72rem;color:#94a3b8;margin:-4px 0 8px;line-height:1.6">Cross-category picks where the player has hit their prop <strong style="color:#fbbf24">80%+ of the time</strong> (min 5 games) — vs today&#39;s opponent or last-10 games. All categories included. Top 10 board + 20 overflow.</div>
-          <div id="ninety-pct-body" class="flex flex-col gap-2"></div>
+          <div id="ninety-pct-body" class="mlb-picks-grid"></div>
           <div id="ninety-pct-more"></div>
         </div>
         <div class="card p-6 hidden" id="triple-split-card" style="border-color:rgba(34,211,238,.4)">
@@ -8322,60 +8322,40 @@ function _coldSplitCard(p, rank, pfx) {
   </div>`;
 }
 
+// 💯 90-100% Locks: dispatches to each category's native card renderer so the
+// card looks identical to its source section (full popup, all stats, bet btn).
+// _90_src is the primary dispatch key (set by the pipeline); _90_cat is the
+// fallback so picks from any new source work automatically.
 function _ninetyCard(p, rank) {
+  var src = p._90_src || '';
   var cat = p._90_cat || '';
   var dir = p._90_dir || 'OVER';
-  var rate = p._90_rate || 0;
-  var games = p._90_games || 0;
-  var basis = p._90_basis || (rate + '%');
-  // Category → bet params
-  var CM = {
-    'Batter Hits':  {cat:'Hitter Hits',  sk:'hits',           sl:'Hits',  ln:0.5},
-    'Batter Runs':  {cat:'Runs',          sk:'runs',           sl:'Runs',  ln:null},
-    'Batter RBI':   {cat:'RBI',           sk:'rbi',            sl:'RBI',   ln:null},
-    'Batter TB':    {cat:'TB',            sk:'totalBases',     sl:'TB',    ln:null},
-    'Batter HRR':   {cat:'HRR',          sk:'hrr',            sl:'HRR',   ln:null},
-    'Batter Walks': {cat:'Walks',         sk:'walks',          sl:'Walks', ln:null},
-    'Batter Ks':    {cat:'Batter Ks',    sk:'bat_strikeOuts', sl:'Ks',    ln:null},
-    'Batter HR':    {cat:'HR',            sk:'homeRuns',       sl:'HR',    ln:null},
-    'Pitcher Ks':   {cat:'Pitcher Ks',   sk:'strikeOuts',     sl:'Ks',    ln:null},
-  };
-  var cm = CM[cat] || {cat:'Hitter Hits', sk:'hits', sl:'Hits', ln:0.5};
-  var ln = cm.ln != null ? cm.ln : (p.line != null ? p.line : 0.5);
-  // Odds: pick correct field per category/direction
-  var od;
-  if (cat === 'Batter Hits') { od = p.hit_odds != null ? p.hit_odds : null; }
-  else if (dir === 'OVER') { od = p.over_odds != null ? p.over_odds : (p.hrr_over_odds != null ? p.hrr_over_odds : (p.tb_over_odds != null ? p.tb_over_odds : (p.odds != null ? p.odds : null))); }
-  else { od = p.under_odds != null ? p.under_odds : (p.hrr_under_odds != null ? p.hrr_under_odds : (p.tb_under_odds != null ? p.tb_under_odds : null)); }
-  // Colors
-  var rateCol = rate >= 90 ? '#ffd700' : rate >= 85 ? '#22c55e' : '#60a5fa';
-  var dirCol  = dir === 'OVER' ? '#22c55e' : '#f87171';
-  var dirBg   = dir === 'OVER' ? 'rgba(34,197,94,.12)' : 'rgba(248,113,113,.12)';
-  // Player name + team line
-  var nm = p.pitcher_name || p.full_name || p.name || '';
-  var tm = p.team || '';
-  var opp = p.opp_team || p.opp || '';
-  var side = (p.side || '').toLowerCase();
-  var tmLine = tm ? (tm + ' ' + (side === 'away' ? '@' : 'vs') + ' ' + opp) : (opp ? 'vs ' + opp : '');
-  var odStr = od != null ? (' \u00b7 <span style="color:#fbbf24;font-weight:700">' + (od > 0 ? '+' : '') + od + '</span>') : '';
-  var bb = _betBtn(p, cm.cat, dir, cm.sk, cm.sl, ln, od);
-  window.__N90_REG__ = window.__N90_REG__ || {}; window.__N90_REG__['n90_' + rank] = p;
-  return '<div class="flex items-start gap-3 p-3 rounded-xl" style="background:rgba(20,15,40,.75);border:1px solid rgba(255,215,0,.18);margin-bottom:4px">'
-    + '<div style="min-width:54px;text-align:center;padding-top:2px">'
-    +   '<div style="font-size:1.45rem;font-weight:900;color:' + rateCol + ';line-height:1">' + rate + '%</div>'
-    +   '<div style="font-size:.6rem;color:#64748b;margin-top:2px">' + games + 'g</div>'
-    + '</div>'
-    + '<div style="flex:1;min-width:0">'
-    +   '<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">'
-    +     '<span style="font-weight:700;font-size:.9rem;color:#f1f5f9">' + _esc(nm) + '</span>'
-    +     '<span style="font-size:.67rem;padding:1px 7px;border-radius:9px;background:rgba(255,255,255,.07);color:#94a3b8">' + _esc(cat) + '</span>'
-    +     '<span style="font-size:.67rem;padding:1px 7px;border-radius:9px;color:' + dirCol + ';background:' + dirBg + '">' + dir + ' ' + ln + '</span>'
-    +   '</div>'
-    +   '<div style="font-size:.72rem;color:#94a3b8;margin-top:2px">' + _esc(tmLine) + '</div>'
-    +   '<div style="font-size:.72rem;color:#cbd5e1;margin-top:2px">' + _esc(basis) + odStr + '</div>'
-    + '</div>'
-    + '<div>' + bb + '</div>'
-    + '</div>';
+  // Source-based dispatch (most specific — preserves popup registry + styling)
+  if (src === 'hit')      return _mlbCard(p, rank);
+  if (src === 'hotSplit') return _hotSplitCard(p, rank, 'n90h');
+  if (src === 'tsc')      return _tscCard(p, rank, 'n90t');
+  if (src === 'fss')      return _fssCard(p, rank, 'n90f');
+  if (src === 'club')     return _clubCard(p, rank, 'n90c');
+  if (src === 'runs')     return _runsCard(p, rank, 'n90r');
+  if (src === 'rbi')      return _rbiCard(p, rank, 'n90b');
+  if (src === 'tb')       return _tbCard(p, rank);
+  if (src === 'tbo')      return _tbOverCard(p, rank);
+  if (src === 'hrr')      return _hrrCard(p, rank, 'n90o');
+  if (src === 'walks')    return _walksCard(p, rank, 'n90w');
+  if (src === 'batk')     return _batKCard(p, rank, 'n90k');
+  if (src === 'hr')       return _hrCard(p, rank, 'n90x');
+  if (src === 'pk')       return _pitcherCard(p, rank, 'n90p');
+  // Category fallback (covers any future source additions automatically)
+  if (cat === 'Batter Hits')  return _mlbCard(p, rank);
+  if (cat === 'Batter Runs')  return _runsCard(p, rank, 'n90');
+  if (cat === 'Batter RBI')   return _rbiCard(p, rank, 'n90');
+  if (cat === 'Batter TB')    return dir === 'UNDER' ? _tbCard(p, rank) : _tbOverCard(p, rank);
+  if (cat === 'Batter HRR')   return _hrrCard(p, rank, 'n90');
+  if (cat === 'Batter Walks') return _walksCard(p, rank, 'n90');
+  if (cat === 'Batter Ks')    return _batKCard(p, rank, 'n90');
+  if (cat === 'Batter HR')    return _hrCard(p, rank, 'n90');
+  if (cat === 'Pitcher Ks')   return _pitcherCard(p, rank, 'n90');
+  return _mlbCard(p, rank);
 }
 
 function _tscCard(p, rank, pfx) {
