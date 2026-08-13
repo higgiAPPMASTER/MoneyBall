@@ -3726,6 +3726,12 @@ _HTML = """
           <div id="cold-split-body" class="mlb-picks-grid"></div>
           <div id="cold-split-more"></div>
         </div>
+        <div class="card p-6 hidden" id="ninety-pct-card" style="border-color:rgba(255,215,0,.35)">
+          <div class="section-hdr" style="color:#fbbf24">💯 90-100% Locks</div>
+          <div style="font-size:.72rem;color:#94a3b8;margin:-4px 0 8px;line-height:1.6">Cross-category picks where the player has hit their prop <strong style="color:#fbbf24">80%+ of the time</strong> (min 5 games) — vs today&#39;s opponent or last-10 games. All categories included. Top 10 board + 20 overflow.</div>
+          <div id="ninety-pct-body" class="flex flex-col gap-2"></div>
+          <div id="ninety-pct-more"></div>
+        </div>
         <div class="card p-6 hidden" id="triple-split-card" style="border-color:rgba(34,211,238,.4)">
           <div class="section-hdr" style="color:#22d3ee">🔱 Triple Split Club</div>
           <div style="font-size:.72rem;color:#94a3b8;margin:-4px 0 8px;line-height:1.6">Hitters batting over .275 in ALL THREE of today&#39;s splits: Home/Away &middot; Day/Night &middot; Game of series. Bet: to record a hit.</div>
@@ -4119,7 +4125,7 @@ function _filterStarted(result){
   if(!result) return result;
   var r=Object.assign({},result);
   function f(a){return (a||[]).filter(function(p){return !_started(p);});}
-  r.top9=f(r.top9); r.also_ran=f(r.also_ran); r.under_picks=f(r.under_picks); r.runs_picks=f(r.runs_picks); r.tb_picks=f(r.tb_picks); r.tb_over_picks=f(r.tb_over_picks||[]); r.hrr_picks=f(r.hrr_picks||[]); r.hrr_special_picks=f(r.hrr_special_picks||[]); r.hot_split_picks=f(r.hot_split_picks||[]); r.cold_split_picks=f(r.cold_split_picks||[]); r.triple_split_picks=f(r.triple_split_picks||[]); r.five_star_split_picks=f(r.five_star_split_picks||[]); r.club_plays_picks=f(r.club_plays_picks||[]); r.rbi_picks=f(r.rbi_picks||[]); r.hr_picks=f(r.hr_picks||[]); r.walks_picks=f(r.walks_picks||[]); r.batter_k_picks=f(r.batter_k_picks||[]);
+  r.top9=f(r.top9); r.also_ran=f(r.also_ran); r.under_picks=f(r.under_picks); r.runs_picks=f(r.runs_picks); r.tb_picks=f(r.tb_picks); r.tb_over_picks=f(r.tb_over_picks||[]); r.hrr_picks=f(r.hrr_picks||[]); r.hrr_special_picks=f(r.hrr_special_picks||[]); r.hot_split_picks=f(r.hot_split_picks||[]); r.cold_split_picks=f(r.cold_split_picks||[]); r.triple_split_picks=f(r.triple_split_picks||[]); r.five_star_split_picks=f(r.five_star_split_picks||[]); r.club_plays_picks=f(r.club_plays_picks||[]); r.rbi_picks=f(r.rbi_picks||[]); r.hr_picks=f(r.hr_picks||[]); r.walks_picks=f(r.walks_picks||[]); r.batter_k_picks=f(r.batter_k_picks||[]); r.ninety_pct_picks=f(r.ninety_pct_picks||[]);
   if(r.pitcher_k){
     r.pitcher_k=Object.assign({},r.pitcher_k);
     r.pitcher_k.picks=f(r.pitcher_k.picks);
@@ -4627,7 +4633,7 @@ function showResults(result) {
   if(typeof _renderGamePredictor==='function') _renderGamePredictor(result);
   // Hide all section cards FIRST — before any filtering — so stale cards from a
   // previous render can never persist if the filter or any later code throws.
-  ['under-picks-card','tb-picks-card','tb-over-picks-card','hrr-special-card','hot-split-card','cold-split-card','triple-split-card','five-star-card','club-plays-card','hrr-over-card','hrr-under-card','rbi-over-card','rbi-under-card','hr-over-card','hr-under-card','runs-over-card','runs-under-card','bwalk-over-card','bwalk-under-card','batter-k-over-card','batter-k-under-card','pitch-day-card','pitcher-all-card','k-over-card','k-under-card','prop-ha-over-card','prop-ha-under-card','prop-outs-over-card','prop-outs-under-card','prop-er-over-card','prop-er-under-card','prop-bb-over-card','prop-bb-under-card'].forEach(hide);
+  ['under-picks-card','tb-picks-card','tb-over-picks-card','hrr-special-card','hot-split-card','cold-split-card','ninety-pct-card','triple-split-card','five-star-card','club-plays-card','hrr-over-card','hrr-under-card','rbi-over-card','rbi-under-card','hr-over-card','hr-under-card','runs-over-card','runs-under-card','bwalk-over-card','bwalk-under-card','batter-k-over-card','batter-k-under-card','pitch-day-card','pitcher-all-card','k-over-card','k-under-card','prop-ha-over-card','prop-ha-under-card','prop-outs-over-card','prop-outs-under-card','prop-er-over-card','prop-er-under-card','prop-bb-over-card','prop-bb-under-card'].forEach(hide);
   // Odds-range filter: self-contained, uses the EXACT field each card displays.
   // Applied directly to the source data before _vBase / EV-filter so every
   // category is covered and there is nothing to guess or chain.
@@ -4670,6 +4676,7 @@ function showResults(result) {
       hrr_special_picks: (result.hrr_special_picks||[]).filter(function(p){return _rok(p.hrr_over_odds);}),
       hot_split_picks:    (result.hot_split_picks||[]).filter(function(p){return _rok(p.hit_odds);}),
       cold_split_picks:   (result.cold_split_picks||[]),
+      ninety_pct_picks:   (result.ninety_pct_picks||[]),
       triple_split_picks: (result.triple_split_picks||[]).filter(function(p){return _rok(p.hit_odds);}),
       pitcher_k:   _rpk?Object.assign({},_rpk,{picks:(_rpk.picks||[]).filter(function(p){return _rok(p.odds);}),all:(_rpk.all||[]).filter(function(p){return _rok(p.odds);})}):_rpk,
       pitcher_props:(function(){var out={};Object.keys(_rpp).forEach(function(m){var b=_rpp[m]||{};out[m]={picks:(b.picks||[]).filter(function(p){return _rok(p.odds);}),all:(b.all||[]).filter(function(p){return _rok(p.odds);})}; });return out;})(),
@@ -4683,6 +4690,7 @@ function showResults(result) {
         hrr_special_picks: [],
         hot_split_picks: [],
         cold_split_picks: [],
+        ninety_pct_picks: (_renderSrc.ninety_pct_picks||[]).filter(p=>p._90_dir==='UNDER'),
         triple_split_picks: [],
         five_star_split_picks: [],
         club_plays_picks: [],
@@ -4835,6 +4843,9 @@ function showResults(result) {
     _fillCard('hot-split-card','hot-split-body','hot-split-more',hotSplit,function(p,r){return _hotSplitCard(p,r,'tsch');},'Hot Hitters Split','#fb923c');
     window.__COLD_REG__={};
     _fillCard('cold-split-card','cold-split-body','cold-split-more',(view.cold_split_picks||[]),function(p,r){return _coldSplitCard(p,r,'cold');},'Cold Batters','#60a5fa');
+    window.__N90_REG__={};
+    const ninetyPct = view.ninety_pct_picks || [];
+    _fillCard('ninety-pct-card','ninety-pct-body','ninety-pct-more',ninetyPct,function(p,r){return _ninetyCard(p,r);},'90-100% Locks','#fbbf24');
     window.__TSC_REG__={};
     const tripleSplit = (view.triple_split_picks||[]).filter(function(p){ return _oddsOk(p.hit_odds); });
     _fillCard('triple-split-card','triple-split-body','triple-split-more',tripleSplit,function(p,r){return _tscCard(p,r,'tsc');},'Triple Split Club','#22d3ee');
@@ -8311,6 +8322,62 @@ function _coldSplitCard(p, rank, pfx) {
   </div>`;
 }
 
+function _ninetyCard(p, rank) {
+  var cat = p._90_cat || '';
+  var dir = p._90_dir || 'OVER';
+  var rate = p._90_rate || 0;
+  var games = p._90_games || 0;
+  var basis = p._90_basis || (rate + '%');
+  // Category → bet params
+  var CM = {
+    'Batter Hits':  {cat:'Hitter Hits',  sk:'hits',           sl:'Hits',  ln:0.5},
+    'Batter Runs':  {cat:'Runs',          sk:'runs',           sl:'Runs',  ln:null},
+    'Batter RBI':   {cat:'RBI',           sk:'rbi',            sl:'RBI',   ln:null},
+    'Batter TB':    {cat:'TB',            sk:'totalBases',     sl:'TB',    ln:null},
+    'Batter HRR':   {cat:'HRR',          sk:'hrr',            sl:'HRR',   ln:null},
+    'Batter Walks': {cat:'Walks',         sk:'walks',          sl:'Walks', ln:null},
+    'Batter Ks':    {cat:'Batter Ks',    sk:'bat_strikeOuts', sl:'Ks',    ln:null},
+    'Batter HR':    {cat:'HR',            sk:'homeRuns',       sl:'HR',    ln:null},
+    'Pitcher Ks':   {cat:'Pitcher Ks',   sk:'strikeOuts',     sl:'Ks',    ln:null},
+  };
+  var cm = CM[cat] || {cat:'Hitter Hits', sk:'hits', sl:'Hits', ln:0.5};
+  var ln = cm.ln != null ? cm.ln : (p.line != null ? p.line : 0.5);
+  // Odds: pick correct field per category/direction
+  var od;
+  if (cat === 'Batter Hits') { od = p.hit_odds != null ? p.hit_odds : null; }
+  else if (dir === 'OVER') { od = p.over_odds != null ? p.over_odds : (p.hrr_over_odds != null ? p.hrr_over_odds : (p.tb_over_odds != null ? p.tb_over_odds : (p.odds != null ? p.odds : null))); }
+  else { od = p.under_odds != null ? p.under_odds : (p.hrr_under_odds != null ? p.hrr_under_odds : (p.tb_under_odds != null ? p.tb_under_odds : null)); }
+  // Colors
+  var rateCol = rate >= 90 ? '#ffd700' : rate >= 85 ? '#22c55e' : '#60a5fa';
+  var dirCol  = dir === 'OVER' ? '#22c55e' : '#f87171';
+  var dirBg   = dir === 'OVER' ? 'rgba(34,197,94,.12)' : 'rgba(248,113,113,.12)';
+  // Player name + team line
+  var nm = p.pitcher_name || p.full_name || p.name || '';
+  var tm = p.team || '';
+  var opp = p.opp_team || p.opp || '';
+  var side = (p.side || '').toLowerCase();
+  var tmLine = tm ? (tm + ' ' + (side === 'away' ? '@' : 'vs') + ' ' + opp) : (opp ? 'vs ' + opp : '');
+  var odStr = od != null ? (' \u00b7 <span style="color:#fbbf24;font-weight:700">' + (od > 0 ? '+' : '') + od + '</span>') : '';
+  var bb = _betBtn(p, cm.cat, dir, cm.sk, cm.sl, ln, od);
+  window.__N90_REG__ = window.__N90_REG__ || {}; window.__N90_REG__['n90_' + rank] = p;
+  return '<div class="flex items-start gap-3 p-3 rounded-xl" style="background:rgba(20,15,40,.75);border:1px solid rgba(255,215,0,.18);margin-bottom:4px">'
+    + '<div style="min-width:54px;text-align:center;padding-top:2px">'
+    +   '<div style="font-size:1.45rem;font-weight:900;color:' + rateCol + ';line-height:1">' + rate + '%</div>'
+    +   '<div style="font-size:.6rem;color:#64748b;margin-top:2px">' + games + 'g</div>'
+    + '</div>'
+    + '<div style="flex:1;min-width:0">'
+    +   '<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">'
+    +     '<span style="font-weight:700;font-size:.9rem;color:#f1f5f9">' + _esc(nm) + '</span>'
+    +     '<span style="font-size:.67rem;padding:1px 7px;border-radius:9px;background:rgba(255,255,255,.07);color:#94a3b8">' + _esc(cat) + '</span>'
+    +     '<span style="font-size:.67rem;padding:1px 7px;border-radius:9px;color:' + dirCol + ';background:' + dirBg + '">' + dir + ' ' + ln + '</span>'
+    +   '</div>'
+    +   '<div style="font-size:.72rem;color:#94a3b8;margin-top:2px">' + _esc(tmLine) + '</div>'
+    +   '<div style="font-size:.72rem;color:#cbd5e1;margin-top:2px">' + _esc(basis) + odStr + '</div>'
+    + '</div>'
+    + '<div>' + bb + '</div>'
+    + '</div>';
+}
+
 function _tscCard(p, rank, pfx) {
   pfx = pfx || 'tsc';
   const abbr = _mlbTeamAbbr(p.team);
@@ -8522,6 +8589,7 @@ function _renderCatBar(view){
     {icon:'⭐',label:'HRR SP',count:(view.hrr_special_picks||[]).length,target:'hrr-special-card'},
     {icon:'🌡️',label:'Hot Hitters',count:(view.hot_split_picks||[]).length,target:'hot-split-card'},
     {icon:'❄️',label:'Cold Batters',count:(view.cold_split_picks||[]).length,target:'cold-split-card',overflow:true},
+    {icon:'💯',label:'90-100% Locks',count:(view.ninety_pct_picks||[]).length,target:'ninety-pct-card',overflow:true},
     {icon:'🔱',label:'Triple Split',count:(view.triple_split_picks||[]).length,target:'triple-split-card'},
     {icon:'⭐',label:'5 Star Split',count:(view.five_star_split_picks||[]).length,target:'five-star-card'},
     {icon:'🏆',label:'Club Plays',count:(view.club_plays_picks||[]).length,target:'club-plays-card'},
