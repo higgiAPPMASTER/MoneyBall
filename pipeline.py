@@ -4677,7 +4677,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     except Exception as _exc:
         emit({"type": "log", "msg": f"⚠️ Game Predictor skipped: {_exc}"})
 
-    # ── 90-100% Locks: cross-category picks with ≥80% hit rate ─────────────
+    # ── 80-100% Locks: cross-category picks with ≥80% hit rate ─────────────
     # Scans EVERY category. No cap — returns ALL qualifying picks so every
     # card in overflow can be tracked via its native bet button.
     def _build_ninety_board(_t9, _ar, _runs, _rbi, _tb, _tbo, _hrr, _walks,
