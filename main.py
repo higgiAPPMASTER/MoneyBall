@@ -225,8 +225,12 @@ def _pick_started(p, now_dt) -> bool:
 def _pick_ident(p):
     pid = p.get("player_id") or p.get("batter_id") or p.get("pid") or ""
     nm  = p.get("name") or p.get("full_name") or ""
-    mkt = p.get("market") or ""
-    return (str(pid), str(nm).lower(), str(mkt))
+    # Locks-board rows are intentionally cross-market: the same player can
+    # qualify in Hits and Total Bases. Keep those snapshot rows distinct so a
+    # live re-run cannot freeze one market over the other.
+    mkt = p.get("market") or p.get("_90_cat") or ""
+    side = p.get("_90_dir") or p.get("pick") or ""
+    return (str(pid), str(nm).lower(), str(mkt), str(side))
 
 def _freeze_merge(old_node, new_node, now_dt):
     # Recurse through dicts on shared keys (e.g. pitcher_k -> picks/all, pitcher_props -> market -> picks/all).
@@ -1134,6 +1138,67 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "edge": p.get("edge"),
         })
 
+    # ── 80-100% Locks — dedicated, cross-market board record ─────────────
+    # The board is already deduplicated by player + market + side in the
+    # pipeline. Track its top 10 in the main record and every remaining card in
+    # the Overflow Tracker, so no Locks selection is counted twice.
+    _LOCK_STAT_MAP = {
+        "Batter Hits": ("hits", "Hits", 0.5),
+        "Batter Runs": ("runs", "Runs", 0.5),
+        "Batter RBI": ("rbi", "RBI", 0.5),
+        "Batter TB": ("total_bases", "Total Bases", 1.5),
+        "Batter HRR": ("hrr", "H+R+RBI", 1.5),
+        "Batter Walks": ("walks_bat", "Walks", 0.5),
+        "Batter Ks": ("bat_strikeOuts", "Ks", 0.5),
+        "Batter HR": ("homeRuns", "HR", 0.5),
+        "Pitcher Ks": ("strikeOuts", "Ks", None),
+    }
+    def _lock_row(p, category):
+        lock_cat = p.get("_90_cat")
+        stat_key, stat_label, default_line = _LOCK_STAT_MAP.get(lock_cat, (None, None, None))
+        if not stat_key:
+            return None
+        pick_dir = (p.get("_90_dir") or p.get("pick") or "OVER").upper()
+        line = p.get("sugg_line") if lock_cat == "Pitcher Ks" and p.get("sugg_line") is not None else p.get("line")
+        if line is None:
+            line = default_line
+        if line is None:
+            return None
+        st = _lookup(p.get("player_id") or p.get("batter_id"), p.get("full_name") or p.get("name"))
+        actual = st.get(stat_key) if st else None
+        # 5 Star / Club cards carry their selected market price in `odds`.
+        # Native market cards carry side-specific odds fields.
+        odds = p.get("odds")
+        if odds is None:
+            if lock_cat == "Batter Hits":
+                odds = p.get("hit_odds")
+            elif lock_cat == "Batter TB":
+                odds = p.get("tb_under_odds") if pick_dir == "UNDER" else p.get("tb_over_odds")
+            elif lock_cat == "Batter HRR":
+                odds = p.get("hrr_under_odds") if pick_dir == "UNDER" else p.get("hrr_over_odds")
+            else:
+                odds = p.get("under_odds") if pick_dir == "UNDER" else p.get("over_odds")
+        return {
+            "name": p.get("full_name") or p.get("name", ""),
+            "team": p.get("team", ""),
+            "category": category, "side": pick_dir,
+            "pick": f"{pick_dir} {line} {stat_label}",
+            "odds": odds, "line": line, "actual": actual, "stat": stat_label,
+            "result": _grade(pick_dir, line, actual, (st or {}).get("final", False)),
+            "game_status": (st or {}).get("status", "—"),
+            "qualifying_rate": p.get("_90_rate"),
+            "qualifying_games": p.get("_90_games"),
+            "ev": p.get("ev"),
+            "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
+            "edge": p.get("edge"),
+        }
+    locks_top10 = []
+    _locks_all = picks.get("ninety_pct_picks") or []
+    for p in _locks_all[:10]:
+        row = _lock_row(p, "80-100% Locks")
+        if row:
+            locks_top10.append(row)
+
     # HRR Special (Parlay Confluence) — OVER only, top 20 for its own record
     # Deliberately kept OUT of main Track Record (_TRK_KEYS) to avoid double-
     # counting with the regular HRR overs. Has its own button + modal.
@@ -1463,6 +1528,13 @@ def _grade_date(date_str: str, picks: dict) -> dict:
         actual = st["hits"] if st else None
         _ovf(p, p.get("name", ""), p.get("team", ""), "Cold Batters (OVF)", "UNDER",
              "UNDER 0.5 Hits (Cold - OVF)", p.get("hit_odds"), 0.5, actual, "Hits", st)
+    # 80-100% Locks overflow: every board card after the main record's top 10.
+    # It is a distinct category so it can never be mixed into (or double-counted
+    # with) the main Locks record.
+    for p in _locks_all[10:]:
+        row = _lock_row(p, "80-100% Locks (OVF)")
+        if row:
+            overflow.append(row)
     # Batter Ks overflow (ranks 11-30 per side)
     for p in ([q for q in _bk_all if q.get("pick") == "OVER"][10:30] +
               [q for q in _bk_all if q.get("pick") == "UNDER"][10:30]):
@@ -1487,6 +1559,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
         "batter_walks":  walks_rows,
         "batter_ks":     batter_ks_rows,
         "hrr":           hrr_rows,
+        "locks_top10":   locks_top10,
         "hrr_special":   hrr_special_rows,
         "hot_split":     hot_split_rows,
         "cold_split":    cold_split_rows,
@@ -1528,7 +1601,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
 # ── Track Record: permanent W/L ledger across all graded days ────────────
 _TRACK_LEDGER_PATH = os.path.join(_CACHE_DIR, "_track_record.json")
 _TRACK_CAT_ORDER = [
-    "Hitter Hits", "Hitter Hits (More)", "Runs", "TB Under", "TB Over", "RBI", "HR", "Batter Walks", "HRR", "Batter Ks", "Pitcher Ks",
+    "Hitter Hits", "Hitter Hits (More)", "80-100% Locks", "Runs", "TB Under", "TB Over", "RBI", "HR", "Batter Walks", "HRR", "Batter Ks", "Pitcher Ks",
     "Pitcher Hits Allowed", "Pitcher Outs", "Pitcher Earned Runs", "Pitcher Walks",
 ]
 
@@ -1629,7 +1702,7 @@ def _aggregate_graded(graded: dict) -> dict:
     Exception: batter_ks odds are rarely posted so they count regardless of odds."""
     _ODDS_OPTIONAL = {"batter_ks"}
     agg: dict = {}
-    for key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "hr", "batter_walks", "hrr", "hrr_special", "hot_split", "triple_split", "five_star_split", "club_plays", "pitcher_ks", "pitcher_props", "batter_ks", "overflow"):
+    for key in ("hitter_overs", "hitter_more", "hitter_unders", "locks_top10", "runs", "tb_under", "tb_over", "rbi", "hr", "batter_walks", "hrr", "hrr_special", "hot_split", "triple_split", "five_star_split", "club_plays", "pitcher_ks", "pitcher_props", "batter_ks", "overflow"):
         for r in graded.get(key, []):
             res = r.get("result")
             if res not in ("WIN", "LOSS"):
@@ -1647,6 +1720,10 @@ def _aggregate_graded(graded: dict) -> dict:
     # backfill re-grades each locked day exactly ONCE to bank its overflow rows,
     # then leaves it alone (no perpetual re-grading / box-score re-fetching).
     agg["__ovf_v1__"] = {"ALL": [0, 0]}
+    # The Locks board was added after the original tracker. Keep a separate
+    # marker so previously locked snapshots are re-graded once and its result
+    # appears in the new main/overflow records too.
+    agg["__locks_v1__"] = {"ALL": [0, 0]}
     return agg
 
 def _detail_graded(graded: dict) -> list:
@@ -1656,7 +1733,7 @@ def _detail_graded(graded: dict) -> list:
     Exception: batter_ks odds are rarely posted so they count regardless of odds."""
     _ODDS_OPTIONAL = {"batter_ks"}
     out = []
-    for key in ("hitter_overs", "hitter_more", "hitter_unders", "runs", "tb_under", "tb_over", "rbi", "hr", "batter_walks", "hrr", "hrr_special", "hot_split", "triple_split", "five_star_split", "club_plays", "pitcher_ks", "pitcher_props", "batter_ks", "overflow"):
+    for key in ("hitter_overs", "hitter_more", "hitter_unders", "locks_top10", "runs", "tb_under", "tb_over", "rbi", "hr", "batter_walks", "hrr", "hrr_special", "hot_split", "triple_split", "five_star_split", "club_plays", "pitcher_ks", "pitcher_props", "batter_ks", "overflow"):
         for r in graded.get(key, []):
             res = r.get("result")
             if res not in ("WIN", "LOSS"):
@@ -1679,6 +1756,8 @@ def _detail_graded(graded: dict) -> list:
                 "edge": r.get("edge"),
                 "proj": r.get("proj"),
                 "series_pos": r.get("series_pos"),
+                "qualifying_rate": r.get("qualifying_rate"),
+                "qualifying_games": r.get("qualifying_games"),
             })
     return out
 
@@ -1743,10 +1822,11 @@ def _update_track_ledger() -> dict:
                 continue          # today/future — games not final yet
             _bn_led = led.get(bn) or {}
             _need_ovf = "__ovf_v1__" not in _bn_led   # one-shot Overflow Tracker backfill
+            _need_locks = "__locks_v1__" not in _bn_led  # one-shot Locks-board backfill
             need_led = (not _bn_led or
                         "Hitter Hits (More)" not in _bn_led or
-                        _need_ovf)
-            need_det = (bn not in det or not det.get(bn) or _need_ovf)
+                        _need_ovf or _need_locks)
+            need_det = (bn not in det or not det.get(bn) or _need_ovf or _need_locks)
             if not need_led and not need_det:
                 continue          # already locked — W/L and detail both present
             picks = _load_grading_picks(bn)
@@ -2690,7 +2770,7 @@ async def track_record(request: Request, token: str = "", admin: str = ""):
             continue   # pre-start dates kept in the ledger but off the running record
         day_w = day_l = 0
         for cat, sides in (led[ds] or {}).items():
-            if cat == "__ovf_v1__" or _is_ovf_cat(cat) or _is_hr_cat(cat):
+            if cat in ("__ovf_v1__", "__locks_v1__") or _is_ovf_cat(cat) or _is_hr_cat(cat):
                 continue   # overflow, HR, + version sentinel never count toward the main record
             for side, wl in sides.items():
                 rec = alltime.setdefault(cat, {}).setdefault(side, [0, 0])
@@ -3727,7 +3807,7 @@ _HTML = """
           <div id="cold-split-more"></div>
         </div>
         <div class="card p-6 hidden" id="ninety-pct-card" style="border-color:rgba(255,215,0,.35)">
-          <div class="section-hdr" style="color:#fbbf24">💯 90-100% Locks</div>
+          <div class="section-hdr" style="color:#fbbf24">💯 80-100% Locks</div>
           <div style="font-size:.72rem;color:#94a3b8;margin:-4px 0 8px;line-height:1.6">Cross-category picks where the player has hit their prop <strong style="color:#fbbf24">80%+ of the time</strong> (min 5 games) — vs today&#39;s opponent or last-10 games. All categories included. Top 10 board + 20 overflow.</div>
           <div id="ninety-pct-body" class="mlb-picks-grid"></div>
           <div id="ninety-pct-more"></div>
@@ -4845,7 +4925,7 @@ function showResults(result) {
     _fillCard('cold-split-card','cold-split-body','cold-split-more',(view.cold_split_picks||[]),function(p,r){return _coldSplitCard(p,r,'cold');},'Cold Batters','#60a5fa');
     window.__N90_REG__={};
     const ninetyPct = view.ninety_pct_picks || [];
-    _fillCard('ninety-pct-card','ninety-pct-body','ninety-pct-more',ninetyPct,function(p,r){return _ninetyCard(p,r);},'90-100% Locks','#fbbf24');
+    _fillCard('ninety-pct-card','ninety-pct-body','ninety-pct-more',ninetyPct,function(p,r){return _ninetyCard(p,r);},'80-100% Locks','#fbbf24');
     window.__TSC_REG__={};
     const tripleSplit = (view.triple_split_picks||[]).filter(function(p){ return _oddsOk(p.hit_odds); });
     _fillCard('triple-split-card','triple-split-body','triple-split-more',tripleSplit,function(p,r){return _tscCard(p,r,'tsc');},'Triple Split Club','#22d3ee');
@@ -8323,7 +8403,7 @@ function _coldSplitCard(p, rank, pfx) {
   </div>`;
 }
 
-// 💯 90-100% Locks: dispatches to each category's native card renderer so the
+// 💯 80-100% Locks: dispatches to each category's native card renderer so the
 // card looks identical to its source section (full popup, all stats, bet btn).
 // _90_src is the primary dispatch key (set by the pipeline); _90_cat is the
 // fallback so picks from any new source work automatically.
@@ -8570,7 +8650,7 @@ function _renderCatBar(view){
     {icon:'⭐',label:'HRR SP',count:(view.hrr_special_picks||[]).length,target:'hrr-special-card'},
     {icon:'🌡️',label:'Hot Hitters',count:(view.hot_split_picks||[]).length,target:'hot-split-card'},
     {icon:'❄️',label:'Cold Batters',count:(view.cold_split_picks||[]).length,target:'cold-split-card',overflow:true},
-    {icon:'💯',label:'90-100% Locks',count:(view.ninety_pct_picks||[]).length,target:'ninety-pct-card',overflow:true},
+    {icon:'💯',label:'80-100% Locks',count:(view.ninety_pct_picks||[]).length,target:'ninety-pct-card',overflow:true},
     {icon:'🔱',label:'Triple Split',count:(view.triple_split_picks||[]).length,target:'triple-split-card'},
     {icon:'⭐',label:'5 Star Split',count:(view.five_star_split_picks||[]).length,target:'five-star-card'},
     {icon:'🏆',label:'Club Plays',count:(view.club_plays_picks||[]).length,target:'club-plays-card'},
@@ -8876,6 +8956,10 @@ function _trkBuildCfg(){
     'Cold Batters (OVF)|UNDER':  {lbl:'Cold Batters Overflow (Under 0.5 Hits)',icon:'❄️'},
     'Hitter Hits|OVER':          {lbl:'Top Picks (Over 0.5 Hits)', icon:'🎯', abbr:'Hits'},
     'Hitter Hits|UNDER':         {lbl:'Under 1.5 Hits',            icon:'📉', abbr:'Unders'},
+    '80-100% Locks|OVER':        {lbl:'80-100% Locks (Over)',      icon:'💯', abbr:'Locks+'},
+    '80-100% Locks|UNDER':       {lbl:'80-100% Locks (Under)',     icon:'💯', abbr:'Locks-'},
+    '80-100% Locks (OVF)|OVER':  {lbl:'80-100% Locks Overflow (Over)',  icon:'💯'},
+    '80-100% Locks (OVF)|UNDER': {lbl:'80-100% Locks Overflow (Under)', icon:'💯'},
     'Runs|OVER':                 {lbl:'Runs (Over 0.5)',            icon:'🏃', abbr:'Runs+'},
     'Runs|UNDER':                {lbl:'Runs (Under 0.5)',           icon:'🏃', abbr:'Runs-'},
     'Pitcher Ks|OVER':           {lbl:'Pitcher Ks (Over)',          icon:'⚾', abbr:'Ks+'},
@@ -8928,13 +9012,13 @@ function _trkBuildCfg(){
     'Batter Ks|UNDER':           {lbl:'Batter Strikeouts (Under)',       icon:'🌀', abbr:'BK-'},
   };
   var CAT_ORDER=[
-    'Hitter Hits|OVER','Hitter Hits|UNDER','Runs|OVER','Runs|UNDER',
+    'Hitter Hits|OVER','Hitter Hits|UNDER','80-100% Locks|OVER','80-100% Locks|UNDER','Runs|OVER','Runs|UNDER',
     'TB Under|UNDER','TB Over|OVER','RBI|OVER','RBI|UNDER','HR|OVER','HR|UNDER','Batter Walks|OVER','Batter Walks|UNDER','HRR|OVER','HRR|UNDER',
     'Batter Ks|OVER','Batter Ks|UNDER',
     'Pitcher Ks|OVER','Pitcher Ks|UNDER','Pitcher Hits Allowed|OVER','Pitcher Hits Allowed|UNDER',
     'Pitcher Outs|OVER','Pitcher Outs|UNDER','Pitcher Earned Runs|OVER','Pitcher Earned Runs|UNDER',
     'Pitcher Walks|OVER','Pitcher Walks|UNDER'];
-  var OVF_ORDER=['Hitter Hits (More)|OVER','Hitter Hits (More)|UNDER','Runs (OVF)|OVER','Runs (OVF)|UNDER',
+  var OVF_ORDER=['Hitter Hits (More)|OVER','Hitter Hits (More)|UNDER','80-100% Locks (OVF)|OVER','80-100% Locks (OVF)|UNDER','Runs (OVF)|OVER','Runs (OVF)|UNDER',
     'TB Under (OVF)|UNDER','TB Over (OVF)|OVER','RBI (OVF)|OVER','RBI (OVF)|UNDER',
     'Batter Walks (OVF)|OVER','Batter Walks (OVF)|UNDER','HRR (OVF)|OVER','HRR (OVF)|UNDER',
     'Batter Ks (OVF)|OVER','Batter Ks (OVF)|UNDER',
@@ -9257,7 +9341,7 @@ function _trkRenderDaily(stake){
   de.innerHTML=daily.length?'<details open style="margin-top:0"><summary style="cursor:pointer;font-weight:700;color:#a78bfa;padding:10px 0;border-bottom:1px solid #1f2937">📅 Daily \u2014 every pick by category ('+daily.length+' day'+(daily.length===1?'':'s')+')</summary><div style="margin-top:6px">'+dayBlocks+'</div></details>':'';
 }
 // ===== Track Record tabs: Daily / Weekly (last 7 days) / Monthly =====
-var _TRK_KEYS=['hitter_overs','hitter_unders','runs','tb_under','tb_over','rbi','batter_walks','hrr','batter_ks','pitcher_ks','pitcher_props'];
+var _TRK_KEYS=['hitter_overs','hitter_unders','locks_top10','runs','tb_under','tb_over','rbi','batter_walks','hrr','batter_ks','pitcher_ks','pitcher_props'];
 var _TRK_KEYS_FULL=_TRK_KEYS;
 function _trkTodayISO(){ var d=new Date(); var z=d.getTimezoneOffset()*60000; return new Date(d.getTime()-z).toISOString().slice(0,10); }
 function _isoShift(iso,days){ var d=new Date(iso+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()+days); return d.toISOString().slice(0,10); }
