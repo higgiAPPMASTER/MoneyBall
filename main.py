@@ -1140,8 +1140,9 @@ def _grade_date(date_str: str, picks: dict) -> dict:
 
     # ── 80-100% Locks — dedicated, cross-market board record ─────────────
     # The board is already deduplicated by player + market + side in the
-    # pipeline. Track its top 10 in the main record and every remaining card in
-    # the Overflow Tracker, so no Locks selection is counted twice.
+    # pipeline. Every Locks card gets its own result in the main record, even
+    # when that player/market is also present in a native category. Ranks 11+
+    # additionally remain visible in the Overflow Tracker as a second report.
     _LOCK_STAT_MAP = {
         "Batter Hits": ("hits", "Hits", 0.5),
         "Batter Runs": ("runs", "Runs", 0.5),
@@ -1192,12 +1193,12 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
             "edge": p.get("edge"),
         }
-    locks_top10 = []
+    locks_all = []
     _locks_all = picks.get("ninety_pct_picks") or []
-    for p in _locks_all[:10]:
+    for p in _locks_all:
         row = _lock_row(p, "80-100% Locks")
         if row:
-            locks_top10.append(row)
+            locks_all.append(row)
 
     # HRR Special (Parlay Confluence) — OVER only, top 20 for its own record
     # Deliberately kept OUT of main Track Record (_TRK_KEYS) to avoid double-
@@ -1528,9 +1529,9 @@ def _grade_date(date_str: str, picks: dict) -> dict:
         actual = st["hits"] if st else None
         _ovf(p, p.get("name", ""), p.get("team", ""), "Cold Batters (OVF)", "UNDER",
              "UNDER 0.5 Hits (Cold - OVF)", p.get("hit_odds"), 0.5, actual, "Hits", st)
-    # 80-100% Locks overflow: every board card after the main record's top 10.
-    # It is a distinct category so it can never be mixed into (or double-counted
-    # with) the main Locks record.
+    # 80-100% Locks overflow: every board card after rank 10 remains visible in
+    # the Overflow Tracker. These rows intentionally also appear in the full
+    # Locks record above so the Locks category reports every qualifying card.
     for p in _locks_all[10:]:
         row = _lock_row(p, "80-100% Locks (OVF)")
         if row:
@@ -1559,7 +1560,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
         "batter_walks":  walks_rows,
         "batter_ks":     batter_ks_rows,
         "hrr":           hrr_rows,
-        "locks_top10":   locks_top10,
+        "locks_all":     locks_all,
         "hrr_special":   hrr_special_rows,
         "hot_split":     hot_split_rows,
         "cold_split":    cold_split_rows,
@@ -1702,7 +1703,7 @@ def _aggregate_graded(graded: dict) -> dict:
     Exception: batter_ks odds are rarely posted so they count regardless of odds."""
     _ODDS_OPTIONAL = {"batter_ks"}
     agg: dict = {}
-    for key in ("hitter_overs", "hitter_more", "hitter_unders", "locks_top10", "runs", "tb_under", "tb_over", "rbi", "hr", "batter_walks", "hrr", "hrr_special", "hot_split", "triple_split", "five_star_split", "club_plays", "pitcher_ks", "pitcher_props", "batter_ks", "overflow"):
+    for key in ("hitter_overs", "hitter_more", "hitter_unders", "locks_all", "runs", "tb_under", "tb_over", "rbi", "hr", "batter_walks", "hrr", "hrr_special", "hot_split", "triple_split", "five_star_split", "club_plays", "pitcher_ks", "pitcher_props", "batter_ks", "overflow"):
         for r in graded.get(key, []):
             res = r.get("result")
             if res not in ("WIN", "LOSS"):
@@ -1723,7 +1724,7 @@ def _aggregate_graded(graded: dict) -> dict:
     # The Locks board was added after the original tracker. Keep a separate
     # marker so previously locked snapshots are re-graded once and its result
     # appears in the new main/overflow records too.
-    agg["__locks_v1__"] = {"ALL": [0, 0]}
+    agg["__locks_v2__"] = {"ALL": [0, 0]}
     return agg
 
 def _detail_graded(graded: dict) -> list:
@@ -1733,7 +1734,7 @@ def _detail_graded(graded: dict) -> list:
     Exception: batter_ks odds are rarely posted so they count regardless of odds."""
     _ODDS_OPTIONAL = {"batter_ks"}
     out = []
-    for key in ("hitter_overs", "hitter_more", "hitter_unders", "locks_top10", "runs", "tb_under", "tb_over", "rbi", "hr", "batter_walks", "hrr", "hrr_special", "hot_split", "triple_split", "five_star_split", "club_plays", "pitcher_ks", "pitcher_props", "batter_ks", "overflow"):
+    for key in ("hitter_overs", "hitter_more", "hitter_unders", "locks_all", "runs", "tb_under", "tb_over", "rbi", "hr", "batter_walks", "hrr", "hrr_special", "hot_split", "triple_split", "five_star_split", "club_plays", "pitcher_ks", "pitcher_props", "batter_ks", "overflow"):
         for r in graded.get(key, []):
             res = r.get("result")
             if res not in ("WIN", "LOSS"):
@@ -1822,7 +1823,7 @@ def _update_track_ledger() -> dict:
                 continue          # today/future — games not final yet
             _bn_led = led.get(bn) or {}
             _need_ovf = "__ovf_v1__" not in _bn_led   # one-shot Overflow Tracker backfill
-            _need_locks = "__locks_v1__" not in _bn_led  # one-shot Locks-board backfill
+            _need_locks = "__locks_v2__" not in _bn_led  # one-shot full-Locks backfill
             need_led = (not _bn_led or
                         "Hitter Hits (More)" not in _bn_led or
                         _need_ovf or _need_locks)
@@ -2770,7 +2771,7 @@ async def track_record(request: Request, token: str = "", admin: str = ""):
             continue   # pre-start dates kept in the ledger but off the running record
         day_w = day_l = 0
         for cat, sides in (led[ds] or {}).items():
-            if cat in ("__ovf_v1__", "__locks_v1__") or _is_ovf_cat(cat) or _is_hr_cat(cat):
+            if cat in ("__ovf_v1__", "__locks_v1__", "__locks_v2__") or _is_ovf_cat(cat) or _is_hr_cat(cat):
                 continue   # overflow, HR, + version sentinel never count toward the main record
             for side, wl in sides.items():
                 rec = alltime.setdefault(cat, {}).setdefault(side, [0, 0])
@@ -9341,7 +9342,7 @@ function _trkRenderDaily(stake){
   de.innerHTML=daily.length?'<details open style="margin-top:0"><summary style="cursor:pointer;font-weight:700;color:#a78bfa;padding:10px 0;border-bottom:1px solid #1f2937">📅 Daily \u2014 every pick by category ('+daily.length+' day'+(daily.length===1?'':'s')+')</summary><div style="margin-top:6px">'+dayBlocks+'</div></details>':'';
 }
 // ===== Track Record tabs: Daily / Weekly (last 7 days) / Monthly =====
-var _TRK_KEYS=['hitter_overs','hitter_unders','locks_top10','runs','tb_under','tb_over','rbi','batter_walks','hrr','batter_ks','pitcher_ks','pitcher_props'];
+var _TRK_KEYS=['hitter_overs','hitter_unders','locks_all','runs','tb_under','tb_over','rbi','batter_walks','hrr','batter_ks','pitcher_ks','pitcher_props'];
 var _TRK_KEYS_FULL=_TRK_KEYS;
 function _trkTodayISO(){ var d=new Date(); var z=d.getTimezoneOffset()*60000; return new Date(d.getTime()-z).toISOString().slice(0,10); }
 function _isoShift(iso,days){ var d=new Date(iso+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()+days); return d.toISOString().slice(0,10); }
