@@ -727,7 +727,7 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
             r2 = requests.get(
                 f"https://api.the-odds-api.com/v4/sports/baseball_mlb/events/{ev['id']}/odds",
                 params={"apiKey": ODDS_API_KEY, "regions": "us,us2,eu,ca",
-                        "markets": "batter_hits,batter_hits_alternate,batter_total_bases,batter_total_bases_alternate,batter_runs_scored,batter_rbis,batter_hits_runs_rbis,batter_walks,batter_home_runs,batter_strikeouts",
+                        "markets": "batter_hits,batter_hits_alternate,batter_total_bases,batter_total_bases_alternate,batter_runs_scored,batter_rbis,batter_hits_runs_rbis,batter_walks,batter_home_runs,batter_strikeouts,batter_strikeouts_alternate",
                         "oddsFormat": "american"}, timeout=15)
             if r2.status_code != 200: continue
             all_bms = r2.json().get("bookmakers", [])
@@ -945,17 +945,21 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
                             _take_odds(entry, "under", "under_book", price, bk)
 
             # Batter Strikeouts (Over/Under 0.5) for the Batter Ks category.
-            # ZERO extra Odds API calls — market added to the same per-game request.
+            # Some books expose the 0.5 line only through the documented
+            # alternate market, so read both keys from the same per-game request.
             for book in ordered_books:
                 bk = book.get("key")
                 for mkt in book.get("markets", []):
-                    if mkt.get("key") != "batter_strikeouts": continue
+                    if mkt.get("key") not in ("batter_strikeouts", "batter_strikeouts_alternate"): continue
                     for oc in mkt.get("outcomes", []):
                         player = oc.get("description", "").strip()
                         pt     = oc.get("point")
                         side   = oc.get("name", "")
                         price  = oc.get("price")
-                        if not player or price is None: continue
+                        # The Batter Ks board is specifically an Over/Under 0.5
+                        # market. Do not attach an alternate 1.5+ price to a
+                        # pick whose model and displayed bet are for 0.5 Ks.
+                        if not player or pt != 0.5 or price is None: continue
                         nk = _norm_name(player)
                         entry = BATTER_K_ODDS.get(nk)
                         if entry is None:
@@ -2318,11 +2322,11 @@ def _recent_bk_log(player_id, n: int = 10) -> list:
 
 
 def run_batter_k_picks(run_date: str, team_schedule: dict, emit=None) -> list:
-    """Generate batter strikeout picks using the HIT_ODDS player pool as candidates
-    (players known to be in today's lineups via the hit-line fetch).  Strikeout
-    odds from BATTER_K_ODDS are attached when posted but are NOT required — picks
-    are generated purely from historical K-rate data so the board is never empty
-    just because books haven't posted the batter_strikeouts market."""
+    """Generate bettable 0.5 Batter Strikeout picks from today's hitter pool.
+
+    A pick must have a posted price for its selected side. This keeps the card,
+    parlay builder, and Track Record from presenting a blank-odds prediction as
+    though it were a wager."""
     _log(emit, "", "log")
     _log(emit, "▸ Batter Strikeout Picks — Batter Ks (Over/Under 0.5)", "section")
     season = int(run_date[:4])
@@ -2401,6 +2405,8 @@ def run_batter_k_picks(run_date: str, team_schedule: dict, emit=None) -> list:
         line = ko.get("line", 0.5) if ko.get("line") is not None else 0.5
         over_odds  = ko.get("over")
         under_odds = ko.get("under")
+        if (pick == "OVER" and over_odds is None) or (pick == "UNDER" and under_odds is None):
+            return None
         return {"name": name, "team": player_team, "side": side, "opp": opp_name,
                 "pick": pick, "line": line,
                 "pitcher": pitcher_name, "pit_id": pitcher_id,
