@@ -4752,7 +4752,9 @@ function showResults(result) {
       hr_picks:    (result.hr_picks||[]).filter(function(p){return p.pick==='OVER'?_rok(p.over_odds):_rok(p.under_odds);}),
       runs_picks:  (result.runs_picks||[]).filter(function(p){return p.pick==='OVER'?_rok(p.over_odds):_rok(p.under_odds);}),
       walks_picks: (result.walks_picks||[]).filter(function(p){return p.pick==='OVER'?_rok(p.over_odds):_rok(p.under_odds);}),
-      batter_k_picks: (result.batter_k_picks||[]).filter(function(p){return p.pick==='OVER'?_rok(p.over_odds):_rok(p.under_odds);}),
+      // Batter K model sides remain visible even when a book has not posted
+      // that side's price. Do not let the optional odds-range UI erase Under picks.
+      batter_k_picks: (result.batter_k_picks||[]),
       hrr_picks:   (result.hrr_picks||[]).filter(function(p){return p.pick==='UNDER'?_rok(p.hrr_under_odds):_rok(p.hrr_over_odds);}),
       hrr_special_picks: (result.hrr_special_picks||[]).filter(function(p){return _rok(p.hrr_over_odds);}),
       hot_split_picks:    (result.hot_split_picks||[]).filter(function(p){return _rok(p.hit_odds);}),
