@@ -2322,11 +2322,11 @@ def _recent_bk_log(player_id, n: int = 10) -> list:
 
 
 def run_batter_k_picks(run_date: str, team_schedule: dict, emit=None) -> list:
-    """Generate bettable 0.5 Batter Strikeout picks from today's hitter pool.
+    """Generate 0.5 Batter Strikeout picks from today's hitter pool.
 
-    A pick must have a posted price for its selected side. This keeps the card,
-    parlay builder, and Track Record from presenting a blank-odds prediction as
-    though it were a wager."""
+    Historical K-rate determines whether the pick is Over or Under. Odds are
+    attached when a sportsbook posts them, but are optional so an entire model
+    side (especially Under) cannot disappear just because coverage is uneven."""
     _log(emit, "", "log")
     _log(emit, "▸ Batter Strikeout Picks — Batter Ks (Over/Under 0.5)", "section")
     season = int(run_date[:4])
@@ -2405,8 +2405,6 @@ def run_batter_k_picks(run_date: str, team_schedule: dict, emit=None) -> list:
         line = ko.get("line", 0.5) if ko.get("line") is not None else 0.5
         over_odds  = ko.get("over")
         under_odds = ko.get("under")
-        if (pick == "OVER" and over_odds is None) or (pick == "UNDER" and under_odds is None):
-            return None
         return {"name": name, "team": player_team, "side": side, "opp": opp_name,
                 "pick": pick, "line": line,
                 "pitcher": pitcher_name, "pit_id": pitcher_id,
