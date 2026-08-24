@@ -4889,7 +4889,15 @@ function showResults(result) {
   const batKOver  = batKPicks.filter(function(p){ return p.pick==='OVER'; });
   const batKUnder = batKPicks.filter(function(p){ return p.pick==='UNDER'; });
   _fillCard('batter-k-over-card','batter-k-over-body','batter-k-over-more',batKOver,function(p,r){return _batKCard(p,r,'bko');},'Batter Ks Over','#a78bfa');
-  _fillCard('batter-k-under-card','batter-k-under-body','batter-k-under-more',batKUnder,function(p,r){return _batKCard(p,r,'bku');},'Batter Ks Under','#ff8a65');
+  if(batKUnder.length){
+    _fillCard('batter-k-under-card','batter-k-under-body','batter-k-under-more',batKUnder,function(p,r){return _batKCard(p,r,'bku');},'Batter Ks Under','#ff8a65');
+  } else {
+    show('batter-k-under-card');
+    var _bkUnderBody=document.getElementById('batter-k-under-body');
+    if(_bkUnderBody) _bkUnderBody.innerHTML='<div class="no-picks">No qualifying Under 0.5 Batter Strikeout picks today.</div>';
+    var _bkUnderMore=document.getElementById('batter-k-under-more');
+    if(_bkUnderMore) _bkUnderMore.innerHTML='';
+  }
 
   const tbPicks = (view.tb_picks || []).filter(function(p){ return _oddsOk(p.tb_under_odds); });
   if (tbPicks.length > 0) {
