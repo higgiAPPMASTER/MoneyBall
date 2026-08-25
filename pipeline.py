@@ -4416,9 +4416,15 @@ def run_pipeline(run_date: str, emit=None) -> dict:
             _COLD_MAX_HA  = 0.220   # coldness ceiling at their venue
             _COLD_MAX_L10 = 40      # max true-L10 hit % to qualify
             _COLD_MIN_G   = 5       # minimum L10 H/A games for reliability
+            from under_picks import TB_ALL_ODDS, _norm_name
             _tb_under_by_id = {
                 str(p.get("batter_id")): p for p in tb_picks_list
                 if p.get("batter_id") is not None
+            }
+            _tb_under_by_name = {
+                _norm_name(p.get("name", "")): p
+                for p in TB_ALL_ODDS.values()
+                if p.get("tb_under_odds") is not None
             }
             for _b, _r in _tsc_by_id.items():
                 _cside = (_r.get("side") or "").upper()
@@ -4432,7 +4438,8 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                 _cl10o_pct, _cl10o_n, _cl10o_hg = _tsch_l10_overall(int(_b))
                 if _cl10o_pct is None or _cl10o_n < 5 or _cl10o_pct > _COLD_MAX_L10:
                     continue
-                _ctb = _tb_under_by_id.get(str(_b))
+                _ctb = (_tb_under_by_id.get(str(_b))
+                        or _tb_under_by_name.get(_norm_name(_r.get("name", ""))))
                 if not _ctb:
                     continue
                 # Season BA from s5 for contrast
