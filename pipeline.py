@@ -2965,7 +2965,9 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         emit({"type": "log", "msg": f"⚠️ Batter K picks skipped: {exc}"})
         batter_k_picks_list = []
     for _kp in batter_k_picks_list:
-        _kp["game_start"] = _game_start_for(_kp.get("team", ""))
+        _kp["game_start"]    = _game_start_for(_kp.get("team", ""))
+        _kp["series_splits"] = fetch_series_splits(
+            _kp.get("batter_id"), _kp.get("opp", ""), run_date, _kp.get("side", ""))
 
     # ── HRR Picks (Hits+Runs+RBI Over 1.5) ────────────────────────────────
     try:
@@ -2990,7 +2992,9 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         emit({"type": "log", "msg": f"⚠️ HRR Special picks skipped: {exc}"})
         hrr_special_list = []
     for _hsp in hrr_special_list:
-        _hsp["game_start"] = _game_start_for(_hsp.get("team", ""))
+        _hsp["game_start"]    = _game_start_for(_hsp.get("team", ""))
+        _hsp["series_splits"] = fetch_series_splits(
+            _hsp.get("batter_id"), _hsp.get("opp", ""), run_date, _hsp.get("side", ""))
 
     # ── HR Picks (Batter Home Runs, Over/Under 0.5) ───────────────────────
     try:
@@ -3069,6 +3073,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                    + list(runs_picks_list) + list(tb_picks_list)
                    + list(tb_over_picks_list) + list(rbi_picks_list)
                    + list(walks_picks_list) + list(hrr_picks_list)
+                   + list(hrr_special_list) + list(batter_k_picks_list)
                    + list(hr_picks_list))
         _sg_pit = list(pitcher_k_result.get("picks", [])) + list(pitcher_k_result.get("all", []))
         for _b in pitcher_props.values():
@@ -3866,6 +3871,20 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                     _orig = _tsc_by_id.get(int(_ts.get("batter_id") or 0)) or {}
                 except Exception:
                     _orig = {}
+                # Derived hitter boards must carry the same series context as
+                # their source cards. Keep an already-published split untouched;
+                # only backfill absent fields for a popup that would otherwise
+                # have no Series Splits panel.
+                if not _ts.get("series_splits"):
+                    _ts["series_splits"] = (
+                        _orig.get("series_splits")
+                        or fetch_series_splits(
+                            _ts.get("batter_id") or _ts.get("player_id"),
+                            _ts.get("opp", ""), run_date, _ts.get("side", ""))
+                    )
+                for _k in ("series_game", "series_of"):
+                    if _ts.get(_k) in (None, "") and _orig.get(_k) not in (None, ""):
+                        _ts[_k] = _orig.get(_k)
                 if (not _ts.get("pitcher")) or _ts.get("pitcher") == "TBD":
                     _pn = _orig.get("pitcher", "")
                     if (not _pn) or _pn == "TBD":
@@ -4460,6 +4479,9 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                     "dn_label": _r.get("dn_label", ""),
                     "s5": _r.get("s5"),
                     "s4": _r.get("s4"),
+                    "series_splits": _r.get("series_splits"),
+                    "series_game": _r.get("series_game"),
+                    "series_of": _r.get("series_of"),
                     "game_start": _r.get("game_start"),
                     "recent_hit_log": _r.get("recent_hit_log"),
                     "ha_ba":  _cl10_hav,
@@ -4497,6 +4519,27 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         hot_split_list = []
         cold_split_list = []
         emit({"type": "log", "msg": f"⚠️ Hot/Cold Hitters skipped: {_exc}"})
+
+    # ── Final popup-detail contract for derived hitter boards ───────────────
+    # These boards are copies of qualifying player rows and can be created
+    # before the source row receives its popup-only pitcher context. Backfill
+    # only fields used for display; no gate, score, market, rank, or price reads
+    # this data. Keeping this pass here also protects future derived boards from
+    # silently opening a thinner popup than their source hitter cards.
+    _popup_detail_boards = (
+        hrr_special_list, triple_split_list, five_star_split_list,
+        club_plays_list, hot_split_list, cold_split_list,
+    )
+    for _popup_list, _popup_label in zip(
+        _popup_detail_boards,
+        ("HRR Special", "Triple Split", "5 Star Split", "Club Plays",
+         "Hot Hitters", "Cold Batters"),
+    ):
+        try:
+            _tsc_vsp_backfill(_popup_list, _popup_label)
+        except Exception as _popup_exc:
+            emit({"type": "log",
+                  "msg": f"⚠️ {_popup_label} popup detail backfill skipped: {_popup_exc}"})
 
     # ── Phase B: combined env + umpire RE-RANKING (reorder only) ──
     # Offense axis = weather/park env × umpire RUN factor (a wide strike zone
