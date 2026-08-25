@@ -4409,12 +4409,17 @@ def run_pipeline(run_date: str, emit=None) -> dict:
 
             # ── Cold Batters ──────────────────────────────────────────────────
             # Hitters who are clearly cold: L10 H/A BA ≤ .220 AND hit in ≤40%
-            # of their true last-10 games. Informational fade board (no bet
-            # tracking — UNDER 0.5 hits is not a standard book market).
+            # of their true last-10 games. The playable Cold Batters market is
+            # Under 1.5 Total Bases, so only retain cold qualifiers with a
+            # matching TB-under candidate.
             # Shares _tsch_d3, _tsch_l10_overall, _TSCH_CY from above.
             _COLD_MAX_HA  = 0.220   # coldness ceiling at their venue
             _COLD_MAX_L10 = 40      # max true-L10 hit % to qualify
             _COLD_MIN_G   = 5       # minimum L10 H/A games for reliability
+            _tb_under_by_id = {
+                str(p.get("batter_id")): p for p in tb_picks_list
+                if p.get("batter_id") is not None
+            }
             for _b, _r in _tsc_by_id.items():
                 _cside = (_r.get("side") or "").upper()
                 if _cside not in ("HOME", "AWAY"):
@@ -4427,23 +4432,15 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                 _cl10o_pct, _cl10o_n, _cl10o_hg = _tsch_l10_overall(int(_b))
                 if _cl10o_pct is None or _cl10o_n < 5 or _cl10o_pct > _COLD_MAX_L10:
                     continue
+                _ctb = _tb_under_by_id.get(str(_b))
+                if not _ctb:
+                    continue
                 # Season BA from s5 for contrast
                 try:
                     _cs5 = _r.get("s5") or {}
                     _cssn_ba = float(_cs5.get("ba") or 0) or None
                 except Exception:
                     _cssn_ba = None
-                # Hit odds lookup (same as Hot Hitters — needed for Track Bet + parlay)
-                _cho = _r.get("hit_odds")
-                _cbk = _r.get("book", "") if _cho is not None else ""
-                if _cho is None:
-                    try:
-                        _cmk = _lookup_odds(_r)
-                        if _cmk:
-                            _cho = _HIT_ODDS.get(_cmk)
-                            _cbk = _hit_book_label(_HIT_ODDS_BOOK.get(_cmk))
-                    except Exception:
-                        pass
                 cold_split_list.append({
                     "name": _r.get("name", ""),
                     "full_name": _r.get("full_name", _r.get("name", "")),
@@ -4473,8 +4470,11 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                     "s1_tag":  _r.get("s1_tag"),
                     "s1_career": _r.get("s1_career"),
                     "vs_pit":  _r.get("vs_pit"),
-                    "hit_odds": _cho,
-                    "book":     _cbk,
+                    "tb_under_odds": _ctb.get("tb_under_odds"),
+                    "tb_score":      _ctb.get("score"),
+                    "tb_rate_disp":  _ctb.get("rate_disp"),
+                    "tb_line":       _ctb.get("line", 1.5),
+                    "book":          _ctb.get("book", ""),
                 })
             # Coldest (lowest L10 H/A BA) at top
             cold_split_list.sort(key=lambda x: x["ha_ba"])
