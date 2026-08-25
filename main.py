@@ -5374,7 +5374,11 @@ function _vsPitLine(p){
 // the market matching THIS hitter&#39;s category (passed as market/statLabel/unit).
 function _oppPitBlock(p, market, statLabel, unit){
   var pit=(p.pitcher&&p.pitcher!=='TBD')?p.pitcher:'';
-  if(!pit) return '';
+  if(!pit){
+    return '<div style="margin-top:12px;padding:10px 12px;background:#0c1622;border-radius:8px;border:1px solid #1e2f3a">'
+      +'<div style="font-size:.66rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Facing Starter</div>'
+      +'<div style="font-size:.8rem;color:#94a3b8">Starter not announced yet</div></div>';
+  }
   var nmFull=String(pit).toLowerCase().trim();
   function _byName(idx){
     if(!idx) return null;
@@ -7367,7 +7371,7 @@ function _dnChip(p){
     +'<span style="font-size:.72rem;color:#64748b">'+lbl+' BA</span>'
     +'<span style="font-family:monospace;font-weight:700;color:#7dd3fc;font-size:.82rem">'+v+'</span></div>';
 }
-function _mlbCard(p, rank, dim) {
+function _mlbCard(p, rank, dim, pfx) {
   const abbr = _mlbTeamAbbr(p.team);
   const teamLogo = abbr ? `https://a.espncdn.com/i/teamlogos/mlb/500/${abbr}.png` : '';
   const headshot = p.player_id ? `https://a.espncdn.com/i/headshots/mlb/players/full/${p.player_id}.png` : '';
@@ -7377,8 +7381,9 @@ function _mlbCard(p, rank, dim) {
   const s5Lbl = p.dn_label||(p.s5?'D/N':'');
   const s5Val = p.s5?.display||'—';
   const s5Suffix = (p.s5 && s5Val!=='—') ? ` &#183; ${s5Lbl} BA ${s5Val}` : '';
-  window.__HIT_REG__=window.__HIT_REG__||{}; window.__HIT_REG__['h'+rank]=p;
-  return `<div class="mlb-pick-card" onclick="_hitForm('h${rank}')" title="Click for recent form" style="cursor:pointer;${dim?'opacity:0.85':''}">
+  pfx = pfx || 'h';
+  window.__HIT_REG__=window.__HIT_REG__||{}; window.__HIT_REG__[pfx+rank]=p;
+  return `<div class="mlb-pick-card" onclick="_hitForm('${pfx}${rank}')" title="Click for recent form" style="cursor:pointer;${dim?'opacity:0.85':''}">
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#1a2a1a 0%,#0a1a0a 100%)">${_cardHdr(rank,rnkColors,_catLbl(p.pos||'','#f59e0b'),teamLogo,p.team,_seriesTag(p,'O',false,0))}</div>
     ${_nameBar(rank,rnkColors,p.player_id,p.full_name||p.name)}
     <div class="mlb-card-body">
@@ -7789,6 +7794,7 @@ function _batKForm(key){
 
   // RIGHT: Last 10 batter K game log
   var log=p.recent_bk_log||[];
+  var ssIn=_ssInner(p);
   var gameRows=log.length?log.map(function(g){
     var struck=g.k>=1;
     var good=isOver?struck:!struck;
@@ -7840,6 +7846,10 @@ function _batKForm(key){
         +panHdr+'Ks vs Today&#39;s Pitcher · <span style="color:#cbd5e1">'+pitLabel+'</span></div>'
         +'<div style="padding:8px 10px;color:#475569;font-size:.72rem">No prior at-bats vs this starter</div></div>';
     }
+  } else {
+    vspBlock='<div style="background:#060d1a;border:1px solid #1e293b;border-radius:10px;overflow:hidden;margin-bottom:8px">'
+      +panHdr+'Facing Starter</div>'
+      +'<div style="padding:8px 10px;color:#64748b;font-size:.72rem">Starter not announced yet</div></div>';
   }
 
   // LEFT: Pitcher K Projection
@@ -7896,6 +7906,8 @@ function _batKForm(key){
     +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:10px 14px">'
       +'<div>'+careerPanel+vspBlock+projBlock+'</div>'
       +'<div style="background:#060d1a;border:1px solid #1e293b;border-radius:10px;overflow:hidden">'
+        +ssIn
+        +(ssIn?'<div style="height:8px"></div>':'')
         +panHdr+'Last '+log.length+' Games</div>'
         +'<table style="width:100%;border-collapse:collapse"><tbody>'+gameRows+'</tbody></table>'
       +'</div>'
@@ -7999,7 +8011,7 @@ function _walksForm(key){
   ov.style.display='flex';
 }
 
-function _tbCard(p, rank) {
+function _tbCard(p, rank, pfx) {
   const abbr = _mlbTeamAbbr(p.team);
   const teamLogo = abbr ? `https://a.espncdn.com/i/teamlogos/mlb/500/${abbr}.png` : '';
   const rnkColors = rank===1?['#a78bfa','#000']:rank===2?['#818cf8','#000']:rank===3?['#6366f1','#fff']:['#1e1e1e','#a78bfa'];
@@ -8013,8 +8025,9 @@ function _tbCard(p, rank) {
     <span>Games <strong style="color:#94a3b8">${p.games||0}</strong></span> &nbsp;
     <span>Wilson <strong style="color:#94a3b8">${p.wilson!=null?p.wilson:'—'}</strong></span>
   </div>`;
-  window.__TB_REG__=window.__TB_REG__||{}; window.__TB_REG__['tb'+rank]=p;
-  return `<div class="mlb-pick-card" onclick="_tbForm('tb${rank}')" title="Click for recent form" style="cursor:pointer">
+  pfx = pfx || 'tb';
+  window.__TB_REG__=window.__TB_REG__||{}; window.__TB_REG__[pfx+rank]=p;
+  return `<div class="mlb-pick-card" onclick="_tbForm('${pfx}${rank}')" title="Click for recent form" style="cursor:pointer">
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#1a1030 0%,#0e0820 100%)">${_cardHdr(rank,rnkColors,_catLbl('TB','#a78bfa'),teamLogo,p.team,_seriesTag(p,'U',false,1))}</div>
     ${_nameBar(rank,rnkColors,p.batter_id,p.name)}
     <div class="mlb-card-body">
@@ -8042,7 +8055,7 @@ function _tbCard(p, rank) {
   </div>`;
 }
 
-function _tbOverCard(p, rank) {
+function _tbOverCard(p, rank, pfx) {
   const abbr = _mlbTeamAbbr(p.team);
   const teamLogo = abbr ? `https://a.espncdn.com/i/teamlogos/mlb/500/${abbr}.png` : '';
   const rnkColors = rank===1?['#4ade80','#000']:rank===2?['#22c55e','#000']:rank===3?['#16a34a','#fff']:['#1e1e1e','#4ade80'];
@@ -8056,8 +8069,9 @@ function _tbOverCard(p, rank) {
     <span>Games <strong style="color:#94a3b8">${p.games||0}</strong></span> &nbsp;
     <span>Wilson <strong style="color:#94a3b8">${p.wilson!=null?p.wilson:'—'}</strong></span>
   </div>`;
-  window.__TBO_REG__=window.__TBO_REG__||{}; window.__TBO_REG__['tbo'+rank]=p;
-  return `<div class="mlb-pick-card" onclick="_tbOverForm('tbo${rank}')" title="Click for recent form" style="cursor:pointer">
+  pfx = pfx || 'tbo';
+  window.__TBO_REG__=window.__TBO_REG__||{}; window.__TBO_REG__[pfx+rank]=p;
+  return `<div class="mlb-pick-card" onclick="_tbOverForm('${pfx}${rank}')" title="Click for recent form" style="cursor:pointer">
     <div class="mlb-card-header" style="background:linear-gradient(135deg,#052e16 0%,#0a1a0a 100%)">${_cardHdr(rank,rnkColors,_catLbl('TBO','#4ade80'),teamLogo,p.team,_seriesTag(p,'O',false,1))}</div>
     ${_nameBar(rank,rnkColors,p.batter_id,p.name)}
     <div class="mlb-card-body">
@@ -8442,31 +8456,31 @@ function _ninetyCard(p, rank) {
   var cat = p._90_cat || '';
   var dir = p._90_dir || 'OVER';
   // Source-based dispatch (most specific — preserves popup registry + styling)
-  if (src === 'hit')      return _mlbCard(p, rank);
+  if (src === 'hit')      return _mlbCard(p, rank, false, 'n90h');
   if (src === 'hotSplit') return _hotSplitCard(p, rank, 'n90h');
   if (src === 'tsc')      return _tscCard(p, rank, 'n90t');
   if (src === 'fss')      return _fssCard(p, rank, 'n90f');
   if (src === 'club')     return _clubCard(p, rank, 'n90c');
   if (src === 'runs')     return _runsCard(p, rank, 'n90r');
   if (src === 'rbi')      return _rbiCard(p, rank, 'n90b');
-  if (src === 'tb')       return _tbCard(p, rank);
-  if (src === 'tbo')      return _tbOverCard(p, rank);
+  if (src === 'tb')       return _tbCard(p, rank, 'n90tb');
+  if (src === 'tbo')      return _tbOverCard(p, rank, 'n90tbo');
   if (src === 'hrr')      return _hrrCard(p, rank, 'n90o');
   if (src === 'walks')    return _walksCard(p, rank, 'n90w');
   if (src === 'batk')     return _batKCard(p, rank, 'n90k');
   if (src === 'hr')       return _hrCard(p, rank, 'n90x');
   if (src === 'pk')       return _pitcherCard(p, rank, 'n90p');
   // Category fallback (covers any future source additions automatically)
-  if (cat === 'Batter Hits')  return _mlbCard(p, rank);
+  if (cat === 'Batter Hits')  return _mlbCard(p, rank, false, 'n90h');
   if (cat === 'Batter Runs')  return _runsCard(p, rank, 'n90');
   if (cat === 'Batter RBI')   return _rbiCard(p, rank, 'n90');
-  if (cat === 'Batter TB')    return dir === 'UNDER' ? _tbCard(p, rank) : _tbOverCard(p, rank);
+  if (cat === 'Batter TB')    return dir === 'UNDER' ? _tbCard(p, rank, 'n90tb') : _tbOverCard(p, rank, 'n90tbo');
   if (cat === 'Batter HRR')   return _hrrCard(p, rank, 'n90');
   if (cat === 'Batter Walks') return _walksCard(p, rank, 'n90');
   if (cat === 'Batter Ks')    return _batKCard(p, rank, 'n90');
   if (cat === 'Batter HR')    return _hrCard(p, rank, 'n90');
   if (cat === 'Pitcher Ks')   return _pitcherCard(p, rank, 'n90');
-  return _mlbCard(p, rank);
+  return _mlbCard(p, rank, false, 'n90h');
 }
 
 function _tscCard(p, rank, pfx) {
