@@ -1245,22 +1245,21 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "edge": p.get("edge"),
         })
 
-    # Cold Batters Split — UNDER 0.5 hits (fading cold hitters); own forward-only
-    # record (own button + modal). Kept OUT of main Track Record (_TRK_KEYS).
+    # Cold Batters Split — UNDER 1.5 total bases for cold hitters.
     cold_split_rows = []
     for p in (picks.get("cold_split_picks") or [])[:10]:
         st = _lookup(p.get("batter_id"), p.get("name"))
-        actual = st["hits"] if st else None
+        actual = st["total_bases"] if st else None
         cold_split_rows.append({
             "name": p.get("name", ""),
             "team": p.get("team", ""),
             "category": "Cold Batters", "side": "UNDER",
-            "pick": "UNDER 0.5 Hits (Cold Batters)",
-            "odds": p.get("hit_odds"),
-            "line": 0.5,
+            "pick": "UNDER 1.5 Total Bases (Cold Batters)",
+            "odds": p.get("tb_under_odds"),
+            "line": 1.5,
             "actual": actual,
-            "stat": "Hits",
-            "result": _grade("UNDER", 0.5, actual, (st or {}).get("final", False)),
+            "stat": "Total Bases",
+            "result": _grade("UNDER", 1.5, actual, (st or {}).get("final", False)),
             "game_status": (st or {}).get("status", "—"),
             "ev": p.get("ev"),
             "ev_prob": p.get("ev_prob"),
@@ -1526,9 +1525,10 @@ def _grade_date(date_str: str, picks: dict) -> dict:
     # Cold Batters overflow (ranks 11-20 — the second page of cold hitters)
     for p in (picks.get("cold_split_picks") or [])[10:30]:
         st = _lookup(p.get("batter_id"), p.get("name"))
-        actual = st["hits"] if st else None
+        actual = st["total_bases"] if st else None
         _ovf(p, p.get("name", ""), p.get("team", ""), "Cold Batters (OVF)", "UNDER",
-             "UNDER 0.5 Hits (Cold - OVF)", p.get("hit_odds"), 0.5, actual, "Hits", st)
+             "UNDER 1.5 Total Bases (Cold - OVF)", p.get("tb_under_odds"), 1.5,
+             actual, "Total Bases", st)
     # 80-100% Locks overflow: every board card after rank 10 remains visible in
     # the Overflow Tracker. These rows intentionally also appear in the full
     # Locks record above so the Locks category reports every qualifying card.
@@ -1602,7 +1602,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
 # ── Track Record: permanent W/L ledger across all graded days ────────────
 _TRACK_LEDGER_PATH = os.path.join(_CACHE_DIR, "_track_record.json")
 _TRACK_CAT_ORDER = [
-    "Hitter Hits", "Hitter Hits (More)", "80-100% Locks", "Runs", "TB Under", "TB Over", "RBI", "HR", "Batter Walks", "HRR", "Batter Ks", "Pitcher Ks",
+    "Hitter Hits", "Hitter Hits (More)", "80-100% Locks", "Cold Batters", "Runs", "TB Under", "TB Over", "RBI", "HR", "Batter Walks", "HRR", "Batter Ks", "Pitcher Ks",
     "Pitcher Hits Allowed", "Pitcher Outs", "Pitcher Earned Runs", "Pitcher Walks",
 ]
 
@@ -1703,7 +1703,7 @@ def _aggregate_graded(graded: dict) -> dict:
     Exception: batter_ks odds are rarely posted so they count regardless of odds."""
     _ODDS_OPTIONAL = {"batter_ks"}
     agg: dict = {}
-    for key in ("hitter_overs", "hitter_more", "hitter_unders", "locks_all", "runs", "tb_under", "tb_over", "rbi", "hr", "batter_walks", "hrr", "hrr_special", "hot_split", "triple_split", "five_star_split", "club_plays", "pitcher_ks", "pitcher_props", "batter_ks", "overflow"):
+    for key in ("hitter_overs", "hitter_more", "hitter_unders", "locks_all", "runs", "tb_under", "tb_over", "rbi", "hr", "batter_walks", "hrr", "hrr_special", "hot_split", "cold_split", "triple_split", "five_star_split", "club_plays", "pitcher_ks", "pitcher_props", "batter_ks", "overflow"):
         for r in graded.get(key, []):
             res = r.get("result")
             if res not in ("WIN", "LOSS"):
@@ -1734,7 +1734,7 @@ def _detail_graded(graded: dict) -> list:
     Exception: batter_ks odds are rarely posted so they count regardless of odds."""
     _ODDS_OPTIONAL = {"batter_ks"}
     out = []
-    for key in ("hitter_overs", "hitter_more", "hitter_unders", "locks_all", "runs", "tb_under", "tb_over", "rbi", "hr", "batter_walks", "hrr", "hrr_special", "hot_split", "triple_split", "five_star_split", "club_plays", "pitcher_ks", "pitcher_props", "batter_ks", "overflow"):
+    for key in ("hitter_overs", "hitter_more", "hitter_unders", "locks_all", "runs", "tb_under", "tb_over", "rbi", "hr", "batter_walks", "hrr", "hrr_special", "hot_split", "cold_split", "triple_split", "five_star_split", "club_plays", "pitcher_ks", "pitcher_props", "batter_ks", "overflow"):
         for r in graded.get(key, []):
             res = r.get("result")
             if res not in ("WIN", "LOSS"):
@@ -3700,6 +3700,9 @@ _HTML = """
                 <div class="parlay-cat-section">Batters</div>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="HIT_O" checked onchange="_catChanged()"> Hits Over 0.5</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="HIT_U" checked onchange="_catChanged()"> Hits Under 1.5</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="HOT" checked onchange="_catChanged()"> 🔥 Hot Hitters</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="COLD" checked onchange="_catChanged()"> ❄️ Cold Batters (Under 1.5 TB)</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="LOCKS" checked onchange="_catChanged()"> 💯 80–100% Locks</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="TB_O" checked onchange="_catChanged()"> Total Bases Over 1.5</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="TB_U" checked onchange="_catChanged()"> Total Bases Under 1.5</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-cat-cb" value="RUN_O" checked onchange="_catChanged()"> Runs Over 0.5</label>
@@ -3803,7 +3806,7 @@ _HTML = """
         </div>
         <div class="card p-6 hidden" id="cold-split-card" style="border-color:rgba(96,165,250,.35)">
           <div class="section-hdr" style="color:#60a5fa">❄️ Cold Batters</div>
-          <div style="font-size:.72rem;color:#94a3b8;margin:-4px 0 8px;line-height:1.6">Hitters in a genuine slump: Last-10 H/A BA &le; .220 <strong style="color:#60a5fa">AND</strong> hit in &le;40% of their true last-10 games. Tap a card to see vs-pitcher &amp; vs-team stats.</div>
+          <div style="font-size:.72rem;color:#94a3b8;margin:-4px 0 8px;line-height:1.6">Hitters in a genuine slump: Last-10 H/A BA &le; .220 <strong style="color:#60a5fa">AND</strong> hit in &le;40% of their true last-10 games. Market: Under 1.5 Total Bases. Tap a card to see vs-pitcher &amp; vs-team stats.</div>
           <div id="cold-split-body" class="mlb-picks-grid"></div>
           <div id="cold-split-more"></div>
         </div>
@@ -5802,7 +5805,7 @@ function _mlbPool(){
     cands.push({type:'TSCH',dir:'OVER',player:(p.full_name||p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'Hits',line:0.5,odds:(p.hit_odds!=null?p.hit_odds:''),conf:clampConf(93,i),reason:'🔥 Hot Hitters · >.270 L10 H/A, D/N & G# · hit in ≥60% of L10 · to record a hit vs '+(p.opp||''),src:p});
   });
   (r.cold_split_picks||[]).forEach(function(p,i){
-    cands.push({type:'COLD',dir:'UNDER',player:(p.full_name||p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'Hits',line:0.5,odds:(p.hit_odds!=null?p.hit_odds:''),conf:clampConf(80,i),reason:'❄️ Cold Batters · L10 H/A BA ≤.220 · hit in ≤40% of L10 · FADE: UNDER 0.5 hits vs '+(p.opp||''),src:p});
+    cands.push({type:'COLD',dir:'UNDER',player:(p.full_name||p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'Total Bases',line:1.5,odds:(p.tb_under_odds!=null?p.tb_under_odds:''),conf:clampConf(80,i),reason:'❄️ Cold Batters · L10 H/A BA ≤.220 · hit in ≤40% of L10 · UNDER 1.5 total bases vs '+(p.opp||''),src:p});
   });
   (r.triple_split_picks||[]).forEach(function(p,i){
     cands.push({type:'TSC',dir:'OVER',player:(p.full_name||p.name||''),team:(p.team||''),opp:(p.opp||''),stat:'Hits',line:0.5,odds:(p.hit_odds!=null?p.hit_odds:''),conf:clampConf(94,i),reason:'🔱 Triple Split · >.275 H/A, D/N & series · to record a hit vs '+(p.opp||''),src:p});
@@ -5814,6 +5817,14 @@ function _mlbPool(){
   (r.club_plays_picks||[]).forEach(function(p,i){
     var _cb={tb:'TBO',runs:'RUN',rbi:'RBI',hrr:'HRR',walks:'BWALK'}[p.pick_market]||'TBO';
     cands.push({type:'CLUB',_clubBase:_cb,dir:'OVER',player:(p.full_name||p.name||''),team:(p.team||''),opp:(p.opp||''),stat:(p.stat_label||'Total Bases'),line:(p.line!=null?p.line:1.5),odds:(p.odds!=null?p.odds:''),conf:clampConf(95,i),reason:'🏆 Club Plays · '+(p.pick_rate!=null?(p.pick_rate+'% L10 '+(p.stat_label||'')):'')+' vs '+(p.opp||''),src:p});
+  });
+  (r.ninety_pct_picks||[]).forEach(function(p,i){
+    var dir=p._90_dir||p.pick||'OVER', src=p._90_src||'', cat=p._90_cat||'';
+    var odds=dir==='UNDER' ? (p.tb_under_odds!=null?p.tb_under_odds:(p.hrr_under_odds!=null?p.hrr_under_odds:p.under_odds)) : (p.hit_odds!=null&&['hit','hotSplit','tsc'].indexOf(src)>=0?p.hit_odds:(p.tb_over_odds!=null&&src==='tbo'?p.tb_over_odds:(p.hrr_over_odds!=null&&src==='hrr'?p.hrr_over_odds:p.over_odds)));
+    var stat=cat==='Batter TB'?'Total Bases':cat==='Batter HRR'?'H+R+RBI':cat==='Batter Runs'?'Runs':cat==='Batter RBI'?'RBI':cat==='Batter Walks'?'Walks':cat==='Batter Ks'?'Ks':cat==='Pitcher Ks'?'Ks':'Hits';
+    var line=p.line!=null?p.line:((cat==='Batter TB'||cat==='Batter HRR')?1.5:0.5);
+    var base={hit:'HIT',hotSplit:'HIT',tsc:'HIT',tb:'TB',tbo:'TBO',runs:'RUN',rbi:'RBI',hrr:'HRR',walks:'BWALK',batk:'BK',hr:'HR',pk:'K'}[src]||'HIT';
+    cands.push({type:'LOCKS',_lockBase:base,dir:dir,player:(p.full_name||p.name||''),team:(p.team||''),opp:(p.opp||''),stat:stat,line:line,odds:(odds!=null?odds:''),conf:clampConf(99,i),reason:'💯 80–100% Lock · '+(p._90_rate!=null?p._90_rate+'%':'')+' '+stat+' vs '+(p.opp||''),src:p});
   });
   // Pitcher prop legs (Hits Allowed / Outs / Earned Runs) — one type per market.
   var _pp=(r.pitcher_props)||{};
@@ -5860,7 +5871,7 @@ function _mlbPool(){
   // supply a Hits leg + a Total Bases leg — so the new prop categories actually
   // deepen the parlay pool instead of being collapsed into a single leg.
   var byKey={};
-  cands.forEach(function(c){ if(!c.player) return; var _ty=(c.type==='HRRSP'?'HRR':(c.type==='TSC'?'HIT':(c.type==='FSS'?(c._fssBase||'TBO'):(c.type==='CLUB'?(c._clubBase||'TBO'):c.type)))); var k=c.player+'|'+_ty+'|'+c.stat; var cur=byKey[k]; if(!cur||_legScoreP(c)>_legScoreP(cur)) byKey[k]=c; });
+  cands.forEach(function(c){ if(!c.player) return; var _ty=(c.type==='HRRSP'?'HRR':(c.type==='TSC'||c.type==='TSCH'?'HIT':(c.type==='FSS'?(c._fssBase||'TBO'):(c.type==='CLUB'?(c._clubBase||'TBO'):(c.type==='LOCKS'?(c._lockBase||'HIT'):c.type))))); var k=c.player+'|'+_ty+'|'+c.stat; var cur=byKey[k]; if(!cur||_legScoreP(c)>_legScoreP(cur)) byKey[k]=c; });
   return Object.keys(byKey).map(function(k){return byKey[k];}).sort(function(a,b){return _legScoreP(b)-_legScoreP(a);});
 }
 function closeParlay(){ var o=document.getElementById('parlayResult'); if(o) o.innerHTML=''; }
@@ -5913,9 +5924,9 @@ function _paintParlay(){
   var am = priced? _decToAm(dec) : null;
   var payout = priced? (100*dec) : null;
   var dirColor=function(d){return d==='OVER'?'#63cab7':d==='UNDER'?'#ff8a65':'#9ca3af';};
-  var tagBg={HIT:'rgba(245,158,11,.16)',UNDER:'rgba(255,138,101,.16)',K:'rgba(99,202,183,.16)',RUN:'rgba(96,165,250,.16)',RBI:'rgba(251,191,36,.16)',HR:'rgba(244,63,94,.16)',HRR:'rgba(251,146,60,.16)',TB:'rgba(167,139,250,.16)',TBO:'rgba(74,222,128,.16)',BWALK:'rgba(52,211,153,.16)',BK:'rgba(167,139,250,.16)',FSS:'rgba(167,139,250,.16)',CLUB:'rgba(244,114,182,.16)',pitcher_hits_allowed:'rgba(248,113,113,.16)',pitcher_outs:'rgba(167,139,250,.16)',pitcher_earned_runs:'rgba(251,146,60,.16)',pitcher_walks:'rgba(52,211,153,.16)'};
-  var tagFg={HIT:'#f59e0b',UNDER:'#ff8a65',K:'#63cab7',RUN:'#60a5fa',RBI:'#fbbf24',HR:'#f43f5e',HRR:'#fb923c',TB:'#a78bfa',TBO:'#4ade80',BWALK:'#34d399',BK:'#a78bfa',FSS:'#a78bfa',CLUB:'#f472b6',pitcher_hits_allowed:'#f87171',pitcher_outs:'#a78bfa',pitcher_earned_runs:'#fb923c',pitcher_walks:'#34d399'};
-  var tagLbl={HIT:'HIT',UNDER:'U1.5',K:'K',RUN:'RUNS',RBI:'RBI',HR:'HR',HRR:'HRR',TB:'U1.5 TB',TBO:'O1.5 TB',BWALK:'BB (BAT)',BK:'BAT K',FSS:'5 STAR',CLUB:'CLUB',pitcher_hits_allowed:'H ALLOW',pitcher_outs:'OUTS',pitcher_earned_runs:'ER',pitcher_walks:'BB (PIT)'};
+  var tagBg={HIT:'rgba(245,158,11,.16)',UNDER:'rgba(255,138,101,.16)',K:'rgba(99,202,183,.16)',RUN:'rgba(96,165,250,.16)',RBI:'rgba(251,191,36,.16)',HR:'rgba(244,63,94,.16)',HRR:'rgba(251,146,60,.16)',TB:'rgba(167,139,250,.16)',TBO:'rgba(74,222,128,.16)',BWALK:'rgba(52,211,153,.16)',BK:'rgba(167,139,250,.16)',TSCH:'rgba(251,146,60,.16)',COLD:'rgba(96,165,250,.16)',LOCKS:'rgba(251,191,36,.16)',FSS:'rgba(167,139,250,.16)',CLUB:'rgba(244,114,182,.16)',pitcher_hits_allowed:'rgba(248,113,113,.16)',pitcher_outs:'rgba(167,139,250,.16)',pitcher_earned_runs:'rgba(251,146,60,.16)',pitcher_walks:'rgba(52,211,153,.16)'};
+  var tagFg={HIT:'#f59e0b',UNDER:'#ff8a65',K:'#63cab7',RUN:'#60a5fa',RBI:'#fbbf24',HR:'#f43f5e',HRR:'#fb923c',TB:'#a78bfa',TBO:'#4ade80',BWALK:'#34d399',BK:'#a78bfa',TSCH:'#fb923c',COLD:'#60a5fa',LOCKS:'#fbbf24',FSS:'#a78bfa',CLUB:'#f472b6',pitcher_hits_allowed:'#f87171',pitcher_outs:'#a78bfa',pitcher_earned_runs:'#fb923c',pitcher_walks:'#34d399'};
+  var tagLbl={HIT:'HIT',UNDER:'U1.5',K:'K',RUN:'RUNS',RBI:'RBI',HR:'HR',HRR:'HRR',TB:'U1.5 TB',TBO:'O1.5 TB',BWALK:'BB (BAT)',BK:'BAT K',TSCH:'HOT',COLD:'COLD TB',LOCKS:'LOCK',FSS:'5 STAR',CLUB:'CLUB',pitcher_hits_allowed:'H ALLOW',pitcher_outs:'OUTS',pitcher_earned_runs:'ER',pitcher_walks:'BB (PIT)'};
   var rows=legs.map(function(l,idx){var fo=_fmtOdds(l.odds);return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #1a1a1a">'
     +'<div style="min-width:0">'
     +'<div style="font-weight:800;color:#fff;font-size:.85rem">'+(idx+1)+'. '+_nameSpan(l.src,l.player)+' <span style="color:#777;font-size:.7rem">'+(l.team?l.team+' ':'')+'vs '+l.opp+'</span> <span style="background:'+(tagBg[l.type]||'#222')+';color:'+(tagFg[l.type]||'#aaa')+';padding:1px 6px;border-radius:4px;font-size:.6rem;font-weight:800">'+(tagLbl[l.type]||l.type)+'</span></div>'
@@ -5946,7 +5957,7 @@ function _replaceParlayLeg(idx){
   var legs=window._parlayLegs; if(!legs||!legs[idx]) return;
   _syncParlayCats();  // swap must respect exactly what is checked, too
   var cur=legs[idx];
-  var _aty=function(c){return c.type==='HRRSP'?'HRR':(c.type==='TSC'?'HIT':(c.type==='FSS'?(c._fssBase||'TBO'):(c.type==='CLUB'?(c._clubBase||'TBO'):c.type)));};
+  var _aty=function(c){return c.type==='HRRSP'?'HRR':(c.type==='TSC'||c.type==='TSCH'?'HIT':(c.type==='FSS'?(c._fssBase||'TBO'):(c.type==='CLUB'?(c._clubBase||'TBO'):(c.type==='LOCKS'?(c._lockBase||'HIT'):c.type))));};
   var curKey=cur.player+'|'+_aty(cur)+'|'+cur.stat;
   var used={}; legs.forEach(function(l,i){ if(i!==idx) used[l.player+'|'+_aty(l)+'|'+l.stat]=1; });
   var pool=_mlbPool().filter(function(c){ var k=c.player+'|'+_aty(c)+'|'+c.stat; return k!==curKey && !used[k]; });
@@ -5981,7 +5992,7 @@ window.PARLAY_MINUS = false;
 window.PARLAY_PLUS = false;
 window.PARLAY_ODDS_RANGE = 'all';
 // Parlay category checkboxes — which pick categories feed the parlay pool (all on by default).
-window.PARLAY_CATS = {HIT_O:true,HIT_U:true,TB_O:true,TB_U:true,RUN_O:true,RUN_U:true,RBI_O:true,RBI_U:true,HR_O:true,HR_U:true,HRR_O:true,HRR_U:true,HRR_SP:true,TSC:true,FSS:true,CLUB:true,BWALK_O:true,BWALK_U:true,BK_O:true,BK_U:true,K_O:true,K_U:true,PHA_O:true,PHA_U:true,POUT_O:true,POUT_U:true,PER_O:true,PER_U:true,PWK_O:true,PWK_U:true};
+window.PARLAY_CATS = {HIT_O:true,HIT_U:true,HOT:true,COLD:true,LOCKS:true,TB_O:true,TB_U:true,RUN_O:true,RUN_U:true,RBI_O:true,RBI_U:true,HR_O:true,HR_U:true,HRR_O:true,HRR_U:true,HRR_SP:true,TSC:true,FSS:true,CLUB:true,BWALK_O:true,BWALK_U:true,BK_O:true,BK_U:true,K_O:true,K_U:true,PHA_O:true,PHA_U:true,POUT_O:true,POUT_U:true,PER_O:true,PER_U:true,PWK_O:true,PWK_U:true};
 // Parlay game filter — which games feed the parlay pool. Empty = all games allowed; a
 // game is excluded only when explicitly set false. Keyed by the same gameKey() label as
 // the "By Game" card. Repopulated each run from the day's slate (_buildGamesMenu).
@@ -6050,6 +6061,9 @@ function _parlayOddsRangeChange(){
 function _legCat(c){
   var dir=(c.dir||'').split(' ')[0]==='OVER'?'O':'U';
   if(c.type==='HIT') return 'HIT_O';
+  if(c.type==='TSCH') return 'HOT';
+  if(c.type==='COLD') return 'COLD';
+  if(c.type==='LOCKS') return 'LOCKS';
   if(c.type==='TSC') return 'TSC';
   if(c.type==='FSS') return 'FSS';
   if(c.type==='CLUB') return 'CLUB';
@@ -6102,6 +6116,12 @@ function _allGameKeys(){
   (r.top9||[]).forEach(function(p){all.push(p);});
   (r.also_ran||[]).forEach(function(p){all.push(p);});
   (r.under_picks||[]).forEach(function(p){all.push(p);});
+  (r.hot_split_picks||[]).forEach(function(p){all.push(p);});
+  (r.cold_split_picks||[]).forEach(function(p){all.push(p);});
+  (r.triple_split_picks||[]).forEach(function(p){all.push(p);});
+  (r.five_star_split_picks||[]).forEach(function(p){all.push(p);});
+  (r.club_plays_picks||[]).forEach(function(p){all.push(p);});
+  (r.ninety_pct_picks||[]).forEach(function(p){all.push(p);});
   ((((r.pitcher_k||{}).all)||[]).filter(function(p){return p.pick;})).forEach(function(p){all.push(p);});
   (r.runs_picks||[]).forEach(function(p){all.push(p);});
   (r.batter_k_picks||[]).forEach(function(p){all.push(p);});
@@ -8381,8 +8401,7 @@ function _coldSplitCard(p, rank, pfx) {
   const s4 = p.s4 || {};
   const s4Score = s4.score!=null ? s4.score+'%' : null;
   const s4G     = s4.games  || 0;
-  // hit odds reference
-  const od = (p.hit_odds!=null)?p.hit_odds:null;
+  const od = (p.tb_under_odds!=null)?p.tb_under_odds:null;
   window.__COLD_REG__ = window.__COLD_REG__ || {};
   window.__COLD_REG__[pfx+rank] = p;
   function _row(lbl, val, clr){
@@ -8407,8 +8426,8 @@ function _coldSplitCard(p, rank, pfx) {
         ${s4Score?_row('Hit rate vs '+_esc(p.opp||'team')+(s4G?' ('+s4G+'g)':''), s4Score, '#cbd5e1'):''}
       </div>
       <div style="margin-top:8px;padding-top:8px;border-top:1px solid #1f1f1f;font-size:.68rem;color:#475569">
-        ${od!=null?('<span style="color:#94a3b8">Ref odds (hit line): </span><span style="color:#93c5fd;font-weight:800;font-family:monospace">'+(od>0?'+':'')+od+'</span><br>'):''}
-        ${_betBtn(p,'Cold Batters','UNDER','hits','Hits',0.5,od)}
+        ${od!=null?('<span style="color:#94a3b8">Under 1.5 TB odds: </span><span style="color:#93c5fd;font-weight:800;font-family:monospace">'+(od>0?'+':'')+od+'</span><br>'):''}
+        ${_betBtn(p,'Cold Batters','UNDER','total_bases','Total Bases',1.5,od)}
       </div>
     </div>
   </div>`;
@@ -8963,8 +8982,8 @@ function _ovfFlatten(g){ var out=[]; if(!g||g==='LOADING'||g.__error__) return o
 function _trkBuildCfg(){
   var CAT_CFG={
     'Hot Hitters|OVER':          {lbl:'Hot Hitters (Over 0.5 Hits)',icon:'🌡️', abbr:'Hot+'},
-    'Cold Batters|UNDER':        {lbl:'Cold Batters (Under 0.5 Hits — Fade)',icon:'❄️', abbr:'Cold-'},
-    'Cold Batters (OVF)|UNDER':  {lbl:'Cold Batters Overflow (Under 0.5 Hits)',icon:'❄️'},
+    'Cold Batters|UNDER':        {lbl:'Cold Batters (Under 1.5 Total Bases)',icon:'❄️', abbr:'Cold TB-'},
+    'Cold Batters (OVF)|UNDER':  {lbl:'Cold Batters Overflow (Under 1.5 Total Bases)',icon:'❄️'},
     'Hitter Hits|OVER':          {lbl:'Top Picks (Over 0.5 Hits)', icon:'🎯', abbr:'Hits'},
     'Hitter Hits|UNDER':         {lbl:'Under 1.5 Hits',            icon:'📉', abbr:'Unders'},
     '80-100% Locks|OVER':        {lbl:'80-100% Locks (Over)',      icon:'💯', abbr:'Locks+'},
@@ -9059,7 +9078,7 @@ function renderTrackRecord(d){
     +'<button onclick="_openProjEdgeStats()" title="W/L record and ROI for Proj Edge plays (pitchers: projection beats the line; hitters: positive edge), tracked forward each day &#x2014; separate from Track Record" style="background:#0c4a6e;color:#7dd3fc;border:1px solid #0ea5e9;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">&#9650; Proj Edge Record</button>'
     +'<button onclick="_openHrrSpStats()" title="W/L record for HRR Special confluence picks (all 4 gates cleared) &#x2014; separate from main Track Record" style="background:#1a0e2e;color:#c4b5fd;border:1px solid #7c3aed;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">&#11088; HRR SP Record</button>'
     +'<button onclick="_openTschStats()" title="W/L record for Hot Hitters — hitters over .270 in last-10 H/A, full-season D/N &amp; last-10 G# splits, plus a hit in at least 60% of their last 10 games &#x2014; to record a hit, separate from main Track Record" style="background:#1c0a02;color:#fb923c;border:1px solid #f97316;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">🌡️ Hot Hitters Record</button>'
-    +'<button onclick="_openColdStats()" title="W/L record for Cold Batters fades — L10 H/A BA &le;.220 AND hit in &le;40% of last 10 games &#x2014; graded UNDER 0.5 hits, separate from main Track Record" style="background:#020b18;color:#60a5fa;border:1px solid #3b82f6;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">❄️ Cold Batters Record</button>'
+    +'<button onclick="_openColdStats()" title="W/L record for Cold Batters fades — L10 H/A BA &le;.220 AND hit in &le;40% of last 10 games &#x2014; graded Under 1.5 Total Bases" style="background:#020b18;color:#60a5fa;border:1px solid #3b82f6;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">❄️ Cold Batters Record</button>'
     +'<button onclick="_openTscStats()" title="W/L record for Triple Split Club picks (over .275 in all three of today&#39;s splits) &#x2014; to record a hit, separate from main Track Record" style="background:#04141c;color:#67e8f9;border:1px solid #0e7490;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">&#128305; Triple Split Record</button>'
     +'<button onclick="_openFssStats()" title="W/L record and ROI for 5 Star Split picks (Triple Split + 60%+ games with a hit vs team + 60%+ last 10) &#x2014; separate from main Track Record" style="background:#0c0a1a;color:#c4b5fd;border:1px solid #7c3aed;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">&#11088; 5 Star Split Record</button>'
     +'<button onclick="_openClubStats()" title="W/L record and ROI for Club Plays (best production market from HRR Special + Triple Split + 5 Star Split members) &#x2014; separate from main Track Record" style="background:#180a12;color:#f9a8d4;border:1px solid #db2777;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">&#127942; Club Plays Record</button>'
@@ -9352,7 +9371,7 @@ function _trkRenderDaily(stake){
   de.innerHTML=daily.length?'<details open style="margin-top:0"><summary style="cursor:pointer;font-weight:700;color:#a78bfa;padding:10px 0;border-bottom:1px solid #1f2937">📅 Daily \u2014 every pick by category ('+daily.length+' day'+(daily.length===1?'':'s')+')</summary><div style="margin-top:6px">'+dayBlocks+'</div></details>':'';
 }
 // ===== Track Record tabs: Daily / Weekly (last 7 days) / Monthly =====
-var _TRK_KEYS=['hitter_overs','hitter_unders','locks_all','runs','tb_under','tb_over','rbi','batter_walks','hrr','batter_ks','pitcher_ks','pitcher_props'];
+var _TRK_KEYS=['hitter_overs','hitter_unders','locks_all','cold_split','runs','tb_under','tb_over','rbi','batter_walks','hrr','batter_ks','pitcher_ks','pitcher_props'];
 var _TRK_KEYS_FULL=_TRK_KEYS;
 function _trkTodayISO(){ var d=new Date(); var z=d.getTimezoneOffset()*60000; return new Date(d.getTime()-z).toISOString().slice(0,10); }
 function _isoShift(iso,days){ var d=new Date(iso+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()+days); return d.toISOString().slice(0,10); }
@@ -9847,7 +9866,7 @@ function _openTschStats(){
   ov2.style.display='flex';
 }
 // ── Cold Batters Record ──────────────────────────────────────────────────────
-// Own forward-only W/L record for fading cold batters (UNDER 0.5 hits).
+// W/L record for fading cold batters (UNDER 1.5 total bases).
 // Reads from cold_split key in grade cache — kept out of main Track Record.
 function _coldRowsForDate(date){
   var d=window.__TRACK__||{}; var rows=[]; var have=false;
@@ -9877,7 +9896,7 @@ async function _coldLoadDay(date){
 function _coldStatsWrap(bodyHtml){
   var ov2=document.getElementById('cold-stats-modal'); if(!ov2) return;
   var dateMode=!!window.__COLD_DATE__, date=window.__COLD_DATE__||'';
-  var sub=dateMode?('Cold Batters &#xB7; L10 H/A BA &le;.220 &amp; hit in &le;40% of L10 &#xB7; '+_weekdayName(date)+' '+date):'Cold Batters &#xB7; L10 H/A BA &le;.220 AND hit rate &le;40% of last 10 games &#xB7; UNDER 0.5 hits &#xB7; tap a day for that slate';
+  var sub=dateMode?('Cold Batters &#xB7; L10 H/A BA &le;.220 &amp; hit in &le;40% of L10 &#xB7; '+_weekdayName(date)+' '+date):'Cold Batters &#xB7; L10 H/A BA &le;.220 AND hit rate &le;40% of last 10 games &#xB7; UNDER 1.5 total bases &#xB7; tap a day for that slate';
   ov2.innerHTML='<div style="background:#020b18;border:1px solid #3b82f6;border-radius:18px;width:100%;max-width:460px;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 24px 80px rgba(0,0,0,.7)" onclick="event.stopPropagation()">'
     +'<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #1e3a5f;flex-shrink:0">'
     +'<div><div style="font-weight:900;color:#60a5fa;font-size:1rem">&#10052;&#65039; Cold Batters Record</div>'
