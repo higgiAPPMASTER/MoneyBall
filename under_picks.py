@@ -77,6 +77,10 @@ RUNS_ODDS: dict = {}
 # away_team, tb_under_odds} for players with a posted batter_total_bases
 # Under 1.5 price. Read by run_tb_under_picks. Cleared each call.
 TB_ODDS: dict = {}
+# All batter_total_bases prices from the same Odds API response, including players
+# who do not also have a posted 1.5-hit line. Used only to attach TB odds to
+# specialized boards such as Cold Batters without changing TB Under qualification.
+TB_ALL_ODDS: dict = {}
 # Populated by _fetch_hits_lines: normalized name → {name, tb_over_odds, …}
 # for players with a posted batter_total_bases Over 1.5 price.
 TB_OVER_ODDS: dict = {}
@@ -677,6 +681,7 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
     # this and is left as-is.)
     RUNS_ODDS.clear()
     TB_ODDS.clear()
+    TB_ALL_ODDS.clear()
     TB_OVER_ODDS.clear()
     RBI_ODDS.clear()
     HRR_ODDS.clear()
@@ -769,6 +774,7 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
             ordered_books = ([_bm_map[k] for k in PREFERRED if k in _bm_map]
                              + [b for b in all_bms if b.get("key") not in PREFERRED])
             event_entries: dict = {}
+            tb_event_entries: dict = {}
             for book in ordered_books:
                 bk = book.get("key")
                 for mkt in book.get("markets", []):
@@ -805,8 +811,15 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
                         price  = oc.get("price")
                         if not player or pt != 1.5 or price is None: continue
                         nk = _norm_name(player)
-                        entry = event_entries.get(nk)
-                        if entry is None: continue  # TB only attaches to 1.5-hit-line players
+                        entry = event_entries.get(nk) or tb_event_entries.get(nk)
+                        if entry is None:
+                            # Keep this separate from event_entries so adding a
+                            # TB-only player cannot expand the existing TB Under
+                            # candidate pool or alter its qualification logic.
+                            entry = {"name": player, "line": 1.5,
+                                     "home_team": home_team, "away_team": away_team,
+                                     "over_odds": None, "under_odds": None}
+                            tb_event_entries[nk] = entry
                         if side == "Under":
                             _take_odds(entry, "tb_under_odds", "tb_under_odds_book", price, bk)
                         elif side == "Over":
@@ -817,8 +830,13 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
                 seen.setdefault(nk, entry)
                 if entry.get("tb_under_odds") is not None:
                     TB_ODDS.setdefault(nk, entry)
+                    TB_ALL_ODDS.setdefault(nk, entry)
                 if entry.get("tb_over_odds") is not None:
                     TB_OVER_ODDS.setdefault(nk, entry)
+                    TB_ALL_ODDS.setdefault(nk, entry)
+            for nk, entry in tb_event_entries.items():
+                if entry.get("tb_under_odds") is not None or entry.get("tb_over_odds") is not None:
+                    TB_ALL_ODDS.setdefault(nk, entry)
             # Batter runs scored (Over/Under, line ~0.5) for the Runs Picks category.
             # Same all-books union + PREFERRED order; first price per side wins, stored
             # in the module-global RUNS_ODDS (parallel to HIT_ODDS), first game seen wins.
