@@ -12232,10 +12232,10 @@ async function _wipeMyBets(){
 // Pure client-side analytics over /api/track-record detail (every graded pick
 // carries date + category + side + result + odds). Buckets by weekday, scores
 // each pick against the matrix lean (displayed _DOW_DISP or original _DOW_SIG),
-// and ranks the best categories per day. Reads banked data only \u2014 no new
+// and ranks every category per day. Reads banked data only \u2014 no new
 // backend, no effect on picks, cards, or the Track Record.
 var _DOW_CATIDX={'Hitter Hits':0,'TB Over':1,'TB Under':1,'HRR':2,'HR':2,'Runs':3,'RBI':4,'Batter Walks':9,'Pitcher Ks':5,'Pitcher Outs':6,'Pitcher Hits Allowed':7,'Pitcher Earned Runs':8,'Pitcher Walks':9};
-var _DOW_CATLBL={'Hitter Hits':'Hits','TB Over':'TB Over','TB Under':'TB Under','HRR':'H+R+RBI','HR':'Home Runs','Runs':'Runs','RBI':'RBI','Batter Walks':'Batter BB','Pitcher Ks':'Pitcher K','Pitcher Outs':'Outs','Pitcher Hits Allowed':'Hits Allowed','Pitcher Earned Runs':'Earned Runs','Pitcher Walks':'Pitcher BB'};
+var _DOW_CATLBL={'Hitter Hits':'Hits','TB Over':'TB Over','TB Under':'TB Under','Cold Batters':'Cold Batters (Under 1.5 TB)','HRR':'H+R+RBI','HR':'Home Runs','Runs':'Runs','RBI':'RBI','Batter Walks':'Batter BB','Pitcher Ks':'Pitcher K','Pitcher Outs':'Outs','Pitcher Hits Allowed':'Hits Allowed','Pitcher Earned Runs':'Earned Runs','Pitcher Walks':'Pitcher BB'};
 function _dowCatLabel(c){ var p=String(c).split('|'),b=p[0],sd=p[1]||'',l=_DOW_CATLBL[b]||b; if(l.indexOf('Over')>=0||l.indexOf('Under')>=0) return l; if(sd==='OVER') return l+' Over'; if(sd==='UNDER') return l+' Under'; return l; }
 function _dowProfit(odds,win){ if(!win) return -1; var o=parseFloat(odds); if(isNaN(o)) return 0; return o>0? o/100 : 100/Math.abs(o); }
 function _dowMatrix(){ var useSig=(window.__DOW_MX__==='sig'); var m=useSig?(typeof _DOW_SIG!=='undefined'?_DOW_SIG:null):(typeof _DOW_DISP!=='undefined'?_DOW_DISP:null); return m||{}; }
@@ -12246,7 +12246,7 @@ function _dowCompute(detail){
   for(var i=0;i<7;i++){ days[i]={w:0,l:0,u:0,cats:{}}; dayMx[i]={aw:0,al:0,gw:0,gl:0}; }
   (detail||[]).forEach(function(r){
     var res=r.result; if(res!=='WIN'&&res!=='LOSS') return;
-    var cat=r.category||''; var idx=_DOW_CATIDX[cat]; if(idx===undefined) return;
+    var cat=r.category||''; var idx=_DOW_CATIDX[cat];
     if(r.odds===null||r.odds===''||r.odds===undefined) return;
     var ds=r.date; if(!ds) return;
     var dow=new Date(ds+'T12:00:00').getDay(); if(isNaN(dow)) return;
@@ -12255,11 +12255,13 @@ function _dowCompute(detail){
     var side=(r.side||'OVER').toUpperCase();
     var catKey=cat+'|'+side;
     var C=D.cats[catKey]||(D.cats[catKey]={w:0,l:0,u:0}); if(win) C.w++; else C.l++; C.u+=prof;
-    var lean=(mx[dow]||[])[idx];
-    if(lean==='O'||lean==='U'){
-      var followed=(side==='OVER'&&lean==='O')||(side==='UNDER'&&lean==='U');
-      if(followed){ if(win){agree.w++;dayMx[dow].aw++;}else{agree.l++;dayMx[dow].al++;} }
-      else{ if(win){against.w++;dayMx[dow].gw++;}else{against.l++;dayMx[dow].gl++;} }
+    if(idx!==undefined){
+      var lean=(mx[dow]||[])[idx];
+      if(lean==='O'||lean==='U'){
+        var followed=(side==='OVER'&&lean==='O')||(side==='UNDER'&&lean==='U');
+        if(followed){ if(win){agree.w++;dayMx[dow].aw++;}else{agree.l++;dayMx[dow].al++;} }
+        else{ if(win){against.w++;dayMx[dow].gw++;}else{against.l++;dayMx[dow].gl++;} }
+      }
     }
   });
   return {days:days,dayMx:dayMx,agree:agree,against:against};
@@ -12280,7 +12282,7 @@ function renderDowReport(tr){
   else { head='<div style="color:#94a3b8;font-size:.78rem;margin-bottom:14px">Building sample \u2014 days with at least 5 graded picks get flagged best / worst.</div>'; }
   var aRows=order.map(function(d){
     var D=c.days[d],n=D.w+D.l,bc='&mdash;',bcp=-1;
-    Object.keys(D.cats).forEach(function(k){ var C=D.cats[k],nn=C.w+C.l; if(nn<4) return; var p=C.w/nn*100; if(p>bcp){ bcp=p; bc=_dowCatLabel(k)+' '+C.w+'-'+C.l+' ('+p.toFixed(0)+'%)'; } });
+    Object.keys(D.cats).forEach(function(k){ var C=D.cats[k],nn=C.w+C.l; if(!nn) return; var p=C.w/nn*100; if(p>bcp){ bcp=p; bc=_dowCatLabel(k)+' '+C.w+'-'+C.l+' ('+p.toFixed(0)+'%)'; } });
     var mark=(best&&d===best.d)?' &#129351;':((worst&&worst.d!==(best&&best.d)&&d===worst.d)?' &#128078;':'');
     var bg=(d===today)?'background:rgba(245,158,11,.07)':'';
     return '<tr style="border-bottom:1px solid #1e1e1e;'+bg+'">'
@@ -12321,10 +12323,10 @@ function renderDowReport(tr){
     +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:.76rem;min-width:480px"><thead><tr style="border-bottom:2px solid #1e293b">'
     +'<th style="text-align:left;padding:7px 8px;color:#94a3b8;font-size:.64rem">DAY</th><th style="padding:7px 6px;color:#94a3b8;font-size:.64rem">FOLLOWED</th>'
     +'<th style="padding:7px 6px;color:#94a3b8;font-size:.64rem">AGAINST</th><th style="padding:7px 6px;color:#94a3b8;font-size:.64rem">EDGE (pts)</th></tr></thead><tbody>'+(mxRows||'<tr><td colspan="4" style="padding:12px;color:#64748b">No matrix-eligible picks graded yet.</td></tr>')+'</tbody></table></div>';
-  var secC='<div style="margin-top:22px;font-weight:800;color:#22d3ee;font-size:.82rem;margin-bottom:8px">Top categories by day (70%+, min 4 graded)</div>';
+  var secC='<div style="margin-top:22px;font-weight:800;color:#22d3ee;font-size:.82rem;margin-bottom:8px">Top categories by day (70%+, all sample sizes)</div>';
   secC+=order.map(function(d){
     var D=c.days[d],arr=[];
-    Object.keys(D.cats).forEach(function(k){ var C=D.cats[k],nn=C.w+C.l; if(nn<4) return; arr.push({k:k,w:C.w,l:C.l,p:C.w/nn*100}); });
+    Object.keys(D.cats).forEach(function(k){ var C=D.cats[k],nn=C.w+C.l; if(!nn) return; arr.push({k:k,w:C.w,l:C.l,p:C.w/nn*100}); });
     arr.sort(function(a,b){ return b.p-a.p; });
     if(!arr.length) return '<div style="padding:6px 8px;border-bottom:1px solid #141414;font-size:.78rem"><b style="color:#cbd5e1">'+_DOW_NAMES[d]+'</b> <span style="color:#64748b">\u2014 not enough graded picks yet</span></div>';
     var hit=arr.filter(function(x){ return x.p>=70; });
