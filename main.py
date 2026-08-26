@@ -12232,18 +12232,47 @@ async function _wipeMyBets(){
   }catch(e){ alert(e.message||'Wipe failed'); }
 }
 // ── Day-of-Week Report: does the matrix lean actually win? ──────────────
-// Pure client-side analytics over /api/track-record detail (every graded pick
-// carries date + category + side + result + odds). Buckets by weekday, scores
-// each pick against the matrix lean (displayed _DOW_DISP or original _DOW_SIG),
-// and ranks every category per day. Reads banked data only \u2014 no new
-// backend, no effect on picks, cards, or the Track Record.
+// Pure client-side analytics over /api/track-record. The category list reads
+// official dated ledger totals, while per-pick detail remains for matrix/profit
+// analysis. This never changes picks, cards, or the Track Record.
 var _DOW_CATIDX={'Hitter Hits':0,'TB Over':1,'TB Under':1,'HRR':2,'HR':2,'Runs':3,'RBI':4,'Batter Walks':9,'Pitcher Ks':5,'Pitcher Outs':6,'Pitcher Hits Allowed':7,'Pitcher Earned Runs':8,'Pitcher Walks':9};
 var _DOW_CATLBL={'Hitter Hits':'Hits','TB Over':'TB Over','TB Under':'TB Under','Cold Batters':'Cold Batters (Under 1.5 TB)','HRR':'H+R+RBI','HR':'Home Runs','Runs':'Runs','RBI':'RBI','Batter Walks':'Batter BB','Pitcher Ks':'Pitcher K','Pitcher Outs':'Outs','Pitcher Hits Allowed':'Hits Allowed','Pitcher Earned Runs':'Earned Runs','Pitcher Walks':'Pitcher BB'};
 function _dowCatLabel(c){ var p=String(c).split('|'),b=p[0],sd=p[1]||'',l=_DOW_CATLBL[b]||b; if(l.indexOf('Over')>=0||l.indexOf('Under')>=0) return l; if(sd==='OVER') return l+' Over'; if(sd==='UNDER') return l+' Under'; return l; }
+function _dowBaseCat(cat,side){
+  var c=String(cat||'').replace(/ \(OVF\)$/,'');
+  // Rank 11+ hit picks are the same hit market, not an independent category.
+  if(c==='Hitter Hits (More)') c='Hitter Hits';
+  // Old combined boards covered multiple different markets. They cannot be
+  // truthfully treated as one current category, so leave them out.
+  if(c==='Top 10 Batter'||c==='Top 10 Batter (NEW)'||c==='Top 10 Pitcher'||c==='Value Plays') return '';
+  // Cold Batters is exclusively an Under 1.5 Total Bases fade.
+  if(c==='Cold Batters' && String(side||'').toUpperCase()!=='UNDER') return '';
+  return c;
+}
 function _dowProfit(odds,win){ if(!win) return -1; var o=parseFloat(odds); if(isNaN(o)) return 0; return o>0? o/100 : 100/Math.abs(o); }
 function _dowMatrix(){ var useSig=(window.__DOW_MX__==='sig'); var m=useSig?(typeof _DOW_SIG!=='undefined'?_DOW_SIG:null):(typeof _DOW_DISP!=='undefined'?_DOW_DISP:null); return m||{}; }
 function _dowUColor(u){ return u>0.0001?'#4ade80':(u<-0.0001?'#f87171':'#94a3b8'); }
 function _dowUFmt(u){ return (u>=0?'+':'')+u.toFixed(1)+'u'; }
+function _dowLedgerCompute(daily){
+  var days={}; for(var i=0;i<7;i++) days[i]={w:0,l:0,cats:{}};
+  (daily||[]).forEach(function(row){
+    var ds=row.date; if(!ds) return;
+    var dow=new Date(ds+'T12:00:00').getDay(); if(isNaN(dow)) return;
+    var D=days[dow],cats=row.cats||{};
+    Object.keys(cats).forEach(function(rawCat){
+      var sides=cats[rawCat]||{};
+      Object.keys(sides).forEach(function(rawSide){
+        var side=String(rawSide||'').toUpperCase(),cat=_dowBaseCat(rawCat,side);
+        var wl=sides[rawSide]||[],w=parseInt(wl[0],10)||0,l=parseInt(wl[1],10)||0;
+        if(!cat||(!w&&!l)) return;
+        D.w+=w; D.l+=l;
+        var key=cat+'|'+side,C=D.cats[key]||(D.cats[key]={w:0,l:0});
+        C.w+=w; C.l+=l;
+      });
+    });
+  });
+  return {days:days};
+}
 function _dowCompute(detail){
   var days={},dayMx={},agree={w:0,l:0},against={w:0,l:0},mx=_dowMatrix();
   for(var i=0;i<7;i++){ days[i]={w:0,l:0,u:0,cats:{}}; dayMx[i]={aw:0,al:0,gw:0,gl:0}; }
@@ -12271,9 +12300,10 @@ function _dowCompute(detail){
 }
 function renderDowReport(tr){
   var allDetail=(tr&&tr.detail)||[];
-  var sel=_dowWinSelector(allDetail);
-  var c=_dowCompute(_dowFilterDetail(allDetail)), order=[1,2,3,4,5,6,0], today=new Date().getDay();
-  var totN=0; order.forEach(function(d){ totN+=c.days[d].w+c.days[d].l; });
+  var allDaily=(tr&&tr.daily)||[];
+  var sel=_dowWinSelector(allDaily);
+  var c=_dowCompute(_dowFilterDetail(allDetail)), ledgerC=_dowLedgerCompute(_dowFilterDaily((tr&&tr.daily)||[])), order=[1,2,3,4,5,6,0], today=new Date().getDay();
+  var totN=0; order.forEach(function(d){ totN+=ledgerC.days[d].w+ledgerC.days[d].l; });
   if(!totN){ document.getElementById('dow-body').innerHTML=sel+'<p style="color:#94a3b8;padding:16px">No graded picks in this window yet \u2014 try All-time or a different month.</p>'; return; }
   var best=null,worst=null;
   order.forEach(function(d){ var D=c.days[d],n=D.w+D.l; if(n<5) return; var p=D.w/n*100;
@@ -12327,9 +12357,9 @@ function renderDowReport(tr){
     +'<th style="text-align:left;padding:7px 8px;color:#94a3b8;font-size:.64rem">DAY</th><th style="padding:7px 6px;color:#94a3b8;font-size:.64rem">FOLLOWED</th>'
     +'<th style="padding:7px 6px;color:#94a3b8;font-size:.64rem">AGAINST</th><th style="padding:7px 6px;color:#94a3b8;font-size:.64rem">EDGE (pts)</th></tr></thead><tbody>'+(mxRows||'<tr><td colspan="4" style="padding:12px;color:#64748b">No matrix-eligible picks graded yet.</td></tr>')+'</tbody></table></div>';
   var secC='<div style="margin-top:22px;font-weight:800;color:#22d3ee;font-size:.82rem;margin-bottom:8px">Categories by day (70%+)</div>'
-    +'<div style="font-size:.72rem;color:#64748b;margin:-2px 0 10px">All stored history · ranked by win rate · no minimum sample size</div>';
+    +'<div style="font-size:.72rem;color:#64748b;margin:-2px 0 10px">Official all-time ledger totals · overflow merged into the base category · ranked by win rate</div>';
   secC+=order.map(function(d){
-    var D=c.days[d],arr=[];
+    var D=ledgerC.days[d],arr=[];
     Object.keys(D.cats).forEach(function(k){ var C=D.cats[k],nn=C.w+C.l; if(!nn) return; arr.push({k:k,w:C.w,l:C.l,p:C.w/nn*100}); });
     arr.sort(function(a,b){ return b.p-a.p || (b.w+b.l)-(a.w+a.l) || _dowCatLabel(a.k).localeCompare(_dowCatLabel(b.k)); });
     if(!arr.length) return '<section style="background:#0b1220;border:1px solid #1e293b;border-radius:10px;padding:10px 12px;margin-bottom:8px"><div style="font-weight:800;color:#cbd5e1">'+_DOW_NAMES[d]+'</div><div style="font-size:.75rem;color:#64748b;margin-top:4px">No graded picks yet</div></section>';
@@ -12363,6 +12393,10 @@ function _dowWinRange(win){
 function _dowFilterDetail(detail){
   var r=_dowWinRange(window.__DOW_WIN__||'all'); if(!r) return detail||[];
   return (detail||[]).filter(function(row){ if(!row.date) return false; var d=new Date(String(row.date)+'T12:00:00'); if(isNaN(d.getTime())) return false; return d>=r.s && d<r.e; });
+}
+function _dowFilterDaily(daily){
+  var r=_dowWinRange(window.__DOW_WIN__||'all'); if(!r) return daily||[];
+  return (daily||[]).filter(function(row){ if(!row.date) return false; var d=new Date(String(row.date)+'T12:00:00'); if(isNaN(d.getTime())) return false; return d>=r.s && d<r.e; });
 }
 function _dowWinSelector(detail){
   var win=window.__DOW_WIN__||'all';
@@ -12398,12 +12432,12 @@ async function openDowReport(){
 }
 function downloadDowCSV(){
   var tr=window.__DOWTR__; if(!tr){ alert('Open the Day-of-Week report first.'); return; }
-  var c=_dowCompute(_dowFilterDetail(tr.detail||[])), order=[1,2,3,4,5,6,0];
-  var rows=[['Day','Category','Picks','Wins','Losses','Win%','NetUnits1u']];
+  var c=_dowLedgerCompute(_dowFilterDaily(tr.daily||[])), order=[1,2,3,4,5,6,0];
+  var rows=[['Day','Category','Picks','Wins','Losses','Win%']];
   order.forEach(function(d){
     var D=c.days[d];
-    Object.keys(D.cats).forEach(function(k){ var C=D.cats[k],n=C.w+C.l; rows.push([_DOW_NAMES[d],_dowCatLabel(k),n,C.w,C.l,(n?(C.w/n*100).toFixed(1):'0'),C.u.toFixed(2)]); });
-    var dn=D.w+D.l; rows.push([_DOW_NAMES[d],'ALL',dn,D.w,D.l,(dn?(D.w/dn*100).toFixed(1):'0'),D.u.toFixed(2)]);
+    Object.keys(D.cats).sort(function(a,b){ var A=D.cats[a],B=D.cats[b],ap=A.w/(A.w+A.l),bp=B.w/(B.w+B.l); return bp-ap||(B.w+B.l)-(A.w+A.l); }).forEach(function(k){ var C=D.cats[k],n=C.w+C.l; rows.push([_DOW_NAMES[d],_dowCatLabel(k),n,C.w,C.l,(n?(C.w/n*100).toFixed(1):'0')]); });
+    var dn=D.w+D.l; rows.push([_DOW_NAMES[d],'ALL',dn,D.w,D.l,(dn?(D.w/dn*100).toFixed(1):'0')]);
   });
   var csv=rows.map(function(row){ return row.map(_csvCell).join(','); }).join(String.fromCharCode(13)+String.fromCharCode(10));
   var blob=new Blob([String.fromCharCode(65279)+csv],{type:'text/csv;charset=utf-8;'});
