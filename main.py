@@ -2751,9 +2751,11 @@ _TRACK_START = "2026-06-15"
 
 
 @app.get("/api/track-record")
-async def track_record(request: Request, token: str = "", admin: str = ""):
+async def track_record(request: Request, token: str = "", admin: str = "", history: str = ""):
     """Admin-only. All-time + daily W/L record per category (Over vs Under) from the
-    permanent ledger. Grades any past cached day not yet locked, then aggregates."""
+    permanent ledger. Grades any past cached day not yet locked, then aggregates.
+    The By Day report passes history=all to read the complete stored history without
+    changing the normal running-record cutoff used by the other panels."""
     tok = token or request.headers.get("Authorization", "").replace("Bearer ", "").strip()
     is_admin = _is_admin_token(tok) or _is_tester_token(tok) or (
         bool(admin) and admin == os.environ.get("INTERNAL_API_TOKEN", "__none__")
@@ -2761,13 +2763,14 @@ async def track_record(request: Request, token: str = "", admin: str = ""):
     if not is_admin:
         raise HTTPException(status_code=403, detail="Admin only")
 
+    full_history = str(history).lower() in ("all", "full", "true", "1")
     led = _update_track_ledger()
     det = _load_detail()
 
     alltime: dict = {}   # {category: {side: [W, L]}}
     daily = []
     for ds in sorted(led.keys()):
-        if ds < _TRACK_START:
+        if ds < _TRACK_START and not full_history:
             continue   # pre-start dates kept in the ledger but off the running record
         day_w = day_l = 0
         for cat, sides in (led[ds] or {}).items():
@@ -2790,7 +2793,7 @@ async def track_record(request: Request, token: str = "", admin: str = ""):
 
     detail = []
     for ds in sorted(det.keys()):
-        if ds < _TRACK_START:
+        if ds < _TRACK_START and not full_history:
             continue   # old detail rows stay saved, just hidden from the record
         for r in (det[ds] or []):
             row = dict(r)
@@ -12323,16 +12326,24 @@ function renderDowReport(tr){
     +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:.76rem;min-width:480px"><thead><tr style="border-bottom:2px solid #1e293b">'
     +'<th style="text-align:left;padding:7px 8px;color:#94a3b8;font-size:.64rem">DAY</th><th style="padding:7px 6px;color:#94a3b8;font-size:.64rem">FOLLOWED</th>'
     +'<th style="padding:7px 6px;color:#94a3b8;font-size:.64rem">AGAINST</th><th style="padding:7px 6px;color:#94a3b8;font-size:.64rem">EDGE (pts)</th></tr></thead><tbody>'+(mxRows||'<tr><td colspan="4" style="padding:12px;color:#64748b">No matrix-eligible picks graded yet.</td></tr>')+'</tbody></table></div>';
-  var secC='<div style="margin-top:22px;font-weight:800;color:#22d3ee;font-size:.82rem;margin-bottom:8px">Top categories by day (70%+, all sample sizes)</div>';
+  var secC='<div style="margin-top:22px;font-weight:800;color:#22d3ee;font-size:.82rem;margin-bottom:8px">Categories by day (70%+)</div>'
+    +'<div style="font-size:.72rem;color:#64748b;margin:-2px 0 10px">All stored history · ranked by win rate · no minimum sample size</div>';
   secC+=order.map(function(d){
     var D=c.days[d],arr=[];
     Object.keys(D.cats).forEach(function(k){ var C=D.cats[k],nn=C.w+C.l; if(!nn) return; arr.push({k:k,w:C.w,l:C.l,p:C.w/nn*100}); });
-    arr.sort(function(a,b){ return b.p-a.p; });
-    if(!arr.length) return '<div style="padding:6px 8px;border-bottom:1px solid #141414;font-size:.78rem"><b style="color:#cbd5e1">'+_DOW_NAMES[d]+'</b> <span style="color:#64748b">\u2014 not enough graded picks yet</span></div>';
+    arr.sort(function(a,b){ return b.p-a.p || (b.w+b.l)-(a.w+a.l) || _dowCatLabel(a.k).localeCompare(_dowCatLabel(b.k)); });
+    if(!arr.length) return '<section style="background:#0b1220;border:1px solid #1e293b;border-radius:10px;padding:10px 12px;margin-bottom:8px"><div style="font-weight:800;color:#cbd5e1">'+_DOW_NAMES[d]+'</div><div style="font-size:.75rem;color:#64748b;margin-top:4px">No graded picks yet</div></section>';
     var hit=arr.filter(function(x){ return x.p>=70; });
-    if(!hit.length) return '<div style="padding:6px 8px;border-bottom:1px solid #141414;font-size:.78rem"><b style="color:#cbd5e1">'+_DOW_NAMES[d]+'</b> <span style="color:#64748b">\u2014 no category at 70%+ yet</span></div>';
-    var top=hit.map(function(x){ return '<span style="color:'+_twColor(x.w,x.l)+'">'+_dowCatLabel(x.k)+' '+x.w+'-'+x.l+' ('+x.p.toFixed(0)+'%)</span>'; }).join('  \u00b7  ');
-    return '<div style="padding:6px 8px;border-bottom:1px solid #141414;font-size:.78rem"><b style="color:#a5f3fc">'+_DOW_NAMES[d]+'</b> &mdash; '+top+'</div>';
+    if(!hit.length) return '<section style="background:#0b1220;border:1px solid #1e293b;border-radius:10px;padding:10px 12px;margin-bottom:8px"><div style="font-weight:800;color:#cbd5e1">'+_DOW_NAMES[d]+'</div><div style="font-size:.75rem;color:#64748b;margin-top:4px">No category at 70%+ yet</div></section>';
+    var bullets=hit.map(function(x){
+      var n=x.w+x.l, col=_twColor(x.w,x.l);
+      return '<li style="padding:7px 0 7px 2px;border-bottom:1px solid #1e293b;display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap">'
+        +'<span style="color:#e2e8f0;font-weight:700"><span style="color:#22d3ee;margin-right:7px">&bull;</span>'+_dowCatLabel(x.k)+'</span>'
+        +'<span style="color:'+col+';font-weight:800;white-space:nowrap">'+x.w+'-'+x.l+' <span style="color:#94a3b8;font-weight:600">('+n+' picks)</span> · '+x.p.toFixed(0)+'%</span></li>';
+    }).join('');
+    return '<section style="background:#0b1220;border:1px solid #1e293b;border-radius:10px;padding:10px 12px;margin-bottom:8px">'
+      +'<div style="font-weight:800;color:#a5f3fc;font-size:.82rem;margin-bottom:2px">'+_DOW_NAMES[d]+'</div>'
+      +'<ul style="list-style:none;margin:0;padding:0">'+bullets+'</ul></section>';
   }).join('');
   document.getElementById('dow-body').innerHTML=sel+head+secA+secB+secC;
 }
@@ -12372,7 +12383,8 @@ async function openDowReport(){
   show('dow-card'); document.getElementById('dow-card').scrollIntoView({behavior:'smooth',block:'start'});
   document.getElementById('dow-spinner').classList.remove('hidden'); document.getElementById('dow-body').innerHTML='';
   try{
-    var res=await fetch('/api/track-record'+_betAuthQS());
+    var auth=_betAuthQS(), sep=auth?'&':'?';
+    var res=await fetch('/api/track-record'+auth+sep+'history=all');
     if(!res.ok){ throw new Error(await res.text()); }
     window.__DOWTR__=await res.json();
     if(!window.__DOW_MX__) window.__DOW_MX__='disp';
@@ -12460,7 +12472,7 @@ function downloadMyBetsCSV(){
 <div id="dow-card" class="hidden space-y-6" style="max-width:960px;margin:0 auto 24px;padding:0 16px">
   <div class="card p-6">
     <div class="section-hdr" style="color:#22d3ee;margin-bottom:8px">📅 Day-of-Week Report</div>
-    <div style="font-size:.78rem;color:#94a3b8;margin:0 0 14px">How every graded pick has performed by day of the week &mdash; and whether following the matrix lean would have helped. Reads banked results only; does not change any picks. Builds from deploy forward.</div>
+    <div style="font-size:.78rem;color:#94a3b8;margin:0 0 14px">How every graded pick has performed by day of the week &mdash; and whether following the matrix lean would have helped. Reads the complete stored history; does not change any picks.</div>
     <div id="dow-spinner" class="hidden" style="color:#94a3b8;font-size:.9rem;margin-bottom:12px;display:flex;align-items:center;gap:8px"><span class="spinner"></span> Crunching day-of-week history&hellip;</div>
     <div id="dow-body"></div>
     <div style="margin-top:18px;padding-top:14px;border-top:1px solid #1e293b;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
