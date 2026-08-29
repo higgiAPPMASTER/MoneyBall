@@ -7385,6 +7385,13 @@ function _mlbCard(p, rank, dim, pfx) {
   const s5Lbl = p.dn_label||(p.s5?'D/N':'');
   const s5Val = p.s5?.display||'—';
   const s5Suffix = (p.s5 && s5Val!=='—') ? ` &#183; ${s5Lbl} BA ${s5Val}` : '';
+  const careerVp = (p.s1_career&&p.s1_career.ab>0&&p.s1_career.display)
+    ? 'Career '+p.s1_career.display
+    : ((p.vs_pit&&p.vs_pit.ab>0&&p.vs_pit.display)?'Career '+p.vs_pit.display:'');
+  const venueVp = (p.s1_ab>0&&p.s1_disp)
+    ? ((p.s1_tag?p.s1_tag+' ':'')+p.s1_disp+' vs pitcher')
+    : '';
+  const hotVp = venueVp&&careerVp ? venueVp+' · '+careerVp : (venueVp||careerVp||'No prior history vs pitcher');
   pfx = pfx || 'h';
   window.__HIT_REG__=window.__HIT_REG__||{}; window.__HIT_REG__[pfx+rank]=p;
   return `<div class="mlb-pick-card" onclick="_hitForm('${pfx}${rank}')" title="Click for recent form" style="cursor:pointer;${dim?'opacity:0.85':''}">
@@ -7406,10 +7413,7 @@ function _mlbCard(p, rank, dim, pfx) {
       ${(p.h2h_disp||p.l10_disp||p.rate_disp)?_rateRows(p,'#86efac'):''}
       ${p.conv_flag?'<div style="font-size:.67rem;color:#4ade80;font-weight:600;margin-top:2px">&#10003; Converged &middot; L10 '+(p.recent_l10||'N/A')+' L5 '+(p.recent_l5||'N/A')+'</div>':(p.cold_flag?'<div style="font-size:.67rem;color:#fb923c;font-weight:600;margin-top:2px">&#9888; Recent diverges &middot; L5 '+(p.recent_l5||'N/A')+'</div>':((p.recent_l10||p.recent_l5)?'<div style="font-size:.67rem;color:#64748b;margin-top:2px">L10 '+(p.recent_l10||'N/A')+' &middot; L5 '+(p.recent_l5||'N/A')+'</div>':''))}
       ${p.hot_disp?'<div style="font-size:.67rem;color:#fbbf24;font-weight:700;margin-top:2px">&#128293; Hot hand &middot; '+p.hot_disp+' (+'+p.hot_bonus+')</div>':''}
-      ${p.over_sourced?'<div style="font-size:.62rem;color:#a78bfa;font-weight:600;margin-top:2px">+ Hot-hitter add ('+(
-        (p.vs_pit&&(p.vs_pit.ab||0)>0)?((p.vs_pit.display||'')+' vs pitcher, below gate')
-        :((p.s1_ab||0)>0&&p.s1_disp)?(p.s1_disp+(p.s1_tag?' '+p.s1_tag.toLowerCase():'')+' vs pitcher, below gate')
-        :'no career vs pitcher')+')</div>':''}
+       ${p.over_sourced?'<div style="font-size:.62rem;color:#a78bfa;font-weight:600;margin-top:2px">+ Hot-hitter add ('+hotVp+', below gate)</div>':''}
       ${p.facing_top_era?`<div style="margin-top:6px;font-size:.7rem;color:#fbbf24;background:rgba(245,158,11,.10);border:1px solid rgba(245,158,11,.35);border-radius:6px;padding:3px 7px">⚾ vs top-30 ERA: ${p.facing_top_era}${p.top_era_val!=null?' · '+(+p.top_era_val).toFixed(2)+' ERA':''}</div>`:''}
       ${(p.blurb||s5Suffix) ? `<div style="margin-top:5px;font-size:.72rem;color:#94a3b8;line-height:1.5;font-style:italic">${p.blurb||''}${s5Suffix}</div>` : ''}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
