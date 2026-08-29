@@ -3853,6 +3853,16 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     except Exception as _exc:
         emit({"type": "log", "msg": f"⚠️ Venue-split vs-pitcher stamp skipped: {_exc}"})
 
+    # The hit-list blurb is first built before the central pitcher-history stamp.
+    # Rebuild hot-hitter additions now so a later popup matchup line cannot
+    # disagree with a stale "no career" phrase on the card face.
+    try:
+        for _hp in list(top9) + list(also_ran):
+            if _hp.get("over_sourced"):
+                _hp["blurb"] = _build_blurb(_hp)
+    except Exception as _exc:
+        emit({"type": "log", "msg": f"⚠️ Hot-hitter matchup blurb refresh skipped: {_exc}"})
+
     # ── TSC / Hot Hitters popup backfill ─────────────────────────────────
     # Triple Split + Hot Hitters entries are COPIES of picks from ten source
     # lists; members sourced from non-hit boards (runs/RBI/TB/HRR/etc.) miss
