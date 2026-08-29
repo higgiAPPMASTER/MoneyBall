@@ -3799,7 +3799,8 @@ def run_pipeline(run_date: str, emit=None) -> dict:
             vp = _vsp_fn(bid, pid)
             if vp:
                 pick["vs_pit"] = {"display": vp.get("display", "N/A"),
-                                  "ab": vp.get("ab", 0), "hr": vp.get("hr", 0)}
+                                  "ab": vp.get("ab", 0), "hr": vp.get("hr", 0),
+                                  "bb": vp.get("bb", 0), "pa": vp.get("pa", 0)}
 
         _vp_n = 0
         for _hp in list(top9) + list(also_ran):
@@ -3901,7 +3902,9 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                         if _vp:
                             _ts["vs_pit"] = {"display": _vp.get("display", "N/A"),
                                              "ab": _vp.get("ab", 0),
-                                             "hr": _vp.get("hr", 0)}
+                                              "hr": _vp.get("hr", 0),
+                                              "bb": _vp.get("bb", 0),
+                                              "pa": _vp.get("pa", 0)}
                 for _k in ("s1", "s1_ab", "s1_disp", "s1_tag", "s1_career"):
                     if _ts.get(_k) in (None, ""):
                         _ts[_k] = _orig.get(_k)
