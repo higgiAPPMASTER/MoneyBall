@@ -4459,6 +4459,51 @@ function _gptSplitsHtml(A){
     +'<div style="margin:10px 0 12px"><div style="font-size:.62rem;color:#38bdf8;font-weight:800;letter-spacing:.05em;margin-bottom:6px">O/U SPLITS</div>'
     +'<div style="display:flex;gap:10px;flex-wrap:wrap">'+_gpTile('OVER CALLS',_wl(A.overC[0],A.overC[1]),_pct(A.overC[0],A.overC[1]),A.overC[3]?Math.round(A.overC[2]*100)/100:null)+_gpTile('UNDER CALLS',_wl(A.underC[0],A.underC[1]),_pct(A.underC[0],A.underC[1]),A.underC[3]?Math.round(A.underC[2]*100)/100:null)+'</div></div>';
 }
+function _gptWeekdayData(stake){
+  var names=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  var buckets=[];
+  for(var i=0;i<7;i++) buckets.push({name:names[i],games:[],slates:0});
+  ((__GP_REC__&&__GP_REC__.daily)||[]).forEach(function(day){
+    var dt=new Date(String(day.date||'')+'T12:00:00'), dow=dt.getDay();
+    if(isNaN(dow)||!(day.games||[]).length) return;
+    buckets[dow].slates++;
+    buckets[dow].games=buckets[dow].games.concat(day.games||[]);
+  });
+  buckets.forEach(function(b){ b.A=_gptAgg(b.games,stake); });
+  return buckets;
+}
+function _gptWeekdayNet(A){
+  return (A.tHas?A.tEarn:0)+(A.oHas?A.oEarn:0);
+}
+function _gptRenderWeekday(be,stake){
+  var rows=_gptWeekdayData(stake), active=rows.filter(function(r){return r.games.length;});
+  var hdr='<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;background:#071f17;border:1px solid #065f46;border-radius:12px;padding:12px 16px;margin-bottom:12px">'
+    +'<div style="font-weight:800;color:#6ee7b7">By Day of Week</div>'
+    +'<span style="color:#94a3b8;font-size:.78rem;margin-left:auto">'+active.length+' active weekday'+(active.length===1?'':'s')+'</span>'
+    +'<button onclick="downloadGptWeekdayCSV()" style="background:#16a34a;color:#fff;border:none;border-radius:6px;padding:5px 11px;font-size:.78rem;font-weight:700;cursor:pointer">⬇ CSV</button></div>';
+  if(!active.length){
+    be.innerHTML=hdr+'<p style="color:#94a3b8;padding:12px">No graded Game Predictor days yet.</p>';
+    return;
+  }
+  var ranked=active.slice().sort(function(a,b){return _gptWeekdayNet(b.A)-_gptWeekdayNet(a.A);});
+  var best=ranked[0], worst=ranked[ranked.length-1];
+  var callout='<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">'
+    +'<div style="flex:1;min-width:220px;background:#052e24;border:1px solid #047857;border-radius:10px;padding:10px 12px"><div style="font-size:.6rem;color:#6ee7b7;font-weight:800;letter-spacing:.06em">BEST COMBINED NET</div><div style="font-weight:900;color:#d1fae5;margin-top:3px">'+best.name+' '+_gpFmtEarn(_gptWeekdayNet(best.A))+'</div><div style="font-size:.7rem;color:#94a3b8;margin-top:2px">Team '+_pct(best.A.tw,best.A.tl)+' · O/U '+_pct(best.A.ow,best.A.ol)+' · '+best.slates+' slate'+(best.slates===1?'':'s')+'</div></div>'
+    +'<div style="flex:1;min-width:220px;background:#3b1118;border:1px solid #991b1b;border-radius:10px;padding:10px 12px"><div style="font-size:.6rem;color:#fca5a5;font-weight:800;letter-spacing:.06em">WORST COMBINED NET</div><div style="font-weight:900;color:#fee2e2;margin-top:3px">'+worst.name+' '+_gpFmtEarn(_gptWeekdayNet(worst.A))+'</div><div style="font-size:.7rem;color:#94a3b8;margin-top:2px">Team '+_pct(worst.A.tw,worst.A.tl)+' · O/U '+_pct(worst.A.ow,worst.A.ol)+' · '+worst.slates+' slate'+(worst.slates===1?'':'s')+'</div></div></div>';
+  var table='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:.75rem;min-width:760px"><thead><tr style="color:#64748b;font-size:.6rem;letter-spacing:.05em;text-transform:uppercase;border-bottom:1px solid #1e293b">'
+    +'<th style="text-align:left;padding:8px">Day</th><th>Slates</th><th>Team W-L-P</th><th>Team %</th><th>Team P/L</th><th>O/U W-L-P</th><th>O/U %</th><th>O/U P/L</th><th>Combined</th></tr></thead><tbody>';
+  rows.forEach(function(r,i){
+    var A=r.A, has=r.games.length>0, net=_gptWeekdayNet(A);
+    table+='<tr style="border-bottom:1px solid #111827;background:'+(i%2?'#070e1b':'#0a1120')+';color:'+(has?'#e2e8f0':'#475569')+'">'
+      +'<td style="padding:9px 8px;font-weight:800;text-align:left">'+r.name+'</td><td style="text-align:center">'+r.slates+'</td>'
+      +'<td style="text-align:center">'+_wl(A.tw,A.tl)+(A.tp?' <span style="color:#64748b">'+A.tp+'P</span>':'')+'</td><td style="text-align:center">'+_pct(A.tw,A.tl)+'</td>'
+      +'<td style="text-align:center">'+(A.tHas?_gpFmtEarn(A.tEarn):'—')+'</td>'
+      +'<td style="text-align:center">'+_wl(A.ow,A.ol)+(A.op?' <span style="color:#64748b">'+A.op+'P</span>':'')+'</td><td style="text-align:center">'+_pct(A.ow,A.ol)+'</td>'
+      +'<td style="text-align:center">'+(A.oHas?_gpFmtEarn(A.oEarn):'—')+'</td><td style="text-align:center;font-weight:900">'+(has?_gpFmtEarn(net):'—')+'</td></tr>';
+  });
+  table+='</tbody></table></div><p style="color:#64748b;font-size:.7rem;margin:10px 0 0">Combined net adds the team-winner and run-total results at the bet amount above. Use the number of slates and graded calls before treating a weekday as a betting signal.</p>';
+  be.innerHTML=hdr+callout+table;
+}
 function _gptDayRowsHtml(days,stake){
   var k=stake/100, rows='';
   for(var i=days.length-1;i>=0;i--){
@@ -4550,7 +4595,7 @@ function _gptRenderRange(be,stake,which){
   var dayHdr='<div style="font-size:.62rem;color:#a78bfa;font-weight:800;letter-spacing:.05em;margin:4px 0 6px;border-top:1px solid #111c2e;padding-top:10px">DAILY RESULTS &mdash; tap any day for every game</div>';
   be.innerHTML=hdrBar+_gptSummaryTiles(A)+_gptSplitsHtml(A)+dayHdr+_gptDayRowsHtml(days,stake);
 }
-function _gptRenderActive(){ var be=document.getElementById('gptrk-body'); if(!be) return; var stake=_gptStake(); var t=window.__GPT_TAB__||'daily'; if(t==='daily') _gptRenderDaily(be,stake); else _gptRenderRange(be,stake,t); }
+function _gptRenderActive(){ var be=document.getElementById('gptrk-body'); if(!be) return; var stake=_gptStake(); var t=window.__GPT_TAB__||'daily'; if(t==='daily') _gptRenderDaily(be,stake); else if(t==='weekday') _gptRenderWeekday(be,stake); else _gptRenderRange(be,stake,t); }
 function renderGPTracker(){
   if(!window.__GPT_TAB__) window.__GPT_TAB__='daily';
   if(!window.__GPT_MONTH__) window.__GPT_MONTH__=_trkTodayISO().slice(0,7);
@@ -4560,7 +4605,7 @@ function renderGPTracker(){
     +'<input id="gptBet" type="number" min="1" step="1" value="'+bet+'" oninput="_gptBetInput()" style="width:104px;background:#020617;border:1px solid #334155;color:#fff;border-radius:8px;padding:8px 12px;font-size:1.05rem;font-weight:800;text-align:center">'
     +'<span style="color:#94a3b8;font-size:.8rem">flat on every GP call (team pick + run total each)</span>'
     +'</div>';
-  var tabs='<div style="display:flex;gap:8px;margin-bottom:4px;flex-wrap:wrap">'+_gptTabBtn('daily','Daily')+_gptTabBtn('weekly','Weekly')+_gptTabBtn('monthly','Monthly')+_gptTabBtn('alltime','All Time')+'</div>';
+  var tabs='<div style="display:flex;gap:8px;margin-bottom:4px;flex-wrap:wrap">'+_gptTabBtn('daily','Daily')+_gptTabBtn('weekly','Weekly')+_gptTabBtn('monthly','Monthly')+_gptTabBtn('alltime','All Time')+_gptTabBtn('weekday','By Weekday')+'</div>';
   var he=document.getElementById('gptrk-head'); if(he) he.innerHTML=hdr+tabs;
   var be=document.getElementById('gptrk-body'); if(be) be.innerHTML='';
   _gptRenderActive();
@@ -4629,6 +4674,19 @@ function downloadGptRangeCSV(which){
   out.push([]);
   out.push(['TOTALS','',tw,tl,tn.toFixed(2),ow,ol,on.toFixed(2)]);
   _trkDownloadCSV(out,'mlb-gp-'+tag+'-flat'+stake+'.csv');
+}
+function downloadGptWeekdayCSV(){
+  var stake=_gptStake(), rows=_gptWeekdayData(stake);
+  var out=[['Weekday','Graded Slates','Team W','Team L','Team P','Team Win %','Team P/L','O/U W','O/U L','O/U P','O/U Win %','O/U P/L','Combined P/L']];
+  rows.forEach(function(r){
+    var A=r.A;
+    if(!r.games.length) return;
+    out.push([r.name,r.slates,A.tw,A.tl,A.tp,_pct(A.tw,A.tl),
+      A.tHas?A.tEarn.toFixed(2):'',A.ow,A.ol,A.op,_pct(A.ow,A.ol),
+      A.oHas?A.oEarn.toFixed(2):'',_gptWeekdayNet(A).toFixed(2)]);
+  });
+  if(out.length===1){ alert('No graded Game Predictor days yet.'); return; }
+  _trkDownloadCSV(out,'mlb-gp-by-weekday-flat'+stake+'.csv');
 }
 function _openGamePred(i){
   var g=(window.__GAME_PRED__||[])[i]; if(!g) return;
