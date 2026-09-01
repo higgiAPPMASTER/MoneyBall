@@ -5314,10 +5314,16 @@ function _vsPitBlock(p){
     // Statcast venue-split — matches the card face display exactly
     lbl=(p.s1_tag||'Career')+' vs';
     inner='<span style="font-family:monospace;font-weight:800;color:#e2e8f0">'+_esc(p.s1_disp||'')+'</span>';
-    // Show combined MLB Stats API career as a secondary footnote when available
-    if(vp&&(vp.ab||0)>0){
-      var hr=vp.hr||0;
-      inner+='<span style="color:#64748b;font-size:.76rem;margin-left:10px">'+_esc(vp.display||'')+' career'+(hr?(' \u00b7 '+hr+' HR'):'')+'</span>';
+    // Keep BA/AB/HR on one source. Statcast supplies the venue row and its
+    // combined career total; mixing an MLB-API HR into this line can render
+    // impossible records such as .000 (10 AB) with 1 HR.
+    var sc=p.s1_career;
+    if(sc&&(sc.ab||0)>0){
+      var hr=sc.hr||0;
+      inner+='<span style="color:#64748b;font-size:.76rem;margin-left:10px">'+_esc(sc.display||'')+' career'+(hr?(' \u00b7 '+hr+' HR'):'')+'</span>';
+    } else if(vp&&(vp.ab||0)>0){
+      var vhr=vp.hr||0;
+      inner+='<span style="color:#64748b;font-size:.76rem;margin-left:10px">'+_esc(vp.display||'')+' career'+(vhr?(' \u00b7 '+vhr+' HR'):'')+'</span>';
     }
   } else if(vp){
     lbl='Career vs';
@@ -5357,7 +5363,7 @@ function _vsPitLine(p){
       +'<span style="font-family:monospace;font-weight:800;color:#e2e8f0;font-size:1rem">'+_esc(p.s1_disp||'')+'</span></div>';
   }
   if(career){
-    var hr=(vp&&vp.hr)||0;  // HR still comes from MLB Stats API (Statcast CSV doesn't track it)
+    var hr=career.hr||0;
     rows+='<div style="display:flex;align-items:baseline;gap:8px'+(hasS1?';margin-top:3px':'')+'">'
       +'<span style="font-size:.6rem;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.05em;min-width:62px">Career</span>'
       +'<span style="font-family:monospace;font-weight:800;color:'+(hasS1?'#94a3b8':'#e2e8f0')+';font-size:'+(hasS1?'.88rem':'1rem')+'">'+_esc(career.display||'')+'</span>'
