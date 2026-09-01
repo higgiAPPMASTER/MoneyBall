@@ -541,7 +541,7 @@ def _get_s1_vs_pitcher_ha(batter_id, pitcher_id) -> dict:
         HIT   = {"single", "double", "triple", "home_run"}
         NONAB = {"walk", "intent_walk", "hit_by_pitch", "sac_fly", "sac_bunt",
                  "catcher_interf", "sac_fly_double_play", "sac_bunt_double_play"}
-        agg = {"home": [0, 0], "away": [0, 0]}  # side -> [ab, hits]
+        agg = {"home": [0, 0, 0], "away": [0, 0, 0]}  # side -> [ab, hits, HR]
         for row in csv.DictReader(io.StringIO(r.text.lstrip("\ufeff"))):
             ev = (row.get("events") or "").strip()
             if not ev:
@@ -551,9 +551,11 @@ def _get_s1_vs_pitcher_ha(batter_id, pitcher_id) -> dict:
                 agg[sd][0] += 1
             if ev in HIT:
                 agg[sd][1] += 1
-        for sd, (ab, h) in agg.items():
+            if ev == "home_run":
+                agg[sd][2] += 1
+        for sd, (ab, h, hr) in agg.items():
             if ab > 0:
-                res[sd] = {"ba": h / ab, "ab": ab, "h": h}
+                res[sd] = {"ba": h / ab, "ab": ab, "h": h, "hr": hr}
     except Exception:
         res = {"home": {}, "away": {}}
     _S1_HA_CACHE[_ck] = res
@@ -576,10 +578,11 @@ def _s1_ha_fields(batter_id, pitcher_id, side, fallback) -> dict:
     a_d = ha_data.get("away") or {}
     tot_ab = (h_d.get("ab") or 0) + (a_d.get("ab") or 0)
     tot_h  = (h_d.get("h")  or 0) + (a_d.get("h")  or 0)
+    tot_hr = (h_d.get("hr") or 0) + (a_d.get("hr") or 0)
     s1_career = None
     if tot_ab > 0:
         tot_ba = tot_h / tot_ab
-        s1_career = {"ab": tot_ab, "ba": tot_ba,
+        s1_career = {"ab": tot_ab, "ba": tot_ba, "hr": tot_hr,
                      "display": f".{int(tot_ba * 1000):03d} ({tot_ab}AB)"}
     if d.get("ab"):
         return {"s1_disp": f".{int(d['ba'] * 1000):03d} ({d['ab']}AB)",
