@@ -4441,9 +4441,10 @@ def run_pipeline(run_date: str, emit=None) -> dict:
 
             # ── Cold Batters ──────────────────────────────────────────────────
             # Hitters who are clearly cold: L10 H/A BA ≤ .220 AND hit in ≤40%
-            # of their true last-10 games. The playable Cold Batters market is
-            # Under 1.5 Total Bases, so only retain cold qualifiers with a
-            # matching TB-under candidate.
+            # of their true last-10 games. Cold Batters qualification is
+            # independent of sportsbook-market availability. Under 1.5 Total
+            # Bases is the preferred displayed play when its odds are available,
+            # but missing TB-under odds must not remove a cold qualifier.
             # Shares _tsch_d3, _tsch_l10_overall, _TSCH_CY from above.
             _COLD_MAX_HA  = 0.220   # coldness ceiling at their venue
             _COLD_MAX_L10 = 40      # max true-L10 hit % to qualify
@@ -4470,10 +4471,12 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                 _cl10o_pct, _cl10o_n, _cl10o_hg = _tsch_l10_overall(int(_b))
                 if _cl10o_pct is None or _cl10o_n < 5 or _cl10o_pct > _COLD_MAX_L10:
                     continue
+                # TB Under 1.5 is the preferred play/price, not a qualification
+                # gate. Keep the cold hitter even when this slate has no
+                # matching sportsbook TB-under quote.
                 _ctb = (_tb_under_by_id.get(str(_b))
-                        or _tb_under_by_name.get(_norm_name(_r.get("name", ""))))
-                if not _ctb:
-                    continue
+                        or _tb_under_by_name.get(_norm_name(_r.get("name", "")))
+                        or {})
                 # Season BA from s5 for contrast
                 try:
                     _cs5 = _r.get("s5") or {}
