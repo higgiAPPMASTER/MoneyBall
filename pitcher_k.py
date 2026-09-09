@@ -1527,7 +1527,7 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
             blend_src += (f" → proj {proj_k} [hand×{proj_factors['hand']}"
                           f" whiff×{proj_factors['whiff']} rest×{proj_factors['rest']}]")
 
-        sugg_line, sugg_odds, sugg_book = None, None, None
+        sugg_line, sugg_odds, sugg_book, sugg_prob = None, None, None, None
         if decision_val is None:
             pick, pick_note = None, f"N/A — {starts} starts vs {opp}, no recent data"
         elif abs(decision_val - line) < MIN_K_EDGE:
@@ -1540,24 +1540,31 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
             pick, pick_note = "UNDER", f"proj {decision_val} < line {line} ({blend_src})"
             logs.append(f"    ✅ UNDER proj {decision_val} < {line} ({blend_src})")
         else:
-            # projection exactly on line → try alt line from career k_list floor
-            sugg_line = (min(k_list) - 0.5) if k_list else None
-            k_ladder  = pl.get("over_ladder") or {}
-            _sugg_quote = k_ladder.get(sugg_line) if sugg_line is not None else None
-            if isinstance(_sugg_quote, dict):
-                sugg_odds = _sugg_quote.get("price")
-                sugg_book = _book_label(_sugg_quote.get("book"))
-            else:
-                # Backward compatibility for an in-process cache created before
-                # ladder quotes began carrying their exact bookmaker.
-                sugg_odds = _sugg_quote
-            if sugg_line is not None and sugg_line < line:
-                pick = "OVER"
-                pick_note = (f"proj {decision_val} on line {line} → floor OVER {sugg_line} ({blend_src})")
-                logs.append(f"    ✅ OVER {sugg_line} (alt) proj on line")
-            else:
-                pick, pick_note = None, f"proj {decision_val} exactly on line"
-                sugg_line, sugg_odds, sugg_book = None, None, None
+            pick, pick_note = None, f"proj {decision_val} exactly on line"
+
+        # Independent Coach-only genuine alternate. Evaluate every published
+        # Over ladder line against recent-start frequency at that exact line.
+        # This never changes the standard board's chosen side or line.
+        k_ladder = pl.get("over_ladder") or {}
+        _alt_ranked = []
+        for _alt_line, _quote in k_ladder.items():
+            if not isinstance(_quote, dict) or not k_list:
+                continue
+            _price, _book = _quote.get("price"), _quote.get("book")
+            if _price is None or not _book:
+                continue
+            try:
+                _al, _ao = float(_alt_line), int(float(_price))
+            except (TypeError, ValueError):
+                continue
+            _ap = sum(1 for k in k_list if k > _al) / len(k_list) * 100.0
+            _imp = (-_ao / (-_ao + 100) * 100.0
+                    if _ao < 0 else 100.0 / (_ao + 100) * 100.0)
+            if _ap > _imp:
+                _alt_ranked.append((_ap - _imp, _ap, _al, _ao, _book))
+        if _alt_ranked:
+            _, sugg_prob, sugg_line, sugg_odds, _sugg_book = max(_alt_ranked)
+            sugg_book = _book_label(_sugg_book)
 
         hits_over = sum(1 for k in k_list if k > line) if k_list else 0
         k_hit_rate = f"{hits_over}/{starts}" if starts else "—"
@@ -1592,6 +1599,7 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                  "k_hit_rate": k_hit_rate,
                  "k_history": ", ".join(str(k) for k in k_list) if k_list else "—",
                  "sugg_line": sugg_line, "sugg_odds": sugg_odds,
+                 "sugg_prob": round(sugg_prob, 1) if sugg_prob is not None else None,
                  "sugg_book": sugg_book,
                  "recent_avg_k": recent_avg_k, "recent_k_list": recent_k_list,
                  "recent_starts": recent_starts, "recent_k_log": rf["recent_k_log"],
