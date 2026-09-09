@@ -274,7 +274,8 @@ def _fetch_k_lines(run_date: str, emit=None) -> list:
                         if not name or pt is None: continue
                         key = _normalize(name)
                         if side == "Over" and price is not None:
-                            ladder.setdefault(key, {}).setdefault(float(pt), price)
+                            ladder.setdefault(key, {}).setdefault(
+                                float(pt), {"price": price, "book": bk})
                         entry = seen.get(key)
                         if entry is None:
                             entry = {"name": name, "line": float(pt),
@@ -1526,7 +1527,7 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
             blend_src += (f" → proj {proj_k} [hand×{proj_factors['hand']}"
                           f" whiff×{proj_factors['whiff']} rest×{proj_factors['rest']}]")
 
-        sugg_line, sugg_odds = None, None
+        sugg_line, sugg_odds, sugg_book = None, None, None
         if decision_val is None:
             pick, pick_note = None, f"N/A — {starts} starts vs {opp}, no recent data"
         elif abs(decision_val - line) < MIN_K_EDGE:
@@ -1542,14 +1543,21 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
             # projection exactly on line → try alt line from career k_list floor
             sugg_line = (min(k_list) - 0.5) if k_list else None
             k_ladder  = pl.get("over_ladder") or {}
-            sugg_odds = k_ladder.get(sugg_line) if sugg_line is not None else None
+            _sugg_quote = k_ladder.get(sugg_line) if sugg_line is not None else None
+            if isinstance(_sugg_quote, dict):
+                sugg_odds = _sugg_quote.get("price")
+                sugg_book = _book_label(_sugg_quote.get("book"))
+            else:
+                # Backward compatibility for an in-process cache created before
+                # ladder quotes began carrying their exact bookmaker.
+                sugg_odds = _sugg_quote
             if sugg_line is not None and sugg_line < line:
                 pick = "OVER"
                 pick_note = (f"proj {decision_val} on line {line} → floor OVER {sugg_line} ({blend_src})")
                 logs.append(f"    ✅ OVER {sugg_line} (alt) proj on line")
             else:
                 pick, pick_note = None, f"proj {decision_val} exactly on line"
-                sugg_line, sugg_odds = None, None
+                sugg_line, sugg_odds, sugg_book = None, None, None
 
         hits_over = sum(1 for k in k_list if k > line) if k_list else 0
         k_hit_rate = f"{hits_over}/{starts}" if starts else "—"
@@ -1584,6 +1592,7 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                  "k_hit_rate": k_hit_rate,
                  "k_history": ", ".join(str(k) for k in k_list) if k_list else "—",
                  "sugg_line": sugg_line, "sugg_odds": sugg_odds,
+                 "sugg_book": sugg_book,
                  "recent_avg_k": recent_avg_k, "recent_k_list": recent_k_list,
                  "recent_starts": recent_starts, "recent_k_log": rf["recent_k_log"],
                  "k_consistency": _k_consistency, "k_std": round(_k_std, 2) if _k_std is not None else None,
