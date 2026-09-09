@@ -409,12 +409,6 @@ executor = ThreadPoolExecutor(max_workers=4)
 _tasks: dict = {}
 _cache: dict = {}
 
-@app.post("/api/login")
-async def login(username: str = Form(...), password: str = Form(...)):
-    if username == "higgi" and password == "Elbowlake77":
-        return {"access_token": "mpa-token", "username": username}
-    raise HTTPException(status_code=401, detail="Invalid credentials")
-
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "today": str(date.today())}
@@ -460,6 +454,7 @@ async def start_run(request: Request, date_str: str, force: bool = False, token:
             if disk:
                 _cache[date_str] = disk
     if not force and date_str in _cache and not _cache[date_str].get("stats", {}).get("has_tbd"):
+        _save_mlb_coach_snapshot(date_str, _cache[date_str])
         task_id = str(uuid.uuid4())
         notify  = asyncio.Event()
         _tasks[task_id] = {
@@ -495,16 +490,17 @@ async def start_run(request: Request, date_str: str, force: bool = False, token:
             # 5.5/6.5 mid-game). Games not yet started still take fresh lines so
             # late-named starters appear. CLV opener below stays on the true run.
             _snap = _freeze_started_picks(date_str, result)
-            task["status"] = "done"
-            task["result"] = _snap
             # Always persist so the read-only /api/results endpoint (parlay hub)
             # can serve the slate even when a starter is still TBD. The MLB app's
             # own load re-runs when has_tbd to pick up late-named starters.
             _cache[date_str] = _snap
             try: _update_track_ledger()
             except Exception as _le: print(f"[track_ledger] {_le}")
+            try: _mlb_grade_coach_ledger()
+            except Exception as _ce: print(f"[mlb_coach_track] grade failed: {_ce}")
             _save_disk_cache(date_str, _snap)
             _save_sb_picks(date_str, _snap)
+            _save_mlb_coach_snapshot(date_str, _snap)
             _save_open_snapshot(date_str, result)
             try:
                 # Bake the picks into the page HTML so the Replit hub can serve
@@ -519,6 +515,9 @@ async def start_run(request: Request, date_str: str, force: bool = False, token:
                 push_picks_to_replit("mlb", baked, html=snapshot_html)
             except Exception as _e:
                 print(f"[replit_push] mlb push failed: {_e}")
+            task["status"] = "done"
+            task["result"] = _snap
+            loop.call_soon_threadsafe(notify.set)
         except Exception as exc:
             import traceback
             emit({"type": "error", "msg": f"{exc}\n{traceback.format_exc()}"})
@@ -708,6 +707,18 @@ def _norm_name(s) -> str:
     s = "".join(c for c in s if not _ud.combining(c))
     return " ".join(s.lower().replace(".", " ").split())
 
+def _game_identity(value) -> str:
+    """Canonical UTC first-pitch identity; separates doubleheader box scores."""
+    if not value:
+        return ""
+    try:
+        parsed = _dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=_dt.timezone.utc)
+        return parsed.astimezone(_dt.timezone.utc).isoformat()
+    except Exception:
+        return str(value)
+
 
 # ── Grading core (shared by /api/grade and the Track Record ledger) ──────
 def _mlb_box_lookup(date_str: str):
@@ -804,6 +815,9 @@ def _mlb_box_lookup(date_str: str):
                     "status": status,
                     "final":  final,
                     "name":   full_name,
+                    "player_id": int(pid),
+                    "game_identity": _game_identity(
+                        (_sched_meta.get(pk) or {}).get("game_date")),
                 }))
         # Team run totals from teamStats (fastest, always present in boxscore)
         score_entry = None
@@ -841,8 +855,13 @@ def _mlb_box_lookup(date_str: str):
                 fetch_complete = False   # final game but boxscore fetch returned nothing
             for pid, full_name, entry in rows:
                 player_stats[pid] = entry
+                game_id = entry.get("game_identity", "")
+                if game_id:
+                    player_stats[(game_id, pid)] = entry
                 if full_name:
                     name_stats[_norm_name(full_name)] = entry
+                    if game_id:
+                        name_stats[(game_id, _norm_name(full_name))] = entry
             if score_entry:
                 game_scores.append(score_entry)
         if not fetch_complete:
@@ -1761,6 +1780,454 @@ def _detail_graded(graded: dict) -> list:
                 "qualifying_games": r.get("qualifying_games"),
             })
     return out
+
+# ── MLB Coach Edge Track Record (isolated from every existing record) ────
+_MLB_COACH_APP = "mlb_coach_track"
+_MLB_COACH_STAKE = 20.0
+import threading as _mlb_coach_threading
+_MLB_COACH_WRITE_LOCK = _mlb_coach_threading.Lock()
+_MLB_COACH_CATEGORIES = {
+    "hitter_safest": "Hitter · Safest Bets",
+    "hitter_edge": "Hitter · Coach Edge",
+    "hitter_alt_hrr": "Hitter · Best Alt-Line HRR 1+",
+    "hitter_hits": "Hitter · To Record a Hit",
+    "hitter_tb": "Hitter · Total Bases",
+    "hitter_production": "Hitter · Production",
+    "hitter_batter_k": "Hitter · Batter Strikeouts",
+    "hitter_unders": "Hitter · Best Unders",
+    "hitter_top3": "Hitter · Top 3",
+    "pitcher_safest": "Pitcher · Safest Bets",
+    "pitcher_edge": "Pitcher · Coach Edge",
+    "pitcher_alt_k": "Pitcher · Best Alt-Line Ks",
+    "pitcher_k": "Pitcher · Strikeouts",
+    "pitcher_hits_allowed": "Pitcher · Hits Allowed",
+    "pitcher_outs": "Pitcher · Pitching Outs",
+    "pitcher_er": "Pitcher · Earned Runs",
+    "pitcher_walks": "Pitcher · Walks Allowed",
+    "pitcher_unders": "Pitcher · Best Unders",
+    "pitcher_top3": "Pitcher · Top 3",
+}
+
+def _mlb_coach_implied(odds):
+    try:
+        odds = float(odds)
+    except (TypeError, ValueError):
+        return None
+    if odds < 0:
+        return -odds / (-odds + 100.0) * 100.0
+    if odds > 0:
+        return 100.0 / (odds + 100.0) * 100.0
+    return None
+
+def _mlb_coach_probability(p, implied, side, score_probability=False):
+    if score_probability:
+        try:
+            over = float(p.get("score"))
+            return 100.0 - over if side == "UNDER" else over
+        except (TypeError, ValueError):
+            return None
+    raw = p.get("ev_prob")
+    if raw is None: raw = p.get("matchup_prob")
+    if raw is None: raw = p.get("true_prob")
+    if raw is None: raw = p.get("win_pct")
+    if raw is None:
+        try:
+            raw = implied + float(p.get("edge")) * 100.0
+        except (TypeError, ValueError):
+            return None
+    try:
+        raw = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if raw <= 1.0001:
+        raw *= 100.0
+    return raw if 0 <= raw <= 100 else None
+
+def _mlb_coach_all_props(result):
+    props, seen = [], set()
+
+    def add(items, market, stat_key, stat_label, *, pitcher=False,
+            side=None, line=None, odds=None, book=None, alternate=False,
+            probability=None, accept=None, projection=None):
+        for p in items or []:
+            if not isinstance(p, dict) or (accept and not accept(p)):
+                continue
+            pick_side = str(side(p) if callable(side) else
+                            side or p.get("pick") or p.get("_90_dir") or
+                            p.get("dir") or p.get("side") or "").upper()
+            if pick_side not in ("OVER", "UNDER"):
+                continue
+            raw_odds = odds(p, pick_side) if callable(odds) else p.get("odds")
+            implied = _mlb_coach_implied(raw_odds)
+            raw_line = line(p, pick_side) if callable(line) else p.get("line")
+            resolved_book = (book(p, pick_side) if callable(book) else
+                             p.get("book") or
+                             (p.get("under_book") if pick_side == "UNDER"
+                              else p.get("over_book")) or "")
+            try:
+                raw_line, raw_odds = float(raw_line), int(float(raw_odds))
+            except (TypeError, ValueError):
+                continue
+            if not resolved_book:
+                continue
+            prob = (probability(p, pick_side, implied) if callable(probability)
+                    else _mlb_coach_probability(p, implied, pick_side))
+            if implied is None or prob is None:
+                continue
+            player = p.get("full_name") or p.get("name") or p.get("player")
+            if not player:
+                continue
+            game_identity = _game_identity(p.get("game_start"))
+            key = (str(player).lower(), market, pick_side, raw_line,
+                   game_identity)
+            if key in seen:
+                continue
+            seen.add(key)
+            proj = (projection(p) if callable(projection) else
+                    p.get("proj", p.get("proj_k",
+                    p.get("blended", p.get("blended_avg_k")))))
+            try:
+                proj = float(proj) if proj not in (None, "") else None
+            except (TypeError, ValueError):
+                proj = None
+            props.append({
+                "player": str(player),
+                "player_id": p.get("player_id") or p.get("batter_id"),
+                "team": p.get("team", ""),
+                "opponent": p.get("opp") or p.get("opponent") or "",
+                "game_start": p.get("game_start", ""),
+                "game_identity": game_identity,
+                "market": market, "market_label": market,
+                "stat_key": stat_key, "stat_label": stat_label,
+                "side": pick_side, "line": raw_line, "odds": raw_odds,
+                "book": resolved_book,
+                "model_probability": float(prob),
+                "implied_probability": float(implied),
+                "coach_edge": float(prob) - float(implied),
+                "projection": proj, "is_pitcher": bool(pitcher),
+                "alternate": bool(alternate(p) if callable(alternate)
+                                  else alternate),
+            })
+
+    add(result.get("top9"), "Hits", "hits", "Hits", side="OVER",
+        line=lambda p, s: p.get("line"), odds=lambda p, s: p.get("hit_odds"))
+    add(result.get("also_ran"), "Hits", "hits", "Hits", side="OVER",
+        line=lambda p, s: p.get("line"), odds=lambda p, s: p.get("hit_odds"))
+    add(result.get("under_picks"), "Hits", "hits", "Hits", side="UNDER",
+        line=lambda p, s: p.get("line"), odds=lambda p, s: p.get("under_odds"))
+    add(result.get("tb_picks"), "Total Bases", "total_bases", "Total Bases",
+        side="UNDER", line=lambda p, s: p.get("line"),
+        odds=lambda p, s: p.get("tb_under_odds"))
+    add(result.get("tb_over_picks"), "Total Bases", "total_bases",
+        "Total Bases", side="OVER", line=lambda p, s: p.get("line"),
+        odds=lambda p, s: p.get("tb_over_odds"))
+    add(result.get("hr_picks"), "Home Runs", "homeRuns", "Home Runs",
+        line=lambda p, s: p.get("line"),
+        odds=lambda p, s: p.get("under_odds") if s == "UNDER"
+        else p.get("over_odds"))
+    add(result.get("rbi_picks"), "RBIs", "rbi", "RBIs",
+        line=lambda p, s: p.get("line"),
+        odds=lambda p, s: p.get("under_odds") if s == "UNDER"
+        else p.get("over_odds"))
+    add(result.get("hrr_picks"), "H+R+RBI", "hrr", "H+R+RBI",
+        line=lambda p, s: p.get("line"),
+        odds=lambda p, s: p.get("hrr_under_odds") if s == "UNDER"
+        else p.get("hrr_over_odds"))
+    add(result.get("hrr_alt_picks"), "H+R+RBI", "hrr", "H+R+RBI",
+        side="OVER", line=lambda p, s: p.get("line"),
+        odds=lambda p, s: p.get("hrr_over_odds"),
+        book=lambda p, s: p.get("book"), alternate=True,
+        probability=lambda p, s, i: p.get("hrr_alt_prob"),
+        accept=lambda p: p.get("line") == 0.5 and
+        p.get("hrr_over_odds") is not None and bool(p.get("book")) and
+        p.get("hrr_alt_prob") is not None)
+    add(result.get("runs_picks"), "Runs", "runs", "Runs",
+        line=lambda p, s: p.get("line"),
+        odds=lambda p, s: p.get("under_odds") if s == "UNDER"
+        else p.get("over_odds"))
+    add(result.get("walks_picks"), "Batter Walks", "walks_bat", "Walks",
+        line=lambda p, s: p.get("line"),
+        odds=lambda p, s: p.get("under_odds") if s == "UNDER"
+        else p.get("over_odds"))
+    add(result.get("batter_k_picks"), "Batter Strikeouts",
+        "bat_strikeOuts", "Strikeouts",
+        line=lambda p, s: p.get("line"),
+        odds=lambda p, s: p.get("under_odds") if s == "UNDER"
+        else p.get("over_odds"),
+        probability=lambda p, s, i: _mlb_coach_probability(
+            p, i, s, score_probability=True))
+
+    def pk_alt(p):
+        return (p.get("sugg_line") is not None and
+                p.get("sugg_odds") is not None and bool(p.get("sugg_book")))
+    pk = result.get("pitcher_k") or {}
+    add(pk.get("picks"), "Pitcher Strikeouts", "strikeOuts", "Strikeouts",
+        pitcher=True, accept=lambda p: p.get("sugg_line") is None or pk_alt(p),
+        side=lambda p: "OVER" if pk_alt(p) else p.get("pick"),
+        line=lambda p, s: p.get("sugg_line") if pk_alt(p)
+        else p.get("line", p.get("k_line")),
+        odds=lambda p, s: p.get("sugg_odds") if pk_alt(p)
+        else (p.get("under_odds") if s == "UNDER" else p.get("over_odds")),
+        book=lambda p, s: p.get("sugg_book") if pk_alt(p) else p.get("book"),
+        alternate=pk_alt,
+        probability=lambda p, s, i: (
+            p.get("sugg_prob") if pk_alt(p)
+            else _mlb_coach_probability(p, i, s)),
+        projection=lambda p: p.get("proj_k", p.get("blended_avg_k")))
+
+    cfg = {
+        "pitcher_hits_allowed": ("Hits Allowed", "hits_allowed", "Hits Allowed"),
+        "pitcher_outs": ("Pitching Outs", "outs", "Pitching Outs"),
+        "pitcher_earned_runs": ("Earned Runs", "earnedRuns", "Earned Runs"),
+        "pitcher_walks": ("Walks Allowed", "walks", "Walks Allowed"),
+    }
+    for key, (market, stat_key, stat_label) in cfg.items():
+        bucket = (result.get("pitcher_props") or {}).get(key) or {}
+        add(bucket.get("picks"), market, stat_key, stat_label, pitcher=True,
+            line=lambda p, s: p.get("line"),
+            odds=lambda p, s: p.get("under_odds") if s == "UNDER"
+            else p.get("over_odds"),
+            projection=lambda p: p.get("proj", p.get("blended")))
+    return props
+
+def _mlb_coach_select_categories(result):
+    props = _mlb_coach_all_props(result)
+    hitters = [p for p in props if not p["is_pitcher"]]
+    pitchers = [p for p in props if p["is_pitcher"]]
+
+    def choose(pool, *, market=None, markets=None, side=None, alternate=None,
+               safest=False, limit=10):
+        rows = [dict(p) for p in pool if p["coach_edge"] > 0]
+        if market:
+            rows = [p for p in rows if p["market"] == market]
+        if markets:
+            rows = [p for p in rows if p["market"] in markets]
+        if side:
+            rows = [p for p in rows if p["side"] == side]
+        if alternate is not None:
+            rows = [p for p in rows if p["alternate"] is alternate]
+        if safest:
+            rows.sort(key=lambda p: (p["model_probability"], p["coach_edge"]),
+                      reverse=True)
+        else:
+            rows.sort(key=lambda p: (p["coach_edge"], p["model_probability"]),
+                      reverse=True)
+        return rows[:limit]
+
+    production = {"Runs", "RBIs", "H+R+RBI", "Home Runs", "Batter Walks"}
+    return {
+        "hitter_safest": choose(hitters, safest=True),
+        "hitter_edge": choose(hitters),
+        "hitter_alt_hrr": choose(hitters, market="H+R+RBI", alternate=True),
+        "hitter_hits": choose(hitters, market="Hits"),
+        "hitter_tb": choose(hitters, market="Total Bases"),
+        "hitter_production": choose(hitters, markets=production),
+        "hitter_batter_k": choose(hitters, market="Batter Strikeouts"),
+        "hitter_unders": choose(hitters, side="UNDER"),
+        "hitter_top3": choose(hitters, limit=3),
+        "pitcher_safest": choose(pitchers, safest=True),
+        "pitcher_edge": choose(pitchers),
+        "pitcher_alt_k": choose(
+            pitchers, market="Pitcher Strikeouts", alternate=True),
+        "pitcher_k": choose(pitchers, market="Pitcher Strikeouts"),
+        "pitcher_hits_allowed": choose(pitchers, market="Hits Allowed"),
+        "pitcher_outs": choose(pitchers, market="Pitching Outs"),
+        "pitcher_er": choose(pitchers, market="Earned Runs"),
+        "pitcher_walks": choose(pitchers, market="Walks Allowed"),
+        "pitcher_unders": choose(pitchers, side="UNDER"),
+        "pitcher_top3": choose(pitchers, limit=3),
+    }
+
+def _mlb_coach_rows(date_str=None, unlocked_only=False):
+    if not (_SB_URL and _SB_KEY):
+        return []
+    out, offset, page_size = [], 0, 500
+    while True:
+        params = {
+            "app": f"eq.{_MLB_COACH_APP}", "side": "eq.ALL",
+            "select": "date,category,detail,locked,locked_at",
+            "order": "date.asc,category.asc", "limit": str(page_size),
+            "offset": str(offset),
+        }
+        if date_str:
+            params["date"] = f"eq.{date_str}"
+        if unlocked_only:
+            params["locked"] = "eq.false"
+        page = _sb_get("mpa_track_ledger", params, timeout=20)
+        if page is None:
+            raise RuntimeError("Coach ledger read failed")
+        out.extend(page)
+        if len(page) < page_size:
+            return out
+        offset += page_size
+
+def _save_mlb_coach_snapshot_unlocked(date_str, result):
+    """Automatically bank all 19 Coach presets; no preset click is involved."""
+    if not (_SB_URL and _SB_KEY):
+        return False
+    try:
+        from zoneinfo import ZoneInfo
+        today_et = _dt.datetime.now(
+            ZoneInfo("America/Toronto")).date().isoformat()
+    except Exception:
+        today_et = date.today().isoformat()
+    if date_str != today_et:
+        return False
+    grouped = _mlb_coach_select_categories(result)
+    existing = {r.get("category"): r
+                for r in _mlb_coach_rows(date_str=date_str)}
+    now = _dt.datetime.utcnow()
+    stamp = _dt.datetime.now(_dt.timezone.utc).isoformat()
+    out = []
+    for category in _MLB_COACH_CATEGORIES:
+        old = (existing.get(category) or {}).get("detail") or []
+        preserved = [dict(r) for r in old if isinstance(r, dict) and
+                     (str(r.get("result", "")).upper() in
+                      ("WIN", "LOSS", "PUSH", "VOID") or
+                      _pick_started(r, now))]
+        preserved_keys = {
+            (str(r.get("player", "")).lower(), r.get("market"), r.get("side"),
+             r.get("line"), r.get("game_identity")) for r in preserved
+        }
+        fresh = []
+        for row in grouped.get(category, []):
+            if not row.get("game_start") or _pick_started(row, now):
+                continue
+            key = (row["player"].lower(), row["market"], row["side"],
+                   row["line"], row.get("game_identity"))
+            if key in preserved_keys:
+                continue
+            fresh.append({**row, "captured_at": stamp, "result": "PENDING",
+                          "actual": None, "units": None})
+        detail = preserved + fresh
+        terminal = bool(detail) and all(str(r.get("result", "")).upper()
+            in ("WIN", "LOSS", "PUSH", "VOID") for r in detail)
+        out.append({
+            "app": _MLB_COACH_APP, "date": date_str, "category": category,
+            "side": "ALL", "wins": sum(r.get("result") == "WIN" for r in detail),
+            "losses": sum(r.get("result") == "LOSS" for r in detail),
+            "locked": terminal,
+            "locked_at": ((existing.get(category) or {}).get("locked_at")
+                          if terminal else None),
+            "detail": detail,
+        })
+    import time as _time
+    ok = False
+    for attempt in range(3):
+        ok = _sb_upsert("mpa_track_ledger", out,
+                        on_conflict="app,date,category,side", timeout=30)
+        if ok:
+            break
+        if attempt < 2:
+            _time.sleep(1.5 * (attempt + 1))
+    print(f"[mlb_coach_track] {'saved' if ok else 'SAVE FAILED'} "
+          f"{date_str}: {sum(len(r['detail']) for r in out)} category plays")
+    if not ok:
+        raise RuntimeError("Coach snapshot failed after three persistence attempts")
+    return True
+
+def _mlb_grade_coach_ledger_unlocked():
+    rows = _mlb_coach_rows(unlocked_only=True)
+    pending_by_date = {}
+    for saved in rows:
+        if not saved.get("locked") and isinstance(saved.get("detail"), list):
+            pending_by_date.setdefault(saved.get("date"), []).append(saved)
+    updates = []
+    for date_str, saved_rows in pending_by_date.items():
+        player_stats, name_stats, any_game, all_final, _ = _mlb_box_lookup(
+            date_str)
+        if not any_game:
+            continue
+        for saved in saved_rows:
+            graded = []
+            for raw in saved.get("detail") or []:
+                row = dict(raw)
+                if str(row.get("result", "")).upper() in (
+                        "WIN", "LOSS", "PUSH", "VOID"):
+                    graded.append(row)
+                    continue
+                st = None
+                game_id = row.get("game_identity") or _game_identity(
+                    row.get("game_start"))
+                try:
+                    if row.get("player_id") and game_id:
+                        st = player_stats.get((game_id, int(row["player_id"])))
+                except (TypeError, ValueError):
+                    pass
+                if not st and not game_id and row.get("player_id"):
+                    try:
+                        st = player_stats.get(int(row["player_id"]))
+                    except (TypeError, ValueError):
+                        pass
+                if not st and game_id:
+                    st = name_stats.get(
+                        (game_id, _norm_name(row.get("player"))))
+                if not st and not game_id:
+                    st = name_stats.get(_norm_name(row.get("player")))
+                actual = st.get(row.get("stat_key")) if st else None
+                final = bool((st or {}).get("final"))
+                result = "PENDING"
+                if actual is None and (final or all_final) and not game_id:
+                    result = "VOID"
+                elif actual is not None and final:
+                    actual_f, line = float(actual), float(row["line"])
+                    if actual_f == line:
+                        result = "PUSH"
+                    elif row["side"] == "OVER":
+                        result = "WIN" if actual_f > line else "LOSS"
+                    else:
+                        result = "WIN" if actual_f < line else "LOSS"
+                units = None
+                if result == "WIN":
+                    saved_odds = float(row["odds"])
+                    units = (saved_odds / 100.0 if saved_odds > 0
+                             else 100.0 / abs(saved_odds))
+                elif result == "LOSS":
+                    units = -1.0
+                elif result in ("PUSH", "VOID"):
+                    units = 0.0
+                row.update({"actual": actual, "result": result, "units": units,
+                            "game_status": (st or {}).get("status", "—")})
+                graded.append(row)
+            terminal = bool(all_final) and all(r.get("result") in
+                ("WIN", "LOSS", "PUSH", "VOID") for r in graded)
+            updates.append({
+                "app": _MLB_COACH_APP, "date": date_str,
+                "category": saved.get("category"), "side": "ALL",
+                "wins": sum(r.get("result") == "WIN" for r in graded),
+                "losses": sum(r.get("result") == "LOSS" for r in graded),
+                "locked": terminal,
+                "locked_at": (_dt.datetime.now(_dt.timezone.utc).isoformat()
+                              if terminal else None),
+                "detail": graded,
+            })
+    if updates and not _sb_upsert(
+            "mpa_track_ledger", updates,
+            on_conflict="app,date,category,side", timeout=30):
+        raise RuntimeError("Coach grading persistence failed")
+    return len(updates)
+
+def _mlb_coach_summary(rows):
+    wins = sum(r.get("result") == "WIN" for r in rows)
+    losses = sum(r.get("result") == "LOSS" for r in rows)
+    pushes = sum(r.get("result") == "PUSH" for r in rows)
+    voids = sum(r.get("result") == "VOID" for r in rows)
+    pending = len(rows) - wins - losses - pushes - voids
+    units = sum(float(r.get("units") or 0) for r in rows)
+    priced = wins + losses
+    return {
+        "wins": wins, "losses": losses, "pushes": pushes, "voids": voids,
+        "pending": pending, "units": round(units, 4),
+        "roi": round(units / priced * 100, 2) if priced else None,
+    }
+
+def _save_mlb_coach_snapshot(date_str, result):
+    with _MLB_COACH_WRITE_LOCK:
+        return _save_mlb_coach_snapshot_unlocked(date_str, result)
+
+def _mlb_grade_coach_ledger():
+    with _MLB_COACH_WRITE_LOCK:
+        return _mlb_grade_coach_ledger_unlocked()
 
 def _attach_clv(date_str: str, rows: list):
     """Stamp each graded row with open_odds (first run of the day) + close_odds
@@ -2803,6 +3270,43 @@ async def track_record(request: Request, token: str = "", admin: str = "", histo
     return {"alltime": rows, "daily": daily, "days": len(led), "detail": detail}
 
 
+@app.get("/api/mlb/coach-track")
+async def mlb_coach_track(request: Request, token: str = "", admin: str = "",
+                          grade: bool = True):
+    """All 19 automatically captured MLB Coach preset records."""
+    tok = token or request.headers.get(
+        "Authorization", "").replace("Bearer ", "").strip()
+    is_admin = _is_admin_token(tok) or _is_tester_token(tok) or (
+        bool(admin) and admin == os.environ.get("INTERNAL_API_TOKEN", "__none__")
+    )
+    if not is_admin:
+        raise HTTPException(status_code=403, detail="Admin only")
+    if not (_SB_URL and _SB_KEY):
+        raise HTTPException(
+            status_code=503,
+            detail="Coach Track Record persistence is unavailable")
+    if grade:
+        await asyncio.to_thread(_mlb_grade_coach_ledger)
+    grouped = {category: [] for category in _MLB_COACH_CATEGORIES}
+    for saved in _mlb_coach_rows():
+        category = saved.get("category")
+        if category not in grouped:
+            continue
+        for raw in saved.get("detail") or []:
+            if isinstance(raw, dict):
+                grouped[category].append({
+                    **raw, "date": saved.get("date"), "category": category,
+                })
+    return {
+        "stake": _MLB_COACH_STAKE,
+        "categories": [{
+            "category": category, "label": label,
+            "summary": _mlb_coach_summary(grouped[category]),
+            "rows": grouped[category],
+        } for category, label in _MLB_COACH_CATEGORIES.items()],
+    }
+
+
 @app.get("/api/gp-record")
 async def gp_record(request: Request, token: str = "", admin: str = ""):
     """Admin-only. All-time + daily W/L record for Game Predictor (team win + O/U)."""
@@ -3805,6 +4309,7 @@ _HTML = """
           </div>
           <div>
             <div style="color:#86efac;border:1px solid rgba(74,222,128,.35);border-radius:999px;padding:5px 9px;height:max-content;font-size:.62rem;font-weight:900;margin-top:6px;white-space:nowrap">NO INVENTED PLAYS</div>
+            <button onclick="openMlbCoachTrack()" style="width:100%;margin-top:8px;background:#0e7490;color:#fff;border:0;border-radius:8px;padding:7px 10px;font-size:.68rem;font-weight:900;cursor:pointer;white-space:nowrap">Coach Track Record</button>
           </div>
         </div>
 
@@ -3812,7 +4317,7 @@ _HTML = """
         <div class="mlb-coach-presets">
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the safest hitter bets?')">Safest bets</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Hitter Coach Edge plays?')">Coach Edge</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Best Alt-Line Hitter Edge Plays? — Top 10')" style="border-color:#f59e0b;color:#fde68a">Best Alt-Line Edge Plays · Top 10</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Best Alt-Line Hitter H+R+RBI 1+ Edge Plays? — Top 10')" style="border-color:#f59e0b;color:#fde68a">Best Alt-Line HRR 1+ · Top 10</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best plays to record a hit?')">To record a hit</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Total Bases plays?')">Total Bases</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best hitter production props?')">Production</button>
@@ -3841,6 +4346,24 @@ _HTML = """
         </div>
         <div style="color:#64748b;font-size:.65rem;line-height:1.45;margin-top:8px">Requires a loaded MLB board and genuine sportsbook prices. Safest Bets ranks qualified sides by app probability; Coach Edge equals app probability minus sportsbook-implied probability.</div>
         <div id="mlbCoachAnswer" class="mlb-coach-answer"></div>
+      </div>
+      <div class="card p-6 hidden" id="mlb-coach-track-card" style="max-width:1100px;margin:0 auto 16px;border-color:rgba(34,211,238,.35)">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+          <div>
+            <div style="color:#22d3ee;font-size:.65rem;font-weight:900;letter-spacing:.1em;text-transform:uppercase">Automatic pre-game snapshots</div>
+            <h2 style="font-family:'Playfair Display',serif;color:#fff;font-size:1.35rem;margin-top:4px">MLB Coach Edge Track Record</h2>
+            <div style="color:#94a3b8;font-size:.73rem;margin-top:4px">All 19 Coach questions populate during the picks run. You never need to click a Coach button to save its plays.</div>
+          </div>
+          <button onclick="hide('mlb-coach-track-card')" style="background:#1f2937;color:#cbd5e1;border:0;border-radius:8px;padding:8px 12px;font-weight:800;cursor:pointer">Close</button>
+        </div>
+        <div style="display:flex;gap:10px;align-items:end;flex-wrap:wrap;background:#07131f;border:1px solid #164e63;border-radius:11px;padding:11px 12px;margin-bottom:12px">
+          <label style="color:#94a3b8;font-size:.7rem">Date<br><input id="mlbCoachTrkDate" type="date" onchange="renderMlbCoachTrack()" style="margin-top:4px;background:#020617;border:1px solid #334155;color:#fff;border-radius:7px;padding:7px"></label>
+          <label style="color:#94a3b8;font-size:.7rem">Period<br><select id="mlbCoachTrkPeriod" onchange="renderMlbCoachTrack()" style="margin-top:4px;background:#020617;border:1px solid #334155;color:#fff;border-radius:7px;padding:7px"><option value="day">Daily</option><option value="week">Last 7 Days</option><option value="month">Monthly</option><option value="all">All Time</option></select></label>
+          <label style="color:#94a3b8;font-size:.7rem">Flat bet $<br><input id="mlbCoachTrkStake" type="number" min="1" value="20" oninput="renderMlbCoachTrack()" style="width:92px;margin-top:4px;background:#020617;border:1px solid #334155;color:#fff;border-radius:7px;padding:7px"></label>
+          <button onclick="loadMlbCoachTrack()" style="background:#0e7490;color:#fff;border:0;border-radius:8px;padding:8px 13px;font-weight:900;cursor:pointer">Get Results</button>
+        </div>
+        <div id="mlbCoachTrackSummary"></div>
+        <div id="mlbCoachTrackBody"><p style="color:#94a3b8">Open the record to load automatic Coach snapshots.</p></div>
       </div>
 
       <!-- SECTION 1: HITTERS -->
@@ -4209,7 +4732,8 @@ function _mlbCoachAllProps() {
         player: player, team: team, opp: opp, market: mkt, side: side, line: line,
         odds: Number(odds), appProb: probability, implied: implied, edge: edge,
         isPitcher: !!cfg.pitcher, alternate: alternate,
-        blurb: blurb, proj: projection, book: book
+        blurb: blurb, proj: projection, book: book,
+        src: cfg.src ? cfg.src(p, side) : p
       });
     });
   }
@@ -4223,6 +4747,15 @@ function _mlbCoachAllProps() {
   add(res.hr_picks, {market:'Home Runs',line:function(p){return p.line != null ? p.line : .5;},odds:function(p,s){return s==='UNDER'?p.under_odds:p.over_odds;}});
   add(res.rbi_picks, {market:'RBIs',line:function(p){return p.line != null ? p.line : .5;},odds:function(p,s){return s==='UNDER'?p.under_odds:p.over_odds;}});
   add(res.hrr_picks, {market:'H+R+RBI',line:function(){return 1.5;},odds:function(p,s){return s==='UNDER'?p.hrr_under_odds:p.hrr_over_odds;}});
+  add(res.hrr_alt_picks, {
+    market:'H+R+RBI',side:'OVER',alternate:true,
+    accept:function(p){return p.line===0.5 && p.hrr_over_odds!=null && !!p.book && p.hrr_alt_prob!=null;},
+    line:function(p){return p.line;},
+    odds:function(p){return p.hrr_over_odds;},
+    book:function(p){return p.book;},
+    prob:function(p){return p.hrr_alt_prob;},
+    src:function(p){return p;}
+  });
   add(res.runs_picks, {market:'Runs',line:function(p){return p.line != null ? p.line : .5;},odds:function(p,s){return s==='UNDER'?p.under_odds:p.over_odds;}});
   add(res.walks_picks, {market:'Batter Walks',line:function(p){return p.line != null ? p.line : .5;},odds:function(p,s){return s==='UNDER'?p.under_odds:p.over_odds;}});
   add(res.batter_k_picks, {
@@ -4248,6 +4781,7 @@ function _mlbCoachAllProps() {
     line:function(p){return completePitcherKAlt(p) ? p.sugg_line : (p.line != null ? p.line : p.k_line);},
     odds:function(p,s){return completePitcherKAlt(p) ? p.sugg_odds : (s==='UNDER'?p.under_odds:p.over_odds);},
     book:function(p){return completePitcherKAlt(p) ? p.sugg_book : p.book;},
+    prob:function(p,s){return completePitcherKAlt(p) && p.sugg_prob != null ? Number(p.sugg_prob) : null;},
     proj:function(p){return p.proj_k != null ? p.proj_k : p.blended_avg_k;}
   });
   var propCfg = {
@@ -4282,6 +4816,30 @@ function _mlbCoachCommit(html) {
   ans.innerHTML = html;
 }
 
+function _mlbCoachRequestedTeams(question, props) {
+  var q=' '+String(question||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()+' ';
+  var teams=[];
+  (props||[]).forEach(function(p){
+    [p.team,p.opponent].forEach(function(t){
+      t=String(t||'').trim();
+      if(t && teams.indexOf(t)<0) teams.push(t);
+    });
+  });
+  var generic={new:1,york:1,los:1,angeles:1,city:1,bay:1,red:1,white:1,blue:1};
+  return teams.filter(function(team){
+    var words=team.toLowerCase().replace(/[^a-z0-9]+/g,' ').trim().split(/\s+/).filter(Boolean);
+    var aliases=[words.join(' ')];
+    for(var size=words.length-1;size>=1;size--){
+      for(var i=0;i+size<=words.length;i++){
+        var part=words.slice(i,i+size).join(' ');
+        if(size>1 || (part.length>=4 && !generic[part])) aliases.push(part);
+      }
+    }
+    aliases.sort(function(a,b){return b.length-a.length;});
+    return aliases.some(function(a){return q.indexOf(' '+a+' ')>=0;});
+  });
+}
+
 function askMlbCoach() {
   var input = document.getElementById('mlbCoachInput');
   var question = String(input && input.value || '').trim();
@@ -4294,11 +4852,28 @@ function askMlbCoach() {
   }
 
   var q = question.toLowerCase();
+  var requestedTeams = _mlbCoachRequestedTeams(question, props);
+  var gameLabel = '';
 
   var isHitterQ = q.indexOf('hitter')>=0 || q.indexOf('batter')>=0 || q.indexOf('hit')>=0 || q.indexOf('total bases')>=0 || q.indexOf('production')>=0;
   var isPitcherQ = q.indexOf('pitcher')>=0 || q.indexOf('pitching')>=0 || (q.indexOf('strikeout')>=0 && q.indexOf('batter')<0) || q.indexOf('hits allowed')>=0 || q.indexOf('outs')>=0 || q.indexOf('earned runs')>=0 || q.indexOf('walks allowed')>=0;
 
   var pool = props;
+  if(requestedTeams.length >= 2) {
+    var gameA=requestedTeams[0].toLowerCase(),gameB=requestedTeams[1].toLowerCase();
+    pool=pool.filter(function(p){
+      var t=String(p.team||'').toLowerCase(),o=String(p.opponent||'').toLowerCase();
+      return (t===gameA&&o===gameB)||(t===gameB&&o===gameA);
+    });
+    gameLabel=requestedTeams[0]+' vs '+requestedTeams[1];
+  } else if(requestedTeams.length === 1) {
+    var wantedTeam=requestedTeams[0].toLowerCase();
+    pool=pool.filter(function(p){
+      return String(p.team||'').toLowerCase()===wantedTeam ||
+             String(p.opponent||'').toLowerCase()===wantedTeam;
+    });
+    gameLabel=requestedTeams[0]+' game';
+  }
   if (isHitterQ && !isPitcherQ) pool = pool.filter(function(p) { return !p.isPitcher; });
   else if (isPitcherQ && !isHitterQ) pool = pool.filter(function(p) { return p.isPitcher; });
 
@@ -4309,7 +4884,7 @@ function askMlbCoach() {
       _mlbCoachCommit('<div><div class="mlb-coach-question">'+_mlbEsc(question)+'</div><div style="margin-top:11px;color:#cbd5e1;font-size:.78rem;line-height:1.5">No genuine MLB alternate line currently meets all positive-edge gates for this request. No standard line was substituted.</div></div>');
       return;
     }
-    _mlbCoachRender(question, pool.slice(0,10), props.length, false);
+    _mlbCoachRender(question, pool.slice(0,10), props.length, false, gameLabel);
     return;
   }
 
@@ -4352,21 +4927,23 @@ function askMlbCoach() {
     pool.sort(function(a,b) { return b.edge - a.edge; });
   }
 
-  if(q.indexOf('top 3') >= 0) pool = pool.slice(0,3);
+  if(q.indexOf('best play')>=0 && q.indexOf('best plays')<0) pool = pool.slice(0,1);
+  else if(q.indexOf('top 3') >= 0) pool = pool.slice(0,3);
   else pool = pool.slice(0,10);
 
-  _mlbCoachRender(question, pool, props.length, isSafest);
+  _mlbCoachRender(question, pool, props.length, isSafest, gameLabel);
 }
 
-function _mlbCoachRender(question, rows, totalPriced, isSafest) {
+function _mlbCoachRender(question, rows, totalPriced, isSafest, gameLabel) {
   var qHtml = '<div class="mlb-coach-question">'+_mlbEsc(question)+'</div>';
   if(!rows.length) {
-    _mlbCoachCommit('<div>'+qHtml+'<div style="margin-top:11px;color:#cbd5e1;font-size:.78rem;line-height:1.5">No loaded MLB prop matched that request with a real sportsbook price and a positive Coach Edge. Try checking the standard markets instead.</div></div>');
+    _mlbCoachCommit('<div>'+qHtml+'<div style="margin-top:11px;color:#cbd5e1;font-size:.78rem;line-height:1.5">No loaded MLB prop'+(gameLabel?' in '+_mlbEsc(gameLabel):'')+' matched that request with a real sportsbook price and a green positive Coach Edge.</div></div>');
     return;
   }
 
   var table = rows.map(function(p, i) {
-    return '<tr><td>'+(i+1)+'</td><td><b style="color:#fff">'+_mlbEsc(p.player)+'</b><br><span style="color:#64748b">'+_mlbEsc(p.team)+' vs '+_mlbEsc(p.opp)+'</span></td>'
+    var clickKey=_nameReg(p.src);
+    return '<tr'+(clickKey?' onclick="_playerForm(&#39;'+clickKey+'&#39;)" style="cursor:pointer" title="Click to open this player card"':'')+'><td>'+(i+1)+'</td><td><b style="color:#fff;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px">'+_mlbEsc(p.player)+'</b><br><span style="color:#64748b">'+_mlbEsc(p.team)+' vs '+_mlbEsc(p.opp)+'</span></td>'
       +'<td>'+_mlbEsc(p.market)+'<br><b style="color:'+(p.side==='OVER'?'#4ade80':'#f87171')+'">'+p.side+' '+_mlbEsc(p.line)+'</b>'+(p.proj!=null?' <span style="color:#94a3b8;font-size:.6rem">proj '+_mlbEsc(p.proj.toFixed(2))+'</span>':'')+'</td>'
       +'<td>'+_mlbCoachOdds(p.odds)+'<br><span style="color:#64748b;font-size:.6rem">'+_mlbEsc(p.book)+'</span></td>'
       +'<td>'+p.appProb.toFixed(1)+'%</td><td>'+p.implied.toFixed(1)+'%</td>'
@@ -4380,12 +4957,92 @@ function _mlbCoachRender(question, rows, totalPriced, isSafest) {
 
   var summaryText = isSafest
     ? 'I checked only the exact sides that qualified for the loaded board, removed every zero or negative Coach Edge play, and ranked the remaining plays by app probability.'
-    : 'I checked '+totalPriced+' priced props from the loaded board and ranked the matching positive-edge plays. Probability edge is shown in percentage points, not traditional expected ROI.';
+    : 'I checked '+totalPriced+' priced props from the loaded board'+(gameLabel?' and restricted the answer to '+_mlbEsc(gameLabel):'')+'. I ranked only matching green positive-edge plays. Probability edge is shown in percentage points, not traditional expected ROI.';
 
   var summaryHtml = '<div style="margin-top:11px;color:#e5e7eb;font-size:.76rem;line-height:1.5">'+summaryText+'</div>';
   var tableWrap = '<div class="mlb-coach-table-wrap"><table class="mlb-coach-table"><thead><tr><th>#</th><th>Player</th><th>Play</th><th>Odds</th><th>App Prob</th><th>Implied</th><th>Coach Edge</th></tr></thead><tbody>'+table+'</tbody></table></div>';
 
   _mlbCoachCommit('<div>'+qHtml+summaryHtml+tableWrap+detail+'</div>');
+}
+
+var _mlbCoachTrackData = null;
+function openMlbCoachTrack() {
+  var card=document.getElementById('mlb-coach-track-card');
+  if(!card)return;
+  show('mlb-coach-track-card');
+  var dp=document.getElementById('mlbCoachTrkDate');
+  if(dp&&!dp.value)dp.value=(document.getElementById('date-picker')||{}).value||new Date().toISOString().slice(0,10);
+  card.scrollIntoView({behavior:'smooth',block:'start'});
+  loadMlbCoachTrack();
+}
+async function loadMlbCoachTrack() {
+  var out=document.getElementById('mlbCoachTrackBody');
+  if(out)out.innerHTML='<p style="color:#94a3b8;padding:12px">Grading final games and loading Coach records...</p>';
+  try{
+    var tok=localStorage.getItem('__mpa_token')||'';
+    var r=await fetch('/api/mlb/coach-track?grade=true&token='+encodeURIComponent(tok),{headers:{'Authorization':tok?'Bearer '+tok:''}});
+    if(!r.ok){var t=await r.text();throw new Error(t||('HTTP '+r.status));}
+    _mlbCoachTrackData=await r.json();
+    renderMlbCoachTrack();
+  }catch(e){
+    if(out)out.innerHTML='<p style="color:#f87171;padding:12px">'+_mlbEsc(e.message||'Could not load Coach record')+'</p>';
+  }
+}
+function _mlbCoachTrackRows() {
+  var out=[];
+  ((_mlbCoachTrackData&&_mlbCoachTrackData.categories)||[]).forEach(function(cat){
+    (cat.rows||[]).forEach(function(r){out.push(Object.assign({},r,{category:cat.category,category_label:cat.label,record_date:r.date||''}));});
+  });
+  return out;
+}
+function _mlbCoachTrackFiltered() {
+  var dp=document.getElementById('mlbCoachTrkDate'),pe=document.getElementById('mlbCoachTrkPeriod');
+  var selected=(dp&&dp.value)||new Date().toISOString().slice(0,10),period=(pe&&pe.value)||'day';
+  var start='';
+  if(period==='week'){var d=new Date(selected+'T12:00:00');d.setDate(d.getDate()-6);start=d.toISOString().slice(0,10);}
+  return _mlbCoachTrackRows().filter(function(r){
+    if(period==='all')return true;
+    if(period==='month')return String(r.record_date).slice(0,7)===selected.slice(0,7);
+    if(period==='week')return r.record_date>=start&&r.record_date<=selected;
+    return r.record_date===selected;
+  });
+}
+function _mlbCoachTrackProfit(r,stake) {
+  var result=String(r.result||'').toUpperCase(),odds=Number(r.odds);
+  if(result==='LOSS')return -stake;
+  if(result!=='WIN'||!isFinite(odds)||!odds)return null;
+  return odds>0?stake*odds/100:stake*100/Math.abs(odds);
+}
+function renderMlbCoachTrack() {
+  var out=document.getElementById('mlbCoachTrackBody'),sum=document.getElementById('mlbCoachTrackSummary');
+  if(!out||!sum||!_mlbCoachTrackData)return;
+  var stake=Number((document.getElementById('mlbCoachTrkStake')||{}).value)||20;
+  var rows=_mlbCoachTrackFiltered(),wins=0,losses=0,pushes=0,voids=0,pending=0,net=0,priced=0;
+  rows.forEach(function(r){var z=String(r.result||'PENDING').toUpperCase(),pl=_mlbCoachTrackProfit(r,stake);if(z==='WIN')wins++;else if(z==='LOSS')losses++;else if(z==='PUSH')pushes++;else if(z==='VOID')voids++;else pending++;if(pl!=null){net+=pl;priced++;}});
+  var rate=(wins+losses)?wins/(wins+losses)*100:null,roi=priced?net/(priced*stake)*100:null,col=net>=0?'#4ade80':'#f87171';
+  sum.innerHTML='<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;background:#07131f;border:1px solid #164e63;border-radius:11px;padding:12px 14px;margin-bottom:12px">'
+    +'<b style="color:#fff">'+wins+'W · '+losses+'L'+(pushes?' · '+pushes+' PUSH':'')+(voids?' · '+voids+' VOID':'')+(pending?' · '+pending+' pending':'')+'</b>'
+    +'<span style="color:#94a3b8">'+(rate==null?'—':rate.toFixed(1)+'%')+' win rate</span>'
+    +'<span style="color:'+col+';font-weight:900">Net '+(net>=0?'+$':'-$')+Math.abs(net).toFixed(2)+'</span>'
+    +'<span style="color:'+col+';font-weight:800">ROI '+(roi==null?'—':(roi>=0?'+':'')+roi.toFixed(1)+'%')+'</span>'
+    +'<span style="color:#64748b;font-size:.7rem">$'+stake.toFixed(0)+' flat per play · plays count separately in every Coach category where they appear</span></div>';
+  var cats=(_mlbCoachTrackData.categories||[]);
+  out.innerHTML=cats.map(function(cat){
+    var list=rows.filter(function(r){return r.category===cat.category;}),w=0,l=0,p=0,v=0,pd=0,catNet=0,catPriced=0;
+    list.forEach(function(r){var z=String(r.result||'PENDING').toUpperCase(),pl=_mlbCoachTrackProfit(r,stake);if(z==='WIN')w++;else if(z==='LOSS')l++;else if(z==='PUSH')p++;else if(z==='VOID')v++;else pd++;if(pl!=null){catNet+=pl;catPriced++;}});
+    var catRoi=catPriced?catNet/(catPriced*stake)*100:null,cc=catNet>=0?'#4ade80':'#f87171';
+    var body=list.length?'<div style="overflow-x:auto"><table class="mlb-coach-table" style="min-width:900px"><thead><tr><th>Date</th><th>Player</th><th>Play</th><th>Odds</th><th>Model / Implied / Edge</th><th>Actual</th><th>Result / P&amp;L</th></tr></thead><tbody>'
+      +list.slice().sort(function(a,b){return String(b.record_date).localeCompare(String(a.record_date));}).map(function(r){
+        var z=String(r.result||'PENDING').toUpperCase(),pl=_mlbCoachTrackProfit(r,stake),zc=z==='WIN'?'#4ade80':z==='LOSS'?'#f87171':z==='PUSH'?'#fbbf24':'#94a3b8';
+        return '<tr><td>'+_mlbEsc(r.record_date)+'</td><td><b style="color:#fff">'+_mlbEsc(r.player)+'</b><br><small style="color:#64748b">'+_mlbEsc(r.team)+' vs '+_mlbEsc(r.opponent)+'</small></td>'
+          +'<td>'+_mlbEsc(r.market_label||r.market)+'<br><b style="color:'+(r.side==='OVER'?'#4ade80':'#f87171')+'">'+_mlbEsc(r.side)+' '+_mlbEsc(r.line)+'</b></td>'
+          +'<td>'+_mlbCoachOdds(r.odds)+'<br><small style="color:#64748b">'+_mlbEsc(r.book||'')+'</small></td>'
+          +'<td>'+Number(r.model_probability||0).toFixed(1)+'% / '+Number(r.implied_probability||0).toFixed(1)+'%<br><b style="color:#4ade80">'+_mlbCoachSigned(r.coach_edge)+' pts</b></td>'
+          +'<td>'+(r.actual==null?'—':_mlbEsc(r.actual))+' '+_mlbEsc(r.stat_label||'')+'</td>'
+          +'<td><b style="color:'+zc+'">'+_mlbEsc(z)+'</b><br><small style="color:'+(pl==null?'#64748b':pl>=0?'#4ade80':'#f87171')+'">'+(pl==null?'—':(pl>=0?'+$':'-$')+Math.abs(pl).toFixed(2))+'</small></td></tr>';
+      }).join('')+'</tbody></table></div>':'<p style="color:#64748b;padding:10px 2px">No qualifying plays saved for this period.</p>';
+    return '<details style="background:#08111f;border:1px solid #1e3a4d;border-radius:11px;margin-bottom:9px"><summary style="cursor:pointer;padding:12px 14px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><b style="color:#7dd3fc">'+_mlbEsc(cat.label)+'</b><span style="color:#94a3b8;font-size:.72rem">'+w+'W · '+l+'L'+(p?' · '+p+'P':'')+(v?' · '+v+'V':'')+(pd?' · '+pd+' pending':'')+' · <b style="color:'+cc+'">'+(catNet>=0?'+$':'-$')+Math.abs(catNet).toFixed(2)+'</b> · '+(catRoi==null?'—':(catRoi>=0?'+':'')+catRoi.toFixed(1)+'% ROI')+'</span></summary>'+body+'</details>';
+  }).join('');
 }
 
 async function getPicks() {
@@ -6035,6 +6692,7 @@ function _playerForm(key){
   else if(p.recent_rbi_log!==undefined && p.recent_hit_log===undefined && p.recent_runs_log===undefined){ _rbiForm(p); }
   else if(p.recent_runs_log!==undefined && p.recent_hit_log===undefined){ _runsForm(p); }
   else if(p.recent_walks_log!==undefined){ _walksForm(p); }
+  else if(p.recent_hrr_log!==undefined){ _hrrForm(p); }
   else { _hitForm(p); }
 }
 
@@ -8964,9 +9622,11 @@ function _hrrForm(key){
     document.body.appendChild(ov);
   }
   var isUnder=(p.pick==='UNDER');
+  var line=(p.line!=null&&isFinite(Number(p.line)))?Number(p.line):1.5;
+  var threshold=Math.floor(line)+1;
   var log=p.recent_hrr_log||[];
   var rows=log.length?log.map(function(g){
-    var good=isUnder?(g.hrr<2):(g.hrr>=2);
+    var good=isUnder?(g.hrr<threshold):(g.hrr>=threshold);
     var clr=good?'#fb923c':'#94a3b8';
     var oppTxt=g.opp?((g.ha==='H'?'vs ':'@ ')+g.opp):'';
     return '<tr>'
@@ -8980,13 +9640,13 @@ function _hrrForm(key){
   ov.innerHTML='<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:820px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">'
     +'<div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid #1e293b">'
       +'<div><div style="font-weight:800;font-size:1.05rem;color:#fff">'+name+'</div>'
-      +'<div style="color:#94a3b8;font-size:.78rem">'+(p.side||'')+' vs '+(p.opp||'')+' \u00b7 '+(isUnder?'Under':'Over')+' 1.5 H+R+RBI</div></div>'
+      +'<div style="color:#94a3b8;font-size:.78rem">'+(p.side||'')+' vs '+(p.opp||'')+' \u00b7 '+(isUnder?'Under':'Over')+' '+line+' H+R+RBI</div></div>'
       +'<button onclick="document.getElementById(&#39;hrr-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem">\u2715</button>'
     +'</div>'
     +'<div style="padding:16px 18px">'
-    +_twoBox(p,'HRR Rate','HRR Odds',(isUnder?p.hrr_under_odds:p.hrr_over_odds),!isUnder,(isUnder?'H+R+RBI \u2264 1 = UNDER':'H+R+RBI \u2265 2 = OVER')+' \u00b7 Last '+log.length+' Games',rows)
+    +_twoBox(p,'HRR Rate','HRR Odds',(isUnder?p.hrr_under_odds:p.hrr_over_odds),!isUnder,(isUnder?('H+R+RBI < '+threshold+' = UNDER'):('H+R+RBI \u2265 '+threshold+' = OVER'))+' \u00b7 Last '+log.length+' Games',rows)
     +_oppPitBlock(p,'pitcher_hits_allowed','Hits Allowed','H')
-    +_matrixWriteup(p,(isUnder?'U':'O'),2,false,'HRR (hits+runs+RBI)',(isUnder?'Under 1.5 H+R+RBI':'Over 1.5 H+R+RBI'))
+    +_matrixWriteup(p,(isUnder?'U':'O'),threshold,false,'HRR (hits+runs+RBI)',(isUnder?'Under ':'Over ')+line+' H+R+RBI')
     +'</div></div>';
   ov.style.display='flex';
 }
@@ -12926,12 +13586,19 @@ function downloadMyBetsCSV(){
 </footer>
 <button id="back-to-top" onclick="window.scrollTo({top:0,behavior:'smooth'})" title="Back to top"
   style="position:fixed;bottom:22px;right:22px;z-index:9999;display:none;width:48px;height:48px;border-radius:50%;border:none;cursor:pointer;background:#f59e0b;color:#0a0a0a;font-size:1.4rem;font-weight:900;box-shadow:0 4px 14px rgba(0,0,0,.45);line-height:1">&#8593;</button>
+<button type="button" id="scroll-to-bottom" onclick="window.scrollTo({top:document.documentElement.scrollHeight,behavior:'smooth'})" title="Scroll to bottom" aria-label="Scroll to bottom"
+  style="position:fixed;bottom:22px;right:78px;z-index:9999;display:none;width:48px;height:48px;border-radius:50%;border:none;cursor:pointer;background:#0e7490;color:#fff;font-size:1.4rem;font-weight:900;box-shadow:0 4px 14px rgba(0,0,0,.45);line-height:1">&#8595;</button>
 <script>
 (function(){
-  var b=document.getElementById('back-to-top');
-  if(!b) return;
-  function _t(){ b.style.display = (window.pageYOffset||document.documentElement.scrollTop) > 400 ? 'block' : 'none'; }
+  var b=document.getElementById('back-to-top'),d=document.getElementById('scroll-to-bottom');
+  if(!b||!d) return;
+  function _t(){
+    var y=window.pageYOffset||document.documentElement.scrollTop||0;
+    b.style.display=y>400?'block':'none';
+    d.style.display=(y+window.innerHeight<document.documentElement.scrollHeight-400)?'block':'none';
+  }
   window.addEventListener('scroll',_t,{passive:true});
+  window.addEventListener('resize',_t,{passive:true});
   _t();
 })();
 </script>
@@ -12996,9 +13663,12 @@ def _auto_run_pipeline(date_str: str, label: str):
         _cache[date_str] = result
         try: _update_track_ledger()
         except Exception as _le: print(f"[track_ledger] {_le}")
+        try: _mlb_grade_coach_ledger()
+        except Exception as _ce: print(f"[mlb_coach_track] grade failed: {_ce}")
         _snap = _freeze_started_picks(date_str, result)
         _save_disk_cache(date_str, _snap)
         _save_sb_picks(date_str, _snap)
+        _save_mlb_coach_snapshot(date_str, _snap)
         _save_open_snapshot(date_str, result)
         if result.get("stats", {}).get("has_tbd"):
             print(f"[auto-run] {label} — cached {date_str} (has TBD starters; app will re-run on load)")
