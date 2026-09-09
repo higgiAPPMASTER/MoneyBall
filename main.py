@@ -3317,6 +3317,28 @@ _HTML = """
     .dq-row { font-size: .82rem; padding: 7px 14px; border-bottom: 1px solid rgba(255,255,255,.04); display: flex; gap: 16px; align-items: center; }
     .dq-row:last-child { border-bottom: none; }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    .mlb-coach{border:1px solid rgba(245,158,11,.45)!important;background:linear-gradient(145deg,#1f1406,#100902)!important}
+    .mlb-coach-presets{display:flex;gap:7px;flex-wrap:wrap;margin:14px 0 10px}
+    .mlb-coach-preset{background:#111827;color:#cbd5e1;border:1px solid #334155;border-radius:999px;padding:7px 11px;font-size:.69rem;font-weight:900;cursor:pointer}
+    .mlb-coach-preset:hover{border-color:#f59e0b;color:#fde68a}
+    .mlb-coach-row{display:flex;gap:8px}
+    .mlb-coach-input{flex:1;min-width:0;background:#070d18;color:#fff;border:1px solid #334155;border-radius:11px;padding:12px 14px;font:inherit;font-size:.84rem;outline:none}
+    .mlb-coach-input:focus{border-color:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,.1)}
+    .mlb-coach-send{background:linear-gradient(135deg,#d97706,#f59e0b);color:#fff;border:0;border-radius:11px;padding:0 18px;font-weight:900;cursor:pointer}
+    .mlb-coach-answer{display:none;margin-top:14px;border-top:1px solid rgba(245,158,11,.25);padding-top:14px}
+    .mlb-coach-question{margin-left:auto;max-width:82%;background:#271604;border:1px solid rgba(245,158,11,.3);border-radius:12px 12px 3px 12px;padding:9px 12px;color:#fde68a;font-size:.75rem}
+    .mlb-coach-stat{display:flex;justify-content:space-between;align-items:center;padding:8px 4px;border-bottom:1px solid #1c1c1c;font-size:.85rem}
+    .mlb-coach-stat:last-child{border-bottom:none}
+    .mlb-coach-stat .k{color:#9ca3af}
+    .mlb-coach-stat .v{font-weight:700}
+    .mlb-coach-table-wrap{overflow-x:auto;margin-top:10px;border:1px solid #292929;border-radius:11px}
+    .mlb-coach-table{width:100%;border-collapse:collapse;font-size:.7rem;min-width:720px}
+    .mlb-coach-table th{background:#111;color:#9ca3af;text-align:left;padding:8px 9px;font-size:.59rem;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap}
+    .mlb-coach-table td{padding:9px;border-top:1px solid #222;color:#e5e7eb;vertical-align:top}
+    .mlb-coach-empty{color:#cbd5e1;font-size:.78rem;line-height:1.5;padding:8px 4px}
+    .mlb-coach-play-copy{font-size:.72rem;color:#94a3b8;margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,.05);line-height:1.5}
+
     .spinner { width: 18px; height: 18px; border: 3px solid rgba(255,255,255,.15); border-top-color: #3b82f6; border-radius: 50%; animation: spin .7s linear infinite; display: inline-block; }
     .login-input { background: var(--navy3); border: 1px solid rgba(255,255,255,.15); color: #e2e8f0; border-radius: 8px; padding: 11px 16px; width: 100%; font-size: 1rem; outline: none; transition: border-color .2s; }
     .login-input:focus { border-color: #3b82f6; }
@@ -3773,6 +3795,54 @@ _HTML = """
         </div>
         <div id="gp-record-body"><div style="color:#475569;font-size:.8rem">Loading&#8230;</div></div>
       </div>
+      <!-- SECTION: COACH EDGE -->
+      <div class="card p-6 mlb-coach" id="mlbCoachCard" style="max-width:960px;margin:0 auto 16px;padding:20px 22px">
+        <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap">
+          <div>
+            <div style="color:#f59e0b;font-size:.66rem;font-weight:900;letter-spacing:.12em;text-transform:uppercase">Grounded MLB analysis</div>
+            <h2 style="font-family:'Playfair Display',serif;color:#fff;font-size:1.35rem;margin-top:4px">The Edge Coach · MLB Props Analyst</h2>
+            <div style="color:#94a3b8;font-size:.76rem;margin-top:5px">Find safer sportsbook sides or scan the loaded MLB board for positive Coach Edge.</div>
+          </div>
+          <div>
+            <div style="color:#86efac;border:1px solid rgba(74,222,128,.35);border-radius:999px;padding:5px 9px;height:max-content;font-size:.62rem;font-weight:900;margin-top:6px;white-space:nowrap">NO INVENTED PLAYS</div>
+          </div>
+        </div>
+
+        <div style="margin-top:18px;font-size:.75rem;font-weight:800;color:#facc15;border-bottom:1px solid rgba(255,255,255,.1);padding-bottom:5px;letter-spacing:.05em;text-transform:uppercase">Hitters</div>
+        <div class="mlb-coach-presets">
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the safest hitter bets?')">Safest bets</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Hitter Coach Edge plays?')">Coach Edge</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Best Alt-Line Hitter Edge Plays? — Top 10')" style="border-color:#f59e0b;color:#fde68a">Best Alt-Line Edge Plays · Top 10</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best plays to record a hit?')">To record a hit</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Total Bases plays?')">Total Bases</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best hitter production props?')">Production</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Batter Strikeout plays?')">Batter Strikeouts</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best hitter unders?')">Hitter unders</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Top 3 hitter plays today?')">Top 3 hitter plays today</button>
+        </div>
+
+        <div style="margin-top:16px;font-size:.75rem;font-weight:800;color:#60a5fa;border-bottom:1px solid rgba(255,255,255,.1);padding-bottom:5px;letter-spacing:.05em;text-transform:uppercase">Pitchers</div>
+        <div class="mlb-coach-presets">
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the safest pitcher bets?')">Safest bets</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Pitcher Coach Edge plays?')">Coach Edge</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Best Alt-Line Pitcher Edge Plays? — Top 10')" style="border-color:#60a5fa;color:#bfdbfe">Best Alt-Line Edge Plays · Top 10</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Pitcher Strikeout plays?')">Pitcher Strikeouts</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Hits Allowed plays?')">Hits Allowed</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Pitching Outs plays?')">Pitching Outs</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Earned Runs plays?')">Earned Runs</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Walks Allowed plays?')">Walks Allowed</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best pitcher unders?')">Pitcher unders</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Top 3 pitcher plays today?')">Top 3 pitcher plays today</button>
+        </div>
+
+        <div class="mlb-coach-row" style="margin-top:16px">
+          <input id="mlbCoachInput" class="mlb-coach-input" placeholder="Type a question..." onkeydown="if(event.key==='Enter')askMlbCoach()"/>
+          <button class="mlb-coach-send" onclick="askMlbCoach()">Analyze</button>
+        </div>
+        <div style="color:#64748b;font-size:.65rem;line-height:1.45;margin-top:8px">Requires a loaded MLB board and genuine sportsbook prices. Safest Bets ranks qualified sides by app probability; Coach Edge equals app probability minus sportsbook-implied probability.</div>
+        <div id="mlbCoachAnswer" class="mlb-coach-answer"></div>
+      </div>
+
       <!-- SECTION 1: HITTERS -->
         <div class="section-hdr" style="color:#facc15;font-size:1.05rem;margin-top:8px">⚾ HITTERS</div>
         <div class="card p-6" id="top-picks-card">
@@ -4047,6 +4117,277 @@ function showDashboard() {
 
 // Get Picks: load the picks already saved on file for the chosen date and show
 // them. Read-only — never starts a pipeline run, so any member can use it.
+// ── MLB Coach Edge AI ────────────────────────────────────────────────────────
+function _mlbCoachOddsImplied(odds) {
+  if(!odds || odds==='' || odds==='-') return null;
+  var o = parseFloat(odds);
+  if(isNaN(o)) return null;
+  if(o < 0) return (-o) / (-o + 100) * 100;
+  if(o > 0) return 100 / (o + 100) * 100;
+  return null;
+}
+function _mlbCoachOdds(odds) {
+  if(!odds || odds==='' || odds==='-') return '—';
+  var o = parseFloat(odds);
+  return (o > 0 ? '+' : '') + o;
+}
+function _mlbCoachSigned(val) {
+  if (val == null) return '';
+  var v = Number(val);
+  return (v > 0 ? '+' : '') + v.toFixed(2);
+}
+function _mlbEsc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function _mlbCoachAllProps() {
+  var res = window._lastResult;
+  if(!res) return [];
+  var arr = [];
+  var seen = {};
+
+  function appProb(p, implied) {
+    var raw = p.ev_prob != null ? p.ev_prob
+      : (p.matchup_prob != null ? p.matchup_prob
+      : (p.true_prob != null ? p.true_prob : p.win_pct));
+    if(raw == null || raw === '') {
+      if(p.edge == null || !isFinite(Number(p.edge))) return null;
+      raw = implied + Number(p.edge) * 100;
+    } else {
+      raw = Number(raw);
+      if(raw <= 1.0001) raw *= 100;
+    }
+    if(!isFinite(raw)) return null;
+    if(raw < 0 || raw > 100) return null;
+    return raw;
+  }
+
+  function add(list, cfg) {
+    cfg = cfg || {};
+    if(!Array.isArray(list)) return;
+    list.forEach(function(p) {
+      if(!p) return;
+      if(typeof cfg.accept === 'function' && !cfg.accept(p)) return;
+      var configuredSide = typeof cfg.side === 'function' ? cfg.side(p) : cfg.side;
+      var side = String(configuredSide || p.pick || p._90_dir || p.dir || p.side || '').toUpperCase();
+      if(side !== 'OVER' && side !== 'UNDER') return;
+      var odds = cfg.odds ? cfg.odds(p, side) : p.odds;
+      if(odds == null || odds === '' || !isFinite(Number(odds))) return;
+      var implied = _mlbCoachOddsImplied(odds);
+      if(implied == null) return;
+      var probability = cfg.prob ? cfg.prob(p, side, implied) : appProb(p, implied);
+      probability = Number(probability);
+      if(probability <= 1.0001) probability *= 100;
+      if(!isFinite(probability) || probability < 0 || probability > 100) return;
+      var line = cfg.line ? cfg.line(p, side) : p.line;
+      line = Number(line);
+      if(!isFinite(line)) return;
+
+      var mkt = cfg.market || p.market || p._90_cat || '';
+      var player = p.full_name || p.name || p.player || '';
+      if(!player || !mkt) return;
+      var team = p.team || '';
+      var opp = p.opp || p.opponent || '';
+      var edge = probability - implied;
+      var k = player+'|'+mkt+'|'+side+'|'+line;
+      if(seen[k]) return;
+      seen[k] = 1;
+
+      var blurb = String(p.blurb || p.reason || p.verdict || p.disp || p.hot_disp || '');
+      var projection = cfg.proj ? cfg.proj(p, side)
+        : (p.proj != null ? p.proj
+        : (p.proj_k != null ? p.proj_k
+        : (p.blended != null ? p.blended : p.blended_avg_k)));
+      projection = projection == null || projection === '' ? null : Number(projection);
+      if(projection != null && !isFinite(projection)) projection = null;
+      var book = cfg.book ? cfg.book(p, side)
+        : (p.book || (side === 'UNDER' ? p.under_book : p.over_book) || '');
+      var alternate = typeof cfg.alternate === 'function'
+        ? !!cfg.alternate(p) : !!cfg.alternate;
+
+      arr.push({
+        player: player, team: team, opp: opp, market: mkt, side: side, line: line,
+        odds: Number(odds), appProb: probability, implied: implied, edge: edge,
+        isPitcher: !!cfg.pitcher, alternate: alternate,
+        blurb: blurb, proj: projection, book: book
+      });
+    });
+  }
+
+  var hitOver = {market:'Hits',side:'OVER',line:function(){return .5;},odds:function(p){return p.hit_odds;}};
+  add(res.top9, hitOver);
+  add(res.also_ran, hitOver);
+  add(res.under_picks, {market:'Hits',side:'UNDER',line:function(){return 1.5;},odds:function(p){return p.under_odds;}});
+  add(res.tb_picks, {market:'Total Bases',side:'UNDER',line:function(){return 1.5;},odds:function(p){return p.tb_under_odds;}});
+  add(res.tb_over_picks, {market:'Total Bases',side:'OVER',line:function(){return 1.5;},odds:function(p){return p.tb_over_odds;}});
+  add(res.hr_picks, {market:'Home Runs',line:function(p){return p.line != null ? p.line : .5;},odds:function(p,s){return s==='UNDER'?p.under_odds:p.over_odds;}});
+  add(res.rbi_picks, {market:'RBIs',line:function(p){return p.line != null ? p.line : .5;},odds:function(p,s){return s==='UNDER'?p.under_odds:p.over_odds;}});
+  add(res.hrr_picks, {market:'H+R+RBI',line:function(){return 1.5;},odds:function(p,s){return s==='UNDER'?p.hrr_under_odds:p.hrr_over_odds;}});
+  add(res.runs_picks, {market:'Runs',line:function(p){return p.line != null ? p.line : .5;},odds:function(p,s){return s==='UNDER'?p.under_odds:p.over_odds;}});
+  add(res.walks_picks, {market:'Batter Walks',line:function(p){return p.line != null ? p.line : .5;},odds:function(p,s){return s==='UNDER'?p.under_odds:p.over_odds;}});
+  add(res.batter_k_picks, {
+    market:'Batter Strikeouts',
+    line:function(p){return p.line != null ? p.line : .5;},
+    odds:function(p,s){return s==='UNDER'?p.under_odds:p.over_odds;},
+    prob:function(p,s){
+      if(p.score == null || !isFinite(Number(p.score))) return null;
+      var overProb = Number(p.score);
+      return s === 'UNDER' ? 100 - overProb : overProb;
+    }
+  });
+
+  var pk = res.pitcher_k || {};
+  function completePitcherKAlt(p) {
+    return p.sugg_line != null && p.sugg_odds != null && !!p.sugg_book;
+  }
+  add(pk.picks, {
+    market:'Pitcher Strikeouts',pitcher:true,
+    accept:function(p){return p.sugg_line == null || completePitcherKAlt(p);},
+    side:function(p){return completePitcherKAlt(p) ? 'OVER' : p.pick;},
+    alternate:completePitcherKAlt,
+    line:function(p){return completePitcherKAlt(p) ? p.sugg_line : (p.line != null ? p.line : p.k_line);},
+    odds:function(p,s){return completePitcherKAlt(p) ? p.sugg_odds : (s==='UNDER'?p.under_odds:p.over_odds);},
+    book:function(p){return completePitcherKAlt(p) ? p.sugg_book : p.book;},
+    proj:function(p){return p.proj_k != null ? p.proj_k : p.blended_avg_k;}
+  });
+  var propCfg = {
+    pitcher_hits_allowed:'Hits Allowed',
+    pitcher_outs:'Pitching Outs',
+    pitcher_earned_runs:'Earned Runs',
+    pitcher_walks:'Walks Allowed'
+  };
+  Object.keys(propCfg).forEach(function(key) {
+    var bucket = (res.pitcher_props || {})[key] || {};
+    add(bucket.picks, {
+      market:propCfg[key],pitcher:true,
+      line:function(p){return p.line;},
+      odds:function(p,s){return s==='UNDER'?p.under_odds:p.over_odds;},
+      proj:function(p){return p.proj != null ? p.proj : p.blended;}
+    });
+  });
+
+  return arr;
+}
+
+function askMlbCoachPreset(question) {
+  var input = document.getElementById('mlbCoachInput');
+  if(input) input.value = question;
+  askMlbCoach();
+}
+
+function _mlbCoachCommit(html) {
+  var ans = document.getElementById('mlbCoachAnswer');
+  if(!ans) return;
+  ans.style.display = 'block';
+  ans.innerHTML = html;
+}
+
+function askMlbCoach() {
+  var input = document.getElementById('mlbCoachInput');
+  var question = String(input && input.value || '').trim();
+  if(!question) { if(input) input.focus(); return; }
+
+  var props = _mlbCoachAllProps();
+  if(!props.length) {
+    _mlbCoachCommit('<div><div class="mlb-coach-question">'+_mlbEsc(question)+'</div><div style="margin-top:11px;color:#cbd5e1;font-size:.78rem;line-height:1.5">Load an MLB board with Get Picks first. The Edge Coach only analyzes generated props that have real sportsbook prices.</div></div>');
+    return;
+  }
+
+  var q = question.toLowerCase();
+
+  var isHitterQ = q.indexOf('hitter')>=0 || q.indexOf('batter')>=0 || q.indexOf('hit')>=0 || q.indexOf('total bases')>=0 || q.indexOf('production')>=0;
+  var isPitcherQ = q.indexOf('pitcher')>=0 || q.indexOf('pitching')>=0 || (q.indexOf('strikeout')>=0 && q.indexOf('batter')<0) || q.indexOf('hits allowed')>=0 || q.indexOf('outs')>=0 || q.indexOf('earned runs')>=0 || q.indexOf('walks allowed')>=0;
+
+  var pool = props;
+  if (isHitterQ && !isPitcherQ) pool = pool.filter(function(p) { return !p.isPitcher; });
+  else if (isPitcherQ && !isHitterQ) pool = pool.filter(function(p) { return p.isPitcher; });
+
+  if(q.indexOf('alt-line') >= 0 || q.indexOf('alternate') >= 0) {
+    pool = pool.filter(function(p) { return p.alternate && p.edge > 0; });
+    pool.sort(function(a,b) { return b.edge - a.edge; });
+    if(!pool.length) {
+      _mlbCoachCommit('<div><div class="mlb-coach-question">'+_mlbEsc(question)+'</div><div style="margin-top:11px;color:#cbd5e1;font-size:.78rem;line-height:1.5">No genuine MLB alternate line currently meets all positive-edge gates for this request. No standard line was substituted.</div></div>');
+      return;
+    }
+    _mlbCoachRender(question, pool.slice(0,10), props.length, false);
+    return;
+  }
+
+  var isSafest = q.indexOf('safest') >= 0;
+
+  if(isSafest) {
+    pool = pool.filter(function(p) { return p.edge > 0; });
+    pool.sort(function(a,b) { return b.appProb - a.appProb || b.edge - a.edge; });
+  } else if(q.indexOf('under') >= 0) {
+    pool = pool.filter(function(p) { return p.side === 'UNDER' && p.edge > 0; });
+    pool.sort(function(a,b) { return b.edge - a.edge; });
+  } else if(q.indexOf('production') >= 0) {
+    pool = pool.filter(function(p) {
+      return p.edge > 0 && ['Runs','RBIs','H+R+RBI','Home Runs','Batter Walks'].indexOf(p.market) >= 0;
+    });
+    pool.sort(function(a,b) { return b.edge - a.edge; });
+  } else if(q.indexOf('total bases') >= 0) {
+    pool = pool.filter(function(p) { return p.edge > 0 && p.market === 'Total Bases'; });
+    pool.sort(function(a,b) { return b.edge - a.edge; });
+  } else if(q.indexOf('record a hit') >= 0) {
+    pool = pool.filter(function(p) { return p.edge > 0 && p.market === 'Hits'; });
+    pool.sort(function(a,b) { return b.edge - a.edge; });
+  } else if(q.indexOf('strikeout') >= 0) {
+    pool = pool.filter(function(p) { return p.edge > 0 && p.market.indexOf('Strikeout')>=0; });
+    pool.sort(function(a,b) { return b.edge - a.edge; });
+  } else if(q.indexOf('hits allowed') >= 0) {
+    pool = pool.filter(function(p) { return p.edge > 0 && p.market === 'Hits Allowed'; });
+    pool.sort(function(a,b) { return b.edge - a.edge; });
+  } else if(q.indexOf('outs') >= 0) {
+    pool = pool.filter(function(p) { return p.edge > 0 && p.market === 'Pitching Outs'; });
+    pool.sort(function(a,b) { return b.edge - a.edge; });
+  } else if(q.indexOf('earned runs') >= 0) {
+    pool = pool.filter(function(p) { return p.edge > 0 && p.market === 'Earned Runs'; });
+    pool.sort(function(a,b) { return b.edge - a.edge; });
+  } else if(q.indexOf('walks allowed') >= 0) {
+    pool = pool.filter(function(p) { return p.edge > 0 && p.market === 'Walks Allowed'; });
+    pool.sort(function(a,b) { return b.edge - a.edge; });
+  } else {
+    pool = pool.filter(function(p) { return p.edge > 0; });
+    pool.sort(function(a,b) { return b.edge - a.edge; });
+  }
+
+  if(q.indexOf('top 3') >= 0) pool = pool.slice(0,3);
+  else pool = pool.slice(0,10);
+
+  _mlbCoachRender(question, pool, props.length, isSafest);
+}
+
+function _mlbCoachRender(question, rows, totalPriced, isSafest) {
+  var qHtml = '<div class="mlb-coach-question">'+_mlbEsc(question)+'</div>';
+  if(!rows.length) {
+    _mlbCoachCommit('<div>'+qHtml+'<div style="margin-top:11px;color:#cbd5e1;font-size:.78rem;line-height:1.5">No loaded MLB prop matched that request with a real sportsbook price and a positive Coach Edge. Try checking the standard markets instead.</div></div>');
+    return;
+  }
+
+  var table = rows.map(function(p, i) {
+    return '<tr><td>'+(i+1)+'</td><td><b style="color:#fff">'+_mlbEsc(p.player)+'</b><br><span style="color:#64748b">'+_mlbEsc(p.team)+' vs '+_mlbEsc(p.opp)+'</span></td>'
+      +'<td>'+_mlbEsc(p.market)+'<br><b style="color:'+(p.side==='OVER'?'#4ade80':'#f87171')+'">'+p.side+' '+_mlbEsc(p.line)+'</b>'+(p.proj!=null?' <span style="color:#94a3b8;font-size:.6rem">proj '+_mlbEsc(p.proj.toFixed(2))+'</span>':'')+'</td>'
+      +'<td>'+_mlbCoachOdds(p.odds)+'<br><span style="color:#64748b;font-size:.6rem">'+_mlbEsc(p.book)+'</span></td>'
+      +'<td>'+p.appProb.toFixed(1)+'%</td><td>'+p.implied.toFixed(1)+'%</td>'
+      +'<td style="color:'+(p.edge>=0?'#4ade80':'#f87171')+'!important;font-weight:700">'+_mlbCoachSigned(p.edge)+' pts</td></tr>';
+  }).join('');
+
+  var detail = rows.map(function(p, i) {
+    var pfx = isSafest ? '<b style="color:#fbbf24">Safety rank: '+p.appProb.toFixed(1)+'% app probability.</b> ' : '';
+    return '<div class="mlb-coach-play-copy"><b>#'+(i+1)+' '+_mlbEsc(p.player)+' '+_mlbEsc(p.market)+' '+p.side+' '+_mlbEsc(p.line)+'</b> — '+pfx+'App Probability '+p.appProb.toFixed(1)+'% versus '+p.implied.toFixed(1)+'% implied = <b style="color:'+(p.edge>=0?'#4ade80':'#f87171')+'">'+_mlbCoachSigned(p.edge)+' Coach Edge points</b>.'+(p.blurb?' '+_mlbEsc(p.blurb):'')+'</div>';
+  }).join('');
+
+  var summaryText = isSafest
+    ? 'I checked only the exact sides that qualified for the loaded board, removed every zero or negative Coach Edge play, and ranked the remaining plays by app probability.'
+    : 'I checked '+totalPriced+' priced props from the loaded board and ranked the matching positive-edge plays. Probability edge is shown in percentage points, not traditional expected ROI.';
+
+  var summaryHtml = '<div style="margin-top:11px;color:#e5e7eb;font-size:.76rem;line-height:1.5">'+summaryText+'</div>';
+  var tableWrap = '<div class="mlb-coach-table-wrap"><table class="mlb-coach-table"><thead><tr><th>#</th><th>Player</th><th>Play</th><th>Odds</th><th>App Prob</th><th>Implied</th><th>Coach Edge</th></tr></thead><tbody>'+table+'</tbody></table></div>';
+
+  _mlbCoachCommit('<div>'+qHtml+summaryHtml+tableWrap+detail+'</div>');
+}
+
 async function getPicks() {
   const dateStr = document.getElementById('date-picker').value;
   if (!dateStr) { alert('Please select a date.'); return; }
@@ -4774,6 +5115,15 @@ function _openGamePred(i){
 function showResults(result) {
   result = _filterStarted(result);
   window._lastResult = result;
+
+  var _mlbAns = document.getElementById('mlbCoachAnswer');
+  if(_mlbAns) {
+    _mlbAns.style.display = 'none';
+    _mlbAns.innerHTML = '';
+  }
+  var _mlbInp = document.getElementById('mlbCoachInput');
+  if(_mlbInp) _mlbInp.value = '';
+
   if(typeof _renderLeanBanner==='function') _renderLeanBanner();
   if(typeof _renderGamePredictor==='function') _renderGamePredictor(result);
   // Hide all section cards FIRST — before any filtering — so stale cards from a
