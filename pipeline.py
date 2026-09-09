@@ -2857,6 +2857,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                 break
         _up.setdefault("team", "")
         _up.setdefault("game_start", "")
+        _up.setdefault("line", 1.5)
         _up["recent_hit_log"] = _recent_hit_log(_up.get("batter_id"))
         _up["series_splits"]  = fetch_series_splits(_up.get("batter_id"), _up.get("opp", ""), run_date, _up.get("side", ""))
 
@@ -2901,6 +2902,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     for _hp in (top9 + also_ran):
         if not _hp.get("game_start"):
             _hp["game_start"] = _game_start_for(_hp.get("team", ""))
+        _hp.setdefault("line", 0.5)
 
     # ── Runs Picks (Batter Runs Scored, Over/Under 0.5) ───────────────
     try:
@@ -2911,6 +2913,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         runs_picks_list = []
     for _rp in runs_picks_list:
         _rp["game_start"]    = _game_start_for(_rp.get("team", ""))
+        _rp.setdefault("line", 0.5)
         _rp["series_splits"] = fetch_series_splits(_rp.get("batter_id"), _rp.get("opp", ""), run_date, _rp.get("side", ""))
 
     # ── TB Under Picks (batter total bases Under 1.5) ─────────────────────
@@ -2922,6 +2925,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         tb_picks_list = []
     for _tp in tb_picks_list:
         _tp["game_start"]    = _game_start_for(_tp.get("team", ""))
+        _tp.setdefault("line", 1.5)
         _tp["series_splits"] = fetch_series_splits(_tp.get("batter_id"), _tp.get("opp", ""), run_date, _tp.get("side", ""))
 
     # ── TB Over Picks (batter total bases Over 1.5) ───────────────────────
@@ -2933,6 +2937,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         tb_over_picks_list = []
     for _tov in tb_over_picks_list:
         _tov["game_start"]    = _game_start_for(_tov.get("team", ""))
+        _tov.setdefault("line", 1.5)
         _tov["series_splits"] = fetch_series_splits(_tov.get("batter_id"), _tov.get("opp", ""), run_date, _tov.get("side", ""))
 
     # ── RBI Picks (Batter RBIs, Over/Under 0.5) ───────────────────────────
@@ -2944,6 +2949,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         rbi_picks_list = []
     for _xp in rbi_picks_list:
         _xp["game_start"]    = _game_start_for(_xp.get("team", ""))
+        _xp.setdefault("line", 0.5)
         _xp["series_splits"] = fetch_series_splits(_xp.get("batter_id"), _xp.get("opp", ""), run_date, _xp.get("side", ""))
 
     # ── Batter Walks Picks (Batter Walks, Over/Under 0.5) ─────────────────
@@ -2955,6 +2961,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         walks_picks_list = []
     for _wp in walks_picks_list:
         _wp["game_start"]    = _game_start_for(_wp.get("team", ""))
+        _wp.setdefault("line", 0.5)
         _wp["series_splits"] = fetch_series_splits(_wp.get("batter_id"), _wp.get("opp", ""), run_date, _wp.get("side", ""))
 
     # ── Batter Strikeout Picks (Batter Ks, Over/Under 0.5) ───────────────
@@ -2966,6 +2973,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         batter_k_picks_list = []
     for _kp in batter_k_picks_list:
         _kp["game_start"]    = _game_start_for(_kp.get("team", ""))
+        _kp.setdefault("line", 0.5)
         _kp["series_splits"] = fetch_series_splits(
             _kp.get("batter_id"), _kp.get("opp", ""), run_date, _kp.get("side", ""))
 
@@ -2978,7 +2986,20 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         hrr_picks_list = []
     for _hp in hrr_picks_list:
         _hp["game_start"]    = _game_start_for(_hp.get("team", ""))
+        _hp.setdefault("line", 1.5)
         _hp["series_splits"] = fetch_series_splits(_hp.get("batter_id"), _hp.get("opp", ""), run_date, _hp.get("side", ""))
+
+    # Coach-only genuine alternate H+R+RBI Over 0.5 collection. It remains
+    # separate from the existing standard 1.5 HRR board and every tracker.
+    try:
+        from under_picks import run_hrr_alt_picks
+        hrr_alt_picks_list = run_hrr_alt_picks(
+            run_date, team_schedule, emit=emit)
+    except Exception as exc:
+        emit({"type": "log", "msg": f"⚠️ Coach HRR alt picks skipped: {exc}"})
+        hrr_alt_picks_list = []
+    for _ha in hrr_alt_picks_list:
+        _ha["game_start"] = _game_start_for(_ha.get("team", ""))
 
     # ── HRR Special (parlay confluence board, OVER only) ──────────────────
     # Stricter, separate board for parlays. Gates 1-3 (.275 vs pitcher / 65%
@@ -4859,7 +4880,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     result = {
         "date": run_date, "top9": top9, "also_ran": also_ran,
         "ninety_pct_picks": ninety_pct_picks,
-        "under_picks": under_picks_list, "runs_picks": runs_picks_list, "tb_picks": tb_picks_list, "tb_over_picks": tb_over_picks_list, "rbi_picks": rbi_picks_list, "walks_picks": walks_picks_list, "batter_k_picks": batter_k_picks_list, "hrr_picks": hrr_picks_list, "hrr_special_picks": hrr_special_list, "triple_split_picks": triple_split_list, "five_star_split_picks": five_star_split_list, "club_plays_picks": club_plays_list, "hot_split_picks": hot_split_list, "cold_split_picks": cold_split_list, "hr_picks": hr_picks_list,
+        "under_picks": under_picks_list, "runs_picks": runs_picks_list, "tb_picks": tb_picks_list, "tb_over_picks": tb_over_picks_list, "rbi_picks": rbi_picks_list, "walks_picks": walks_picks_list, "batter_k_picks": batter_k_picks_list, "hrr_picks": hrr_picks_list, "hrr_alt_picks": hrr_alt_picks_list, "hrr_special_picks": hrr_special_list, "triple_split_picks": triple_split_list, "five_star_split_picks": five_star_split_list, "club_plays_picks": club_plays_list, "hot_split_picks": hot_split_list, "cold_split_picks": cold_split_list, "hr_picks": hr_picks_list,
         "all_qualified": era_qualified,
         "game_predictions": game_predictions,
         "dq_s1_s3": [x for x in results if x["dq"] and x not in dn_dq and x not in era_dq and x not in dq_lineup and x not in s4_dq],
