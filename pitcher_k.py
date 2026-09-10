@@ -276,8 +276,17 @@ def _fetch_k_lines(run_date: str, emit=None) -> list:
                         if not name or pt is None: continue
                         key = _normalize(name)
                         if side == "Over" and price is not None:
-                            ladder.setdefault(key, {}).setdefault(
-                                float(pt), {"price": price, "book": bk})
+                            line_quotes = ladder.setdefault(key, {})
+                            current = line_quotes.get(float(pt))
+                            try:
+                                is_better = (current is None or
+                                             int(float(price)) >
+                                             int(float(current.get("price"))))
+                            except (TypeError, ValueError):
+                                is_better = current is None
+                            if is_better:
+                                line_quotes[float(pt)] = {
+                                    "price": price, "book": bk}
                         # Alternate ladders are Coach-only. They must never
                         # establish or overwrite the standard board line.
                         if market_key != "pitcher_strikeouts":
@@ -296,7 +305,6 @@ def _fetch_k_lines(run_date: str, emit=None) -> list:
                             _take_odds(entry, "over_odds", "over_odds_book", price, bk)
                         elif side == "Under":
                             _take_odds(entry, "under_odds", "under_odds_book", price, bk)
-                break
         for key, entry in seen.items():
             entry["over_ladder"] = ladder.get(key, {})
         return list(seen.values())
@@ -1549,12 +1557,13 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
             pick, pick_note = None, f"proj {decision_val} exactly on line"
 
         # Independent Coach-only genuine alternate. Evaluate every published
-        # Over ladder line against recent-start frequency at that exact line.
+        # lower Over ladder line and keep this pitcher's best available edge.
         # This never changes the standard board's chosen side or line.
         k_ladder = pl.get("over_ladder") or {}
         _alt_ranked = []
+        _alt_sample = recent_k_list or k_list
         for _alt_line, _quote in k_ladder.items():
-            if not isinstance(_quote, dict) or not k_list:
+            if not isinstance(_quote, dict) or not _alt_sample:
                 continue
             _price, _book = _quote.get("price"), _quote.get("book")
             if _price is None or not _book:
@@ -1563,13 +1572,13 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
                 _al, _ao = float(_alt_line), int(float(_price))
             except (TypeError, ValueError):
                 continue
-            if abs(_al - float(line)) < 1e-9 or _ao < COACH_MIN_ODDS:
+            if _al >= float(line) or _ao < COACH_MIN_ODDS:
                 continue
-            _ap = sum(1 for k in k_list if k > _al) / len(k_list) * 100.0
+            _ap = (sum(1 for k in _alt_sample if k > _al) /
+                   len(_alt_sample) * 100.0)
             _imp = (-_ao / (-_ao + 100) * 100.0
                     if _ao < 0 else 100.0 / (_ao + 100) * 100.0)
-            if _ap > _imp:
-                _alt_ranked.append((_ap - _imp, _ap, _al, _ao, _book))
+            _alt_ranked.append((_ap - _imp, _ap, _al, _ao, _book))
         if _alt_ranked:
             _, sugg_prob, sugg_line, sugg_odds, _sugg_book = max(_alt_ranked)
             sugg_book = _book_label(_sugg_book)
