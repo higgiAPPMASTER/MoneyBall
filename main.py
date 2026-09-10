@@ -1959,21 +1959,24 @@ def _mlb_coach_all_props(result):
 
     def pk_alt(p):
         return (p.get("sugg_line") is not None and
+                p.get("sugg_line") != p.get("line") and
                 p.get("sugg_odds") is not None and
                 p.get("sugg_odds") >= -1000 and bool(p.get("sugg_book")))
     pk = result.get("pitcher_k") or {}
     add(pk.get("picks"), "Pitcher Strikeouts", "strikeOuts", "Strikeouts",
-        pitcher=True, accept=lambda p: p.get("sugg_line") is None or pk_alt(p),
-        side=lambda p: "OVER" if pk_alt(p) else p.get("pick"),
-        line=lambda p, s: p.get("sugg_line") if pk_alt(p)
-        else p.get("line", p.get("k_line")),
-        odds=lambda p, s: p.get("sugg_odds") if pk_alt(p)
-        else (p.get("under_odds") if s == "UNDER" else p.get("over_odds")),
-        book=lambda p, s: p.get("sugg_book") if pk_alt(p) else p.get("book"),
-        alternate=pk_alt,
-        probability=lambda p, s, i: (
-            p.get("sugg_prob") if pk_alt(p)
-            else _mlb_coach_probability(p, i, s)),
+        pitcher=True, side=lambda p: p.get("pick"),
+        line=lambda p, s: p.get("line", p.get("k_line")),
+        odds=lambda p, s: (p.get("under_odds") if s == "UNDER"
+                           else p.get("over_odds")),
+        book=lambda p, s: p.get("book"), alternate=False,
+        probability=lambda p, s, i: _mlb_coach_probability(p, i, s),
+        projection=lambda p: p.get("proj_k", p.get("blended_avg_k")))
+    add(pk.get("all"), "Pitcher Strikeouts", "strikeOuts", "Strikeouts",
+        pitcher=True, accept=pk_alt, side="OVER",
+        line=lambda p, s: p.get("sugg_line"),
+        odds=lambda p, s: p.get("sugg_odds"),
+        book=lambda p, s: p.get("sugg_book"), alternate=True,
+        probability=lambda p, s, i: p.get("sugg_prob"),
         projection=lambda p: p.get("proj_k", p.get("blended_avg_k")))
 
     cfg = {
@@ -1997,8 +2000,9 @@ def _mlb_coach_select_categories(result):
     pitchers = [p for p in props if p["is_pitcher"]]
 
     def choose(pool, *, market=None, markets=None, side=None, alternate=None,
-               safest=False, limit=10):
-        rows = [dict(p) for p in pool if p["coach_edge"] > 0]
+               safest=False, positive_only=True, limit=10):
+        rows = [dict(p) for p in pool
+                if not positive_only or p["coach_edge"] > 0]
         if market:
             rows = [p for p in rows if p["market"] == market]
         if markets:
@@ -2029,12 +2033,18 @@ def _mlb_coach_select_categories(result):
         "pitcher_safest": choose(pitchers, safest=True),
         "pitcher_edge": choose(pitchers),
         "pitcher_alt_k": choose(
-            pitchers, market="Pitcher Strikeouts", alternate=True),
-        "pitcher_k": choose(pitchers, market="Pitcher Strikeouts"),
-        "pitcher_hits_allowed": choose(pitchers, market="Hits Allowed"),
-        "pitcher_outs": choose(pitchers, market="Pitching Outs"),
-        "pitcher_er": choose(pitchers, market="Earned Runs"),
-        "pitcher_walks": choose(pitchers, market="Walks Allowed"),
+            pitchers, market="Pitcher Strikeouts", alternate=True,
+            positive_only=False),
+        "pitcher_k": choose(pitchers, market="Pitcher Strikeouts",
+                            alternate=False, positive_only=False, limit=5),
+        "pitcher_hits_allowed": choose(
+            pitchers, market="Hits Allowed", positive_only=False, limit=5),
+        "pitcher_outs": choose(
+            pitchers, market="Pitching Outs", positive_only=False, limit=5),
+        "pitcher_er": choose(
+            pitchers, market="Earned Runs", positive_only=False, limit=5),
+        "pitcher_walks": choose(
+            pitchers, market="Walks Allowed", positive_only=False, limit=5),
         "pitcher_unders": choose(pitchers, side="UNDER"),
         "pitcher_top3": choose(pitchers, limit=3),
     }
@@ -4773,17 +4783,24 @@ function _mlbCoachAllProps() {
   var pk = res.pitcher_k || {};
   function completePitcherKAlt(p) {
     return p.sugg_line != null && p.sugg_odds != null
+      && Number(p.sugg_line) !== Number(p.line)
       && Number(p.sugg_odds) >= -1000 && !!p.sugg_book;
   }
   add(pk.picks, {
     market:'Pitcher Strikeouts',pitcher:true,
-    accept:function(p){return p.sugg_line == null || completePitcherKAlt(p);},
-    side:function(p){return completePitcherKAlt(p) ? 'OVER' : p.pick;},
-    alternate:completePitcherKAlt,
-    line:function(p){return completePitcherKAlt(p) ? p.sugg_line : (p.line != null ? p.line : p.k_line);},
-    odds:function(p,s){return completePitcherKAlt(p) ? p.sugg_odds : (s==='UNDER'?p.under_odds:p.over_odds);},
-    book:function(p){return completePitcherKAlt(p) ? p.sugg_book : p.book;},
-    prob:function(p,s){return completePitcherKAlt(p) && p.sugg_prob != null ? Number(p.sugg_prob) : null;},
+    side:function(p){return p.pick;},alternate:false,
+    line:function(p){return p.line != null ? p.line : p.k_line;},
+    odds:function(p,s){return s==='UNDER'?p.under_odds:p.over_odds;},
+    book:function(p){return p.book;},
+    proj:function(p){return p.proj_k != null ? p.proj_k : p.blended_avg_k;}
+  });
+  add(pk.all, {
+    market:'Pitcher Strikeouts',pitcher:true,
+    accept:completePitcherKAlt,side:'OVER',alternate:true,
+    line:function(p){return p.sugg_line;},
+    odds:function(p){return p.sugg_odds;},
+    book:function(p){return p.sugg_book;},
+    prob:function(p){return p.sugg_prob != null ? Number(p.sugg_prob) : null;},
     proj:function(p){return p.proj_k != null ? p.proj_k : p.blended_avg_k;}
   });
   var propCfg = {
@@ -4880,17 +4897,22 @@ function askMlbCoach() {
   else if (isPitcherQ && !isHitterQ) pool = pool.filter(function(p) { return p.isPitcher; });
 
   if(q.indexOf('alt-line') >= 0 || q.indexOf('alternate') >= 0) {
-    pool = pool.filter(function(p) { return p.alternate && p.edge > 0; });
+    var allowPitcherAltAnyEdge = isPitcherQ && !isHitterQ;
+    pool = pool.filter(function(p) {
+      return p.alternate && (allowPitcherAltAnyEdge || p.edge > 0);
+    });
     pool.sort(function(a,b) { return b.edge - a.edge; });
     if(!pool.length) {
       _mlbCoachCommit('<div><div class="mlb-coach-question">'+_mlbEsc(question)+'</div><div style="margin-top:11px;color:#cbd5e1;font-size:.78rem;line-height:1.5">No genuine MLB alternate line currently meets all positive-edge gates for this request. No standard line was substituted.</div></div>');
       return;
     }
-    _mlbCoachRender(question, pool.slice(0,10), props.length, false, gameLabel);
+    _mlbCoachRender(question, pool.slice(0,10), props.length, false, gameLabel,
+                    allowPitcherAltAnyEdge);
     return;
   }
 
   var isSafest = q.indexOf('safest') >= 0;
+  var isPitcherMarketList = false;
 
   if(isSafest) {
     pool = pool.filter(function(p) { return p.edge > 0; });
@@ -4910,19 +4932,27 @@ function askMlbCoach() {
     pool = pool.filter(function(p) { return p.edge > 0 && p.market === 'Hits'; });
     pool.sort(function(a,b) { return b.edge - a.edge; });
   } else if(q.indexOf('strikeout') >= 0) {
-    pool = pool.filter(function(p) { return p.edge > 0 && p.market.indexOf('Strikeout')>=0; });
+    isPitcherMarketList = isPitcherQ && !isHitterQ;
+    pool = pool.filter(function(p) {
+      return p.market.indexOf('Strikeout')>=0
+        && (!isPitcherMarketList || !p.alternate);
+    });
     pool.sort(function(a,b) { return b.edge - a.edge; });
   } else if(q.indexOf('hits allowed') >= 0) {
-    pool = pool.filter(function(p) { return p.edge > 0 && p.market === 'Hits Allowed'; });
+    isPitcherMarketList = true;
+    pool = pool.filter(function(p) { return p.market === 'Hits Allowed'; });
     pool.sort(function(a,b) { return b.edge - a.edge; });
   } else if(q.indexOf('outs') >= 0) {
-    pool = pool.filter(function(p) { return p.edge > 0 && p.market === 'Pitching Outs'; });
+    isPitcherMarketList = true;
+    pool = pool.filter(function(p) { return p.market === 'Pitching Outs'; });
     pool.sort(function(a,b) { return b.edge - a.edge; });
   } else if(q.indexOf('earned runs') >= 0) {
-    pool = pool.filter(function(p) { return p.edge > 0 && p.market === 'Earned Runs'; });
+    isPitcherMarketList = true;
+    pool = pool.filter(function(p) { return p.market === 'Earned Runs'; });
     pool.sort(function(a,b) { return b.edge - a.edge; });
   } else if(q.indexOf('walks allowed') >= 0) {
-    pool = pool.filter(function(p) { return p.edge > 0 && p.market === 'Walks Allowed'; });
+    isPitcherMarketList = true;
+    pool = pool.filter(function(p) { return p.market === 'Walks Allowed'; });
     pool.sort(function(a,b) { return b.edge - a.edge; });
   } else {
     pool = pool.filter(function(p) { return p.edge > 0; });
@@ -4931,15 +4961,17 @@ function askMlbCoach() {
 
   if(q.indexOf('best play')>=0 && q.indexOf('best plays')<0) pool = pool.slice(0,1);
   else if(q.indexOf('top 3') >= 0) pool = pool.slice(0,3);
+  else if(isPitcherMarketList) pool = pool.slice(0,5);
   else pool = pool.slice(0,10);
 
-  _mlbCoachRender(question, pool, props.length, isSafest, gameLabel);
+  _mlbCoachRender(question, pool, props.length, isSafest, gameLabel,
+                  isPitcherMarketList);
 }
 
-function _mlbCoachRender(question, rows, totalPriced, isSafest, gameLabel) {
+function _mlbCoachRender(question, rows, totalPriced, isSafest, gameLabel, allowAnyEdge) {
   var qHtml = '<div class="mlb-coach-question">'+_mlbEsc(question)+'</div>';
   if(!rows.length) {
-    _mlbCoachCommit('<div>'+qHtml+'<div style="margin-top:11px;color:#cbd5e1;font-size:.78rem;line-height:1.5">No loaded MLB prop'+(gameLabel?' in '+_mlbEsc(gameLabel):'')+' matched that request with a real sportsbook price and a green positive Coach Edge.</div></div>');
+    _mlbCoachCommit('<div>'+qHtml+'<div style="margin-top:11px;color:#cbd5e1;font-size:.78rem;line-height:1.5">No loaded MLB prop'+(gameLabel?' in '+_mlbEsc(gameLabel):'')+' matched that request with a real sportsbook price'+(allowAnyEdge?'.':' and a green positive Coach Edge.')+'</div></div>');
     return;
   }
 
@@ -4952,7 +4984,9 @@ function _mlbCoachRender(question, rows, totalPriced, isSafest, gameLabel) {
       +'<td style="color:'+(p.edge>=0?'#4ade80':'#f87171')+'!important;font-weight:700">'+_mlbCoachSigned(p.edge)+' pts</td></tr>';
   }).join('');
 
-  var summaryText = isSafest
+  var summaryText = allowAnyEdge
+    ? 'I used up to five qualified normal-board picks for this pitcher market and kept their calculated Coach Edge visible, including negative values.'
+    : isSafest
     ? 'I checked only the exact sides that qualified for the loaded board, removed every zero or negative Coach Edge play, and ranked the remaining plays by app probability.'
     : 'I checked '+totalPriced+' priced props from the loaded board'+(gameLabel?' and restricted the answer to '+_mlbEsc(gameLabel):'')+'. I ranked only matching green positive-edge plays. Probability edge is shown in percentage points, not traditional expected ROI.';
 
