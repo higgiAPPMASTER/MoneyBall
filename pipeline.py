@@ -3480,17 +3480,10 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                 _cdf = _pois_cdf(int(_math.floor(ln)), mean)
                 _set_ev(p, _cal_prob(_cdf, "UNDER"), p.get("under_odds"))
             else:
-                _alt = p.get("sugg_line")
-                if _alt is not None and p.get("pick") == "OVER":
-                    _c = _pois_cdf(int(_math.floor(_alt)), mean)
-                    _pw = (1.0 - _c) if _c is not None else None
-                    _set_ev(p, _cal_prob(_pw, "OVER"),
-                            p.get("sugg_odds") or p.get("over_odds"))
-                else:
-                    _c = _pois_cdf(int(_math.floor(ln)), mean)
-                    _pw = (1.0 - _c) if _c is not None else None
-                    _set_ev(p, _cal_prob(_pw, "OVER"),
-                            p.get("over_odds"))
+                _c = _pois_cdf(int(_math.floor(ln)), mean)
+                _pw = (1.0 - _c) if _c is not None else None
+                _set_ev(p, _cal_prob(_pw, "OVER"),
+                        p.get("over_odds"))
 
         for _pk in (pitcher_k_result.get("picks", [])
                     + pitcher_k_result.get("all", [])):
