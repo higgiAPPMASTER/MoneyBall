@@ -1179,7 +1179,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
         if not stat_key:
             return None
         pick_dir = (p.get("_90_dir") or p.get("pick") or "OVER").upper()
-        line = p.get("sugg_line") if lock_cat == "Pitcher Ks" and p.get("sugg_line") is not None else p.get("line")
+        line = p.get("line")
         if line is None:
             line = default_line
         if line is None:
@@ -1379,7 +1379,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             continue
         st  = _lookup(None, p.get("name"))
         actual = st["strikeOuts"] if st else None
-        line   = p.get("sugg_line") if p.get("sugg_line") is not None else p.get("line")
+        line   = p.get("line")
         if line is None:
             continue
         pick_dir = p.get("pick")
@@ -1519,7 +1519,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             continue
         st = _lookup(None, p.get("name"))
         actual = st["strikeOuts"] if st else None
-        ln = p.get("sugg_line") if p.get("sugg_line") is not None else p.get("line")
+        ln = p.get("line")
         if ln is None:
             continue
         pd = p.get("pick")
@@ -1959,7 +1959,8 @@ def _mlb_coach_all_props(result):
 
     def pk_alt(p):
         return (p.get("sugg_line") is not None and
-                p.get("sugg_odds") is not None and bool(p.get("sugg_book")))
+                p.get("sugg_odds") is not None and
+                p.get("sugg_odds") >= -1000 and bool(p.get("sugg_book")))
     pk = result.get("pitcher_k") or {}
     add(pk.get("picks"), "Pitcher Strikeouts", "strikeOuts", "Strikeouts",
         pitcher=True, accept=lambda p: p.get("sugg_line") is None or pk_alt(p),
@@ -4771,7 +4772,8 @@ function _mlbCoachAllProps() {
 
   var pk = res.pitcher_k || {};
   function completePitcherKAlt(p) {
-    return p.sugg_line != null && p.sugg_odds != null && !!p.sugg_book;
+    return p.sugg_line != null && p.sugg_odds != null
+      && Number(p.sugg_odds) >= -1000 && !!p.sugg_book;
   }
   add(pk.picks, {
     market:'Pitcher Strikeouts',pitcher:true,
@@ -4950,11 +4952,6 @@ function _mlbCoachRender(question, rows, totalPriced, isSafest, gameLabel) {
       +'<td style="color:'+(p.edge>=0?'#4ade80':'#f87171')+'!important;font-weight:700">'+_mlbCoachSigned(p.edge)+' pts</td></tr>';
   }).join('');
 
-  var detail = rows.map(function(p, i) {
-    var pfx = isSafest ? '<b style="color:#fbbf24">Safety rank: '+p.appProb.toFixed(1)+'% app probability.</b> ' : '';
-    return '<div class="mlb-coach-play-copy"><b>#'+(i+1)+' '+_mlbEsc(p.player)+' '+_mlbEsc(p.market)+' '+p.side+' '+_mlbEsc(p.line)+'</b> — '+pfx+'App Probability '+p.appProb.toFixed(1)+'% versus '+p.implied.toFixed(1)+'% implied = <b style="color:'+(p.edge>=0?'#4ade80':'#f87171')+'">'+_mlbCoachSigned(p.edge)+' Coach Edge points</b>.'+(p.blurb?' '+_mlbEsc(p.blurb):'')+'</div>';
-  }).join('');
-
   var summaryText = isSafest
     ? 'I checked only the exact sides that qualified for the loaded board, removed every zero or negative Coach Edge play, and ranked the remaining plays by app probability.'
     : 'I checked '+totalPriced+' priced props from the loaded board'+(gameLabel?' and restricted the answer to '+_mlbEsc(gameLabel):'')+'. I ranked only matching green positive-edge plays. Probability edge is shown in percentage points, not traditional expected ROI.';
@@ -4962,7 +4959,7 @@ function _mlbCoachRender(question, rows, totalPriced, isSafest, gameLabel) {
   var summaryHtml = '<div style="margin-top:11px;color:#e5e7eb;font-size:.76rem;line-height:1.5">'+summaryText+'</div>';
   var tableWrap = '<div class="mlb-coach-table-wrap"><table class="mlb-coach-table"><thead><tr><th>#</th><th>Player</th><th>Play</th><th>Odds</th><th>App Prob</th><th>Implied</th><th>Coach Edge</th></tr></thead><tbody>'+table+'</tbody></table></div>';
 
-  _mlbCoachCommit('<div>'+qHtml+summaryHtml+tableWrap+detail+'</div>');
+  _mlbCoachCommit('<div>'+qHtml+summaryHtml+tableWrap+'</div>');
 }
 
 var _mlbCoachTrackData = null;
@@ -6079,7 +6076,7 @@ function _pkForm(key){
   var blendTxt=p.blended_avg_k!=null?(p.blended_avg_k+' K'):'—';
   var lineTxt=line!=null?(line+' Ks'):'no line';
   var pickClr=p.pick==='OVER'?'#63cab7':(p.pick==='UNDER'?'#ff8a65':'#94a3b8');
-  var pickTxt=p.pick?(p.sugg_line!=null?('OVER '+p.sugg_line):p.pick):'No pick';
+  var pickTxt=p.pick?p.pick:'No pick';
   // ── All-4-markets summary ─────────────────────────────────────────────
   // Strikeouts (this pick) + Hits Allowed / Outs / Earned Runs pulled from the
   // per-name prop index (window.__PP_BY_NAME__) built in renderPitcherProps.
@@ -6103,10 +6100,9 @@ function _pkForm(key){
       +'<td style="padding:5px 8px;font-family:monospace;color:#cbd5e1">'+(bl!=null?(bl+(unit?(' '+unit):'')):'\u2014')+'</td>'
       +'<td style="padding:5px 8px;font-weight:800;color:'+pc+'">'+pickStr+'</td>'+betCell+'</tr>';
   }
-  var _kHasSugg=p.sugg_line!=null;
-  var _kLine=_kHasSugg?p.sugg_line:p.line;
-  var _kPick=_kHasSugg?'OVER':p.pick;
-  var _kOd=_kHasSugg?p.sugg_odds:(p.pick==='OVER'?p.over_odds:(p.pick==='UNDER'?p.under_odds:null));
+  var _kLine=p.line;
+  var _kPick=p.pick;
+  var _kOd=p.pick==='OVER'?p.over_odds:(p.pick==='UNDER'?p.under_odds:null);
   var _kBl=(p.blended_avg_k!=null?p.blended_avg_k:p.avg_k);
   var _kSrc={name:p.name,team:p.team,opp:p.opp};
   var mkBody=_mkRow('Strikeouts',_kLine,_kBl,'K',_kPick,_kOd,'',false,_kSrc,'Pitcher Ks','strikeOuts');
@@ -6140,7 +6136,7 @@ function _pkForm(key){
         <div><span style="color:#64748b">Blended (pick driver)</span><br><span style="color:#e2e8f0;font-weight:800">${blendTxt}</span></div>
         <div><span style="color:#64748b">Pick</span><br><span style="color:${pickClr};font-weight:800">${pickTxt}</span></div>
       </div>
-      ${_matrixWriteup(p,((p.sugg_line!=null||p.pick==='OVER')?'O':'U'),0,true,'strikeouts',pickTxt)}
+      ${_matrixWriteup(p,(p.pick==='OVER'?'O':'U'),0,true,'strikeouts',pickTxt)}
       ${p.blend_src?('<div style="margin-top:10px;color:#64748b;font-size:.74rem">'+p.blend_src+'</div>'):''}
     </div>
   </div>`;
@@ -6489,10 +6485,9 @@ function _oppPitBlock(p, market, statLabel, unit){
   }
   var mkBody='';
   if(kObj){
-    var kHasSugg=kObj.sugg_line!=null;
-    var kLine=kHasSugg?kObj.sugg_line:kObj.line;
-    var kPick=kHasSugg?'OVER':kObj.pick;
-    var kOd=kHasSugg?kObj.sugg_odds:(kObj.pick==='OVER'?kObj.over_odds:(kObj.pick==='UNDER'?kObj.under_odds:null));
+    var kLine=kObj.line;
+    var kPick=kObj.pick;
+    var kOd=kObj.pick==='OVER'?kObj.over_odds:(kObj.pick==='UNDER'?kObj.under_odds:null);
     var kProj=(kObj.blended_avg_k!=null?kObj.blended_avg_k:kObj.avg_k);
     mkBody+=_mRow('Strikeouts',kLine,kProj,kPick,kOd);
   } else { mkBody+=_mRow('Strikeouts',null,null,null,null); }
@@ -6764,10 +6759,9 @@ function downloadPicksCSV(){
     var ga=Math.abs((a.avg_k||0)-(a.line||0)), gb=Math.abs((b.avg_k||0)-(b.line||0));
     return gb-ga;
   }).forEach(function(p,i){
-    var hasSugg=p.sugg_line!=null;
-    var line=hasSugg?p.sugg_line:p.line;
-    var pick=hasSugg?('OVER '+p.sugg_line+' Ks'):(p.pick+' '+(p.line!=null?p.line:'')+' Ks');
-    var odds=hasSugg?p.sugg_odds:(p.pick==='OVER'?p.over_odds:p.under_odds);
+    var line=p.line;
+    var pick=p.pick+' '+(p.line!=null?p.line:'')+' Ks';
+    var odds=p.pick==='OVER'?p.over_odds:p.under_odds;
     var detail='Avg '+(p.avg_k!=null?p.avg_k+'K':'—')+(p.era?(', ERA '+p.era):'');
     rows.push(['Pitcher K', i+1, p.name||'', '', 'P', p.side||'', p.opp||'', '',
       pick, (line!=null?line:''), _csvOdds(odds), '', detail]);
@@ -6827,10 +6821,9 @@ function _mlbPool(){
   });
   var pk=(r.pitcher_k&&r.pitcher_k.all)||[];
   pk.filter(function(p){return p.pick;}).sort(function(a,b){var ga=Math.abs((a.avg_k||0)-(a.line||0)),gb=Math.abs((b.avg_k||0)-(b.line||0));return gb-ga;}).forEach(function(p,i){
-    var hasSugg=(p.sugg_line!=null);
-    var dir=hasSugg?'OVER':p.pick;
-    var line=hasSugg?p.sugg_line:p.line;
-    var odds=hasSugg?p.sugg_odds:(p.pick==='OVER'?p.over_odds:p.under_odds);
+    var dir=p.pick;
+    var line=p.line;
+    var odds=p.pick==='OVER'?p.over_odds:p.under_odds;
     cands.push({type:'K',dir:dir,player:(p.name||''),team:'',opp:(p.opp||''),stat:'Ks',line:line,odds:(odds!=null?odds:''),conf:clampConf(90,i),reason:'⚾ '+dir+' '+(line!=null?line:'')+' Ks · avg '+(p.avg_k!=null?p.avg_k+'K':'—')+(p.era?(' · ERA '+p.era):''),src:p});
   });
   (r.rbi_picks||[]).forEach(function(p,i){
@@ -8039,7 +8032,7 @@ function renderByGame(result){
       var note='';
       if(kind==='HITTER') note='OVER '+(p.line!=null?p.line:'0.5')+' Hits'+(p.hit_odds!=null?' · '+p.hit_odds:'');
       else if(kind==='UNDER') note=(p.pick||'UNDER')+' '+(p.line!=null?p.line:'1.5')+' Hits vs '+(p.pitcher||'TBD');
-      else if(kind==='PITCHER K') note=(p.sugg_line!=null?('OVER '+p.sugg_line+' Ks (line '+(p.line||'')+')'):((p.pick||'')+' '+(p.line||'')+' Ks'));
+      else if(kind==='PITCHER K') note=(p.pick||'')+' '+(p.line||'')+' Ks';
       else if(kind==='RUNS') note=(p.pick||'')+' '+(p.line!=null?p.line:0.5)+' runs ('+(p.rate_disp||'')+')';
       else if(isProp) note=(p.pick||'')+' '+(p.line!=null?p.line:'')+' '+(p.label||'').replace('Pitcher ','')+' · blend '+(p.blended!=null?(p.blended+_ppU(p)):'—');
       var lineup=p.lineup_status==='IN_LINEUP'?'<span class="badge badge-in">✅ IN</span>'
@@ -8941,10 +8934,10 @@ function _batKForm(key){
     }
     var kObj=_byNm2(window.__PK_BY_NAME__||{});
     if(kObj){
-      var kLine=kObj.sugg_line!=null?kObj.sugg_line:kObj.line;
+      var kLine=kObj.line;
       var kProj=kObj.blended_avg_k!=null?kObj.blended_avg_k:kObj.avg_k;
-      var kPick=kObj.sugg_line!=null?'OVER':kObj.pick;
-      var kOd=kObj.sugg_line!=null?kObj.sugg_odds:(kObj.pick==='OVER'?kObj.over_odds:(kObj.pick==='UNDER'?kObj.under_odds:null));
+      var kPick=kObj.pick;
+      var kOd=kObj.pick==='OVER'?kObj.over_odds:(kObj.pick==='UNDER'?kObj.under_odds:null);
       var kOdStr=kOd!=null?((kOd>0?'+':'')+kOd):'--';
       var kPkClr=kPick==='OVER'?'#63cab7':(kPick==='UNDER'?'#ff8a65':'#64748b');
       var era=kObj.era!=null?' \u00b7 '+kObj.era+' ERA':'';
@@ -9350,7 +9343,7 @@ function _buildPitchDay(view){
   dayList=dayList.filter(function(x){ var k=((x.p.name||x.p.full_name||'')+'').trim().toLowerCase(); if(!k) return true; if(_pdSeen[k]) return false; _pdSeen[k]=true; return true; });
   dayList=dayList.filter(function(x){
     var p=x.p;
-    if(x.kind==='K'){ var sK=(p.sugg_line!=null||p.pick==='OVER')?'O':'U'; return !_t10DotIsRed(p,sK,true,0); }
+    if(x.kind==='K'){ var sK=p.pick==='OVER'?'O':'U'; return !_t10DotIsRed(p,sK,true,0); }
     var isOver=(p.pick||'').toUpperCase()==='OVER';
     var ci={pitcher_hits_allowed:1,pitcher_outs:2,pitcher_earned_runs:3,pitcher_walks:4}[p.market];
     return !_t10DotIsRed(p,isOver?'O':'U',true,ci);
@@ -9698,11 +9691,8 @@ function _pitcherCard(p, rank, keyPfx) {
   const sideCls = p.side==='HOME'?'badge-home':'badge-away';
   const isOver = p.pick==='OVER';
   const pickClr = isOver?'#63cab7':'#ff8a65';
-  const hasSugg = p.sugg_line!=null;
-  const pickLabel = hasSugg?('OVER '+p.sugg_line+' K'):(p.pick?p.pick+' '+(p.line!=null?p.line:'')+' K':'—');
-  const odds = hasSugg
-    ?(p.sugg_odds!=null?(p.sugg_odds>0?'+':'')+p.sugg_odds:'')
-    :(isOver?(p.over_odds!=null?(p.over_odds>0?'+':'')+p.over_odds:''):(p.under_odds!=null?(p.under_odds>0?'+':'')+p.under_odds:''));
+  const pickLabel = p.pick?p.pick+' '+(p.line!=null?p.line:'')+' K':'—';
+  const odds = isOver?(p.over_odds!=null?(p.over_odds>0?'+':'')+p.over_odds:''):(p.under_odds!=null?(p.under_odds>0?'+':'')+p.under_odds:'');
   const conflict = p.avg_k!=null&&p.recent_avg_k!=null&&p.line!=null&&((p.avg_k>p.line)!==(p.recent_avg_k>p.line));
   const blDisp = p.blended_avg_k!=null?p.blended_avg_k+'K'+(conflict?' ⚠️':''):'—';
   const pf = p.proj_factors||{};
@@ -9711,7 +9701,7 @@ function _pitcherCard(p, rank, keyPfx) {
   const factTxt = hasProj?('Hand x'+(pf.hand!=null?pf.hand:1)+' · Whiff x'+(pf.whiff!=null?pf.whiff:1)+' · Rest x'+(pf.rest!=null?pf.rest:1)):'';
   window.__PK_REG__=window.__PK_REG__||{}; window.__PK_REG__[keyPfx+rank]=p;
   return `<div class="mlb-pick-card" onclick="_pkForm('${keyPfx}${rank}')" title="Click for all 5 markets" style="cursor:pointer">
-    <div class="mlb-card-header" style="background:linear-gradient(135deg,#0f2420 0%,#08160f 100%)">${_cardHdr(rank,rnkColors,_catLbl('P','#63cab7'),teamLogo,p.team,_seriesTag(p,((p.sugg_line!=null||p.pick==='OVER')?'O':'U'),true,0))}</div>
+    <div class="mlb-card-header" style="background:linear-gradient(135deg,#0f2420 0%,#08160f 100%)">${_cardHdr(rank,rnkColors,_catLbl('P','#63cab7'),teamLogo,p.team,_seriesTag(p,(p.pick==='OVER'?'O':'U'),true,0))}</div>
     ${_nameBar(rank,rnkColors,p.pid,p.name)}
     <div class="mlb-card-body">
       <div style="display:flex;align-items:center;justify-content:space-between">
@@ -9738,7 +9728,7 @@ function _pitcherCard(p, rank, keyPfx) {
       ${_veloBadge(p)}
       ${_evBadge(p)}
     </div>
-  ${_betBtn(p,'Pitcher Ks',(hasSugg?'OVER':p.pick),'strikeOuts','Ks',(hasSugg?p.sugg_line:p.line),(hasSugg?p.sugg_odds:(isOver?p.over_odds:p.under_odds)))}
+  ${_betBtn(p,'Pitcher Ks',p.pick,'strikeOuts','Ks',p.line,(isOver?p.over_odds:p.under_odds))}
   </div>`;
 }
 
