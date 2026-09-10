@@ -23,6 +23,7 @@ K_SEASONS        = [2021, 2022, 2023, 2024, 2025, 2026]
 SEASON           = "2026"
 BOTTOM_K_TEAMS_N = 0  # disabled — show all teams
 MIN_K_EDGE       = 0.5  # projection must beat the line by ≥0.5 K or pick is dropped
+COACH_MIN_ODDS   = -1000 # reject Coach alternates shorter than -1000
 LEAGUE_AVG_K_PER_GAME = 16.5   # 2024-2026 MLB avg Ks per game (both teams combined)
 _UMP_K_CACHE: dict = {}         # {ump_name: ump_dict | None} — season-level cache
 # ── Projection-model edges (handedness K% + whiff% + rest) ──────────────────
@@ -266,6 +267,7 @@ def _fetch_k_lines(run_date: str, emit=None) -> list:
             for bm in r2.json().get("bookmakers", []):
                 bk = bm.get("key")
                 for mkt in bm.get("markets", []):
+                    market_key = mkt.get("key")
                     for oc in mkt.get("outcomes", []):
                         name  = (oc.get("description") or oc.get("name", "")).strip()
                         pt    = oc.get("point")
@@ -276,6 +278,10 @@ def _fetch_k_lines(run_date: str, emit=None) -> list:
                         if side == "Over" and price is not None:
                             ladder.setdefault(key, {}).setdefault(
                                 float(pt), {"price": price, "book": bk})
+                        # Alternate ladders are Coach-only. They must never
+                        # establish or overwrite the standard board line.
+                        if market_key != "pitcher_strikeouts":
+                            continue
                         entry = seen.get(key)
                         if entry is None:
                             entry = {"name": name, "line": float(pt),
@@ -1556,6 +1562,8 @@ def run_pitcher_k_picks(run_date: str, team_schedule: dict, emit=None) -> dict:
             try:
                 _al, _ao = float(_alt_line), int(float(_price))
             except (TypeError, ValueError):
+                continue
+            if abs(_al - float(line)) < 1e-9 or _ao < COACH_MIN_ODDS:
                 continue
             _ap = sum(1 for k in k_list if k > _al) / len(k_list) * 100.0
             _imp = (-_ao / (-_ao + 100) * 100.0
