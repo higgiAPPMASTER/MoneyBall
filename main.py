@@ -5438,8 +5438,12 @@ function _gptAgg(games,stake){
   var k=stake/100;
   var A={tw:0,tl:0,tp:0,ow:0,ol:0,op:0,tEarn:0,tHas:0,oEarn:0,oHas:0,
     tiers:{STRONG:[0,0,0,0],MODERATE:[0,0,0,0],LEAN:[0,0,0,0]},
-    homeP:[0,0],awayP:[0,0],fav:[0,0],dog:[0,0],val:[0,0],
+    homeP:[0,0,0,0],awayP:[0,0,0,0],fav:[0,0,0,0],dog:[0,0,0,0],val:[0,0,0,0],
     overC:[0,0,0,0],underC:[0,0,0,0]};
+  function addTeamSplit(a,wi,earn){
+    a[wi]++;
+    if(earn!=null){ a[2]+=earn*k; a[3]=1; }
+  }
   games.forEach(function(g){
     var tr=g.team_result;
     if(tr==='PUSH') A.tp++;
@@ -5448,9 +5452,9 @@ function _gptAgg(games,stake){
       if(wi===0)A.tw++; else A.tl++;
       if(g.ml_earnings!=null){ A.tEarn+=g.ml_earnings*k; A.tHas=1; }
       var t=A.tiers[g.conf]; if(t){ t[wi]++; if(g.ml_earnings!=null){t[2]+=g.ml_earnings*k;t[3]=1;} }
-      (g.pick_home?A.homeP:A.awayP)[wi]++;
-      if(g.ml_pick_odds!=null)(g.ml_pick_odds<0?A.fav:A.dog)[wi]++;
-      if(g.value_flag) A.val[wi]++;
+      addTeamSplit(g.pick_home?A.homeP:A.awayP,wi,g.ml_earnings);
+      if(g.ml_pick_odds!=null) addTeamSplit(g.ml_pick_odds<0?A.fav:A.dog,wi,g.ml_earnings);
+      if(g.value_flag) addTeamSplit(A.val,wi,g.ml_earnings);
     }
     var or_=g.ou_result;
     if(or_==='PUSH') A.op++;
@@ -5480,7 +5484,7 @@ function _gptSummaryTiles(A){
 }
 function _gptSplitsHtml(A){
   function tierT(n,t){ return _gpTile(n,_wl(t[0],t[1]),_pct(t[0],t[1]),t[3]?Math.round(t[2]*100)/100:null); }
-  function splitT(n,a){ return _gpTile(n,_wl(a[0],a[1]),_pct(a[0],a[1]),null,80); }
+  function splitT(n,a){ return _gpTile(n,_wl(a[0],a[1]),_pct(a[0],a[1]),a[3]?Math.round(a[2]*100)/100:null,80); }
   return '<div style="margin-bottom:4px"><div style="font-size:.62rem;color:#a78bfa;font-weight:800;letter-spacing:.05em;margin-bottom:6px">TEAM PICKS BY CONFIDENCE TIER</div>'
     +'<div style="display:flex;gap:10px;flex-wrap:wrap">'+tierT('STRONG',A.tiers.STRONG)+tierT('MODERATE',A.tiers.MODERATE)+tierT('LEAN',A.tiers.LEAN)+'</div></div>'
     +'<div style="margin:10px 0 4px"><div style="font-size:.62rem;color:#a78bfa;font-weight:800;letter-spacing:.05em;margin-bottom:6px">MORE SPLITS</div>'
@@ -5745,13 +5749,14 @@ function _openGamePred(i){
     var chips=_chip(_lead,'#a78bfa')+_chip('AVG TOTAL '+h2.avg_total+' R','#38bdf8');
     if(h2.line!=null&&h2.overs!=null) chips+=_chip('OVER '+g_gpFix(h2.line)+' IN '+h2.overs+'/'+h2.n,'#4ade80');
     chips+=_chip('HOME TEAM '+h2.home_side_w+'-'+(h2.n-h2.home_side_w),'#94a3b8');
-    var _grid='72px 56px 1.5fr 58px 52px 84px 56px';
-    var trs='<div style="display:grid;grid-template-columns:'+_grid+';gap:0;padding:5px 12px;background:#0c1829;border-radius:6px;font-size:.56rem;color:#475569;font-weight:800;letter-spacing:.04em"><span>DATE</span><span>SITE</span><span>SCORE</span><span>WINNER</span><span style="text-align:right">TOTAL</span><span style="text-align:right">'+(h2.line!=null?('vs LINE '+g_gpFix(h2.line)):'O/U')+'</span><span style="text-align:right">MARGIN</span></div>';
+    var _grid='72px 54px 56px 1.5fr 58px 52px 84px 56px';
+    var trs='<div style="display:grid;grid-template-columns:'+_grid+';gap:0;padding:5px 12px;background:#0c1829;border-radius:6px;font-size:.56rem;color:#475569;font-weight:800;letter-spacing:.04em"><span>DATE</span><span>TIME</span><span>SITE</span><span>SCORE</span><span>WINNER</span><span style="text-align:right">TOTAL</span><span style="text-align:right">'+(h2.line!=null?('vs LINE '+g_gpFix(h2.line)):'O/U')+'</span><span style="text-align:right">MARGIN</span></div>';
     (h2.games||[]).forEach(function(r,ix){
       var wc=r.w===g.pick_abbr?'#4ade80':'#f87171';
       var oc=r.ou==='OVER'?'#4ade80':(r.ou==='UNDER'?'#f87171':'#94a3b8');
       trs+='<div style="display:grid;grid-template-columns:'+_grid+';gap:0;padding:6px 12px;border-bottom:1px solid #0f172a;background:'+(ix%2?'#070e1b':'#050c18')+';font-size:.68rem">'
         +'<span style="color:#94a3b8">'+_esc(r.d)+'</span>'
+        +'<span style="color:'+(r.day_night==='NIGHT'?'#a78bfa':'#fbbf24')+';font-size:.58rem;font-weight:900">'+_esc(r.day_night||'—')+'</span>'
         +'<span style="color:#64748b">@ '+_esc(r.site)+'</span>'
         +'<span style="color:#e2e8f0">'+_esc(r.score)+'</span>'
         +'<span style="color:'+wc+';font-weight:800">'+_esc(r.w)+'</span>'
