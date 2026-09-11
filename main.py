@@ -4285,6 +4285,38 @@ _HTML = """
               <div id="parlay-games-list"><div style="font-size:.72rem;color:#666;padding:4px 2px">Run picks first.</div></div>
             </div>
           </div>
+          <div style="position:relative;display:inline-block">
+            <button class="btn-primary" id="parlay-coach-btn" onclick="toggleCoachMenu(event)" style="background:#1f2937;color:#fff">&#9889; Coach Edge (0/19) &#9662;</button>
+            <div id="parlay-coach-menu" style="display:none;position:absolute;z-index:60;top:calc(100% + 6px);left:0;background:#0e0e0e;border:1px solid #2a2a2a;border-radius:10px;padding:10px 12px;min-width:255px;max-height:390px;overflow:auto;box-shadow:0 12px 34px rgba(0,0,0,.55)">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px">
+                <span style="font-size:.63rem;color:#fbbf24;font-weight:800;letter-spacing:.06em">COACH EDGE PRESETS</span>
+                <span style="font-size:.63rem"><a onclick="_coachSetAll(true)" style="color:#63cab7;cursor:pointer;font-weight:800">All</a> <span style="color:#444">·</span> <a onclick="_coachSetAll(false)" style="color:#ff8a65;cursor:pointer;font-weight:800">None</a></span>
+              </div>
+              <div id="parlay-coach-list">
+                <div class="parlay-cat-section">Hitters</div>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="hitter_safest" onchange="_coachChanged()"> Safest hitter bets</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="hitter_edge" onchange="_coachChanged()"> Hitter Coach Edge</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="hitter_alt_hrr" onchange="_coachChanged()"> Alt-Line HRR 1+ · Top 10</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="hitter_hits" onchange="_coachChanged()"> To record a hit</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="hitter_tb" onchange="_coachChanged()"> Total Bases</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="hitter_production" onchange="_coachChanged()"> Hitter production</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="hitter_batter_k" onchange="_coachChanged()"> Batter Strikeouts</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="hitter_unders" onchange="_coachChanged()"> Hitter unders</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="hitter_top3" onchange="_coachChanged()"> Top 3 hitter plays</label>
+                <div class="parlay-cat-section">Pitchers</div>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="pitcher_safest" onchange="_coachChanged()"> Safest pitcher bets</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="pitcher_edge" onchange="_coachChanged()"> Pitcher Coach Edge</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="pitcher_alt_k" onchange="_coachChanged()"> Alt-Line pitcher Edge · Top 10</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="pitcher_k" onchange="_coachChanged()"> Pitcher Strikeouts</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="pitcher_hits_allowed" onchange="_coachChanged()"> Hits Allowed</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="pitcher_outs" onchange="_coachChanged()"> Pitching Outs</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="pitcher_earned_runs" onchange="_coachChanged()"> Earned Runs</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="pitcher_walks" onchange="_coachChanged()"> Walks Allowed</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="pitcher_unders" onchange="_coachChanged()"> Pitcher unders</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="pitcher_top3" onchange="_coachChanged()"> Top 3 pitcher plays</label>
+              </div>
+            </div>
+          </div>
         </div>
         <div id="parlayResult" style="margin-top:16px"></div>
       </div>
@@ -4822,6 +4854,93 @@ function _mlbCoachAllProps() {
   return arr;
 }
 
+// The 19 Coach buttons are also the 19 independently selectable parlay presets.
+// Keep this selector pure: it receives the exact priced rows produced by
+// _mlbCoachAllProps and applies the same gates, ordering, and caps as askMlbCoach.
+// The parlay builder and the visible Coach answer therefore cannot drift apart.
+var _MLB_COACH_PRESET_LABELS = {
+  hitter_safest:'Safest hitter bets', hitter_edge:'Hitter Coach Edge',
+  hitter_alt_hrr:'Alt-Line HRR 1+ · Top 10', hitter_hits:'To record a hit',
+  hitter_tb:'Total Bases', hitter_production:'Hitter production',
+  hitter_batter_k:'Batter Strikeouts', hitter_unders:'Hitter unders',
+  hitter_top3:'Top 3 hitter plays',
+  pitcher_safest:'Safest pitcher bets', pitcher_edge:'Pitcher Coach Edge',
+  pitcher_alt_k:'Alt-Line pitcher Edge · Top 10', pitcher_k:'Pitcher Strikeouts',
+  pitcher_hits_allowed:'Hits Allowed', pitcher_outs:'Pitching Outs',
+  pitcher_earned_runs:'Earned Runs', pitcher_walks:'Walks Allowed',
+  pitcher_unders:'Pitcher unders', pitcher_top3:'Top 3 pitcher plays'
+};
+var _MLB_COACH_PRESET_ORDER = [
+  'hitter_safest','hitter_edge','hitter_alt_hrr','hitter_hits','hitter_tb',
+  'hitter_production','hitter_batter_k','hitter_unders','hitter_top3',
+  'pitcher_safest','pitcher_edge','pitcher_alt_k','pitcher_k',
+  'pitcher_hits_allowed','pitcher_outs','pitcher_earned_runs','pitcher_walks',
+  'pitcher_unders','pitcher_top3'
+];
+function _mlbCoachSelectRows(props, preset) {
+  var rows=(props||[]).slice(), isPit=String(preset||'').indexOf('pitcher_')===0;
+  rows=rows.filter(function(p){ return !!p.isPitcher===isPit; });
+  var out=rows.slice(), positive=function(p){ return p.edge>0; };
+  function byEdge(a,b){ return b.edge-a.edge; }
+  function bySafe(a,b){ return b.appProb-a.appProb || b.edge-a.edge; }
+  switch(preset){
+    case 'hitter_safest': case 'pitcher_safest':
+      out=rows.filter(positive).sort(bySafe).slice(0,10); break;
+    case 'hitter_edge': case 'pitcher_edge':
+      out=rows.filter(positive).sort(byEdge).slice(0,10); break;
+    case 'hitter_alt_hrr':
+      out=rows.filter(function(p){return p.alternate&&p.market==='H+R+RBI'&&p.edge>0;}).sort(byEdge).slice(0,10); break;
+    case 'pitcher_alt_k':
+      out=rows.filter(function(p){return p.alternate;}).sort(byEdge).slice(0,10); break;
+    case 'hitter_hits':
+      out=rows.filter(function(p){return p.edge>0&&p.market==='Hits';}).sort(byEdge).slice(0,10); break;
+    case 'hitter_tb':
+      out=rows.filter(function(p){return p.edge>0&&p.market==='Total Bases';}).sort(byEdge).slice(0,10); break;
+    case 'hitter_production':
+      out=rows.filter(function(p){return p.edge>0&&['Runs','RBIs','H+R+RBI','Home Runs','Batter Walks'].indexOf(p.market)>=0;}).sort(byEdge).slice(0,10); break;
+    case 'hitter_batter_k':
+      out=rows.filter(function(p){return p.market.indexOf('Strikeout')>=0;}).sort(byEdge).slice(0,10); break;
+    case 'pitcher_k':
+      out=rows.filter(function(p){return p.market.indexOf('Strikeout')>=0&&!p.alternate;}).sort(byEdge).slice(0,5); break;
+    case 'pitcher_hits_allowed':
+      out=rows.filter(function(p){return p.market==='Hits Allowed';}).sort(byEdge).slice(0,5); break;
+    case 'pitcher_outs':
+      out=rows.filter(function(p){return p.market==='Pitching Outs';}).sort(byEdge).slice(0,5); break;
+    case 'pitcher_earned_runs':
+      out=rows.filter(function(p){return p.market==='Earned Runs';}).sort(byEdge).slice(0,5); break;
+    case 'pitcher_walks':
+      out=rows.filter(function(p){return p.market==='Walks Allowed';}).sort(byEdge).slice(0,5); break;
+    case 'hitter_unders': case 'pitcher_unders':
+      out=rows.filter(function(p){return p.side==='UNDER'&&p.edge>0;}).sort(byEdge).slice(0,10); break;
+    case 'hitter_top3': case 'pitcher_top3':
+      out=rows.filter(positive).sort(byEdge).slice(0,3); break;
+    default: out=[];
+  }
+  return out;
+}
+function _mlbCoachPresetForQuestion(q, isHitterQ, isPitcherQ) {
+  q=String(q||'').toLowerCase();
+  // "hits allowed" contains "hit", so the broad legacy hitter detector can
+  // mark both roles. Explicit pitcher-market words must win that ambiguity.
+  var p=/pitcher|pitching|hits allowed|outs|earned runs|walks allowed/.test(q) ||
+        (isPitcherQ&&!isHitterQ);
+  var h=!p && (isHitterQ||/hitter|batter|record a hit|total bases|production/.test(q));
+  if(q.indexOf('alt-line')>=0||q.indexOf('alternate')>=0) return h?'hitter_alt_hrr':(p?'pitcher_alt_k':'');
+  if(q.indexOf('safest')>=0) return h?'hitter_safest':(p?'pitcher_safest':'');
+  if(q.indexOf('under')>=0) return h?'hitter_unders':(p?'pitcher_unders':'');
+  if(q.indexOf('production')>=0) return h?'hitter_production':'';
+  if(q.indexOf('total bases')>=0) return h?'hitter_tb':'';
+  if(q.indexOf('record a hit')>=0) return h?'hitter_hits':'';
+  if(q.indexOf('strikeout')>=0) return h?'hitter_batter_k':(p?'pitcher_k':'');
+  if(q.indexOf('hits allowed')>=0) return p?'pitcher_hits_allowed':'';
+  if(q.indexOf('outs')>=0) return p?'pitcher_outs':'';
+  if(q.indexOf('earned runs')>=0) return p?'pitcher_earned_runs':'';
+  if(q.indexOf('walks allowed')>=0) return p?'pitcher_walks':'';
+  if(q.indexOf('coach edge')>=0) return h?'hitter_edge':(p?'pitcher_edge':'');
+  if(q.indexOf('top 3')>=0) return h?'hitter_top3':(p?'pitcher_top3':'');
+  return '';
+}
+
 function askMlbCoachPreset(question) {
   var input = document.getElementById('mlbCoachInput');
   if(input) input.value = question;
@@ -4895,6 +5014,19 @@ function askMlbCoach() {
   }
   if (isHitterQ && !isPitcherQ) pool = pool.filter(function(p) { return !p.isPitcher; });
   else if (isPitcherQ && !isHitterQ) pool = pool.filter(function(p) { return p.isPitcher; });
+
+  // Route the named preset questions through the same pure selector used by
+  // the parlay menu. Team/game narrowing still happens first, just as it did
+  // for the original Coach question flow.
+  var coachPreset=_mlbCoachPresetForQuestion(question,isHitterQ,isPitcherQ);
+  if(coachPreset){
+    var coachRows=_mlbCoachSelectRows(pool,coachPreset);
+    var coachAnyEdge=/^(pitcher_alt_k|pitcher_k|pitcher_hits_allowed|pitcher_outs|pitcher_earned_runs|pitcher_walks)$/.test(coachPreset);
+    _mlbCoachRender(question,coachRows,props.length,
+                    coachPreset==='hitter_safest'||coachPreset==='pitcher_safest',
+                    gameLabel,coachAnyEdge);
+    return;
+  }
 
   if(q.indexOf('alt-line') >= 0 || q.indexOf('alternate') >= 0) {
     var allowPitcherAltAnyEdge = isPitcherQ && !isHitterQ;
@@ -5906,8 +6038,8 @@ function showResults(result) {
   var view = window.EV_ONLY ? _evFilterView(_vBase) : _vBase;
   const { top9, stats, pitcher_k } = view;
 
-  document.getElementById('stats-row').innerHTML = _renderCatBar(view);
-  if(!window.__CATMENU_DOC__){ window.__CATMENU_DOC__=true; document.addEventListener('click',function(e){ if(!(e.target.closest&&e.target.closest('.catmenu-wrap'))) _catClose(); }); }
+   document.getElementById('stats-row').innerHTML = _renderCatBar(view);
+   if(!window.__CATMENU_DOC__){ window.__CATMENU_DOC__=true; document.addEventListener('click',function(e){ if(!(e.target.closest&&e.target.closest('.catmenu-wrap'))) _catClose(); if(!(e.target.closest&&e.target.closest('#parlay-coach-menu'))&&!((e.target.closest&&e.target.closest('#parlay-coach-btn')))){ var _pcm=document.getElementById('parlay-coach-menu'); if(_pcm) _pcm.style.display='none'; } }); }
 
   if (window.UNDERS_ONLY && (window.IS_ADMIN||window.IS_TESTER)) { hide('top-picks-card'); } else { show('top-picks-card'); }
   window.__HIT_REG__={};
@@ -6055,6 +6187,7 @@ function showResults(result) {
   renderPitcherProps(view);
   renderByGame(view);
   _syncParlayCats(); _paintCatBtn();  // keep the Categories button count matching the live checkboxes
+  _syncCoachCats(); _paintCoachBtn();  // Coach presets are opt-in and persist across board refreshes
   _buildGamesMenu();  // refresh the parlay "Games" filter list from today's full slate
   show('results-card');
 }
@@ -6948,6 +7081,11 @@ function _mlbPool(){
       cands.push({type:mkt,dir:p.pick,player:(p.name||''),team:(p.team||''),opp:(p.opp||''),stat:statLbl,line:(p.line!=null?p.line:0),odds:(od!=null?od:''),conf:clampConf(85,i),reason:cfg.icon+' '+p.pick+' '+(p.line!=null?p.line:'')+' '+statLbl+' · blend '+(p.blended!=null?(p.blended+_ppU(p)):'—')+' vs '+(p.opp||''),src:p});
     });
   });
+  // Coach Edge is an opt-in source. Its rows are selected from the same
+  // priced/qualified props used by the Coach answer, but remain separate
+  // candidates so Coach checkboxes do not get accidentally erased by the
+  // standard category checkboxes below.
+  _mlbCoachParlayCandidates(r).forEach(function(c){ cands.push(c); });
   cands.forEach(function(c){ c.dec=_amToDec(c.odds); c.hasOdds=!!c.dec; });
   // NO N/A LEGS: every parlay leg must be priced. Drops any leg with missing odds
   // (HIT legs with no hit_odds, K legs with no odds). Under legs already required odds.
@@ -6972,7 +7110,7 @@ function _mlbPool(){
     });
   }
   // Parlay-builder category checkboxes — keep only legs whose category is checked.
-  if(window.PARLAY_CATS){ cands=cands.filter(function(c){ return window.PARLAY_CATS[_legCat(c)]!==false; }); }
+  if(window.PARLAY_CATS){ cands=cands.filter(function(c){ return c.isCoach || window.PARLAY_CATS[_legCat(c)]!==false; }); }
   // Parlay-builder game checkboxes — keep only legs whose game is checked. Uses the same
   // gameKey() label as the "By Game" card so every leg type (hit/under/K/run/prop) maps
   // consistently. A game is dropped only when explicitly unchecked (===false).
@@ -6982,21 +7120,76 @@ function _mlbPool(){
   // supply a Hits leg + a Total Bases leg — so the new prop categories actually
   // deepen the parlay pool instead of being collapsed into a single leg.
   var byKey={};
-  cands.forEach(function(c){ if(!c.player) return; var _ty=(c.type==='HRRSP'?'HRR':(c.type==='TSC'||c.type==='TSCH'?'HIT':(c.type==='FSS'?(c._fssBase||'TBO'):(c.type==='CLUB'?(c._clubBase||'TBO'):(c.type==='LOCKS'?(c._lockBase||'HIT'):c.type))))); var k=c.player+'|'+_ty+'|'+c.stat; var cur=byKey[k]; if(!cur||_legScoreP(c)>_legScoreP(cur)) byKey[k]=c; });
+  cands.forEach(function(c){
+    if(!c.player) return;
+    var _ty=(c.type==='HRRSP'?'HRR':(c.type==='TSC'||c.type==='TSCH'?'HIT':(c.type==='FSS'?(c._fssBase||'TBO'):(c.type==='CLUB'?(c._clubBase||'TBO'):(c.type==='LOCKS'?(c._lockBase||'HIT'):c.type)))));
+    var k=c.player+'|'+_ty+'|'+c.stat, cur=byKey[k];
+    // If a checked Coach preset and a standard source describe the same
+    // player/market, deterministically keep Coach's exact source fields.
+    var take=!cur || (c.isCoach&&!cur.isCoach) ||
+      (c.isCoach===cur.isCoach&&_legScoreP(c)>_legScoreP(cur));
+    if(take) byKey[k]=c;
+  });
   return Object.keys(byKey).map(function(k){return byKey[k];}).sort(function(a,b){return _legScoreP(b)-_legScoreP(a);});
 }
 function closeParlay(){ var o=document.getElementById('parlayResult'); if(o) o.innerHTML=''; }
 function buildParlay(){ _renderParlay(false); }
 function generateParlay(){ _renderParlay(true); }
+function _coachLegFromRow(row,preset,gameDate){
+  var m=row.market||'', side=row.side==='UNDER'?'UNDER':'OVER', type='', stat='', statKey='';
+  if(m==='Hits'){ type=side==='UNDER'?'UNDER':'HIT'; stat='Hits'; statKey='hits'; }
+  else if(m==='Total Bases'){ type=side==='UNDER'?'TB':'TBO'; stat='Total Bases'; statKey='total_bases'; }
+  else if(m==='Runs'){ type='RUN'; stat='Runs'; statKey='runs'; }
+  else if(m==='RBIs'){ type='RBI'; stat='RBI'; statKey='rbi'; }
+  else if(m==='Home Runs'){ type='HR'; stat='HR'; statKey='homeRuns'; }
+  else if(m==='H+R+RBI'){ type='HRR'; stat='H+R+RBI'; statKey='hrr'; }
+  else if(m==='Batter Walks'){ type='BWALK'; stat='Walks'; statKey='walks_bat'; }
+  else if(m==='Batter Strikeouts'){ type='BK'; stat='Ks'; statKey='bat_strikeOuts'; }
+  else if(m==='Pitcher Strikeouts'){ type='K'; stat='Ks'; statKey='strikeOuts'; }
+  else if(m==='Hits Allowed'){ type='pitcher_hits_allowed'; stat=m; statKey='hits_allowed'; }
+  else if(m==='Pitching Outs'){ type='pitcher_outs'; stat='Outs'; statKey='outs'; }
+  else if(m==='Earned Runs'){ type='pitcher_earned_runs'; stat=m; statKey='earnedRuns'; }
+  else if(m==='Walks Allowed'){ type='pitcher_walks'; stat=m; statKey='walks'; }
+  else return null;
+  // The source is a shallow clone so exact Coach line/price/book fields are
+  // isolated from the standard result objects used by the rest of the UI.
+  var src=Object.assign({},row.src||{});
+  var sourceGameSide=src.side;
+  src.name=row.player; src.full_name=row.player; src.team=row.team; src.opp=row.opp;
+  src.side=sourceGameSide; src.line=row.line; src.book=row.book||''; src.date=gameDate||src.date||'';
+  src.odds=row.odds; src.stat_key=statKey; src.stat_label=stat;
+  var label=_MLB_COACH_PRESET_LABELS[preset]||preset;
+  return {
+    type:type, dir:side, player:row.player, team:row.team||'', opp:row.opp||'',
+    stat:stat, stat_key:statKey, stat_label:stat, line:row.line, odds:row.odds,
+    book:row.book||'', date:gameDate||'', conf:Math.max(40,Math.min(99,row.appProb||0)),
+    reason:'⚡ Coach · '+label+' · '+(row.edge>=0?'+':'')+Number(row.edge||0).toFixed(1)+'% edge',
+    src:src, isCoach:true, coachPreset:preset, coachLabel:label,
+    dec:_amToDec(row.odds), hasOdds:_amToDec(row.odds)!=null
+  };
+}
+function _mlbCoachParlayCandidates(result){
+  var props=_mlbCoachAllProps(), out=[], date=result&&result.date||'';
+  _MLB_COACH_PRESET_ORDER.forEach(function(preset){
+    if(!window.PARLAY_COACH_CATS||window.PARLAY_COACH_CATS[preset]!==true) return;
+    _mlbCoachSelectRows(props,preset).forEach(function(row){
+      // Coach candidates are never allowed to carry extreme/unpriced juice.
+      if(row.odds==null||Number(row.odds)<-1000) return;
+      var leg=_coachLegFromRow(row,preset,date); if(leg) out.push(leg);
+    });
+  });
+  return out;
+}
 function _renderParlay(randomize){
   var sel=document.getElementById('parlayLegs');
   var n=parseInt(sel?sel.value:'3',10)||3;
   var out=document.getElementById('parlayResult'); if(!out) return;
   if(!window._lastResult){ out.innerHTML='<div style="color:#888;padding:10px">Run picks first, then build a parlay.</div>'; return; }
   try{
-  _syncParlayCats();  // re-read the live checkboxes so the build uses exactly what is checked
-  var _anyCat=false; for(var _ck in window.PARLAY_CATS){ if(window.PARLAY_CATS[_ck]){ _anyCat=true; break; } }
-  if(!_anyCat){ out.innerHTML='<div style="color:#f87171;padding:10px">Pick at least one category from the Categories menu.</div>'; return; }
+   _syncParlayCats(); _syncCoachCats();  // re-read live boxes before every build
+   var _anyCat=false; for(var _ck in window.PARLAY_CATS){ if(window.PARLAY_CATS[_ck]){ _anyCat=true; break; } }
+   var _anyCoach=false; _MLB_COACH_PRESET_ORDER.forEach(function(_cp){if(window.PARLAY_COACH_CATS[_cp]) _anyCoach=true;});
+   if(!_anyCat&&!_anyCoach){ out.innerHTML='<div style="color:#f87171;padding:10px">Pick at least one category or Coach preset.</div>'; return; }
   var cands=_mlbPool();
   if(cands.length<n){ out.innerHTML='<div style="color:#f87171;padding:10px">Only '+cands.length+' qualifying play'+(cands.length!==1?'s':'')+' on the board. Pick a smaller parlay.</div>'; return; }
   var legs;
@@ -7038,14 +7231,15 @@ function _paintParlay(){
   var tagBg={HIT:'rgba(245,158,11,.16)',UNDER:'rgba(255,138,101,.16)',K:'rgba(99,202,183,.16)',RUN:'rgba(96,165,250,.16)',RBI:'rgba(251,191,36,.16)',HR:'rgba(244,63,94,.16)',HRR:'rgba(251,146,60,.16)',TB:'rgba(167,139,250,.16)',TBO:'rgba(74,222,128,.16)',BWALK:'rgba(52,211,153,.16)',BK:'rgba(167,139,250,.16)',TSCH:'rgba(251,146,60,.16)',COLD:'rgba(96,165,250,.16)',LOCKS:'rgba(251,191,36,.16)',FSS:'rgba(167,139,250,.16)',CLUB:'rgba(244,114,182,.16)',pitcher_hits_allowed:'rgba(248,113,113,.16)',pitcher_outs:'rgba(167,139,250,.16)',pitcher_earned_runs:'rgba(251,146,60,.16)',pitcher_walks:'rgba(52,211,153,.16)'};
   var tagFg={HIT:'#f59e0b',UNDER:'#ff8a65',K:'#63cab7',RUN:'#60a5fa',RBI:'#fbbf24',HR:'#f43f5e',HRR:'#fb923c',TB:'#a78bfa',TBO:'#4ade80',BWALK:'#34d399',BK:'#a78bfa',TSCH:'#fb923c',COLD:'#60a5fa',LOCKS:'#fbbf24',FSS:'#a78bfa',CLUB:'#f472b6',pitcher_hits_allowed:'#f87171',pitcher_outs:'#a78bfa',pitcher_earned_runs:'#fb923c',pitcher_walks:'#34d399'};
   var tagLbl={HIT:'HIT',UNDER:'U1.5',K:'K',RUN:'RUNS',RBI:'RBI',HR:'HR',HRR:'HRR',TB:'U1.5 TB',TBO:'O1.5 TB',BWALK:'BB (BAT)',BK:'BAT K',TSCH:'HOT',COLD:'COLD TB',LOCKS:'LOCK',FSS:'5 STAR',CLUB:'CLUB',pitcher_hits_allowed:'H ALLOW',pitcher_outs:'OUTS',pitcher_earned_runs:'ER',pitcher_walks:'BB (PIT)'};
-  var rows=legs.map(function(l,idx){var fo=_fmtOdds(l.odds);return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #1a1a1a">'
+  var rows=legs.map(function(l,idx){var fo=_fmtOdds(l.odds);var _sourceTxt=l.isCoach?('⚡ Coach · '+(l.coachLabel||l.coachPreset||'Preset')):'Standard';var _bookTxt=l.book||(l.src&&(l.src.book||l.src.over_book||l.src.under_book))||'';return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #1a1a1a">'
     +'<div style="min-width:0">'
     +'<div style="font-weight:800;color:#fff;font-size:.85rem">'+(idx+1)+'. '+_nameSpan(l.src,l.player)+' <span style="color:#777;font-size:.7rem">'+(l.team?l.team+' ':'')+'vs '+l.opp+'</span> <span style="background:'+(tagBg[l.type]||'#222')+';color:'+(tagFg[l.type]||'#aaa')+';padding:1px 6px;border-radius:4px;font-size:.6rem;font-weight:800">'+(tagLbl[l.type]||l.type)+'</span></div>'
     +'<div style="color:#999;font-size:.72rem;margin-top:2px">'+l.reason+'</div>'
+    +'<div style="color:#64748b;font-size:.66rem;margin-top:2px">'+_sourceTxt+' · Book: '+(_bookTxt||'N/A')+' · '+l.dir+' '+l.stat+(l.line!=null?(' '+l.line):'')+'</div>'
     +'</div>'
     +'<div style="display:flex;align-items:center;gap:8px;white-space:nowrap">'
     +'<div style="text-align:right">'
-    +'<div style="color:'+dirColor(l.dir)+';font-weight:900;font-size:.8rem">'+l.dir+' '+l.stat+'</div>'
+     +'<div style="color:'+dirColor(l.dir)+';font-weight:900;font-size:.8rem">'+l.dir+' '+l.stat+(l.line!=null?(' '+l.line):'')+'</div>'
     +'<div style="color:#fbbf24;font-size:.72rem;font-weight:800">'+(fo||'odds N/A')+'</div>'
     +'</div>'
     +'<button id="mlbrep'+idx+'" onclick="event.stopPropagation();_replaceParlayLeg('+idx+')" title="Swap this leg for another play" style="background:#1e3a8a;color:#bfdbfe;border:1px solid #1d4ed8;border-radius:7px;padding:4px 9px;font-size:.85rem;cursor:pointer;font-weight:800;line-height:1;flex-shrink:0">&#8635;</button>'
@@ -7066,7 +7260,7 @@ function _paintParlay(){
 // since the just-placed leg is then on the ticket. No regenerate, no other leg lost.
 function _replaceParlayLeg(idx){
   var legs=window._parlayLegs; if(!legs||!legs[idx]) return;
-  _syncParlayCats();  // swap must respect exactly what is checked, too
+  _syncParlayCats(); _syncCoachCats();  // swap must respect exactly what is checked, too
   var cur=legs[idx];
   var _aty=function(c){return c.type==='HRRSP'?'HRR':(c.type==='TSC'||c.type==='TSCH'?'HIT':(c.type==='FSS'?(c._fssBase||'TBO'):(c.type==='CLUB'?(c._clubBase||'TBO'):(c.type==='LOCKS'?(c._lockBase||'HIT'):c.type))));};
   var curKey=cur.player+'|'+_aty(cur)+'|'+cur.stat;
@@ -7104,6 +7298,10 @@ window.PARLAY_PLUS = false;
 window.PARLAY_ODDS_RANGE = 'all';
 // Parlay category checkboxes — which pick categories feed the parlay pool (all on by default).
 window.PARLAY_CATS = {HIT_O:true,HIT_U:true,HOT:true,COLD:true,LOCKS:true,TB_O:true,TB_U:true,RUN_O:true,RUN_U:true,RBI_O:true,RBI_U:true,HR_O:true,HR_U:true,HRR_O:true,HRR_U:true,HRR_SP:true,TSC:true,FSS:true,CLUB:true,BWALK_O:true,BWALK_U:true,BK_O:true,BK_U:true,K_O:true,K_U:true,PHA_O:true,PHA_U:true,POUT_O:true,POUT_U:true,PER_O:true,PER_U:true,PWK_O:true,PWK_U:true};
+// Coach presets are intentionally off by default; standard categories remain
+// unchanged unless a user explicitly opts into one or more Coach buttons.
+window.PARLAY_COACH_CATS = {};
+_MLB_COACH_PRESET_ORDER.forEach(function(k){ window.PARLAY_COACH_CATS[k]=false; });
 // Parlay game filter — which games feed the parlay pool. Empty = all games allowed; a
 // game is excluded only when explicitly set false. Keyed by the same gameKey() label as
 // the "By Game" card. Repopulated each run from the day's slate (_buildGamesMenu).
@@ -7219,6 +7417,34 @@ function _catSetAll(v){
   for(var i=0;i<cbs.length;i++){ cbs[i].checked=v; }
   _catChanged();
 }
+function _coachCount(){
+  var n=0,t=_MLB_COACH_PRESET_ORDER.length;
+  _MLB_COACH_PRESET_ORDER.forEach(function(k){if(window.PARLAY_COACH_CATS[k]) n++;});
+  return n+'/'+t;
+}
+function _paintCoachBtn(){
+  var b=document.getElementById('parlay-coach-btn');
+  if(b){ var active=_coachCount().split('/')[0]!=='0'; b.innerHTML='&#9889; Coach Edge ('+_coachCount()+') &#9662;'; b.style.background=active?'#78350f':'#1f2937'; b.style.color=active?'#fef3c7':'#fff'; }
+}
+function toggleCoachMenu(e){
+  if(e) e.stopPropagation();
+  var m=document.getElementById('parlay-coach-menu');
+  if(m) m.style.display=(m.style.display==='block')?'none':'block';
+}
+function _syncCoachCats(){
+  var cbs=document.querySelectorAll('.parlay-coach-cb');
+  if(!cbs.length) return;
+  for(var i=0;i<cbs.length;i++) window.PARLAY_COACH_CATS[cbs[i].value]=cbs[i].checked;
+}
+function _coachChanged(){
+  _syncCoachCats(); _paintCoachBtn();
+  if((document.getElementById('parlayResult').innerHTML||'').trim()) buildParlay();
+}
+function _coachSetAll(v){
+  var cbs=document.querySelectorAll('.parlay-coach-cb');
+  for(var i=0;i<cbs.length;i++) cbs[i].checked=v;
+  _coachChanged();
+}
 // ── Parlay game filter (mirrors the category menu; list built from the day's slate) ──
 // Unique games on today's board, via the same gameKey() used by the "By Game" card.
 function _allGameKeys(){
@@ -7239,6 +7465,11 @@ function _allGameKeys(){
   (r.batter_k_picks||[]).forEach(function(p){all.push(p);});
   var _pp=(r.pitcher_props)||{};
   PROP_ORDER.forEach(function(mkt){ ((((_pp[mkt]||{}).picks))||[]).forEach(function(p){all.push(p);}); });
+  // Include games that are represented only by priced Coach rows, so the
+  // common game filter can still constrain an opt-in Coach preset.
+  _mlbCoachAllProps().forEach(function(p){
+    all.push({team:p.team,opp:p.opp,side:(p.src&&p.src.side)||'',date:(p.src&&p.src.date)||r.date});
+  });
   var seen={}, out=[];
   all.forEach(function(p){ var g=gameKey(p); if(g&&g!=='Unknown'&&!seen[g]){seen[g]=1;out.push(g);} });
   out.sort();
@@ -12880,6 +13111,9 @@ async function _saveManualBet(){
   }catch(e){ msg.textContent=(e.message||'Save failed'); btn.disabled=false; btn.textContent='Log Bet'; }
 }
 function _legStatKey(l){
+  // Coach candidates carry the exact stat key from the source market. Never
+  // infer a pitcher/batter strikeout key from the shared "Ks" label.
+  if(l&&l.stat_key) return l.stat_key;
   var lbl=((l.stat||'')+'').toLowerCase().trim();
   var byLabel={'hits':'hits','runs':'runs','total bases':'total_bases','rbi':'rbi',
     'hr':'homeRuns','home runs':'homeRuns','walks':'walks_bat','batter walks':'walks_bat',
@@ -12951,7 +13185,8 @@ async function _saveParlay(){
     return {name:(l.player||''),team:(l.team||''),opp:(l.opp||''),
       side:l.dir,stat_key:_legStatKey(l),stat_label:(l.stat||''),
       line:l.line,odds:l.odds,category:l.type,
-      date:((l.src&&l.src.date)||today)};
+      book:(l.book||''),source:(l.isCoach?'COACH':'STANDARD'),
+      coach_preset:(l.coachPreset||''),date:((l.src&&l.src.date)||l.date||today)};
   });
   var body={bet_type:'parlay',legs:legsData,odds:Math.round(o),stake:s,
     date:today,placed_at:new Date().toISOString()};
