@@ -5000,7 +5000,9 @@ function askMlbCoach() {
   // An explicit 100% request is a hard qualification gate, not a ranking hint.
   // Apply it before every preset/market branch so hitter and pitcher questions
   // behave identically and no lower-probability play can leak into the answer.
-  var exact100Requested = /\b100(?:\.0+)?\s*(?:%|percent\b)/i.test(question);
+  var exact100Requested = q.indexOf('100%')>=0 ||
+                          q.indexOf('100.0%')>=0 ||
+                          q.indexOf('100 percent')>=0;
   var requestedTeams = _mlbCoachRequestedTeams(question, props);
   var gameLabel = '';
 
