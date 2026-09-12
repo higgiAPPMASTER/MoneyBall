@@ -176,12 +176,7 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
     # any next-day run can't serve a first-seen matchup/price. (HIT_ODDS predates
     # this and is left as-is.)
     RUNS_ODDS.clear()
-    # Prefer the user's Canadian books first when the Odds API returns them,
-    # then retain the existing US-book fallback order. Unknown keys are harmless:
-    # every returned bookmaker is still scanned below.
-    PREFERRED = ["thescore", "thescorebet", "bet99", "bet365",
-                 "espnbet", "draftkings", "betmgm", "hardrockbet",
-                 "fanduel", "williamhill_us", "pointsbetus"]
+    PREFERRED = ["draftkings", "betmgm", "espnbet", "hardrockbet", "fanduel", "williamhill_us", "pointsbetus"]
     tomorrow  = (time.strftime("%Y-%m-%d",
                   time.gmtime(time.mktime(time.strptime(run_date, "%Y-%m-%d")) + 86400)))
     try:
@@ -224,7 +219,7 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
             away_team = ev.get("away_team", "")
             r2 = requests.get(
                 f"https://api.the-odds-api.com/v4/sports/baseball_mlb/events/{ev['id']}/odds",
-                params={"apiKey": ODDS_API_KEY, "regions": "us,us2,ca",
+                params={"apiKey": ODDS_API_KEY, "regions": "us,us2",
                         "markets": "batter_hits,batter_hits_alternate,batter_total_bases,batter_total_bases_alternate,batter_runs_scored",
                         "oddsFormat": "american"}, timeout=15)
             if r2.status_code != 200: continue
