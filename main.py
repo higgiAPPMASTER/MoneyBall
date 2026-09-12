@@ -4997,6 +4997,10 @@ function askMlbCoach() {
   }
 
   var q = question.toLowerCase();
+  // An explicit 100% request is a hard qualification gate, not a ranking hint.
+  // Apply it before every preset/market branch so hitter and pitcher questions
+  // behave identically and no lower-probability play can leak into the answer.
+  var exact100Requested = /\b100(?:\.0+)?\s*(?:%|percent\b)/i.test(question);
   var requestedTeams = _mlbCoachRequestedTeams(question, props);
   var gameLabel = '';
 
@@ -5021,6 +5025,11 @@ function askMlbCoach() {
   }
   if (isHitterQ && !isPitcherQ) pool = pool.filter(function(p) { return !p.isPitcher; });
   else if (isPitcherQ && !isHitterQ) pool = pool.filter(function(p) { return p.isPitcher; });
+  if(exact100Requested) {
+    pool = pool.filter(function(p) {
+      return isFinite(Number(p.appProb)) && Math.abs(Number(p.appProb)-100) < 0.05;
+    });
+  }
 
   // Route the named preset questions through the same pure selector used by
   // the parlay menu. Team/game narrowing still happens first, just as it did
