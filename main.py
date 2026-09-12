@@ -4365,6 +4365,7 @@ _HTML = """
 
         <div style="margin-top:18px;font-size:.75rem;font-weight:800;color:#facc15;border-bottom:1px solid rgba(255,255,255,.1);padding-bottom:5px;letter-spacing:.05em;text-transform:uppercase">Hitters</div>
         <div class="mlb-coach-presets">
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('Give me all 100% app probability hitter plays today')" style="border-color:#22c55e;color:#86efac">100% App Plays</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the safest hitter bets?')">Safest bets</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Hitter Coach Edge plays?')">Coach Edge</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Best Alt-Line Hitter H+R+RBI 1+ Edge Plays? — Top 10')" style="border-color:#f59e0b;color:#fde68a">Best Alt-Line HRR 1+ · Top 10</button>
@@ -4378,6 +4379,7 @@ _HTML = """
 
         <div style="margin-top:16px;font-size:.75rem;font-weight:800;color:#60a5fa;border-bottom:1px solid rgba(255,255,255,.1);padding-bottom:5px;letter-spacing:.05em;text-transform:uppercase">Pitchers</div>
         <div class="mlb-coach-presets">
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('Give me all 100% app probability pitcher plays today')" style="border-color:#22c55e;color:#86efac">100% App Plays</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the safest pitcher bets?')">Safest bets</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Pitcher Coach Edge plays?')">Coach Edge</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Best Alt-Line Pitcher Edge Plays? — Top 10')" style="border-color:#60a5fa;color:#bfdbfe">Best Alt-Line Edge Plays · Top 10</button>
@@ -5109,10 +5111,14 @@ function askMlbCoach() {
     pool.sort(function(a,b) { return b.edge - a.edge; });
   }
 
-  if(q.indexOf('best play')>=0 && q.indexOf('best plays')<0) pool = pool.slice(0,1);
-  else if(q.indexOf('top 3') >= 0) pool = pool.slice(0,3);
-  else if(isPitcherMarketList) pool = pool.slice(0,5);
-  else pool = pool.slice(0,10);
+  // Explicit 100% requests return every exact match. All existing Coach
+  // questions retain their original one/three/five/ten-play limits.
+  if(!exact100Requested) {
+    if(q.indexOf('best play')>=0 && q.indexOf('best plays')<0) pool = pool.slice(0,1);
+    else if(q.indexOf('top 3') >= 0) pool = pool.slice(0,3);
+    else if(isPitcherMarketList) pool = pool.slice(0,5);
+    else pool = pool.slice(0,10);
+  }
 
   _mlbCoachRender(question, pool, props.length, isSafest, gameLabel,
                   isPitcherMarketList);
