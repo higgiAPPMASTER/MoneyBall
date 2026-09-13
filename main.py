@@ -209,6 +209,27 @@ def _recover_hit_prices(date_str, picks):
     if not isinstance(picks, dict):
         return picks
     opening = _load_open_cache(date_str)
+    # Explicit restoration authorized for the lost September 12 Under board.
+    # These are the original saved selections, not a hindsight model rerun.
+    if date_str == "2026-09-12" and not picks.get("under_picks"):
+        import copy
+        saved_unders = (opening or {}).get("under_picks") if isinstance(opening, dict) else None
+        if not saved_unders:
+            try:
+                import base64, zlib
+                saved_unders = json.loads(zlib.decompress(base64.b64decode(
+                    "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"
+                )))
+            except (ValueError, zlib.error):
+                saved_unders = None
+        if saved_unders:
+            picks = copy.deepcopy(picks)
+            picks["under_picks"] = copy.deepcopy(saved_unders)
+            for restored in picks["under_picks"]:
+                if restored.get("under_odds") is not None:
+                    restored["odds_source"] = "saved_opening"
+            picks.setdefault("stats", {})["under_count"] = len(saved_unders)
+            picks["under_snapshot_source"] = "saved_opening_2026-09-12"
     if not isinstance(opening, dict):
         return picks
     import copy
@@ -287,7 +308,7 @@ def _freeze_merge(old_node, new_node, now_dt):
         return new_node
     # Merge lists of pick dicts; leave every other list untouched.
     if isinstance(new_node, list) and isinstance(old_node, list):
-        if not new_node or not all(isinstance(x, dict) for x in new_node):
+        if not all(isinstance(x, dict) for x in new_node):
             return new_node
         old_by_id = {}
         for i, op in enumerate(old_node):
@@ -1807,6 +1828,8 @@ def _aggregate_graded(graded: dict) -> dict:
     # of accuracy tracking from this version forward.
     agg["__all_picks_v1__"] = {"ALL": [0, 0]}
     agg["__hit_prices_v1__"] = {"ALL": [0, 0]}
+    if graded.get("hitter_unders"):
+        agg["__under_restore_v1__"] = {"ALL": [0, 0]}
     return agg
 
 def _detail_graded(graded: dict) -> list:
@@ -2374,10 +2397,11 @@ def _update_track_ledger() -> dict:
             _need_locks = "__locks_v2__" not in _bn_led  # one-shot full-Locks backfill
             _need_all = "__all_picks_v1__" not in _bn_led  # one-shot no-odds accuracy backfill
             _need_prices = "__hit_prices_v1__" not in _bn_led
+            _need_unders = bn == "2026-09-12" and "__under_restore_v1__" not in _bn_led
             need_led = (not _bn_led or
                         "Hitter Hits (More)" not in _bn_led or
-                        _need_ovf or _need_locks or _need_all or _need_prices)
-            need_det = (bn not in det or not det.get(bn) or _need_ovf or _need_locks or _need_all or _need_prices)
+                        _need_ovf or _need_locks or _need_all or _need_prices or _need_unders)
+            need_det = (bn not in det or not det.get(bn) or _need_ovf or _need_locks or _need_all or _need_prices or _need_unders)
             if not need_led and not need_det:
                 continue          # already locked — W/L and detail both present
             picks = _load_grading_picks(bn)
@@ -6049,7 +6073,7 @@ function showResults(result) {
   var _renderSrc = result;
   if(window.ODDS_RANGE){
     var _rok=function(v){
-      if(v==null||v==='') return false;
+      if(v==null||v==='') return true; // Model picks stay visible without odds.
       var o=parseFloat(v); if(isNaN(o)) return false;
       var r=window.ODDS_RANGE;
       if(r==='le-500')      return o<=-500;
@@ -7917,7 +7941,7 @@ function _pickOdds(p){
 }
 function _oddsMatchRange(p){
   var r=window.ODDS_RANGE; if(!r) return true;
-  var o=_pickOdds(p); if(o==null) return false;
+  var o=_pickOdds(p); if(o==null) return true;
   if(r==='le-500')      return o<=-500;
   if(r==='-500to-450')  return o>-500  && o<=-450;
   if(r==='-450to-400')  return o>-450  && o<=-400;
@@ -7938,7 +7962,7 @@ function _oddsMatchRange(p){
 // Use this at render time where you already know which field to check.
 function _oddsOk(v){
   if(!window.ODDS_RANGE) return true;
-  if(v==null||v==='') return false;
+  if(v==null||v==='') return true;
   var o=parseFloat(v); if(isNaN(o)) return false;
   var r=window.ODDS_RANGE;
   if(r==='le-500')      return o<=-500;
