@@ -153,8 +153,8 @@ def _load_pick_cache(date_str: str):
     (survives redeploys). Used by every read/grade path."""
     d = _load_disk_cache(date_str)
     if d is not None:
-        return d
-    return _load_sb_picks(date_str)
+        return _recover_hit_prices(date_str, d)
+    return _recover_hit_prices(date_str, _load_sb_picks(date_str))
 
 # ── Manual pick lock (Track Record integrity) ────────────────────────────
 # Admin hits "Lock Picks" just before game time. That snapshot is what gets
@@ -197,8 +197,54 @@ def _load_grading_picks(date_str: str):
     """For grading: prefer the manually-locked snapshot; fall back to __picks__."""
     locked = _load_locked_picks(date_str)
     if locked:
-        return locked
+        return _recover_hit_prices(date_str, locked)
     return _load_pick_cache(date_str)
+
+def _recover_hit_prices(date_str, picks):
+    """Recover only missing 0.5-hit prices from this date's opening snapshot.
+
+    Never overwrite current prices or change pick qualification/rank/results.
+    Recovered quotes remain identified as opening prices, not closing prices.
+    """
+    if not isinstance(picks, dict):
+        return picks
+    opening = _load_open_cache(date_str)
+    if not isinstance(opening, dict):
+        return picks
+    import copy
+    def identity(p):
+        name = str(p.get("full_name") or p.get("name") or "").strip().casefold()
+        team = str(p.get("team") or "").strip().casefold()
+        opp = str(p.get("opp") or "").strip().casefold()
+        return (name, team, opp) if name and team and opp else None
+    def walk(node):
+        if isinstance(node, dict):
+            yield node
+            for value in node.values():
+                yield from walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                yield from walk(value)
+    quotes = {}
+    for row in walk(opening):
+        key = identity(row)
+        try:
+            odds = float(row.get("hit_odds"))
+        except (TypeError, ValueError):
+            continue
+        if key and ((-1000 <= odds <= -100) or (100 <= odds < float("inf"))):
+            quotes.setdefault(key, row)
+    recovered = copy.deepcopy(picks)
+    for row in walk(recovered):
+        # hit_odds is exclusively the existing Over 0.5 Hits contract.
+        if "hit_odds" not in row or row.get("hit_odds") not in (None, ""):
+            continue
+        quote = quotes.get(identity(row))
+        if quote:
+            row["hit_odds"] = quote["hit_odds"]
+            row["book"] = quote.get("book", "")
+            row["hit_odds_source"] = "saved_opening"
+    return recovered
 
 # ── Pre-game snapshot freeze (Track Record integrity) ───────────────────
 # The graded snapshot (disk + Supabase) must reflect the LAST run BEFORE each
@@ -489,7 +535,7 @@ async def start_run(request: Request, date_str: str, force: bool = False, token:
             # never rewrite a live in-game line (e.g. a 4.5 K line jumping to
             # 5.5/6.5 mid-game). Games not yet started still take fresh lines so
             # late-named starters appear. CLV opener below stays on the true run.
-            _snap = _freeze_started_picks(date_str, result)
+            _snap = _recover_hit_prices(date_str, _freeze_started_picks(date_str, result))
             # Always persist so the read-only /api/results endpoint (parlay hub)
             # can serve the slate even when a starter is still TBD. The MLB app's
             # own load re-runs when has_tbd to pick up late-named starters.
@@ -908,6 +954,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "category": "Hitter Hits", "side": "OVER",
             "pick": "OVER 0.5 Hits",
             "odds": p.get("hit_odds"),
+            "odds_source": p.get("hit_odds_source"),
             "line": 0.5,
             "actual": actual,
             "stat": "Hits",
@@ -929,6 +976,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "category": "Hitter Hits (More)", "side": "OVER",
             "pick": "OVER 0.5 Hits",
             "odds": p.get("hit_odds"),
+            "odds_source": p.get("hit_odds_source"),
             "line": 0.5,
             "actual": actual,
             "stat": "Hits",
@@ -1204,6 +1252,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "category": category, "side": pick_dir,
             "pick": f"{pick_dir} {line} {stat_label}",
             "odds": odds, "line": line, "actual": actual, "stat": stat_label,
+            "odds_source": (p.get("hit_odds_source") if lock_cat == "Batter Hits" and p.get("odds") is None else None),
             "result": _grade(pick_dir, line, actual, (st or {}).get("final", False)),
             "game_status": (st or {}).get("status", "—"),
             "qualifying_rate": p.get("_90_rate"),
@@ -1746,6 +1795,7 @@ def _aggregate_graded(graded: dict) -> dict:
     # Migration sentinel: rows without sportsbook prices are intentionally part
     # of accuracy tracking from this version forward.
     agg["__all_picks_v1__"] = {"ALL": [0, 0]}
+    agg["__hit_prices_v1__"] = {"ALL": [0, 0]}
     return agg
 
 def _detail_graded(graded: dict) -> list:
@@ -1771,6 +1821,7 @@ def _detail_graded(graded: dict) -> list:
                 "side": r.get("side") or "OVER",
                 "pick": r.get("pick", ""),
                 "odds": r.get("odds"),
+                "odds_source": r.get("odds_source"),
                 "priced": _priced,
                 "tracking_basis": ("priced_pick" if _priced else "model_pick_no_price"),
                 "line": r.get("line"),
@@ -2264,7 +2315,7 @@ def _attach_clv(date_str: str, rows: list):
         # open_odds stays None when no opening line existed yet (e.g. props whose
         # line posts just before first pitch) — the frontend then skips it from
         # CLV rather than faking a 0% "even" move.
-        r["close_odds"] = r.get("odds")
+        r["close_odds"] = None if r.get("odds_source") == "saved_opening" else r.get("odds")
         r["open_odds"] = omap.get((r.get("name"), r.get("category"), r.get("side"), r.get("pick")))
 
 import threading as _trk_threading
@@ -2309,10 +2360,11 @@ def _update_track_ledger() -> dict:
             _need_ovf = "__ovf_v1__" not in _bn_led   # one-shot Overflow Tracker backfill
             _need_locks = "__locks_v2__" not in _bn_led  # one-shot full-Locks backfill
             _need_all = "__all_picks_v1__" not in _bn_led  # one-shot no-odds accuracy backfill
+            _need_prices = "__hit_prices_v1__" not in _bn_led
             need_led = (not _bn_led or
                         "Hitter Hits (More)" not in _bn_led or
-                        _need_ovf or _need_locks or _need_all)
-            need_det = (bn not in det or not det.get(bn) or _need_ovf or _need_locks or _need_all)
+                        _need_ovf or _need_locks or _need_all or _need_prices)
+            need_det = (bn not in det or not det.get(bn) or _need_ovf or _need_locks or _need_all or _need_prices)
             if not need_led and not need_det:
                 continue          # already locked — W/L and detail both present
             picks = _load_grading_picks(bn)
@@ -10624,13 +10676,12 @@ function _matrixScorecard(d){
     +s2+'</div>';
 }
 
-// American-odds profit on a winning bet; a loss always costs the full stake.
-// Returns null for a WIN whose odds we never captured (can't value the payout).
+// Unpriced picks count in accuracy, never in stake, profit or ROI.
 function _amProfit(odds, stake, win){
-  if(!win) return -stake;
   if(odds==null||odds==='') return null;
   odds=Number(odds);
   if(!isFinite(odds)||odds===0) return null;   // unpriceable / malformed -> exclude
+  if(!win) return -stake;
   return odds>0 ? stake*(odds/100) : stake*(100/Math.abs(odds));
 }
 // ===== Manual odds entry — when a pick has no posted odds (no Ontario book
@@ -10652,7 +10703,7 @@ function _manOddsEntry(idx){
   _manOddsRerender();
 }
 function _manOddsRerender(){ var ov=document.getElementById('ovf-body'); if(ov&&ov.offsetParent!==null){ _ovfRenderActive(); return; } var tr=document.getElementById('track-body'); if(tr&&tr.offsetParent!==null){ _trkRenderActive(); return; } if(ov) _ovfRenderActive(); else if(tr) _trkRenderActive(); }
-function _oddsCell(p,idx){ var eff=_effOdds(p); if(eff!=null){ var man=_isManOdds(p); var col=man?'#fbbf24':'#cbd5e1', bd=man?'#b45309':'#334155', bg=man?'#3a2406':'#0f1b2e'; return '<span onclick="_manOddsEntry('+idx+')" title="'+(man?'Manual odds \u2014 click to edit':'Click to edit odds')+'" style="font-family:monospace;cursor:pointer;color:'+col+';border:1px solid '+bd+';background:'+bg+';border-radius:5px;padding:1px 7px;font-size:.66rem;font-weight:800;flex-shrink:0">'+((eff>0?'+':'')+eff)+' \u270e</span>'; } return '<button onclick="_manOddsEntry('+idx+')" title="Enter odds from another book" style="background:#78350f;color:#fde68a;border:1px solid #b45309;border-radius:5px;padding:1px 7px;font-size:.66rem;font-weight:800;cursor:pointer;flex-shrink:0">+odds</button>'; }
+function _oddsCell(p,idx){ var eff=_effOdds(p); if(eff!=null){ var man=_isManOdds(p); var col=man?'#fbbf24':'#cbd5e1', bd=man?'#b45309':'#334155', bg=man?'#3a2406':'#0f1b2e'; return '<span onclick="_manOddsEntry('+idx+')" title="'+(man?'Manual odds \u2014 click to edit':p.odds_source==='saved_opening'?'Recovered saved opening price, not a closing quote':'Click to edit odds')+'" style="font-family:monospace;cursor:pointer;color:'+col+';border:1px solid '+bd+';background:'+bg+';border-radius:5px;padding:1px 7px;font-size:.66rem;font-weight:800;flex-shrink:0">'+((eff>0?'+':'')+eff)+(p.odds_source==='saved_opening'?' (open)':'')+' \u270e</span>'; } return '<button onclick="_manOddsEntry('+idx+')" title="Enter odds from another book" style="background:#78350f;color:#fde68a;border:1px solid #b45309;border-radius:5px;padding:1px 7px;font-size:.66rem;font-weight:800;cursor:pointer;flex-shrink:0">+odds</button>'; }
 // Single source of truth for the flat bet size — blank/zero/negative/NaN all
 // fall back to the $20 default so the live total and the CSV always agree.
 function _trkStake(){
@@ -13952,7 +14003,7 @@ def _auto_run_pipeline(date_str: str, label: str):
         except Exception as _le: print(f"[track_ledger] {_le}")
         try: _mlb_grade_coach_ledger()
         except Exception as _ce: print(f"[mlb_coach_track] grade failed: {_ce}")
-        _snap = _freeze_started_picks(date_str, result)
+        _snap = _recover_hit_prices(date_str, _freeze_started_picks(date_str, result))
         _save_disk_cache(date_str, _snap)
         _save_sb_picks(date_str, _snap)
         _save_mlb_coach_snapshot(date_str, _snap)
