@@ -1883,6 +1883,7 @@ _MLB_COACH_CATEGORIES = {
     "hitter_safest": "Hitter · Safest Bets",
     "hitter_edge": "Hitter · Coach Edge",
     "hitter_alt_hrr": "Hitter · Best Alt-Line HRR 1+",
+    "hitter_hrr_top10": "Hitter · 1+ HRR Top 10",
     "hitter_hits": "Hitter · To Record a Hit",
     "hitter_tb": "Hitter · Total Bases",
     "hitter_production": "Hitter · Production",
@@ -2085,6 +2086,32 @@ def _mlb_coach_all_props(result):
             odds=lambda p, s: p.get("under_odds") if s == "UNDER"
             else p.get("over_odds"),
             projection=lambda p: p.get("proj", p.get("blended")))
+    # This source-board confluence is intentionally allowed to contain
+    # unpriced candidates and is not subject to the positive-edge gate.
+    for consensus_rank, p in enumerate(result.get("hrr_top10_picks") or [], 1):
+        prob = p.get("model_prob")
+        if prob is None:
+            continue
+        props.append({
+            "player": p.get("full_name") or p.get("name") or "",
+            "player_id": p.get("player_id") or p.get("batter_id"),
+            "team": p.get("team", ""), "opponent": p.get("opp", ""),
+            "game_start": p.get("game_start", ""),
+            "game_identity": _game_identity(p.get("game_start")),
+            "market": "H+R+RBI", "market_label": "H+R+RBI",
+            "stat_key": "hrr", "stat_label": "H+R+RBI",
+            "side": "OVER", "line": 0.5, "odds": p.get("hrr_over_odds"),
+            "book": p.get("book") or "", "model_probability": float(prob),
+            "implied_probability": p.get("implied_prob"),
+            # None would make the generic Coach sort incomparable; an
+            # unpriced row is retained with a neutral/non-positive sort value.
+            "coach_edge": (p.get("edge") if p.get("edge") is not None else -1.0),
+            "projection": None,
+            "is_pitcher": False, "alternate": False,
+            "source_count": p.get("source_count"),
+            "source_names": p.get("source_names") or [],
+            "consensus_rank": consensus_rank,
+        })
     return props
 
 def _mlb_coach_select_categories(result):
@@ -2117,6 +2144,11 @@ def _mlb_coach_select_categories(result):
         "hitter_safest": choose(hitters, safest=True),
         "hitter_edge": choose(hitters),
         "hitter_alt_hrr": choose(hitters, market="H+R+RBI", alternate=True),
+        "hitter_hrr_top10": sorted(
+            [p for p in hitters
+             if p.get("source_count") and p.get("market") == "H+R+RBI"
+             and p.get("alternate") is False],
+            key=lambda p: p.get("consensus_rank", 999))[:10],
         "hitter_hits": choose(hitters, market="Hits"),
         "hitter_tb": choose(hitters, market="Total Bases"),
         "hitter_production": choose(hitters, markets=production),
@@ -2282,7 +2314,7 @@ def _mlb_grade_coach_ledger_unlocked():
                     else:
                         result = "WIN" if actual_f < line else "LOSS"
                 units = None
-                if result == "WIN":
+                if result == "WIN" and row.get("odds") is not None:
                     saved_odds = float(row["odds"])
                     units = (saved_odds / 100.0 if saved_odds > 0
                              else 100.0 / abs(saved_odds))
@@ -4277,16 +4309,6 @@ _HTML = """
         <span class="spinner"></span> Analyzing player histories…
       </div>
     </div>
-    <div id="rotation-card" class="card p-6 admin-only">
-      <div class="section-hdr" style="color:#f59e0b">🔧 Rotation Order <span style="font-size:.7rem;color:#777;font-weight:400">admin only</span></div>
-      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
-        <button class="btn-primary" onclick="loadRotation()">Load Rotations</button>
-        <button class="btn-primary" id="rot-save-btn" onclick="saveRotation()" style="background:#16a34a;color:#fff">Save Overrides</button>
-        <button class="btn-primary" id="rot-collapse-btn" onclick="_rotCollapseAll()" style="background:#334155;color:#e5e7eb">Collapse all</button>
-        <span id="rot-status" style="font-size:.78rem;color:#9ca3af"></span>
-      </div>
-      <div id="rotation-list" style="display:flex;flex-direction:column;gap:14px"></div>
-    </div>
     <div id="progress-card" class="card p-6 hidden admin-only">
       <div class="flex justify-between items-center mb-3">
         <div class="section-hdr mb-0">Live Progress</div>
@@ -4393,6 +4415,7 @@ _HTML = """
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="hitter_safest" onchange="_coachChanged()"> Safest hitter bets</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="hitter_edge" onchange="_coachChanged()"> Hitter Coach Edge</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="hitter_alt_hrr" onchange="_coachChanged()"> Alt-Line HRR 1+ · Top 10</label>
+              <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="hitter_hrr_top10" onchange="_coachChanged()"> 1+ HRR Top 10 · Source Confluence</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="hitter_hits" onchange="_coachChanged()"> To record a hit</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="hitter_tb" onchange="_coachChanged()"> Total Bases</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="hitter_production" onchange="_coachChanged()"> Hitter production</label>
@@ -4458,6 +4481,7 @@ _HTML = """
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the safest hitter bets?')">Safest bets</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Hitter Coach Edge plays?')">Coach Edge</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Best Alt-Line Hitter H+R+RBI 1+ Edge Plays? — Top 10')" style="border-color:#f59e0b;color:#fde68a">Best Alt-Line HRR 1+ · Top 10</button>
+           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the 1+ HRR Top 10 source-board confluence plays?')" style="border-color:#fb923c;color:#fed7aa">1+ HRR Top 10 · Source Confluence</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best plays to record a hit?')">To record a hit</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Total Bases plays?')">Total Bases</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best hitter production props?')">Production</button>
@@ -4534,6 +4558,12 @@ _HTML = """
           <div style="font-size:.72rem;color:#94a3b8;margin:-4px 0 8px;line-height:1.6">All 4 must clear: BA &ge; .275 vs pitcher &middot; 65%+ vs team (H/A) &middot; 65%+ last-10 H/A &middot; BA &ge; .275 in today&#39;s day/night split</div>
           <div id="hrr-special-body" class="mlb-picks-grid"></div>
           <div id="hrr-special-more"></div>
+        </div>
+        <div class="card p-6 hidden" id="hrr-top10-card" style="border-color:rgba(251,146,60,.5)">
+          <div class="section-hdr" style="color:#fb923c">🔥 1+ HRR Top 10 · Source Confluence</div>
+          <div style="font-size:.72rem;color:#94a3b8;margin:-4px 0 8px;line-height:1.6">Union of positive candidates from Record a Hit, Total Bases Over, Hot Hitters, Triple Split Club and 5-Star. Ranked by source-board count, true last-10 1+ HRR history, then relevant team/pitcher history. Positive edge is not a gate; genuine HRR Over 0.5 prices are optional.</div>
+          <div id="hrr-top10-body" class="mlb-picks-grid"></div>
+          <div id="hrr-top10-more"></div>
         </div>
         <div class="card p-6 hidden" id="hot-split-card" style="border-color:rgba(251,146,60,.4)">
           <div class="section-hdr" style="color:#fb923c">🔥 Hot Hitters Split</div>
@@ -4949,6 +4979,24 @@ function _mlbCoachAllProps() {
     });
   });
 
+  // 1+ HRR Top 10 is a confluence board, not a priced-only board. Keep
+  // unpriced candidates available to the dedicated Coach preset.
+  (res.hrr_top10_picks||[]).forEach(function(p) {
+    var player=p.full_name||p.name||'';
+    if(!player) return;
+    var model=p.model_prob!=null?Number(p.model_prob)*100:null;
+    if(!isFinite(model)) return;
+    arr.push({
+      player:player, team:p.team||'', opp:p.opp||'', market:'H+R+RBI',
+      side:'OVER', line:.5, odds:p.hrr_over_odds==null?null:Number(p.hrr_over_odds),
+      appProb:model, implied:p.implied_prob==null?null:Number(p.implied_prob)*100,
+      edge:p.edge==null?null:Number(p.edge)*100, isPitcher:false, alternate:false,
+      blurb:'Source boards ('+(p.source_count||0)+'): '+(p.source_names||[]).join(' · '),
+      proj:null, book:p.book||'', source_count:p.source_count||0,
+      src:p
+    });
+  });
+
   return arr;
 }
 
@@ -4958,7 +5006,7 @@ function _mlbCoachAllProps() {
 // The parlay builder and the visible Coach answer therefore cannot drift apart.
 var _MLB_COACH_PRESET_LABELS = {
   hitter_safest:'Safest hitter bets', hitter_edge:'Hitter Coach Edge',
-  hitter_alt_hrr:'Alt-Line HRR 1+ · Top 10', hitter_hits:'To record a hit',
+  hitter_alt_hrr:'Alt-Line HRR 1+ · Top 10', hitter_hrr_top10:'1+ HRR Top 10 · Source Confluence', hitter_hits:'To record a hit',
   hitter_tb:'Total Bases', hitter_production:'Hitter production',
   hitter_batter_k:'Batter Strikeouts', hitter_unders:'Hitter unders',
   hitter_top3:'Top 3 hitter plays',
@@ -4969,7 +5017,7 @@ var _MLB_COACH_PRESET_LABELS = {
   pitcher_unders:'Pitcher unders', pitcher_top3:'Top 3 pitcher plays'
 };
 var _MLB_COACH_PRESET_ORDER = [
-  'hitter_safest','hitter_edge','hitter_alt_hrr','hitter_hits','hitter_tb',
+  'hitter_safest','hitter_edge','hitter_alt_hrr','hitter_hrr_top10','hitter_hits','hitter_tb',
   'hitter_production','hitter_batter_k','hitter_unders','hitter_top3',
   'pitcher_safest','pitcher_edge','pitcher_alt_k','pitcher_k',
   'pitcher_hits_allowed','pitcher_outs','pitcher_earned_runs','pitcher_walks',
@@ -4988,6 +5036,11 @@ function _mlbCoachSelectRows(props, preset) {
       out=rows.filter(positive).sort(byEdge).slice(0,10); break;
     case 'hitter_alt_hrr':
       out=rows.filter(function(p){return p.alternate&&p.market==='H+R+RBI'&&p.edge>0;}).sort(byEdge).slice(0,10); break;
+     case 'hitter_hrr_top10':
+       out=rows.filter(function(p){return p.market==='H+R+RBI'&&p.source_count;}).sort(function(a,b){
+         return (b.source_count||0)-(a.source_count||0) ||
+           (b.model_probability||0)-(a.model_probability||0);
+       }).slice(0,10); break;
     case 'pitcher_alt_k':
       out=rows.filter(function(p){return p.alternate;}).sort(byEdge).slice(0,10); break;
     case 'hitter_hits':
@@ -5023,6 +5076,8 @@ function _mlbCoachPresetForQuestion(q, isHitterQ, isPitcherQ) {
   var p=/pitcher|pitching|hits allowed|outs|earned runs|walks allowed/.test(q) ||
         (isPitcherQ&&!isHitterQ);
   var h=!p && (isHitterQ||/hitter|batter|record a hit|total bases|production/.test(q));
+  if(/1\+\s*hrr|hrr top 10|source.board confluence|source confluence/.test(q))
+    return 'hitter_hrr_top10';
   if(q.indexOf('alt-line')>=0||q.indexOf('alternate')>=0) return h?'hitter_alt_hrr':(p?'pitcher_alt_k':'');
   if(q.indexOf('safest')>=0) return h?'hitter_safest':(p?'pitcher_safest':'');
   if(q.indexOf('under')>=0) return h?'hitter_unders':(p?'pitcher_unders':'');
@@ -5486,7 +5541,7 @@ function _filterStarted(result){
   if(!result) return result;
   var r=Object.assign({},result);
   function f(a){return (a||[]).filter(function(p){return !_started(p);});}
-  r.top9=f(r.top9); r.also_ran=f(r.also_ran); r.under_picks=f(r.under_picks); r.runs_picks=f(r.runs_picks); r.tb_picks=f(r.tb_picks); r.tb_over_picks=f(r.tb_over_picks||[]); r.hrr_picks=f(r.hrr_picks||[]); r.hrr_special_picks=f(r.hrr_special_picks||[]); r.hot_split_picks=f(r.hot_split_picks||[]); r.cold_split_picks=f(r.cold_split_picks||[]); r.triple_split_picks=f(r.triple_split_picks||[]); r.five_star_split_picks=f(r.five_star_split_picks||[]); r.club_plays_picks=f(r.club_plays_picks||[]); r.rbi_picks=f(r.rbi_picks||[]); r.hr_picks=f(r.hr_picks||[]); r.walks_picks=f(r.walks_picks||[]); r.batter_k_picks=f(r.batter_k_picks||[]); r.ninety_pct_picks=f(r.ninety_pct_picks||[]);
+  r.top9=f(r.top9); r.also_ran=f(r.also_ran); r.under_picks=f(r.under_picks); r.runs_picks=f(r.runs_picks); r.tb_picks=f(r.tb_picks); r.tb_over_picks=f(r.tb_over_picks||[]); r.hrr_picks=f(r.hrr_picks||[]); r.hrr_special_picks=f(r.hrr_special_picks||[]); r.hrr_top10_picks=f(r.hrr_top10_picks||[]); r.hot_split_picks=f(r.hot_split_picks||[]); r.cold_split_picks=f(r.cold_split_picks||[]); r.triple_split_picks=f(r.triple_split_picks||[]); r.five_star_split_picks=f(r.five_star_split_picks||[]); r.club_plays_picks=f(r.club_plays_picks||[]); r.rbi_picks=f(r.rbi_picks||[]); r.hr_picks=f(r.hr_picks||[]); r.walks_picks=f(r.walks_picks||[]); r.batter_k_picks=f(r.batter_k_picks||[]); r.ninety_pct_picks=f(r.ninety_pct_picks||[]);
   if(r.pitcher_k){
     r.pitcher_k=Object.assign({},r.pitcher_k);
     r.pitcher_k.picks=f(r.pitcher_k.picks);
@@ -6066,7 +6121,7 @@ function showResults(result) {
   if(typeof _renderGamePredictor==='function') _renderGamePredictor(result);
   // Hide all section cards FIRST — before any filtering — so stale cards from a
   // previous render can never persist if the filter or any later code throws.
-  ['under-picks-card','tb-picks-card','tb-over-picks-card','hrr-special-card','hot-split-card','cold-split-card','ninety-pct-card','triple-split-card','five-star-card','club-plays-card','hrr-over-card','hrr-under-card','rbi-over-card','rbi-under-card','hr-over-card','hr-under-card','runs-over-card','runs-under-card','bwalk-over-card','bwalk-under-card','batter-k-over-card','batter-k-under-card','pitch-day-card','pitcher-all-card','k-over-card','k-under-card','prop-ha-over-card','prop-ha-under-card','prop-outs-over-card','prop-outs-under-card','prop-er-over-card','prop-er-under-card','prop-bb-over-card','prop-bb-under-card'].forEach(hide);
+  ['under-picks-card','tb-picks-card','tb-over-picks-card','hrr-special-card','hrr-top10-card','hot-split-card','cold-split-card','ninety-pct-card','triple-split-card','five-star-card','club-plays-card','hrr-over-card','hrr-under-card','rbi-over-card','rbi-under-card','hr-over-card','hr-under-card','runs-over-card','runs-under-card','bwalk-over-card','bwalk-under-card','batter-k-over-card','batter-k-under-card','pitch-day-card','pitcher-all-card','k-over-card','k-under-card','prop-ha-over-card','prop-ha-under-card','prop-outs-over-card','prop-outs-under-card','prop-er-over-card','prop-er-under-card','prop-bb-over-card','prop-bb-under-card'].forEach(hide);
   // Odds-range filter: self-contained, uses the EXACT field each card displays.
   // Applied directly to the source data before _vBase / EV-filter so every
   // category is covered and there is nothing to guess or chain.
@@ -6109,6 +6164,9 @@ function showResults(result) {
       batter_k_picks: (result.batter_k_picks||[]),
       hrr_picks:   (result.hrr_picks||[]).filter(function(p){return p.pick==='UNDER'?_rok(p.hrr_under_odds):_rok(p.hrr_over_odds);}),
       hrr_special_picks: (result.hrr_special_picks||[]).filter(function(p){return _rok(p.hrr_over_odds);}),
+      // 1+ HRR Top 10 deliberately keeps unpriced candidates and does not
+      // inherit the +EV/odds gates used by priced market boards.
+      hrr_top10_picks: (result.hrr_top10_picks||[]),
       hot_split_picks:    (result.hot_split_picks||[]).filter(function(p){return _rok(p.hit_odds);}),
       cold_split_picks:   (result.cold_split_picks||[]),
       ninety_pct_picks:   (result.ninety_pct_picks||[]),
@@ -6123,6 +6181,7 @@ function showResults(result) {
         top9: [],
         also_ran: [],
         hrr_special_picks: [],
+        hrr_top10_picks: [],
         hot_split_picks: [],
         cold_split_picks: [],
         ninety_pct_picks: (_renderSrc.ninety_pct_picks||[]).filter(p=>p._90_dir==='UNDER'),
@@ -6281,6 +6340,9 @@ function showResults(result) {
     _fillCard('hrr-under-card','hrr-under-body','hrr-under-more',hrrUnder,function(p,r){return _hrrCard(p,r,'hru');},'HRR Under','#ff8a65');
     const hrrSpecial = (view.hrr_special_picks||[]).filter(function(p){ return _oddsOk(p.hrr_over_odds); });
     _fillCard('hrr-special-card','hrr-special-body','hrr-special-more',hrrSpecial,function(p,r){return _hrrSpCard(p,r,'hrsp');},'HRR Special','#a78bfa');
+     window.__HRRT_REG__={};
+     const hrrTop10 = (view.hrr_top10_picks||[]);
+     _fillCard('hrr-top10-card','hrr-top10-body','hrr-top10-more',hrrTop10,function(p,r){return _hrrTop10Card(p,r,'hrrt');},'1+ HRR Top 10','#fb923c');
     window.__TSCH_REG__={};
     const hotSplit = (view.hot_split_picks||[]).filter(function(p){ return _oddsOk(p.hit_odds); });
     _fillCard('hot-split-card','hot-split-body','hot-split-more',hotSplit,function(p,r){return _hotSplitCard(p,r,'tsch');},'Hot Hitters Split','#fb923c');
@@ -8558,21 +8620,9 @@ function _seriesChip(p){
     +'<span style="font-size:.6rem;color:#475569">series</span>'+parts+'</div>';
 }
 function _rotInfo(p,isPit){
-  if(!p) return null;
-  var rank=isPit?p.rot_rank:p.opp_rot_rank;
-  var rookie=isPit?p.rot_rookie:p.opp_rot_rookie;
-  var tovr=isPit?p.rot_tier:p.opp_rot_tier;   // admin tier override (1/2/3); 0=auto
-  if((rank==null||rank===0)&&!rookie&&!(tovr&&tovr>0)) return null;
-  var tier;
-  if(tovr&&tovr>0){
-    tier=tovr;                     // admin-set tier wins (e.g. a weak staff all-mid)
-  } else if(rank!=null&&rank>0){
-    if(rank<=2) tier=1;            // SP1-2 = ace (two-ace staffs both read ace)
-    else if(rank<=4) tier=2;       // SP3-4 = mid
-    else tier=3;                   // SP5+  = back-end
-  } else if(rookie) tier=3;        // unranked rookie = back-end fallback
-  else return null;
-  return {rank:rank,rookie:!!rookie,tier:tier};
+  // Rotation ranks and manual overrides are intentionally disabled. Pitcher
+  // cards and categories are driven by the game-day schedule and prop slate.
+  return null;
 }
 function _seriesBadge(p,isPit){
   var ri=_rotInfo(p,isPit); if(!ri) return '';
@@ -9733,6 +9783,50 @@ function _buildPitchDay(view){
   });
   return dayList;
 }
+function _hrrTop10Card(p, rank, pfx) {
+  pfx = pfx || 'hrrt';
+  const abbr = _mlbTeamAbbr(p.team);
+  const teamLogo = abbr ? `https://a.espncdn.com/i/teamlogos/mlb/500/${abbr}.png` : '';
+  const rnkColors = rank===1?['#fed7aa','#000']:rank===2?['#fdba74','#000']:rank===3?['#fb923c','#000']:['#2a1505','#fb923c'];
+  const sideCls = p.side==='HOME'?'badge-home':'badge-away';
+  const od = p.hrr_over_odds;
+  const odDisp = od!=null?(od>0?'+':'')+od:'—';
+  const srcs = (p.source_names||[]).map(function(s){return _esc(s);}).join(' · ');
+  const model = p.model_prob!=null ? (p.model_prob*100).toFixed(1)+'%' : '—';
+  const implied = p.implied_prob!=null ? (p.implied_prob*100).toFixed(1)+'%' : '—';
+  const edge = p.edge!=null ? (p.edge>=0?'+':'')+(p.edge*100).toFixed(1)+'%' : '—';
+  window.__HRR_REG__=window.__HRR_REG__||{}; window.__HRR_REG__[pfx+rank]=p;
+  function _r(lbl,val){
+    return '<div style="display:flex;align-items:center;justify-content:space-between;font-size:.71rem;margin-top:4px">'
+      +'<span style="color:#94a3b8">'+lbl+'</span><span style="color:#fed7aa;font-weight:800;font-family:monospace">'+val+'</span></div>';
+  }
+  return `<div class="mlb-pick-card" onclick="_hrrForm('${pfx}${rank}')" title="Click for full HRR history" style="cursor:pointer;border:1px solid rgba(251,146,60,.5)">
+    <div class="mlb-card-header" style="background:linear-gradient(135deg,#431407 0%,#1a0a00 100%)">${_cardHdr(rank,rnkColors,_catLbl('1+ HRR TOP 10','#fb923c'),teamLogo,p.team,_seriesTag(p,'O',false,2))}</div>
+    ${_nameBar(rank,rnkColors,p.batter_id,p.name)}
+    <div class="mlb-card-body">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <span style="font-size:.82rem;color:#94a3b8">vs <strong style="color:#fff">${p.opp||'—'}</strong> · ${p.pitcher||'TBD'}</span>
+        <span class="badge ${sideCls}">${p.side}</span>
+      </div>
+      <div style="margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
+        ${_r('Source boards ('+(p.source_count||0)+')',srcs||'—')}
+        ${_r('True last 10 · 1+ HRR', (p.last10_hrr_display||'N/A')+' ('+(p.last10_hrr_pct!=null?p.last10_hrr_pct+'%':'N/A')+')')}
+        ${_r('Vs team · 1+ HRR', (p.vs_team_hrr_display||'N/A')+' ('+(p.vs_team_hrr_pct!=null?p.vs_team_hrr_pct+'%':'N/A')+')')}
+        ${_r('Career vs pitcher', (p.vs_pitcher_hrr_display||'N/A')+' · '+(p.vs_pitcher_hrr_sample||'N/A'))}
+      </div>
+      <div style="margin-top:6px;padding-top:6px;border-top:1px solid #1f1f1f">
+        ${_r('Model probability',model)} ${_r('Book implied',implied)} ${_r('Signed edge',edge)}
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:7px;padding-top:7px;border-top:1px solid #1f1f1f">
+        <span style="font-size:.8rem;color:#fb923c;font-weight:900">OVER 0.5 H+R+RBI</span>
+        <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.9rem">${odDisp}${od!=null?_bookTag(p):' · UNPRICED'}</span>
+      </div>
+      <div style="font-size:.65rem;color:#64748b;margin-top:4px">True last-10 log: ${(p.last10_hrr_log||[]).length} games · click for game-by-game detail</div>
+    </div>
+  ${_betBtn(p,'1+ HRR Top 10','OVER','hrr','H+R+RBI',0.5,od)}
+  </div>`;
+}
+
 function _hrrCard(p, rank, pfx) {
   pfx = pfx || 'hrr';
   const abbr = _mlbTeamAbbr(p.team);
@@ -10156,6 +10250,7 @@ function _renderCatBar(view){
     {icon:'📈',label:'TB Over',count:(view.tb_over_picks||[]).length,target:'tb-over-picks-card',tone:'over'},
     {icon:'⬇️',label:'TB Under',count:(view.tb_picks||[]).length,target:'tb-picks-card',tone:'under'},
     {icon:'⭐',label:'HRR SP',count:(view.hrr_special_picks||[]).length,target:'hrr-special-card'},
+     {icon:'🔥',label:'1+ HRR Top 10',count:(view.hrr_top10_picks||[]).length,target:'hrr-top10-card'},
     {icon:'🌡️',label:'Hot Hitters',count:(view.hot_split_picks||[]).length,target:'hot-split-card'},
     {icon:'❄️',label:'Cold Batters',count:(view.cold_split_picks||[]).length,target:'cold-split-card',overflow:true},
     {icon:'💯',label:'80-100% Locks',count:(view.ninety_pct_picks||[]).length,target:'ninety-pct-card',overflow:true},
