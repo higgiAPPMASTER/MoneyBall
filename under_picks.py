@@ -65,6 +65,7 @@ HIT_ODDS: dict = {}
 # Parallel to HIT_ODDS: normalized name -> source book key for the displayed
 # (best-among-MY_BOOKS) 0.5-hit Over price. Read by pipeline.py to stamp pick["book"].
 HIT_ODDS_BOOK: dict = {}
+HIT_ODDS_DATE = None
 # Parallel to HIT_ODDS: normalized name -> {name, home_team, away_team} for EVERY
 # hitter with a posted 0.5 "to record a hit" line. Lets run_hit_picks build the
 # broadened pool-B candidate set (hot hitters with no career-vs-pitcher history).
@@ -677,11 +678,39 @@ def _last10_ba(player_id, side: str, opp_name: str = "", max_games: int = 10) ->
         return {"ba": None, "display": "N/A", "games": 0}
 
 
+def _odds_get_with_retry(url, params, emit=None, label="request"):
+    """Bound transient retries and keep one failed event from aborting the slate.
+
+    Never log request URLs or exception text: they may contain the API key.
+    """
+    for attempt in range(3):
+        try:
+            response = requests.get(url, params=params, timeout=15)
+            if response.status_code == 200:
+                return response
+            _log(emit, f"  Odds API {label}: HTTP {response.status_code} (attempt {attempt + 1}/3)")
+            if response.status_code not in (408, 429, 500, 502, 503, 504):
+                return None
+        except requests.RequestException as exc:
+            _log(emit, f"  Odds API {label}: {type(exc).__name__} (attempt {attempt + 1}/3)")
+        if attempt < 2:
+            time.sleep(attempt + 1)
+    _log(emit, f"  Odds API {label}: unavailable after retries; continuing other games")
+    return None
+
+
 def _fetch_hits_lines(run_date: str, emit=None) -> list:
     if not ODDS_API_KEY:
         _log(emit, "⚠️  ODDS_API_KEY not set — Under Picks skipped")
         return []
 
+    # Retain successful quotes across retries of this date, never across dates.
+    global HIT_ODDS_DATE
+    if HIT_ODDS_DATE != run_date:
+        HIT_ODDS.clear()
+        HIT_ODDS_BOOK.clear()
+        HIT_TEAMS.clear()
+        HIT_ODDS_DATE = run_date
     # Fresh runs odds each call so the in-process scheduler (11/14/17:40 ET) and
     # any next-day run can't serve a first-seen matchup/price. (HIT_ODDS predates
     # this and is left as-is.)
@@ -699,11 +728,10 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
     tomorrow  = (time.strftime("%Y-%m-%d",
                   time.gmtime(time.mktime(time.strptime(run_date, "%Y-%m-%d")) + 86400)))
     try:
-        r = requests.get(
+        r = _odds_get_with_retry(
             "https://api.the-odds-api.com/v4/sports/baseball_mlb/events",
-            params={"apiKey": ODDS_API_KEY, "dateFormat": "iso"}, timeout=15)
-        if r.status_code != 200:
-            _log(emit, f"⚠️  Odds API events returned {r.status_code}")
+            params={"apiKey": ODDS_API_KEY, "dateFormat": "iso"}, emit=emit, label="events")
+        if r is None:
             return []
 
         def _is_run_date_game(ct: str) -> bool:
@@ -736,12 +764,12 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
                     pass
             home_team = ev.get("home_team", "")
             away_team = ev.get("away_team", "")
-            r2 = requests.get(
+            r2 = _odds_get_with_retry(
                 f"https://api.the-odds-api.com/v4/sports/baseball_mlb/events/{ev['id']}/odds",
                 params={"apiKey": ODDS_API_KEY, "regions": "us,us2,eu,ca",
                         "markets": "batter_hits,batter_hits_alternate,batter_total_bases,batter_total_bases_alternate,batter_runs_scored,batter_rbis,batter_hits_runs_rbis,batter_hits_runs_rbis_alternate,batter_walks,batter_home_runs,batter_strikeouts,batter_strikeouts_alternate",
-                        "oddsFormat": "american"}, timeout=15)
-            if r2.status_code != 200: continue
+                        "oddsFormat": "american"}, emit=emit, label=f"{away_team} at {home_team}")
+            if r2 is None: continue
             all_bms = r2.json().get("bookmakers", [])
             # Scan ALL books for both the 0.5 hit odds and the 1.5-line candidates.
             _bm_map = {b.get("key"): b for b in all_bms}
@@ -1036,7 +1064,7 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
         _log(emit, f"  ▸ Scanning {len(candidates)} players for unders (was {len(seen)} on the 1.5 line)")
         return candidates
     except Exception as exc:
-        _log(emit, f"⚠️  Odds API error: {exc}")
+        _log(emit, f"⚠️  Odds API collection error: {type(exc).__name__}; successful quotes retained")
         return []
 
 
