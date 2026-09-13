@@ -1537,7 +1537,7 @@ def _grade_date(date_str: str, picks: dict) -> dict:
             "ev_prob": (p.get("ev_prob") if p.get("ev_prob") is not None else p.get("matchup_prob")),
             "edge": p.get("edge"),
         })
-    for p in (picks.get("under_picks") or [])[10:20]:
+    for p in (picks.get("under_picks") or [])[10:30]:
         st = _lookup(p.get("batter_id"), p.get("name"))
         actual = st["hits"] if st else None
         pd = p.get("pick", "UNDER")
@@ -6179,7 +6179,7 @@ function showResults(result) {
     show('under-picks-card');
     document.getElementById('under-picks-body').innerHTML = underPicks.slice(0, 10).map((p,i) => _underCard(p, i+1)).join('');
     document.getElementById('under-more-wrap').innerHTML = underPicks.length > 10
-      ? _moreWrap(underPicks.slice(10), function(p,r){ return _underCard(p, r); }, 11, 'Under Picks', '#ff8a65')
+      ? _moreWrap(underPicks.slice(10, 30), function(p,r){ return _underCard(p, r); }, 11, 'Under Picks', '#ff8a65')
       : '';
   }
 
