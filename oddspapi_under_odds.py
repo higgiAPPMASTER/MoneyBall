@@ -14,10 +14,13 @@ import requests
 
 _LOCK = threading.Lock()
 _CACHE = Path(".pick_cache/oddspapi")
-_BOOKS = {"betano.ca": "Betano Canada", "thescore": "theScore", "bet99": "Bet99"}
+# theScore currently carries the broadest MLB Hits 1.5 board. Query it first so
+# a later bookmaker-specific rate limit cannot strand the whole Hit fallback.
+_BOOKS = {"thescore": "theScore", "betano.ca": "Betano Canada", "bet99": "Bet99"}
 _MARKETS = {"playertotals-hits": ("hits", 1.5),
             "playertotals-strikeouts": ("ks", 0.5)}
-_blocked_until = 0
+_auth_blocked_until = 0
+_request_blocked_until = {}
 
 
 def _log(emit, message):
@@ -48,7 +51,7 @@ def _instant(value):
 
 def _get(endpoint, params, ttl, key, deadline, emit):
     """No URLs/exception bodies in logs: request query strings contain secrets."""
-    global _blocked_until
+    global _auth_blocked_until
     cache_id = hashlib.sha256(
         json.dumps([endpoint, params], sort_keys=True).encode()).hexdigest()
     path = _CACHE / (cache_id + ".json")
@@ -59,7 +62,9 @@ def _get(endpoint, params, ttl, key, deadline, emit):
             return saved["data"], saved["fetched_at"]
     except (OSError, ValueError, KeyError, TypeError):
         pass
-    if now < _blocked_until or time.monotonic() >= deadline:
+    if (now < _auth_blocked_until
+            or now < _request_blocked_until.get(cache_id, 0)
+            or time.monotonic() >= deadline):
         return None, None
     try:
         response = requests.get(
@@ -68,8 +73,13 @@ def _get(endpoint, params, ttl, key, deadline, emit):
             timeout=max(1, min(15, deadline - time.monotonic())))
         if response.status_code != 200:
             _log(emit, f"{endpoint} HTTP {response.status_code}; missing prices remain unpriced")
-            if response.status_code in (401, 403, 429):
-                _blocked_until = time.time() + 3600
+            if response.status_code in (401, 403):
+                _auth_blocked_until = time.time() + 3600
+            elif response.status_code == 429:
+                # Do not let one bookmaker response block the remaining books.
+                # A brief per-request cooldown avoids a retry storm while the
+                # next configured bookmaker can still supply the same market.
+                _request_blocked_until[cache_id] = time.time() + 60
             return None, None
         data = response.json()
         if not isinstance(data, list):
