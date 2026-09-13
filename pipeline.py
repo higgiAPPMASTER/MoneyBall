@@ -3412,6 +3412,13 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         triple_split_list = []
         emit({"type": "log", "msg": f"⚠️ Triple Split Club skipped: {_exc}"})
 
+    # Optional exact-line fallback before EV, copied boards and snapshots.
+    try:
+        from oddspapi_under_odds import enrich_under_odds
+        enrich_under_odds(run_date, under_picks_list, batter_k_picks_list, emit)
+    except Exception as _exc:
+        emit({"type": "log", "msg": f"OddsPapi fallback unavailable ({type(_exc).__name__}); existing picks retained"})
+
     # ── EV enrichment for ALL non-hit categories ────────────────────────
     # Each pick gets ev / edge / ev_prob from our model probability vs the
     # posted price for the SIDE we picked. Binary 0.5/1.5 batter markets use the
