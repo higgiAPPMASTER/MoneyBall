@@ -1068,13 +1068,71 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
         return []
 
 
+def _under_roster_candidates(run_date, team_schedule, emit=None):
+    """Model candidates come from scheduled MLB rosters, never sportsbook coverage."""
+    try:
+        response = requests.get("https://statsapi.mlb.com/api/v1/schedule",
+                                params={"sportId": 1, "date": run_date}, timeout=15)
+        response.raise_for_status()
+        teams = {}
+        for day in response.json().get("dates", []):
+            for game in day.get("games", []):
+                home = game["teams"]["home"]["team"]
+                away = game["teams"]["away"]["team"]
+                if not any(_team_match(home["name"], t) for t in team_schedule):
+                    continue
+                for team in (home, away):
+                    teams.setdefault(team["id"], (team["name"], home["name"], away["name"],
+                                                   game.get("gameDate", "")))
+        def roster(item):
+            tid, (team, home, away, start) = item
+            try:
+                r = requests.get(f"https://statsapi.mlb.com/api/v1/teams/{tid}/roster",
+                                 params={"rosterType": "active", "date": run_date}, timeout=12)
+                r.raise_for_status()
+                return [{"name": row["person"]["fullName"],
+                         "batter_id": row["person"]["id"], "roster_team": team,
+                         "home_team": home, "away_team": away, "game_start": start,
+                         "line": 1.5, "under_odds": None, "over_odds": None,
+                         "tb_under_odds": None}
+                        for row in r.json().get("roster", [])
+                        if row.get("position", {}).get("type") != "Pitcher"]
+            except (requests.RequestException, ValueError, KeyError):
+                _log(emit, f"⚠️ MLB roster unavailable for {team}; no players invented")
+                return []
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            candidates = [p for group in pool.map(roster, teams.items()) for p in group]
+        _log(emit, f"  MLB rosters: {len(candidates)} hitter candidates, independent of odds")
+        return candidates
+    except (requests.RequestException, ValueError, KeyError):
+        _log(emit, "⚠️ MLB schedule unavailable for Under candidates")
+        return []
+
+
 def run_under_picks(run_date: str, team_schedule: dict, emit=None,
                     top_era=None, top_era_list=None) -> list:
     _log(emit, "", "log")
     _log(emit, "▸ Under Picks — Fetching 1.5 hits lines from The Odds API", "section")
     season = int(run_date[:4])
 
-    candidates = _fetch_hits_lines(run_date, emit)
+    book_candidates = _fetch_hits_lines(run_date, emit)
+    candidates = _under_roster_candidates(run_date, team_schedule, emit)
+    # Attach optional prices without allowing their availability to qualify a player.
+    def _candidate_key(c):
+        return (_norm_name(c.get("name", "")), _team_nick(c.get("home_team", "")),
+                _team_nick(c.get("away_team", "")))
+    by_key = {_candidate_key(c): c for c in candidates}
+    for quote in book_candidates:
+        existing = by_key.get(_candidate_key(quote))
+        if existing is not None:
+            for field in ("under_odds", "over_odds", "tb_under_odds",
+                          "under_odds_book", "over_odds_book", "tb_under_odds_book"):
+                if quote.get(field) is not None:
+                    existing[field] = quote[field]
+        else:
+            # Preserve the existing book-derived pool; never narrow it here.
+            candidates.append(quote)
+            by_key[_candidate_key(quote)] = quote
     if not candidates: return []
 
     _log(emit, "  Loading probable pitchers…")
@@ -1092,11 +1150,14 @@ def run_under_picks(run_date: str, team_schedule: dict, emit=None,
 
     id_map: dict = {}
     for c in candidates:
-        pid = _resolve_id(c["name"])
+        pid = c.get("batter_id") or _resolve_id(c["name"])
         if pid: id_map[c["name"]] = pid
 
     _log(emit, f"  Looking up teams for {len(id_map)} players…")
     team_map = _get_teams_batch(list(id_map.values()))
+    for c in candidates:
+        if c.get("batter_id") and c.get("roster_team"):
+            team_map[c["batter_id"]] = c["roster_team"]
     _log(emit, "  ✅ Teams resolved")
     _log(emit, f"  Evaluating {len(candidates)} candidates…")
 
