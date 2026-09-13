@@ -3119,6 +3119,190 @@ def run_hrr_alt_picks(run_date: str, team_schedule: dict, emit=None) -> list:
     return picks
 
 
+_HRR_TOP10_VSP_CACHE: dict = {}
+
+
+def _hrr_top10_vs_pitcher(batter_id, pitcher_id) -> dict:
+    """Official career batting totals against today's probable pitcher."""
+    key = (int(batter_id or 0), int(pitcher_id or 0))
+    if not key[0] or not key[1]:
+        return {"games": 0, "hrr_games": 0, "rate": None, "display": "N/A",
+                "sample": "N/A"}
+    if key in _HRR_TOP10_VSP_CACHE:
+        return _HRR_TOP10_VSP_CACHE[key]
+    out = {"games": 0, "hrr_games": 0, "rate": None, "display": "N/A",
+           "sample": "N/A"}
+    try:
+        response = requests.get(
+            f"https://statsapi.mlb.com/api/v1/people/{key[0]}/stats",
+            params={"stats": "vsPlayerTotal", "opposingPlayerId": key[1],
+                    "group": "hitting"},
+            timeout=12)
+        response.raise_for_status()
+        splits = ((response.json().get("stats") or [{}])[0].get("splits") or [])
+        if splits:
+            stat = splits[0].get("stat") or {}
+            hits = int(stat.get("hits", 0) or 0)
+            runs = int(stat.get("runs", 0) or 0)
+            rbi = int(stat.get("rbi", 0) or 0)
+            ab = int(stat.get("atBats", 0) or 0)
+            pa = int(stat.get("plateAppearances", 0) or 0)
+            total = hits + runs + rbi
+            out = {
+                "games": 0, "hrr_games": 0, "rate": None,
+                "display": f"H {hits} · R {runs} · RBI {rbi} · HRR {total}",
+                "sample": f"{ab} AB / {pa} PA",
+            }
+    except Exception:
+        pass
+    _HRR_TOP10_VSP_CACHE[key] = out
+    return out
+
+
+def run_hrr_top10_picks(run_date: str, team_schedule: dict,
+                        source_boards: dict, emit=None) -> list:
+    """MLB Edge Coach: 1+ HRR Top 10.
+
+    This is deliberately a separate confluence category, not the existing
+    standard 1.5 HRR board or the alternate HRR board.  Membership is the
+    union of positive candidates from the five named source boards.  It has no
+    positive-edge gate and keeps candidates when the genuine HRR O0.5 quote is
+    unavailable.
+    """
+    _log(emit, "▸ 1+ HRR Top 10 — source-board confluence", "section")
+    season = int(run_date[:4])
+    _build_player_map(season)
+
+    # First occurrence supplies matchup/display context; all occurrences add a
+    # distinct board name. IDs, rather than spelling variants, define a player.
+    by_id = {}
+    for board_name, rows in (source_boards or {}).items():
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            # The five inputs are positive/OVER boards. Never let an under
+            # row leak into this independent confluence union.
+            if str(row.get("pick") or row.get("side") or "").upper() == "UNDER":
+                continue
+            pid = row.get("batter_id") or row.get("player_id")
+            if not pid:
+                pid = _resolve_id(row.get("full_name") or row.get("name", ""))
+            if not pid:
+                continue
+            pid = int(pid)
+            ent = by_id.setdefault(pid, {"row": row, "sources": []})
+            if board_name not in ent["sources"]:
+                ent["sources"].append(board_name)
+    if not by_id:
+        _log(emit, "  No positive candidates across the five source boards.")
+        return []
+
+    team_map = _get_teams_batch(list(by_id))
+    pitchers = _get_probable_pitchers(run_date)
+
+    def _matchup(pid, row):
+        team = team_map.get(pid, "") or row.get("team", "")
+        home, away = row.get("home_team", ""), row.get("away_team", "")
+        if not home or not away:
+            # Source rows use team/opp rather than Odds API home/away names.
+            team, opp = team or row.get("team", ""), row.get("opp", "")
+            side = row.get("side", "")
+            return team, opp, side
+        if _team_match(team, home):
+            return team, away, "HOME"
+        if _team_match(team, away):
+            return team, home, "AWAY"
+        return "", "", ""
+
+    def _eval(item):
+        pid, ent = item
+        row = ent["row"]
+        team, opp, side = _matchup(pid, row)
+        if not team or not opp or side not in ("HOME", "AWAY"):
+            return None
+        pitcher_name, pitcher_id = "TBD", None
+        for pteam, pinfo in pitchers.items():
+            if _team_match(pteam, opp):
+                pitcher_name, pitcher_id = pinfo.get("name", "TBD"), pinfo.get("id")
+                break
+
+        # True last ten, venue-independent; relevant history is supplemental.
+        l10 = _hrr_consistency_over(pid, side, "", 10, ignore_ha=True,
+                                    threshold=1)
+        vs_team = _hrr_consistency_over(pid, side, opp, 10, threshold=1)
+        vs_pit = _hrr_top10_vs_pitcher(pid, pitcher_id)
+        rates = [l10["score"] / 100.0]
+        weights = [0.55]
+        if vs_team["games"]:
+            rates.append(vs_team["score"] / 100.0); weights.append(0.25)
+        if vs_pit["rate"] is not None:
+            rates.append(vs_pit["rate"]); weights.append(0.20)
+        model_prob = sum(r * w for r, w in zip(rates, weights)) / sum(weights)
+
+        # HRR_ALT_ODDS is the genuine batter_hits_runs_rbis alternate O0.5
+        # quote. It is read here without changing the existing alt board.
+        quote = HRR_ALT_ODDS.get(_norm_name(row.get("full_name") or row.get("name", "")))
+        if quote:
+            qteam, qopp = quote.get("home_team", ""), quote.get("away_team", "")
+            if not ((_team_match(team, qteam) and _team_match(opp, qopp)) or
+                    (_team_match(team, qopp) and _team_match(opp, qteam))):
+                quote = None
+        odds = quote.get("over_odds") if quote else None
+        book = _book_label(quote.get("over_book")) if quote else ""
+        implied = _ml_implied(odds) if odds is not None else None
+        edge = (model_prob - implied) if implied is not None else None
+        log = _recent_hrr_log(pid, 10)
+        return {
+            "name": row.get("full_name") or row.get("name", ""),
+            "full_name": row.get("full_name") or row.get("name", ""),
+            "batter_id": pid, "player_id": row.get("player_id") or pid,
+            "team": team, "opp": opp, "side": side, "pick": "OVER", "line": 0.5,
+            "pitcher": pitcher_name, "source_count": len(ent["sources"]),
+            "source_names": ent["sources"], "source_boards": ent["sources"],
+            "last10_hrr_count": l10["hrr_games"], "last10_hrr_games": l10["games"],
+            "last10_hrr_rate": l10["score"] / 100.0 if l10["games"] else None,
+            "last10_hrr_pct": l10["score"] if l10["games"] else None,
+            "last10_hrr_display": l10["display"], "last10_hrr_log": log,
+            "rate_disp": l10["display"], "score": l10["score"],
+            "vs_team_hrr_count": vs_team["hrr_games"],
+            "vs_team_hrr_games": vs_team["games"],
+            "vs_team_hrr_rate": vs_team["score"] / 100.0 if vs_team["games"] else None,
+            "vs_team_hrr_pct": vs_team["score"] if vs_team["games"] else None,
+            "vs_team_hrr_display": vs_team["display"],
+            "vs_pitcher_hrr_count": vs_pit["hrr_games"],
+            "vs_pitcher_hrr_games": vs_pit["games"],
+            "vs_pitcher_hrr_rate": vs_pit["rate"],
+            "vs_pitcher_hrr_pct": round(vs_pit["rate"] * 100) if vs_pit["rate"] is not None else None,
+            "vs_pitcher_hrr_display": vs_pit["display"],
+            "vs_pitcher_hrr_sample": vs_pit["sample"],
+            "model_prob": round(model_prob, 4), "hrr_over_odds": odds,
+            "book": book, "implied_prob": round(implied, 4) if implied is not None else None,
+            "edge": round(edge, 4) if edge is not None else None,
+            "ev_prob": round(model_prob, 4) if odds is not None else None,
+            "ev": round(_ml_ev(model_prob, odds), 4) if odds is not None else None,
+            "recent_hrr_log": log, "s1": _get_s1_vs_pitcher(pid, pitcher_id),
+        }
+
+    picks = []
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = {executor.submit(_eval, item): item for item in by_id.items()}
+        for future in as_completed(futures):
+            try:
+                pick = future.result()
+            except Exception:
+                pick = None
+            if pick:
+                picks.append(pick)
+    picks.sort(key=lambda p: (
+        -p["source_count"], -p["last10_hrr_count"], -(p["last10_hrr_rate"] or 0),
+        -(p["vs_team_hrr_count"] or 0), -(p["vs_team_hrr_rate"] or 0),
+        -(p["vs_pitcher_hrr_rate"] or 0), -(p["model_prob"] or 0)))
+    picks = picks[:10]
+    _log(emit, f"✅ 1+ HRR Top 10: {len(picks)} candidates "
+               f"(unpriced allowed; {sum(p.get('hrr_over_odds') is not None for p in picks)} priced)")
+    return picks
+
+
 # ── HRR SPECIAL (parlay confluence board) ─────────────────────────────────
 # A separate, stricter OVER-only board built for parlays. A pick qualifies ONLY
 # when ALL gates clear together (AND confluence). Gates 1-3 live here; the 4th
