@@ -1232,6 +1232,7 @@ def run_under_picks(run_date: str, team_schedule: dict, emit=None,
         if _sav_u.get("hard_hit_pct") is not None:
             under_score += int(max(-20, min(30, round((_sav_u["hard_hit_pct"] - LEAGUE_HARD_HIT_UP) * 1.5))))
         return {"name": name, "team": player_team, "pos": "—", "side": side, "opp": opp_name,
+                "line": 1.5, "game_start": c.get("game_start"),
                 "pitcher": pitcher_name, **_s1_ha_fields(batter_id, pitcher_id, side, s1),
                 "s2": s2, "s3": s3, "l7": l7,
                 "lineup_status": "TBD", "under_score": under_score,
@@ -2539,6 +2540,7 @@ def run_batter_k_picks(run_date: str, team_schedule: dict, emit=None) -> list:
         under_odds = ko.get("under")
         return {"name": name, "team": player_team, "side": side, "opp": opp_name,
                 "pick": pick, "line": line,
+                "game_start": c.get("game_start"),
                 "pitcher": pitcher_name, "pit_id": pitcher_id,
                 "vs_pit": s1, **s1_fields,
                 "rate_disp": rate["display"], "score": score,
