@@ -4898,5 +4898,48 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                   "prop_counts": {m: len(b.get("picks", [])) for m, b in pitcher_props.items()},
                   "has_tbd": slate_has_tbd(run_date)},
     }
+    # Later market stages may refill HIT_ODDS after the early hit-price pass.
+    # Reconcile before exposing/saving the slate; never replace a posted price.
+    try:
+        from under_picks import HIT_ODDS, HIT_ODDS_BOOK, HIT_ODDS_DATE, HIT_TEAMS, _norm_name, _book_label, _team_match
+        def _late_hit_prices(node):
+            count = 0
+            if isinstance(node, list):
+                return sum(_late_hit_prices(p) for p in node)
+            if not isinstance(node, dict):
+                return 0
+            if "hit_odds" in node and node.get("hit_odds") in (None, ""):
+                key = _norm_name(node.get("full_name") or node.get("name") or "")
+                quote = HIT_ODDS.get(key)
+                matchup = HIT_TEAMS.get(key) or {}
+                home, away = matchup.get("home_team"), matchup.get("away_team")
+                team, opp = node.get("team"), node.get("opp")
+                matches = home and away and team and opp and (
+                    (_team_match(team, home) and _team_match(opp, away)) or
+                    (_team_match(team, away) and _team_match(opp, home)))
+                if HIT_ODDS_DATE == run_date and quote is not None and matches:
+                    node["hit_odds"] = quote
+                    node["book"] = _book_label(HIT_ODDS_BOOK.get(key))
+                    # Retain the model probability; only fill price-derived data.
+                    prob = node.get("matchup_prob")
+                    if prob is not None:
+                        implied = _ml_implied(quote)
+                        ev = _ml_ev(prob, quote)
+                        node["impl_prob"] = round(implied, 4) if implied is not None else None
+                        node["edge"] = round(prob - implied, 4) if implied is not None else None
+                        node["ev"] = round(ev, 4) if ev is not None else None
+                    count += 1
+            for value in list(node.values()):
+                if isinstance(value, (dict, list)):
+                    count += _late_hit_prices(value)
+            return count
+        filled = _late_hit_prices(result)
+        hit_rows = result["top9"] + result["also_ran"]
+        priced = sum(p.get("hit_odds") is not None for p in hit_rows)
+        emit({"type": "log", "msg": f"Hit odds final check: {priced}/{len(hit_rows)} priced; {filled} missing copies filled from later market fetches"})
+        if priced < len(hit_rows):
+            emit({"type": "log", "msg": f"Hit odds: {len(hit_rows)-priced} picks have no matching pre-game quote; saved-price recovery will be attempted, never fabricated"})
+    except Exception as exc:
+        emit({"type": "log", "msg": f"Hit odds final reconciliation failed: {type(exc).__name__}"})
     emit({"type": "done", "result": result})
     return result
