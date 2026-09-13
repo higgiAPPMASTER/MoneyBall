@@ -3762,50 +3762,6 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     except Exception as _plat_exc:
         emit({"type": "log", "msg": f"⚠️ Non-hit platoon skipped: {_plat_exc}"})
 
-    # ── Rotation rank (SP1..SP5) — drives the card depth-chart dot ──────────
-    # Rank each team's pitchers by season games-started (most-started = ace,
-    # SP1). Hitters get opp_rot_rank (the arm they face); pitchers get rot_rank
-    # (their own). Frontend tiers: SP1 ace, SP2-3 mid (neutral), SP4+/rookie
-    # back-end. MLB Stats API only — no scraping.
-    try:
-        _rot = _build_rotation_ranks(run_date)
-    except Exception as _rexc:
-        emit({"type": "log", "msg": f"⚠️ Rotation ranks skipped: {_rexc}"})
-        _rot = {}
-
-    def _rot_get(pid):
-        try:
-            return _rot.get(int(pid)) if pid else None
-        except Exception:
-            return None
-
-    def _set_opp_rot(pick, pid):
-        info = _rot_get(pid)
-        if info:
-            pick["opp_rot_rank"]   = info.get("rank")
-            pick["opp_rot_rookie"] = info.get("rookie", False)
-            pick["opp_rot_tier"]   = info.get("tier", 0)
-
-    def _set_own_rot(pick, pid):
-        info = _rot_get(pid)
-        if info:
-            pick["rot_rank"]   = info.get("rank")
-            pick["rot_rookie"] = info.get("rookie", False)
-            pick["rot_tier"]   = info.get("tier", 0)
-
-    for _hp in list(top9) + list(also_ran):
-        _set_opp_rot(_hp, _hp.get("pit_id"))
-    for _np in _nonhit_all:
-        _set_opp_rot(_np, _np.get("pit_id") or _opp_pit_id(_np.get("opp", "")))
-    _pk_all = list(pitcher_k_result.get("picks", [])) + list(pitcher_k_result.get("all", []))
-    for _mkt, _bucket in (pitcher_k_result.get("props", {}) or {}).items():
-        _pk_all += list(_bucket.get("picks", [])) + list(_bucket.get("all", []))
-    for _pk in _pk_all:
-        _set_own_rot(_pk, _pk.get("pid"))
-    _rot_hit = sum(1 for x in (list(top9) + list(also_ran) + _nonhit_all) if x.get("opp_rot_rank"))
-    _rot_pit = sum(1 for x in _pk_all if x.get("rot_rank"))
-    emit({"type": "log", "msg": f"  ✅ Rotation rank: {len(_rot)} pitchers ranked, attached to {_rot_hit} hitters + {_rot_pit} pitcher picks"})
-
     # ── Batter vs today's starter (head-to-head career line) for popups ──
     # Every hitter popup shows the batter's career record vs the arm he faces
     # (the user wanted this on ALL hitter props). _get_s1_vs_pitcher is cached and
@@ -4557,6 +4513,28 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         cold_split_list = []
         emit({"type": "log", "msg": f"⚠️ Hot/Cold Hitters skipped: {_exc}"})
 
+    # ── 1+ HRR Top 10 — Coach source-board confluence -----------------------
+    # Separate from both standard 1.5 HRR and the existing genuine alternate
+    # HRR board. Positive edge is intentionally not a qualification gate.
+    hrr_top10_list = []
+    try:
+        from under_picks import run_hrr_top10_picks
+        hrr_top10_list = run_hrr_top10_picks(
+            run_date, team_schedule, {
+                "Record a Hit": list(top9) + list(also_ran),
+                "Total Bases Over": list(tb_over_picks_list),
+                "Hot Hitters": list(hot_split_list),
+                "Triple Split Club": list(triple_split_list),
+                "5-Star": list(five_star_split_list),
+            }, emit=emit)
+    except Exception as _exc:
+        emit({"type": "log", "msg": f"⚠️ 1+ HRR Top 10 skipped: {_exc}"})
+        hrr_top10_list = []
+    for _ht in hrr_top10_list:
+        _ht["game_start"] = _game_start_for(_ht.get("team", ""))
+        _ht["series_splits"] = fetch_series_splits(
+            _ht.get("batter_id"), _ht.get("opp", ""), run_date, _ht.get("side", ""))
+
     # ── Final popup-detail contract for derived hitter boards ───────────────
     # These boards are copies of qualifying player rows and can be created
     # before the source row receives its popup-only pitcher context. Backfill
@@ -4564,13 +4542,13 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     # this data. Keeping this pass here also protects future derived boards from
     # silently opening a thinner popup than their source hitter cards.
     _popup_detail_boards = (
-        hrr_special_list, triple_split_list, five_star_split_list,
+        hrr_special_list, hrr_top10_list, triple_split_list, five_star_split_list,
         club_plays_list, hot_split_list, cold_split_list,
     )
     for _popup_list, _popup_label in zip(
         _popup_detail_boards,
-        ("HRR Special", "Triple Split", "5 Star Split", "Club Plays",
-         "Hot Hitters", "Cold Batters"),
+        ("HRR Special", "1+ HRR Top 10", "Triple Split", "5 Star Split",
+         "Club Plays", "Hot Hitters", "Cold Batters"),
     ):
         try:
             _tsc_vsp_backfill(_popup_list, _popup_label)
@@ -4880,7 +4858,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     result = {
         "date": run_date, "top9": top9, "also_ran": also_ran,
         "ninety_pct_picks": ninety_pct_picks,
-        "under_picks": under_picks_list, "runs_picks": runs_picks_list, "tb_picks": tb_picks_list, "tb_over_picks": tb_over_picks_list, "rbi_picks": rbi_picks_list, "walks_picks": walks_picks_list, "batter_k_picks": batter_k_picks_list, "hrr_picks": hrr_picks_list, "hrr_alt_picks": hrr_alt_picks_list, "hrr_special_picks": hrr_special_list, "triple_split_picks": triple_split_list, "five_star_split_picks": five_star_split_list, "club_plays_picks": club_plays_list, "hot_split_picks": hot_split_list, "cold_split_picks": cold_split_list, "hr_picks": hr_picks_list,
+        "under_picks": under_picks_list, "runs_picks": runs_picks_list, "tb_picks": tb_picks_list, "tb_over_picks": tb_over_picks_list, "rbi_picks": rbi_picks_list, "walks_picks": walks_picks_list, "batter_k_picks": batter_k_picks_list, "hrr_picks": hrr_picks_list, "hrr_alt_picks": hrr_alt_picks_list, "hrr_special_picks": hrr_special_list, "hrr_top10_picks": hrr_top10_list, "triple_split_picks": triple_split_list, "five_star_split_picks": five_star_split_list, "club_plays_picks": club_plays_list, "hot_split_picks": hot_split_list, "cold_split_picks": cold_split_list, "hr_picks": hr_picks_list,
         "all_qualified": era_qualified,
         "game_predictions": game_predictions,
         "dq_s1_s3": [x for x in results if x["dq"] and x not in dn_dq and x not in era_dq and x not in dq_lineup and x not in s4_dq],
@@ -4896,6 +4874,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                   "walks_count": len(walks_picks_list),
                   "batter_k_count": len(batter_k_picks_list),
                   "hrr_count": len(hrr_picks_list),
+                  "hrr_top10_count": len(hrr_top10_list),
                   "hrr_special_count": len(hrr_special_list),
                   "triple_split_count": len(triple_split_list),
                   "five_star_count": len(five_star_split_list),
