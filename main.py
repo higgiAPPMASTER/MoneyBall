@@ -4087,6 +4087,10 @@ _HTML = """
     .mlb-coach-presets{display:flex;gap:7px;flex-wrap:wrap;margin:14px 0 10px}
     .mlb-coach-preset{background:#111827;color:#cbd5e1;border:1px solid #334155;border-radius:999px;padding:7px 11px;font-size:.69rem;font-weight:900;cursor:pointer}
     .mlb-coach-preset:hover{border-color:#f59e0b;color:#fde68a}
+    .mlb-coach-sidebar{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:14px 0 4px;padding:9px 10px;border:1px solid #334155;border-radius:10px;background:#0b1220}
+    .mlb-coach-side{background:#111827;color:#94a3b8;border:1px solid #475569;border-radius:7px;padding:7px 16px;font-size:.7rem;font-weight:950;cursor:pointer;letter-spacing:.05em}
+    .mlb-coach-side.over.active{background:#14532d;border-color:#22c55e;color:#bbf7d0}
+    .mlb-coach-side.under.active{background:#7f1d1d;border-color:#ef4444;color:#fecaca}
     .mlb-coach-row{display:flex;gap:8px}
     .mlb-coach-input{flex:1;min-width:0;background:#070d18;color:#fff;border:1px solid #334155;border-radius:11px;padding:12px 14px;font:inherit;font-size:.84rem;outline:none}
     .mlb-coach-input:focus{border-color:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,.1)}
@@ -4594,6 +4598,13 @@ _HTML = """
             <div style="color:#86efac;border:1px solid rgba(74,222,128,.35);border-radius:999px;padding:5px 9px;height:max-content;font-size:.62rem;font-weight:900;margin-top:6px;white-space:nowrap">NO INVENTED PLAYS</div>
             <button onclick="openMlbCoachTrack()" style="width:100%;margin-top:8px;background:#0e7490;color:#fff;border:0;border-radius:8px;padding:7px 10px;font-size:.68rem;font-weight:900;cursor:pointer;white-space:nowrap">Coach Track Record</button>
           </div>
+        </div>
+
+        <div class="mlb-coach-sidebar">
+          <span style="font-size:.65rem;font-weight:900;color:#fbbf24;letter-spacing:.06em;margin-right:3px">SIDE FILTER</span>
+          <button id="mlbCoachSideOver" class="mlb-coach-side over" onclick="_setMlbCoachSide('OVER')">OVER</button>
+          <button id="mlbCoachSideUnder" class="mlb-coach-side under" onclick="_setMlbCoachSide('UNDER')">UNDER</button>
+          <span id="mlbCoachSideHint" style="font-size:.62rem;color:#64748b">Choose a side, then choose any hitter or pitcher market</span>
         </div>
 
         <div style="margin-top:18px;font-size:.75rem;font-weight:800;color:#facc15;border-bottom:1px solid rgba(255,255,255,.1);padding-bottom:5px;letter-spacing:.05em;text-transform:uppercase">Hitters</div>
@@ -5274,6 +5285,21 @@ function askMlbCoachPreset(question) {
   askMlbCoach();
 }
 
+window._MLB_COACH_SIDE_FILTER=window._MLB_COACH_SIDE_FILTER||'';
+function _setMlbCoachSide(side){
+  side=String(side||'').toUpperCase();
+  window._MLB_COACH_SIDE_FILTER=(window._MLB_COACH_SIDE_FILTER===side)?'':side;
+  var active=window._MLB_COACH_SIDE_FILTER;
+  var over=document.getElementById('mlbCoachSideOver');
+  var under=document.getElementById('mlbCoachSideUnder');
+  var hint=document.getElementById('mlbCoachSideHint');
+  if(over) over.classList.toggle('active',active==='OVER');
+  if(under) under.classList.toggle('active',active==='UNDER');
+  if(hint) hint.textContent=active
+    ? active+' selected — now choose any hitter or pitcher market'
+    :'Choose a side, then choose any hitter or pitcher market';
+}
+
 function _mlbCoachCommit(html) {
   var ans = document.getElementById('mlbCoachAnswer');
   if(!ans) return;
@@ -5358,10 +5384,12 @@ function askMlbCoach() {
   // for the original Coach question flow.
   var coachPreset=_mlbCoachPresetForQuestion(question,isHitterQ,isPitcherQ);
   if(coachPreset){
+    var coachSide=window._MLB_COACH_SIDE_FILTER||'';
+    if(coachSide) pool=pool.filter(function(p){return p.side===coachSide;});
     var coachRows=_mlbCoachSelectRows(pool,coachPreset);
     var coachAnyEdge=/^(pitcher_alt_k|pitcher_k|pitcher_hits_allowed|pitcher_outs|pitcher_earned_runs|pitcher_walks)$/.test(coachPreset);
     var coachSeriesOnly=coachPreset==='hitter_hrr_top10';
-    _mlbCoachRender(question,coachRows,props.length,
+    _mlbCoachRender(question+(coachSide?' · '+coachSide+' only':''),coachRows,props.length,
                     coachPreset==='hitter_safest'||coachPreset==='pitcher_safest',
                     gameLabel,coachAnyEdge,coachSeriesOnly);
     return;
