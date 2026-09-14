@@ -4528,13 +4528,27 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     # HRR board. The result is consumed only by the Edge Coach preset.
     hrr_top10_list = []
     try:
-        from under_picks import run_hrr_top10_picks
-        # Build this Coach preset from every generated active-batter row, not
-        # from a pre-qualified TSC/FSS board. Prefer OVER/neutral rows and merge
-        # their display stamps so one incomplete market row cannot hide a
-        # player's series or day/night data.
+        from under_picks import (
+            run_hrr_top10_picks, _under_roster_candidates,
+            _team_match as _hrr_team_match,
+        )
+        # Start from every active non-pitcher on today's MLB rosters. The old
+        # generated-row union was still bounded by the upstream top-30 hitter
+        # pipeline, which silently removed valid .300+ series qualifiers.
+        _hrr_active_rows = _under_roster_candidates(run_date, team_schedule, emit)
+        for _row in _hrr_active_rows:
+            _team = _row.get("roster_team", "")
+            _home = _row.get("home_team", "")
+            _away = _row.get("away_team", "")
+            _row["team"] = _team
+            if _hrr_team_match(_team, _home):
+                _row["opp"], _row["side"] = _away, "HOME"
+            elif _hrr_team_match(_team, _away):
+                _row["opp"], _row["side"] = _home, "AWAY"
+
+        # Merge existing generated rows afterward for optional display context.
         _hrr_by_id = {}
-        _hrr_lists = [lineup_qualified, top9, also_ran, under_picks_list,
+        _hrr_lists = [_hrr_active_rows, lineup_qualified, top9, also_ran, under_picks_list,
                       runs_picks_list, tb_picks_list, tb_over_picks_list,
                       rbi_picks_list, walks_picks_list, hrr_picks_list,
                       hrr_special_list, batter_k_picks_list, hr_picks_list]
@@ -4551,12 +4565,16 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                 for _key, _value in _row.items():
                     if (_key not in _dst or _dst[_key] in (None, "", [], {})) and _value not in (None, "", [], {}):
                         _dst[_key] = _value
-        # This Coach category is based only on series position. Re-fetch its
-        # G1/G2/G3+ history across all venues; the other app sections keep their
-        # existing home/away-specific series splits.
-        for _bid, _row in _hrr_by_id.items():
-            _row["series_splits"] = fetch_series_splits(
+        # This Coach category is based only on series position. Fetch the
+        # all-venue G1/G2/G3+ history concurrently for the full active roster.
+        def _hrr_series_stamp(_item):
+            _bid, _row = _item
+            return _bid, fetch_series_splits(
                 _bid, _row.get("opp", ""), run_date, "")
+        with _TPEx(max_workers=8) as _hrr_ex:
+            for _bid, _splits in _hrr_ex.map(
+                    _hrr_series_stamp, list(_hrr_by_id.items())):
+                _hrr_by_id[_bid]["series_splits"] = _splits
         hrr_top10_list = run_hrr_top10_picks(
             run_date, team_schedule, {
                 "Eligible Batters": list(_hrr_by_id.values()),
