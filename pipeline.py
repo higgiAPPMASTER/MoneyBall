@@ -4513,20 +4513,15 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         cold_split_list = []
         emit({"type": "log", "msg": f"⚠️ Hot/Cold Hitters skipped: {_exc}"})
 
-    # ── 1+ HRR Top 10 — Hot Hitters with strict matchup history -------------
+    # ── Coach-only 1+ HRR Game 1 split qualifiers ----------------------------
     # Separate from both standard 1.5 HRR and the existing genuine alternate
-    # HRR board. Hot Hitters is mandatory; pitcher and opponent history gates
-    # are enforced in run_hrr_top10_picks. Positive edge remains display-only.
+    # HRR board. The result is consumed only by the Edge Coach preset.
     hrr_top10_list = []
     try:
         from under_picks import run_hrr_top10_picks
         hrr_top10_list = run_hrr_top10_picks(
             run_date, team_schedule, {
-                "Record a Hit": list(top9) + list(also_ran),
-                "Total Bases Over": list(tb_over_picks_list),
-                "Hot Hitters": list(hot_split_list),
-                "Triple Split Club": list(triple_split_list),
-                "5-Star": list(five_star_split_list),
+                "Eligible Batters": list(_tsc_by_id.values()),
             }, emit=emit)
     except Exception as _exc:
         emit({"type": "log", "msg": f"⚠️ 1+ HRR Top 10 skipped: {_exc}"})
@@ -4548,7 +4543,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     )
     for _popup_list, _popup_label in zip(
         _popup_detail_boards,
-        ("HRR Special", "1+ HRR Hot Matchup History", "Triple Split", "5 Star Split",
+        ("HRR Special", "1+ HRR Game 1 Split Qualifiers", "Triple Split", "5 Star Split",
          "Club Plays", "Hot Hitters", "Cold Batters"),
     ):
         try:
