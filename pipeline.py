@@ -661,8 +661,11 @@ def _last10_ha_ba(player_id, side: str, n: int = 10):
 
 def fetch_series_splits(player_id, today_opp: str, run_date: str, side: str = "") -> dict:
     """G1/G2/G3+ BA splits — current season only, filtered by home/away."""
-    _EMPTY = {"today_pos": 1, "g1_ba": None, "g1_ab": 0,
-               "g2_ba": None, "g2_ab": 0, "g3_ba": None, "g3_ab": 0, "ha": side or ""}
+    _EMPTY = {"today_pos": 1,
+               "g1_ba": None, "g1_ba_any": None, "g1_ab": 0,
+               "g2_ba": None, "g2_ba_any": None, "g2_ab": 0,
+               "g3_ba": None, "g3_ba_any": None, "g3_ab": 0,
+               "ha": side or ""}
     if not player_id:
         return _EMPTY
     try:
@@ -712,6 +715,7 @@ def fetch_series_splits(player_id, today_opp: str, run_date: str, side: str = ""
             i = j
 
         def _ba(h, a): return round(h / a, 3) if a >= 5 else None
+        def _ba_any(h, a): return round(h / a, 3) if a >= 1 else None
 
         # Today's series position — count recent consecutive games vs same opp
         try:
@@ -733,9 +737,12 @@ def fetch_series_splits(player_id, today_opp: str, run_date: str, side: str = ""
 
         return {
             "today_pos": min(streak + 1, 3),
-            "g1_ba": _ba(pos_stats[1][0], pos_stats[1][1]), "g1_ab": pos_stats[1][1],
-            "g2_ba": _ba(pos_stats[2][0], pos_stats[2][1]), "g2_ab": pos_stats[2][1],
-            "g3_ba": _ba(pos_stats[3][0], pos_stats[3][1]), "g3_ab": pos_stats[3][1],
+            "g1_ba": _ba(pos_stats[1][0], pos_stats[1][1]),
+            "g1_ba_any": _ba_any(pos_stats[1][0], pos_stats[1][1]), "g1_ab": pos_stats[1][1],
+            "g2_ba": _ba(pos_stats[2][0], pos_stats[2][1]),
+            "g2_ba_any": _ba_any(pos_stats[2][0], pos_stats[2][1]), "g2_ab": pos_stats[2][1],
+            "g3_ba": _ba(pos_stats[3][0], pos_stats[3][1]),
+            "g3_ba_any": _ba_any(pos_stats[3][0], pos_stats[3][1]), "g3_ab": pos_stats[3][1],
             "ha": side or "",
         }
     except Exception:
