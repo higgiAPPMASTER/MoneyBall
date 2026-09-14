@@ -4482,7 +4482,7 @@ _HTML = """
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the safest hitter bets?')">Safest bets</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Hitter Coach Edge plays?')">Coach Edge</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Best Alt-Line Hitter H+R+RBI 1+ Edge Plays? — Top 10')" style="border-color:#f59e0b;color:#fde68a">Best Alt-Line HRR 1+ · Top 10</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('Show the 1+ HRR Game 1 split qualifiers')" style="border-color:#fb923c;color:#fed7aa">1+ HRR · G1 Split Qualifiers</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('Show the 1+ HRR applicable series split qualifiers')" style="border-color:#fb923c;color:#fed7aa">1+ HRR · Series Split Qualifiers</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best plays to record a hit?')">To record a hit</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Total Bases plays?')">Total Bases</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best hitter production props?')">Production</button>
@@ -4974,7 +4974,7 @@ function _mlbCoachAllProps() {
     });
   });
 
-  // Coach-only 1+ HRR G1 split qualifiers are not price-gated. Keep unpriced
+  // Coach-only 1+ HRR series-split qualifiers are not price-gated. Keep unpriced
   // qualified candidates available to the dedicated Coach preset.
   (res.hrr_top10_picks||[]).forEach(function(p, consensusIndex) {
     var player=p.full_name||p.name||'';
@@ -5003,7 +5003,7 @@ function _mlbCoachAllProps() {
 // The parlay builder and the visible Coach answer therefore cannot drift apart.
 var _MLB_COACH_PRESET_LABELS = {
   hitter_safest:'Safest hitter bets', hitter_edge:'Hitter Coach Edge',
-  hitter_alt_hrr:'Alt-Line HRR 1+ · Top 10', hitter_hrr_top10:'1+ HRR · G1 Split Qualifiers', hitter_hits:'To record a hit',
+  hitter_alt_hrr:'Alt-Line HRR 1+ · Top 10', hitter_hrr_top10:'1+ HRR · Series Split Qualifiers', hitter_hits:'To record a hit',
   hitter_tb:'Total Bases', hitter_production:'Hitter production',
   hitter_batter_k:'Batter Strikeouts', hitter_unders:'Hitter unders',
   hitter_top3:'Top 3 hitter plays',
@@ -5291,7 +5291,7 @@ function _mlbCoachRender(question, rows, totalPriced, isSafest, gameLabel, allow
 
   var isHrrConsensus=rows.some(function(p){return !!p.source_count;});
   var summaryText = isHrrConsensus
-    ?'This Coach-only 1+ HRR list requires all four batting-average gates: Series Game 1 over .300, today\\'s day/night split over .250, career against today\\'s probable pitcher over .250, and against today\\'s opponent in the applicable home/away split over .250. Genuine Over 0.5 HRR prices are shown when available; unpriced qualifiers remain eligible.'
+    ?'This Coach-only 1+ HRR list uses today\\'s series position automatically: Game 1 uses G1 BA, Game 2 uses G2 BA, and Game 3 or later uses G3+ BA. The applicable series BA must be over .300, today\\'s day/night split over .250, career against today\\'s probable pitcher over .250, and against today\\'s opponent in the applicable home/away split over .250. Genuine Over 0.5 HRR prices are shown when available; unpriced qualifiers remain eligible.'
     : allowAnyEdge
     ? 'I used up to five qualified normal-board picks for this pitcher market and kept their calculated Coach Edge visible, including negative values.'
     : isSafest
@@ -10105,11 +10105,11 @@ function _hrrForm(key){
     var n=Number(v);
     return isFinite(n)?('.'+String(Math.round(n*1000)).padStart(3,'0')):'N/A';
   }
-  var qualifierHtml=p.hrr_g1_qualifier
+  var qualifierHtml=p.hrr_series_qualifier
     ?'<div style="margin-bottom:14px;padding:12px;background:#1c1208;border:1px solid rgba(251,146,60,.35);border-radius:10px">'
       +'<div style="color:#fb923c;font-size:.72rem;font-weight:900;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Coach 1+ HRR qualification stats</div>'
       +'<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px">'
-        +'<div style="background:#0f172a;border-radius:8px;padding:9px"><div style="font-size:.62rem;color:#64748b">SERIES GAME 1 BA</div><b style="color:#fff">'+_qualBa(p.series_ba)+'</b></div>'
+        +'<div style="background:#0f172a;border-radius:8px;padding:9px"><div style="font-size:.62rem;color:#64748b">SERIES GAME '+_esc(String(p.series_gno||p.series_game||1)+((p.series_gno||p.series_game||1)>=3?'+':''))+' BA</div><b style="color:#fff">'+_qualBa(p.series_ba)+'</b></div>'
         +'<div style="background:#0f172a;border-radius:8px;padding:9px"><div style="font-size:.62rem;color:#64748b">'+_esc((p.dn_label||'DAY/NIGHT')+' BA')+'</div><b style="color:#fff">'+_qualBa(p.dn_ba)+'</b></div>'
         +'<div style="background:#0f172a;border-radius:8px;padding:9px"><div style="font-size:.62rem;color:#64748b">VS TODAY\\'S PITCHER</div><b style="color:#fff">'+_esc((p.s1&&p.s1.display)||p.s1_disp||'N/A')+'</b></div>'
         +'<div style="background:#0f172a;border-radius:8px;padding:9px"><div style="font-size:.62rem;color:#64748b">VS OPPONENT · '+_esc(p.side||'H/A')+'</div><b style="color:#fff">'+_esc(p.vs_team_ba_display||'N/A')+'</b></div>'
