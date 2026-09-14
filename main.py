@@ -2141,7 +2141,7 @@ def _mlb_coach_all_props(result):
 
     # This category intentionally allows unpriced candidates and is not subject
     # to any day/night, matchup, odds, or edge gate.
-    for consensus_rank, p in enumerate(hrr_qualifiers, 1):
+    for consensus_rank, p in enumerate(hrr_qualifiers[:20], 1):
         prob = p["_coach_series_ba"]
         source_label = (
             f"G{p['_coach_series_game']}"
@@ -2205,7 +2205,7 @@ def _mlb_coach_select_categories(result):
             [p for p in hitters
              if p.get("source_count") and p.get("market") == "H+R+RBI"
              and p.get("alternate") is False],
-            key=lambda p: p.get("consensus_rank", 999)),
+            key=lambda p: p.get("consensus_rank", 999))[:20],
         "hitter_hits": choose(regular_hitters, market="Hits"),
         "hitter_tb": choose(regular_hitters, market="Total Bases"),
         "hitter_production": choose(regular_hitters, markets=production),
@@ -5032,7 +5032,12 @@ function _mlbCoachAllProps() {
   // Rebuild the Coach-only .300+ series category from all loaded hitter cards.
   // This makes the visible card splits authoritative even if a cached backend
   // hrr_top10_picks list is incomplete.
-  var hrrRows=[], hrrSeen={};
+  var hrrRows=[], hrrSeen={}, hrrDetail={};
+  (res.hrr_top10_picks||[]).forEach(function(p){
+    if(!p) return;
+    var player=p.full_name||p.name||'', id=p.batter_id||p.player_id||player.toLowerCase();
+    if(id) hrrDetail[String(id)]=p;
+  });
   ['top9','also_ran','under_picks','tb_picks','tb_over_picks','runs_picks',
    'rbi_picks','walks_picks','batter_k_picks','hrr_picks','hr_picks',
    'hot_split_picks','cold_split_picks','triple_split_picks',
@@ -5053,8 +5058,15 @@ function _mlbCoachAllProps() {
   });
   Object.keys(hrrSeen).forEach(function(k){hrrRows.push(hrrSeen[k]);});
   hrrRows.sort(function(a,b){return b.ba-a.ba||a.player.localeCompare(b.player);});
-  hrrRows.forEach(function(q, consensusIndex) {
+  hrrRows.slice(0,20).forEach(function(q, consensusIndex) {
     var p=q.p, player=q.player, model=q.ba*100;
+    var detail=hrrDetail[String(p.batter_id||p.player_id||player.toLowerCase())]||{};
+    var popup=Object.assign({},p,detail,{
+      name:player,full_name:player,team:p.team||detail.team||'',
+      opp:p.opp||detail.opp||'',side:p.side||detail.side||'',
+      line:.5,pick:'OVER',hrr_series_qualifier:true,
+      series_ba:q.ba,series_game:q.game,series_gno:q.game
+    });
     var source='G'+q.game+(q.game===3?'+':'')+' BA ≥.300';
     arr.push({
       player:player, team:p.team||'', opp:p.opp||'', market:'H+R+RBI',
@@ -5065,7 +5077,7 @@ function _mlbCoachAllProps() {
       proj:null, book:p.book||'', source_count:1,
       consensus_rank:consensusIndex+1,
       coachPresetOnly:'hitter_hrr_top10',
-      src:p
+      src:popup
     });
   });
 
@@ -5114,7 +5126,7 @@ function _mlbCoachSelectRows(props, preset) {
      case 'hitter_hrr_top10':
        out=rows.filter(function(p){return p.market==='H+R+RBI'&&p.source_count;})
          .sort(function(a,b){return (a.consensus_rank||999)-(b.consensus_rank||999);})
-         ; break;
+          .slice(0,20); break;
     case 'pitcher_alt_k':
       out=rows.filter(function(p){return p.alternate;}).sort(byEdge).slice(0,10); break;
     case 'hitter_hits':
@@ -10181,6 +10193,8 @@ function _hrrForm(key){
   var line=(p.line!=null&&isFinite(Number(p.line)))?Number(p.line):1.5;
   var threshold=Math.floor(line)+1;
   var log=p.recent_hrr_log||[];
+  var venueLog=p.last10_hrr_log||log;
+  var teamLog=p.vs_team_hrr_log||[];
   function _qualBa(v){
     var n=Number(v);
     return isFinite(n)?('.'+String(Math.round(n*1000)).padStart(3,'0')):'N/A';
@@ -10192,7 +10206,8 @@ function _hrrForm(key){
         +'<div style="background:#0f172a;border-radius:8px;padding:9px"><div style="font-size:.62rem;color:#64748b">SERIES GAME '+_esc(String(p.series_gno||p.series_game||1)+((p.series_gno||p.series_game||1)>=3?'+':''))+' BA</div><b style="color:#fff">'+_qualBa(p.series_ba)+'</b></div>'
       +'</div></div>'
     :'';
-  var rows=log.length?log.map(function(g){
+  function _hrrLogRows(data,emptyText){
+    return data.length?data.map(function(g){
     var good=isUnder?(g.hrr<threshold):(g.hrr>=threshold);
     var clr=good?'#fb923c':'#94a3b8';
     var oppTxt=g.opp?((g.ha==='H'?'vs ':'@ ')+g.opp):'';
@@ -10202,7 +10217,31 @@ function _hrrForm(key){
       +'<td style="padding:6px 10px;text-align:right;font-family:monospace;font-size:.8rem;color:#93c5fd">'+g.h+'H '+g.r+'R '+g.rbi+'RBI</td>'
       +'<td style="padding:6px 10px;text-align:right;font-family:monospace;font-weight:800;color:'+clr+'">'+g.hrr+' HRR</td>'
     +'</tr>';
-  }).join(''):'<tr><td colspan="4" style="padding:14px;color:#64748b;text-align:center">No recent games on record</td></tr>';
+    }).join(''):'<tr><td colspan="4" style="padding:14px;color:#64748b;text-align:center">'+emptyText+'</td></tr>';
+  }
+  var rows=_hrrLogRows(log,'No recent games on record');
+  var venueRows=_hrrLogRows(venueLog,'No matching home/away games on record');
+  var teamRows=_hrrLogRows(teamLog,'No games against today\\'s opponent at this venue on record');
+  function _hrrPct(hits,games){
+    hits=Number(hits)||0; games=Number(games)||0;
+    return games?(hits+'/'+games+' · '+Math.round(hits/games*100)+'%'):'N/A';
+  }
+  function _hrrHistoryBlock(title,sub,summary,bodyRows){
+    return '<div style="margin-top:12px;border:1px solid #1e293b;border-radius:10px;overflow:hidden">'
+      +'<div style="padding:10px 12px;background:#111827;display:flex;justify-content:space-between;gap:10px;align-items:center">'
+        +'<div><div style="font-size:.72rem;font-weight:900;color:#fb923c">'+title+'</div><div style="font-size:.62rem;color:#64748b;margin-top:2px">'+sub+'</div></div>'
+        +'<b style="color:#fff;font-family:monospace">'+summary+'</b></div>'
+      +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse"><tbody>'+bodyRows+'</tbody></table></div></div>';
+  }
+  var coachBody=qualifierHtml
+    +_hrrHistoryBlock(
+      '1+ HRR · LAST 10 '+String(p.side||'').toUpperCase(),
+      'Newest games matching today\\'s '+(String(p.side||'').toUpperCase()==='HOME'?'home':'away')+' venue',
+      _hrrPct(p.last10_hrr_count,p.last10_hrr_games),venueRows)
+    +_hrrHistoryBlock(
+      '1+ HRR · VS '+_esc(String(p.opp||'').toUpperCase())+' · '+String(p.side||'').toUpperCase(),
+      'Games against today\\'s opponent matching today\\'s venue',
+      _hrrPct(p.vs_team_hrr_count,p.vs_team_hrr_games),teamRows);
   var name=p.name||'';
   ov.innerHTML='<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:820px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">'
     +'<div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid #1e293b">'
@@ -10211,10 +10250,11 @@ function _hrrForm(key){
       +'<button onclick="document.getElementById(&#39;hrr-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem">\u2715</button>'
     +'</div>'
     +'<div style="padding:16px 18px">'
-    +qualifierHtml
-    +_twoBox(p,'HRR Rate','HRR Odds',(isUnder?p.hrr_under_odds:p.hrr_over_odds),!isUnder,(isUnder?('H+R+RBI < '+threshold+' = UNDER'):('H+R+RBI \u2265 '+threshold+' = OVER'))+' \u00b7 Last '+log.length+' Games',rows)
-    +_oppPitBlock(p,'pitcher_hits_allowed','Hits Allowed','H')
-    +_matrixWriteup(p,(isUnder?'U':'O'),threshold,false,'HRR (hits+runs+RBI)',(isUnder?'Under ':'Over ')+line+' H+R+RBI')
+    +(p.hrr_series_qualifier?coachBody:
+      qualifierHtml
+      +_twoBox(p,'HRR Rate','HRR Odds',(isUnder?p.hrr_under_odds:p.hrr_over_odds),!isUnder,(isUnder?('H+R+RBI < '+threshold+' = UNDER'):('H+R+RBI \u2265 '+threshold+' = OVER'))+' \u00b7 Last '+log.length+' Games',rows)
+      +_oppPitBlock(p,'pitcher_hits_allowed','Hits Allowed','H')
+      +_matrixWriteup(p,(isUnder?'U':'O'),threshold,false,'HRR (hits+runs+RBI)',(isUnder?'Under ':'Over ')+line+' H+R+RBI'))
     +'</div></div>';
   ov.style.display='flex';
 }
