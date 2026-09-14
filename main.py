@@ -2089,14 +2089,13 @@ def _mlb_coach_all_props(result):
     # Rebuild the series-position category from every loaded hitter row. Do not
     # trust only hrr_top10_picks: older/cached pipeline results may contain an
     # incomplete precomputed list even though the loaded cards already carry
-    # the correct all-venue G1/G2/G3+ splits.
+    # the correct current-season, venue-matched G1/G2/G3+ splits.
     hrr_sources = []
     for key in (
         "top9", "also_ran", "under_picks", "tb_picks", "tb_over_picks",
         "runs_picks", "rbi_picks", "walks_picks", "batter_k_picks",
         "hrr_picks", "hr_picks", "hot_split_picks", "cold_split_picks",
         "triple_split_picks", "five_star_split_picks", "club_plays_picks",
-        "hrr_top10_picks",
     ):
         hrr_sources.extend(result.get(key) or [])
     hrr_by_player = {}
@@ -2115,8 +2114,6 @@ def _mlb_coach_all_props(result):
 
     hrr_qualifiers = []
     for p in hrr_by_player.values():
-        if p.get("lineup_status") != "IN_LINEUP":
-            continue
         splits = p.get("series_splits") or {}
         try:
             game_no = int(p.get("series_game")
@@ -5039,10 +5036,9 @@ function _mlbCoachAllProps() {
   ['top9','also_ran','under_picks','tb_picks','tb_over_picks','runs_picks',
    'rbi_picks','walks_picks','batter_k_picks','hrr_picks','hr_picks',
    'hot_split_picks','cold_split_picks','triple_split_picks',
-   'five_star_split_picks','club_plays_picks','hrr_top10_picks'].forEach(function(k){
+   'five_star_split_picks','club_plays_picks'].forEach(function(k){
     (res[k]||[]).forEach(function(p){
       if(!p) return;
-      if(p.lineup_status!=='IN_LINEUP') return;
       var player=p.full_name||p.name||'', id=p.batter_id||p.player_id||player.toLowerCase();
       if(!player||!id) return;
       var ss=p.series_splits||{}, game=Number(p.series_game||ss.today_pos||1);
@@ -5352,7 +5348,7 @@ function _mlbCoachRender(question, rows, totalPriced, isSafest, gameLabel, allow
   if(!rows.length) {
     _mlbCoachCommit('<div>'+qHtml+'<div style="margin-top:11px;color:#cbd5e1;font-size:.78rem;line-height:1.5">'+
       (seriesOnly
-       ?'No loaded hitter is batting .300 or better in the all-venue historical split matching today\\'s series position.'
+       ?'No hitter generated in today\\'s app categories is batting .300 or better in this season\\'s home/away split matching today\\'s series position.'
        :'No loaded MLB prop'+(gameLabel?' in '+_mlbEsc(gameLabel):'')+' matched that request with a real sportsbook price'+(allowAnyEdge?'.':' and a green positive Coach Edge.'))+
       '</div></div>');
     return;
@@ -5375,7 +5371,7 @@ function _mlbCoachRender(question, rows, totalPriced, isSafest, gameLabel, allow
 
   var isHrrConsensus=seriesOnly||rows.some(function(p){return !!p.source_count;});
   var summaryText = isHrrConsensus
-    ?'This list has one requirement only. Game 1 uses all-venue G1 BA, Game 2 uses all-venue G2 BA, and Game 3 or later uses all-venue G3+ BA. Every loaded hitter batting .300 or better in the applicable series-position split is shown. Day/night, home/away, pitcher history, opponent history, sportsbook odds, and Coach Edge are not requirements.'
+    ?'This list uses every unique hitter generated in today\\'s app categories. Game 1 uses this season\\'s G1 BA at today\\'s home/away venue, Game 2 uses the matching G2 BA, and Game 3 or later uses G3+ BA. Every hitter at .300 or better is shown. Pitcher history, opponent history, sportsbook odds, and Coach Edge are not requirements.'
     : allowAnyEdge
     ? 'I used up to five qualified normal-board picks for this pitcher market and kept their calculated Coach Edge visible, including negative values.'
     : isSafest
