@@ -773,8 +773,13 @@ async def get_hrr_coach_context_endpoint(
         raise HTTPException(
             status_code=401,
             detail="Subscription required — please log in via moneypicksarena.com")
-    from under_picks import get_hrr_coach_context
-    return get_hrr_coach_context(date_str, player_id, side, opp)
+    try:
+        from under_picks import get_hrr_coach_context
+        return get_hrr_coach_context(date_str, player_id, side, opp)
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="HRR context helper is not installed with this server build") from exc
 
 
 def _norm_name(s) -> str:
