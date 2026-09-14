@@ -4536,6 +4536,10 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         # generated-row union was still bounded by the upstream top-30 hitter
         # pipeline, which silently removed valid .300+ series qualifiers.
         _hrr_active_rows = _under_roster_candidates(run_date, team_schedule, emit)
+        from lineup_check import build_lineup_map, get_lineup_status
+        (_hrr_lu_ids, _hrr_lu_names, _hrr_lu_confirmed,
+         _hrr_rw_lineups, _hrr_rw_teams) = build_lineup_map(run_date)
+        _hrr_starter_rows = []
         for _row in _hrr_active_rows:
             _team = _row.get("roster_team", "")
             _home = _row.get("home_team", "")
@@ -4545,10 +4549,25 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                 _row["opp"], _row["side"] = _away, "HOME"
             elif _hrr_team_match(_team, _away):
                 _row["opp"], _row["side"] = _home, "AWAY"
+            _status = get_lineup_status(
+                _row.get("batter_id"), _row.get("name", ""), _team,
+                _hrr_lu_ids, _hrr_lu_names, _hrr_lu_confirmed,
+                _hrr_rw_lineups, _hrr_rw_teams)
+            _row["lineup_status"] = _status
+            if _status == "IN_LINEUP":
+                _hrr_starter_rows.append(_row)
+        emit({"type": "log",
+              "msg": f"  Coach 1+ HRR starters: {len(_hrr_starter_rows)}/"
+                     f"{len(_hrr_active_rows)} active hitters confirmed/projected IN"})
+        _hrr_starter_ids = {
+            int(_s.get("batter_id")) for _s in _hrr_starter_rows
+            if _s.get("batter_id")
+        }
 
-        # Merge existing generated rows afterward for optional display context.
+        # Start from confirmed/projected starters only. Merge generated rows
+        # afterward solely for optional display context on those same IDs.
         _hrr_by_id = {}
-        _hrr_lists = [_hrr_active_rows, lineup_qualified, top9, also_ran, under_picks_list,
+        _hrr_lists = [_hrr_starter_rows, lineup_qualified, top9, also_ran, under_picks_list,
                       runs_picks_list, tb_picks_list, tb_over_picks_list,
                       rbi_picks_list, walks_picks_list, hrr_picks_list,
                       hrr_special_list, batter_k_picks_list, hr_picks_list]
@@ -4558,6 +4577,8 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                 if not _bid:
                     continue
                 _bid = int(_bid)
+                if _bid not in _hrr_starter_ids:
+                    continue
                 if _bid not in _hrr_by_id:
                     _hrr_by_id[_bid] = dict(_row)
                     continue
