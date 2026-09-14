@@ -763,6 +763,20 @@ async def get_results(date_str: str, request: Request, token: str = ""):
     raise HTTPException(status_code=404, detail="No results for this date.")
 
 
+@app.get("/api/hrr-coach-context")
+async def get_hrr_coach_context_endpoint(
+        request: Request, date_str: str, player_id: int,
+        side: str, opp: str = "", token: str = ""):
+    """Backfill HRR popup context when a saved slate predates these fields."""
+    tok = token or request.headers.get("Authorization", "").replace("Bearer ", "").strip()
+    if not _verify_hub_token(tok):
+        raise HTTPException(
+            status_code=401,
+            detail="Subscription required — please log in via moneypicksarena.com")
+    from under_picks import get_hrr_coach_context
+    return get_hrr_coach_context(date_str, player_id, side, opp)
+
+
 def _norm_name(s) -> str:
     """Normalize a player name for matching: strip accents, lowercase, drop
     periods, collapse whitespace. Box scores spell names with accents while
@@ -10259,6 +10273,34 @@ function _hrrForm(key){
     ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; };
     document.body.appendChild(ov);
   }
+  if(p.hrr_series_qualifier&&!p.hrr_context_loaded&&!p.__hrr_context_loading){
+    var pid=p.batter_id||p.player_id;
+    var runDate=(window._lastResult&&window._lastResult.date)
+      ||(document.getElementById('date-picker')||{}).value||'';
+    if(pid&&runDate){
+      p.__hrr_context_loading=true;
+      ov.innerHTML='<div style="background:#0f172a;border:1px solid #1e293b;border-radius:14px;padding:24px;max-width:480px;width:100%;color:#cbd5e1;text-align:center"><b style="color:#fb923c">Loading complete HRR history...</b><div style="font-size:.72rem;color:#64748b;margin-top:7px">Refreshing this player from MLB game logs</div></div>';
+      ov.style.display='flex';
+      var tok=localStorage.getItem('__mpa_token')||localStorage.getItem('hub_token')||'';
+      var qs='?date_str='+encodeURIComponent(runDate)
+        +'&player_id='+encodeURIComponent(pid)
+        +'&side='+encodeURIComponent(p.side||'')
+        +'&opp='+encodeURIComponent(p.opp||'')
+        +'&token='+encodeURIComponent(tok);
+      fetch('/api/hrr-coach-context'+qs).then(function(r){
+        if(!r.ok) return r.text().then(function(t){throw new Error(t||'HRR history request failed');});
+        return r.json();
+      }).then(function(data){
+        Object.assign(p,data||{});
+        p.__hrr_context_loading=false;
+        _hrrForm(p);
+      }).catch(function(err){
+        p.__hrr_context_loading=false;
+        ov.innerHTML='<div style="background:#0f172a;border:1px solid #7f1d1d;border-radius:14px;padding:24px;max-width:520px;width:100%;color:#fca5a5;text-align:center"><b>Could not load HRR history</b><div style="font-size:.72rem;margin-top:7px">'+_esc((err&&err.message)||err)+'</div><button onclick="document.getElementById(&#39;hrr-modal&#39;).style.display=&#39;none&#39;" style="margin-top:14px;background:#1e293b;border:none;color:#fff;border-radius:7px;padding:7px 14px;cursor:pointer">Close</button></div>';
+      });
+      return;
+    }
+  }
   var isUnder=(p.pick==='UNDER');
   var line=(p.line!=null&&isFinite(Number(p.line)))?Number(p.line):1.5;
   var threshold=Math.floor(line)+1;
@@ -10304,15 +10346,12 @@ function _hrrForm(key){
       +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse"><tbody>'+bodyRows+'</tbody></table></div></div>';
   }
   var pitcherName=p.pitcher||'TBD';
-  var pitcherSummary=p.vs_pitcher_hrr_display||'N/A';
-  var pitcherSample=p.vs_pitcher_hrr_sample||'N/A';
   var pitcherAvg=_qualBa(p.vs_pitcher_avg);
+  var pitcherAb=Number(p.vs_pitcher_ab)||0;
   var pitcherBlock='<div style="margin-top:12px;border:1px solid #1e293b;border-radius:10px;padding:11px 12px;background:#111827">'
-    +'<div style="font-size:.72rem;font-weight:900;color:#60a5fa">CAREER VS TODAY\\'S PITCHER · '+_esc(pitcherName.toUpperCase())+'</div>'
-    +'<div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-end;margin-top:8px;flex-wrap:wrap">'
-      +'<div><div style="font-size:.62rem;color:#64748b">HITS · RUNS · RBI · HRR</div><b style="color:#fff">'+_esc(pitcherSummary)+'</b></div>'
-      +'<div style="text-align:right"><div style="font-size:.62rem;color:#64748b">BATTING AVG · SAMPLE</div><b style="color:#fff">'+pitcherAvg+' · '+_esc(pitcherSample)+'</b></div>'
-    +'</div></div>';
+    +'<div style="font-size:.72rem;font-weight:900;color:#60a5fa">CAREER BA VS TODAY\\'S PITCHER · '+_esc(pitcherName.toUpperCase())+'</div>'
+    +'<div style="margin-top:8px"><b style="color:#fff;font-size:1.05rem">'+pitcherAvg+' BA</b>'
+      +'<span style="color:#64748b;font-size:.72rem;margin-left:8px">'+(pitcherAb?('('+pitcherAb+' AB)'):'(No recorded AB)')+'</span></div></div>';
   var coachBody=qualifierHtml
     +_hrrHistoryBlock(
       '1+ HRR · LAST 10 '+String(p.side||'').toUpperCase(),
