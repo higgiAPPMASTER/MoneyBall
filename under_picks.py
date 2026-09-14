@@ -2848,6 +2848,41 @@ def _recent_hrr_log(player_id, n: int = 5) -> list:
         return []
 
 
+def _hrr_top20_context_log(player_id, side: str, season: int,
+                           opp_name: str = "", max_games: int = 10) -> list:
+    """Newest HRR game rows matching today's venue and optional opponent."""
+    if not player_id:
+        return []
+    try:
+        from mlb_stats_splits import _get_game_logs, _team_name_match
+        games = []
+        for year in range(int(season), int(season) - 5, -1):
+            for sp in reversed(_get_game_logs(player_id, year)):
+                if ((side.upper() == "HOME") != bool(sp.get("isHome", False))):
+                    continue
+                opp = (sp.get("opponent", {}) or {}).get("name", "")
+                if opp_name and not _team_name_match(opp, opp_name):
+                    continue
+                stat = sp.get("stat", {})
+                if int(stat.get("atBats", 0) or 0) < 1:
+                    continue
+                hits = int(stat.get("hits", 0) or 0)
+                runs = int(stat.get("runs", 0) or 0)
+                rbi = int(stat.get("rbi", 0) or 0)
+                games.append({
+                    "d": (sp.get("date") or "")[5:],
+                    "h": hits, "r": runs, "rbi": rbi,
+                    "hrr": hits + runs + rbi,
+                    "opp": opp,
+                    "ha": "H" if sp.get("isHome") else "A",
+                })
+                if len(games) >= max_games:
+                    return games
+        return games
+    except Exception:
+        return []
+
+
 HRR_OVER_CUT    = 60   # >= this % → likely to get H+R+RBI >= 2 (vs opp H/A)
 HRR_UNDER_CUT   = 30   # <= this % → likely to stay under 1.5 H+R+RBI (vs opp H/A)
 HRR_MIN_VS  = 2    # vs-opp H/A games to use the head-to-head anchor
@@ -3245,10 +3280,25 @@ def run_hrr_top10_picks(run_date: str, team_schedule: dict,
         if series_ba < 0.300:
             return None
 
-        # Recent HRR is display context only. It never qualifies or rejects.
-        l10 = _hrr_consistency_over(pid, side, "", 10, ignore_ha=True,
-                                    threshold=1)
-        vs_team = _hrr_consistency_over(pid, side, opp, 10, threshold=1)
+        # Both popup histories match today's home/away venue. They are display
+        # context only and never qualify or reject a player.
+        l10_log = _hrr_top20_context_log(pid, side, season, max_games=10)
+        vs_team_log = _hrr_top20_context_log(
+            pid, side, season, opp_name=opp, max_games=10)
+        l10_hits = sum(1 for game in l10_log if game["hrr"] >= 1)
+        vs_team_hits = sum(1 for game in vs_team_log if game["hrr"] >= 1)
+        l10 = {
+            "hrr_games": l10_hits, "games": len(l10_log),
+            "display": f"{l10_hits}/{len(l10_log)}" if l10_log else "N/A",
+            "score": round(l10_hits / len(l10_log) * 100) if l10_log else 0,
+        }
+        vs_team = {
+            "hrr_games": vs_team_hits, "games": len(vs_team_log),
+            "display": (f"{vs_team_hits}/{len(vs_team_log)}"
+                        if vs_team_log else "N/A"),
+            "score": (round(vs_team_hits / len(vs_team_log) * 100)
+                      if vs_team_log else 0),
+        }
         model_prob = series_ba
 
         # HRR_ALT_ODDS is the genuine batter_hits_runs_rbis alternate O0.5
@@ -3265,7 +3315,6 @@ def run_hrr_top10_picks(run_date: str, team_schedule: dict,
         book = _book_label(quote.get("over_book")) if quote else ""
         implied = _ml_implied(odds) if odds is not None else None
         edge = (model_prob - implied) if implied is not None else None
-        log = _recent_hrr_log(pid, 10)
         return {
             "name": row.get("full_name") or row.get("name", ""),
             "full_name": row.get("full_name") or row.get("name", ""),
@@ -3290,13 +3339,14 @@ def run_hrr_top10_picks(run_date: str, team_schedule: dict,
             "last10_hrr_count": l10["hrr_games"], "last10_hrr_games": l10["games"],
             "last10_hrr_rate": l10["score"] / 100.0 if l10["games"] else None,
             "last10_hrr_pct": l10["score"] if l10["games"] else None,
-            "last10_hrr_display": l10["display"], "last10_hrr_log": log,
+            "last10_hrr_display": l10["display"], "last10_hrr_log": l10_log,
             "rate_disp": l10["display"], "score": l10["score"],
             "vs_team_hrr_count": vs_team["hrr_games"],
             "vs_team_hrr_games": vs_team["games"],
             "vs_team_hrr_rate": vs_team["score"] / 100.0 if vs_team["games"] else None,
             "vs_team_hrr_pct": vs_team["score"] if vs_team["games"] else None,
             "vs_team_hrr_display": vs_team["display"],
+            "vs_team_hrr_log": vs_team_log,
             "vs_pitcher_hrr_count": 0, "vs_pitcher_hrr_games": 0,
             "vs_pitcher_hrr_rate": None, "vs_pitcher_hrr_pct": None,
             "vs_pitcher_hrr_display": "N/A",
@@ -3311,7 +3361,7 @@ def run_hrr_top10_picks(run_date: str, team_schedule: dict,
             "edge": round(edge, 4) if edge is not None else None,
             "ev_prob": round(model_prob, 4) if odds is not None else None,
             "ev": round(_ml_ev(model_prob, odds), 4) if odds is not None else None,
-            "recent_hrr_log": log,
+            "recent_hrr_log": l10_log,
         }
 
     picks = []
@@ -3328,8 +3378,9 @@ def run_hrr_top10_picks(run_date: str, team_schedule: dict,
         -(p.get("series_ba") or 0),
         -p["last10_hrr_count"],
         -(p["last10_hrr_rate"] or 0), -(p["model_prob"] or 0)))
-    _log(emit, f"✅ Coach 1+ HRR Series BA ≥.300: {len(picks)} candidates "
-               f"(unpriced allowed; {sum(p.get('hrr_over_odds') is not None for p in picks)} priced)")
+    picks = picks[:20]
+    _log(emit, f"✅ Coach 1+ HRR Series BA ≥.300: {len(picks)} players (max 20; "
+               f"unpriced allowed; {sum(p.get('hrr_over_odds') is not None for p in picks)} priced)")
     return picks
 
 
