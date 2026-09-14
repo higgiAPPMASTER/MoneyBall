@@ -3166,15 +3166,16 @@ def _hrr_top10_vs_pitcher(batter_id, pitcher_id) -> dict:
 
 def run_hrr_top10_picks(run_date: str, team_schedule: dict,
                         source_boards: dict, emit=None) -> list:
-    """Coach-only 1+ HRR Game 1 split qualifiers.
+    """Coach-only 1+ HRR applicable-series-position split qualifiers.
 
     This is deliberately a separate confluence category, not the existing
-    standard 1.5 HRR board or alternate HRR board. A hitter must be over .300
-    in Series Game 1, over .250 in today's day/night split, over .250 career
-    against today's probable pitcher, and over .250 against today's opponent
-    in the applicable home/away split. Odds and positive edge are not gates.
+    standard 1.5 HRR board or alternate HRR board. For today's series position,
+    a hitter must be over .300 in the matching G1/G2/G3+ split, over .250 in
+    today's day/night split, over .250 career against today's probable pitcher,
+    and over .250 against today's opponent in the applicable home/away split.
+    Odds and positive edge are not gates.
     """
-    _log(emit, "▸ Coach 1+ HRR — G1 + D/N + pitcher + opponent H/A", "section")
+    _log(emit, "▸ Coach 1+ HRR — applicable series split + D/N + pitcher + opponent H/A", "section")
     season = int(run_date[:4])
     _build_player_map(season)
 
@@ -3232,10 +3233,9 @@ def run_hrr_top10_picks(run_date: str, team_schedule: dict,
                               or series_splits.get("today_pos") or 1)
         except (TypeError, ValueError):
             series_game = 1
-        if series_game != 1:
-            return None
+        series_game = 1 if series_game < 1 else (3 if series_game > 3 else series_game)
         try:
-            series_ba = float(series_splits.get("g1_ba"))
+            series_ba = float(series_splits.get(f"g{series_game}_ba"))
         except (TypeError, ValueError):
             return None
         try:
@@ -3291,10 +3291,10 @@ def run_hrr_top10_picks(run_date: str, team_schedule: dict,
             "batter_id": pid, "player_id": row.get("player_id") or pid,
             "team": team, "opp": opp, "side": side, "pick": "OVER", "line": 0.5,
             "pitcher": pitcher_name, "source_count": len(ent["sources"]),
-            "source_names": ["G1 >.300", "D/N >.250",
+            "source_names": [f"G{series_game}{'+' if series_game == 3 else ''} >.300", "D/N >.250",
                              "vs Pitcher >.250", "vs Team H/A >.250"],
             "source_boards": ent["sources"],
-            "hrr_g1_qualifier": True,
+            "hrr_series_qualifier": True,
             "series_game": series_game, "series_gno": series_game,
             "series_splits": series_splits,
             "series_ba": series_ba,
@@ -3346,7 +3346,7 @@ def run_hrr_top10_picks(run_date: str, team_schedule: dict,
         -(p.get("vs_pitcher_avg") or 0), -(p.get("vs_team_ba") or 0),
         -p["last10_hrr_count"],
         -(p["last10_hrr_rate"] or 0), -(p["model_prob"] or 0)))
-    _log(emit, f"✅ Coach 1+ HRR Game 1 Split Qualifiers: {len(picks)} candidates "
+    _log(emit, f"✅ Coach 1+ HRR Series Split Qualifiers: {len(picks)} candidates "
                f"(unpriced allowed; {sum(p.get('hrr_over_odds') is not None for p in picks)} priced)")
     return picks
 
