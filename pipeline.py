@@ -660,26 +660,29 @@ def _last10_ha_ba(player_id, side: str, n: int = 10):
 
 
 def fetch_series_splits(player_id, today_opp: str, run_date: str, side: str = "") -> dict:
-    """G1/G2/G3+ BA splits — current season only, filtered by home/away."""
+    """G1/G2/G3+ BA splits — current season, all venues.
+
+    Series position and venue are independent dimensions. Home/away filtering
+    here previously made cards for the same player disagree about G1/G2/G3+
+    batting average, because some consumers showed the all-venue series value
+    while others received only today's venue subset.
+    """
     _EMPTY = {"today_pos": 1,
                "g1_ba": None, "g1_ba_any": None, "g1_ab": 0,
                "g2_ba": None, "g2_ba_any": None, "g2_ab": 0,
                "g3_ba": None, "g3_ba_any": None, "g3_ab": 0,
-               "ha": side or ""}
+               "ha": "ALL"}
     if not player_id:
         return _EMPTY
     try:
         from mlb_stats_splits import _get_game_logs
         from datetime import date as _dt
         cy = _dt.today().year
-        want_home = (side.upper() == "HOME") if side else None
         all_games = []
         for sp in _get_game_logs(player_id, cy):
             stat = sp.get("stat", {})
             ab = int(stat.get("atBats", 0) or 0)
             if ab < 1:
-                continue
-            if want_home is not None and sp.get("isHome") != want_home:
                 continue
             raw = (sp.get("date") or "")[:10]
             try:
@@ -743,7 +746,7 @@ def fetch_series_splits(player_id, today_opp: str, run_date: str, side: str = ""
             "g2_ba_any": _ba_any(pos_stats[2][0], pos_stats[2][1]), "g2_ab": pos_stats[2][1],
             "g3_ba": _ba(pos_stats[3][0], pos_stats[3][1]),
             "g3_ba_any": _ba_any(pos_stats[3][0], pos_stats[3][1]), "g3_ab": pos_stats[3][1],
-            "ha": side or "",
+            "ha": "ALL",
         }
     except Exception:
         return _EMPTY
@@ -4549,6 +4552,12 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                 for _key, _value in _row.items():
                     if (_key not in _dst or _dst[_key] in (None, "", [], {})) and _value not in (None, "", [], {}):
                         _dst[_key] = _value
+        # This Coach category is based only on series position. Re-fetch its
+        # G1/G2/G3+ history across all venues; the other app sections keep their
+        # existing home/away-specific series splits.
+        for _bid, _row in _hrr_by_id.items():
+            _row["series_splits"] = fetch_series_splits(
+                _bid, _row.get("opp", ""), run_date, "")
         hrr_top10_list = run_hrr_top10_picks(
             run_date, team_schedule, {
                 "Eligible Batters": list(_hrr_by_id.values()),
@@ -4559,7 +4568,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     for _ht in hrr_top10_list:
         _ht["game_start"] = _game_start_for(_ht.get("team", ""))
         _ht["series_splits"] = fetch_series_splits(
-            _ht.get("batter_id"), _ht.get("opp", ""), run_date, _ht.get("side", ""))
+            _ht.get("batter_id"), _ht.get("opp", ""), run_date, "")
 
     # ── Final popup-detail contract for derived hitter boards ───────────────
     # These boards are copies of qualifying player rows and can be created
