@@ -3170,8 +3170,8 @@ def run_hrr_top10_picks(run_date: str, team_schedule: dict,
 
     This is deliberately separate from the existing standard 1.5 HRR and
     alternate-HRR boards. Its only qualification is batting over .300 in the
-    historical all-venue split matching today's series position: G1, G2, or
-    G3+. A .300 average qualifies.
+    current-season home/away split matching today's venue and series position:
+    G1, G2, or G3+. A .300 average qualifies.
     Day/night, pitcher, opponent, odds, and positive edge are not gates.
     """
     _log(emit, "▸ Coach 1+ HRR — applicable series-position BA ≥.300", "section")
@@ -3276,7 +3276,7 @@ def run_hrr_top10_picks(run_date: str, team_schedule: dict,
             "source_names": [f"G{series_game}{'+' if series_game == 3 else ''} BA ≥.300"],
             "source_boards": ent["sources"],
             "hrr_series_qualifier": True,
-            "series_scope": "ALL_ACTIVE_HITTERS_ALL_VENUES",
+            "series_scope": "TODAY_APP_HITTERS_CURRENT_SEASON_HOME_AWAY",
             "series_game": series_game, "series_gno": series_game,
             "series_splits": series_splits,
             "series_ba": series_ba,
