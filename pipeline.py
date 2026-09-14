@@ -4513,15 +4513,38 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         cold_split_list = []
         emit({"type": "log", "msg": f"⚠️ Hot/Cold Hitters skipped: {_exc}"})
 
-    # ── Coach-only 1+ HRR Game 1 split qualifiers ----------------------------
+    # ── Coach-only 1+ HRR applicable-series split qualifiers -----------------
     # Separate from both standard 1.5 HRR and the existing genuine alternate
     # HRR board. The result is consumed only by the Edge Coach preset.
     hrr_top10_list = []
     try:
         from under_picks import run_hrr_top10_picks
+        # Build this Coach preset from every generated active-batter row, not
+        # from a pre-qualified TSC/FSS board. Prefer OVER/neutral rows and merge
+        # their display stamps so one incomplete market row cannot hide a
+        # player's series or day/night data.
+        _hrr_by_id = {}
+        _hrr_lists = [top9, also_ran, runs_picks_list, tb_over_picks_list,
+                      rbi_picks_list, walks_picks_list, hrr_picks_list,
+                      hrr_special_list, batter_k_picks_list, hr_picks_list]
+        for _lst in _hrr_lists:
+            for _row in _lst:
+                if str(_row.get("pick") or "").upper() == "UNDER":
+                    continue
+                _bid = _row.get("batter_id") or _row.get("player_id")
+                if not _bid:
+                    continue
+                _bid = int(_bid)
+                if _bid not in _hrr_by_id:
+                    _hrr_by_id[_bid] = dict(_row)
+                    continue
+                _dst = _hrr_by_id[_bid]
+                for _key, _value in _row.items():
+                    if (_key not in _dst or _dst[_key] in (None, "", [], {})) and _value not in (None, "", [], {}):
+                        _dst[_key] = _value
         hrr_top10_list = run_hrr_top10_picks(
             run_date, team_schedule, {
-                "Eligible Batters": list(_tsc_by_id.values()),
+                "Eligible Batters": list(_hrr_by_id.values()),
             }, emit=emit)
     except Exception as _exc:
         emit({"type": "log", "msg": f"⚠️ 1+ HRR Top 10 skipped: {_exc}"})
@@ -4543,7 +4566,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     )
     for _popup_list, _popup_label in zip(
         _popup_detail_boards,
-        ("HRR Special", "1+ HRR Game 1 Split Qualifiers", "Triple Split", "5 Star Split",
+        ("HRR Special", "1+ HRR Series Split Qualifiers", "Triple Split", "5 Star Split",
          "Club Plays", "Hot Hitters", "Cold Batters"),
     ):
         try:
