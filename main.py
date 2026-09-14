@@ -1883,7 +1883,7 @@ _MLB_COACH_CATEGORIES = {
     "hitter_safest": "Hitter · Safest Bets",
     "hitter_edge": "Hitter · Coach Edge",
     "hitter_alt_hrr": "Hitter · Best Alt-Line HRR 1+",
-    "hitter_hrr_top10": "Hitter · 1+ HRR Hot Matchup History",
+    "hitter_hrr_top10": "Hitter · 1+ HRR Game 1 Split Qualifiers",
     "hitter_hits": "Hitter · To Record a Hit",
     "hitter_tb": "Hitter · Total Bases",
     "hitter_production": "Hitter · Production",
@@ -2108,6 +2108,7 @@ def _mlb_coach_all_props(result):
             "coach_edge": (p.get("edge") if p.get("edge") is not None else -1.0),
             "projection": None,
             "is_pitcher": False, "alternate": False,
+            "coach_preset_only": "hitter_hrr_top10",
             "source_count": p.get("source_count"),
             "source_names": p.get("source_names") or [],
             "consensus_rank": consensus_rank,
@@ -2117,6 +2118,7 @@ def _mlb_coach_all_props(result):
 def _mlb_coach_select_categories(result):
     props = _mlb_coach_all_props(result)
     hitters = [p for p in props if not p["is_pitcher"]]
+    regular_hitters = [p for p in hitters if not p.get("coach_preset_only")]
     pitchers = [p for p in props if p["is_pitcher"]]
 
     def choose(pool, *, market=None, markets=None, side=None, alternate=None,
@@ -2141,20 +2143,20 @@ def _mlb_coach_select_categories(result):
 
     production = {"Runs", "RBIs", "H+R+RBI", "Home Runs", "Batter Walks"}
     return {
-        "hitter_safest": choose(hitters, safest=True),
-        "hitter_edge": choose(hitters),
-        "hitter_alt_hrr": choose(hitters, market="H+R+RBI", alternate=True),
+        "hitter_safest": choose(regular_hitters, safest=True),
+        "hitter_edge": choose(regular_hitters),
+        "hitter_alt_hrr": choose(regular_hitters, market="H+R+RBI", alternate=True),
         "hitter_hrr_top10": sorted(
             [p for p in hitters
              if p.get("source_count") and p.get("market") == "H+R+RBI"
              and p.get("alternate") is False],
-            key=lambda p: p.get("consensus_rank", 999))[:10],
-        "hitter_hits": choose(hitters, market="Hits"),
-        "hitter_tb": choose(hitters, market="Total Bases"),
-        "hitter_production": choose(hitters, markets=production),
-        "hitter_batter_k": choose(hitters, market="Batter Strikeouts"),
-        "hitter_unders": choose(hitters, side="UNDER"),
-        "hitter_top3": choose(hitters, limit=3),
+            key=lambda p: p.get("consensus_rank", 999)),
+        "hitter_hits": choose(regular_hitters, market="Hits"),
+        "hitter_tb": choose(regular_hitters, market="Total Bases"),
+        "hitter_production": choose(regular_hitters, markets=production),
+        "hitter_batter_k": choose(regular_hitters, market="Batter Strikeouts"),
+        "hitter_unders": choose(regular_hitters, side="UNDER"),
+        "hitter_top3": choose(regular_hitters, limit=3),
         "pitcher_safest": choose(pitchers, safest=True),
         "pitcher_edge": choose(pitchers),
         "pitcher_alt_k": choose(
@@ -4415,7 +4417,6 @@ _HTML = """
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="hitter_safest" onchange="_coachChanged()"> Safest hitter bets</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="hitter_edge" onchange="_coachChanged()"> Hitter Coach Edge</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="hitter_alt_hrr" onchange="_coachChanged()"> Alt-Line HRR 1+ · Top 10</label>
-              <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="hitter_hrr_top10" onchange="_coachChanged()"> 1+ HRR · Hot Matchup History</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="hitter_hits" onchange="_coachChanged()"> To record a hit</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="hitter_tb" onchange="_coachChanged()"> Total Bases</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="hitter_production" onchange="_coachChanged()"> Hitter production</label>
@@ -4481,7 +4482,7 @@ _HTML = """
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the safest hitter bets?')">Safest bets</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Hitter Coach Edge plays?')">Coach Edge</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Best Alt-Line Hitter H+R+RBI 1+ Edge Plays? — Top 10')" style="border-color:#f59e0b;color:#fde68a">Best Alt-Line HRR 1+ · Top 10</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the 1+ HRR hottest hitters with good pitcher and opponent history?')" style="border-color:#fb923c;color:#fed7aa">1+ HRR · Hot Matchup History</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('Show the 1+ HRR Game 1 split qualifiers')" style="border-color:#fb923c;color:#fed7aa">1+ HRR · G1 Split Qualifiers</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best plays to record a hit?')">To record a hit</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Total Bases plays?')">Total Bases</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best hitter production props?')">Production</button>
@@ -4558,12 +4559,6 @@ _HTML = """
           <div style="font-size:.72rem;color:#94a3b8;margin:-4px 0 8px;line-height:1.6">All 4 must clear: BA &ge; .275 vs pitcher &middot; 65%+ vs team (H/A) &middot; 65%+ last-10 H/A &middot; BA &ge; .275 in today&#39;s day/night split</div>
           <div id="hrr-special-body" class="mlb-picks-grid"></div>
           <div id="hrr-special-more"></div>
-        </div>
-        <div class="card p-6 hidden" id="hrr-top10-card" style="border-color:rgba(251,146,60,.5)">
-          <div class="section-hdr" style="color:#fb923c">🔥 1+ HRR · Hot Matchup History</div>
-          <div style="font-size:.72rem;color:#94a3b8;margin:-4px 0 8px;line-height:1.6">Hot Hitters only. Requires 1+ HRR in at least 60% of two or more games against today's opponent, plus at least 3 career AB, a .250+ average and 2+ combined H+R+RBI against today's probable pitcher. Ranked by Hot Hitters strength first. Positive edge is not a gate; genuine HRR Over 0.5 prices are optional.</div>
-          <div id="hrr-top10-body" class="mlb-picks-grid"></div>
-          <div id="hrr-top10-more"></div>
         </div>
         <div class="card p-6 hidden" id="hot-split-card" style="border-color:rgba(251,146,60,.4)">
           <div class="section-hdr" style="color:#fb923c">🔥 Hot Hitters Split</div>
@@ -4979,7 +4974,7 @@ function _mlbCoachAllProps() {
     });
   });
 
-  // 1+ HRR Hot Matchup History is not a priced-only board. Keep unpriced
+  // Coach-only 1+ HRR G1 split qualifiers are not price-gated. Keep unpriced
   // qualified candidates available to the dedicated Coach preset.
   (res.hrr_top10_picks||[]).forEach(function(p, consensusIndex) {
     var player=p.full_name||p.name||'';
@@ -4991,9 +4986,10 @@ function _mlbCoachAllProps() {
       side:'OVER', line:.5, odds:p.hrr_over_odds==null?null:Number(p.hrr_over_odds),
       appProb:model, implied:p.implied_prob==null?null:Number(p.implied_prob)*100,
       edge:p.edge==null?null:Number(p.edge)*100, isPitcher:false, alternate:false,
-      blurb:'Source boards ('+(p.source_count||0)+'): '+(p.source_names||[]).join(' · '),
+       blurb:'Passed: '+(p.source_names||[]).join(' · '),
       proj:null, book:p.book||'', source_count:p.source_count||0,
        consensus_rank:consensusIndex+1,
+       coachPresetOnly:'hitter_hrr_top10',
       src:p
     });
   });
@@ -5007,7 +5003,7 @@ function _mlbCoachAllProps() {
 // The parlay builder and the visible Coach answer therefore cannot drift apart.
 var _MLB_COACH_PRESET_LABELS = {
   hitter_safest:'Safest hitter bets', hitter_edge:'Hitter Coach Edge',
-  hitter_alt_hrr:'Alt-Line HRR 1+ · Top 10', hitter_hrr_top10:'1+ HRR · Hot Matchup History', hitter_hits:'To record a hit',
+  hitter_alt_hrr:'Alt-Line HRR 1+ · Top 10', hitter_hrr_top10:'1+ HRR · G1 Split Qualifiers', hitter_hits:'To record a hit',
   hitter_tb:'Total Bases', hitter_production:'Hitter production',
   hitter_batter_k:'Batter Strikeouts', hitter_unders:'Hitter unders',
   hitter_top3:'Top 3 hitter plays',
@@ -5026,7 +5022,10 @@ var _MLB_COACH_PRESET_ORDER = [
 ];
 function _mlbCoachSelectRows(props, preset) {
   var rows=(props||[]).slice(), isPit=String(preset||'').indexOf('pitcher_')===0;
-  rows=rows.filter(function(p){ return !!p.isPitcher===isPit; });
+   rows=rows.filter(function(p){
+     return !!p.isPitcher===isPit &&
+       (!p.coachPresetOnly || p.coachPresetOnly===preset);
+   });
   var out=rows.slice(), positive=function(p){ return p.edge>0; };
   function byEdge(a,b){ return b.edge-a.edge; }
   function bySafe(a,b){ return b.appProb-a.appProb || b.edge-a.edge; }
@@ -5040,7 +5039,7 @@ function _mlbCoachSelectRows(props, preset) {
      case 'hitter_hrr_top10':
        out=rows.filter(function(p){return p.market==='H+R+RBI'&&p.source_count;})
          .sort(function(a,b){return (a.consensus_rank||999)-(b.consensus_rank||999);})
-         .slice(0,10); break;
+         ; break;
     case 'pitcher_alt_k':
       out=rows.filter(function(p){return p.alternate;}).sort(byEdge).slice(0,10); break;
     case 'hitter_hits':
@@ -5076,7 +5075,7 @@ function _mlbCoachPresetForQuestion(q, isHitterQ, isPitcherQ) {
   var p=/pitcher|pitching|hits allowed|outs|earned runs|walks allowed/.test(q) ||
         (isPitcherQ&&!isHitterQ);
   var h=!p && (isHitterQ||/hitter|batter|record a hit|total bases|production/.test(q));
-  if(/1\+\s*hrr|hrr top 10|source.board confluence|source confluence|hot matchup history/.test(q))
+  if(/1\+\s*hrr|hrr top 10|source.board confluence|source confluence|hot matchup history|g1 split qualifier/.test(q))
     return 'hitter_hrr_top10';
   if(q.indexOf('alt-line')>=0||q.indexOf('alternate')>=0) return h?'hitter_alt_hrr':(p?'pitcher_alt_k':'');
   if(q.indexOf('safest')>=0) return h?'hitter_safest':(p?'pitcher_safest':'');
@@ -5292,7 +5291,7 @@ function _mlbCoachRender(question, rows, totalPriced, isSafest, gameLabel, allow
 
   var isHrrConsensus=rows.some(function(p){return !!p.source_count;});
   var summaryText = isHrrConsensus
-    ?'This separate 1+ HRR list starts with Hot Hitters only. Every player also cleared at least 60% 1+ HRR history over two or more games against today\\'s opponent, plus at least 3 career AB, a .250 average and 2 combined H+R+RBI against today\\'s probable pitcher. Genuine Over 0.5 HRR prices are shown when available; unpriced players remain eligible and display N/A.'
+    ?'This Coach-only 1+ HRR list requires all four batting-average gates: Series Game 1 over .300, today\\'s day/night split over .250, career against today\\'s probable pitcher over .250, and against today\\'s opponent in the applicable home/away split over .250. Genuine Over 0.5 HRR prices are shown when available; unpriced qualifiers remain eligible.'
     : allowAnyEdge
     ? 'I used up to five qualified normal-board picks for this pitcher market and kept their calculated Coach Edge visible, including negative values.'
     : isSafest
@@ -6173,7 +6172,7 @@ function showResults(result) {
       batter_k_picks: (result.batter_k_picks||[]),
       hrr_picks:   (result.hrr_picks||[]).filter(function(p){return p.pick==='UNDER'?_rok(p.hrr_under_odds):_rok(p.hrr_over_odds);}),
       hrr_special_picks: (result.hrr_special_picks||[]).filter(function(p){return _rok(p.hrr_over_odds);}),
-      // 1+ HRR Hot Matchup History deliberately keeps unpriced candidates and does not
+      // Coach-only 1+ HRR qualifiers deliberately keep unpriced candidates and do not
       // inherit the +EV/odds gates used by priced market boards.
       hrr_top10_picks: (result.hrr_top10_picks||[]),
       hot_split_picks:    (result.hot_split_picks||[]).filter(function(p){return _rok(p.hit_odds);}),
@@ -6350,8 +6349,6 @@ function showResults(result) {
     const hrrSpecial = (view.hrr_special_picks||[]).filter(function(p){ return _oddsOk(p.hrr_over_odds); });
     _fillCard('hrr-special-card','hrr-special-body','hrr-special-more',hrrSpecial,function(p,r){return _hrrSpCard(p,r,'hrsp');},'HRR Special','#a78bfa');
      window.__HRRT_REG__={};
-     const hrrTop10 = (view.hrr_top10_picks||[]);
-     _fillCard('hrr-top10-card','hrr-top10-body','hrr-top10-more',hrrTop10,function(p,r){return _hrrTop10Card(p,r,'hrrt');},'1+ HRR Hot Matchup History','#fb923c');
     window.__TSCH_REG__={};
     const hotSplit = (view.hot_split_picks||[]).filter(function(p){ return _oddsOk(p.hit_odds); });
     _fillCard('hot-split-card','hot-split-body','hot-split-more',hotSplit,function(p,r){return _hotSplitCard(p,r,'tsch');},'Hot Hitters Split','#fb923c');
@@ -10104,6 +10101,20 @@ function _hrrForm(key){
   var line=(p.line!=null&&isFinite(Number(p.line)))?Number(p.line):1.5;
   var threshold=Math.floor(line)+1;
   var log=p.recent_hrr_log||[];
+  function _qualBa(v){
+    var n=Number(v);
+    return isFinite(n)?('.'+String(Math.round(n*1000)).padStart(3,'0')):'N/A';
+  }
+  var qualifierHtml=p.hrr_g1_qualifier
+    ?'<div style="margin-bottom:14px;padding:12px;background:#1c1208;border:1px solid rgba(251,146,60,.35);border-radius:10px">'
+      +'<div style="color:#fb923c;font-size:.72rem;font-weight:900;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Coach 1+ HRR qualification stats</div>'
+      +'<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px">'
+        +'<div style="background:#0f172a;border-radius:8px;padding:9px"><div style="font-size:.62rem;color:#64748b">SERIES GAME 1 BA</div><b style="color:#fff">'+_qualBa(p.series_ba)+'</b></div>'
+        +'<div style="background:#0f172a;border-radius:8px;padding:9px"><div style="font-size:.62rem;color:#64748b">'+_esc((p.dn_label||'DAY/NIGHT')+' BA')+'</div><b style="color:#fff">'+_qualBa(p.dn_ba)+'</b></div>'
+        +'<div style="background:#0f172a;border-radius:8px;padding:9px"><div style="font-size:.62rem;color:#64748b">VS TODAY\\'S PITCHER</div><b style="color:#fff">'+_esc((p.s1&&p.s1.display)||p.s1_disp||'N/A')+'</b></div>'
+        +'<div style="background:#0f172a;border-radius:8px;padding:9px"><div style="font-size:.62rem;color:#64748b">VS OPPONENT · '+_esc(p.side||'H/A')+'</div><b style="color:#fff">'+_esc(p.vs_team_ba_display||'N/A')+'</b></div>'
+      +'</div></div>'
+    :'';
   var rows=log.length?log.map(function(g){
     var good=isUnder?(g.hrr<threshold):(g.hrr>=threshold);
     var clr=good?'#fb923c':'#94a3b8';
@@ -10123,6 +10134,7 @@ function _hrrForm(key){
       +'<button onclick="document.getElementById(&#39;hrr-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem">\u2715</button>'
     +'</div>'
     +'<div style="padding:16px 18px">'
+    +qualifierHtml
     +_twoBox(p,'HRR Rate','HRR Odds',(isUnder?p.hrr_under_odds:p.hrr_over_odds),!isUnder,(isUnder?('H+R+RBI < '+threshold+' = UNDER'):('H+R+RBI \u2265 '+threshold+' = OVER'))+' \u00b7 Last '+log.length+' Games',rows)
     +_oppPitBlock(p,'pitcher_hits_allowed','Hits Allowed','H')
     +_matrixWriteup(p,(isUnder?'U':'O'),threshold,false,'HRR (hits+runs+RBI)',(isUnder?'Under ':'Over ')+line+' H+R+RBI')
@@ -10259,7 +10271,6 @@ function _renderCatBar(view){
     {icon:'📈',label:'TB Over',count:(view.tb_over_picks||[]).length,target:'tb-over-picks-card',tone:'over'},
     {icon:'⬇️',label:'TB Under',count:(view.tb_picks||[]).length,target:'tb-picks-card',tone:'under'},
     {icon:'⭐',label:'HRR SP',count:(view.hrr_special_picks||[]).length,target:'hrr-special-card'},
-     {icon:'🔥',label:'1+ HRR Hot Matchup History',count:(view.hrr_top10_picks||[]).length,target:'hrr-top10-card'},
     {icon:'🌡️',label:'Hot Hitters',count:(view.hot_split_picks||[]).length,target:'hot-split-card'},
     {icon:'❄️',label:'Cold Batters',count:(view.cold_split_picks||[]).length,target:'cold-split-card',overflow:true},
     {icon:'💯',label:'80-100% Locks',count:(view.ninety_pct_picks||[]).length,target:'ninety-pct-card',overflow:true},
