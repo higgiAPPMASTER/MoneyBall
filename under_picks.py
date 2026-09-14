@@ -3199,6 +3199,86 @@ def _hrr_top10_vs_pitcher(batter_id, pitcher_id) -> dict:
     return out
 
 
+def get_hrr_coach_context(run_date: str, player_id, side: str,
+                          opp_name: str) -> dict:
+    """Build fresh popup-only HRR context for cached slates missing new fields."""
+    try:
+        season = int(str(run_date)[:4])
+        player_id = int(player_id)
+    except (TypeError, ValueError):
+        return {"hrr_context_loaded": True, "hrr_context_error": "Invalid player/date"}
+    side = str(side or "").upper()
+    if side not in ("HOME", "AWAY"):
+        return {"hrr_context_loaded": True, "hrr_context_error": "Missing home/away side"}
+
+    try:
+        l10_log = _hrr_top20_context_log(
+            player_id, side, season, max_games=10)
+    except Exception:
+        l10_log = []
+    try:
+        team_log = _hrr_top20_context_log(
+            player_id, side, season, opp_name=opp_name, max_games=10)
+    except Exception:
+        team_log = []
+    l10_hrr = sum(1 for game in l10_log if game["hrr"] >= 1)
+    team_hrr = sum(1 for game in team_log if game["hrr"] >= 1)
+    team_hits = sum(1 for game in team_log if game["h"] >= 1)
+
+    pitcher_name, pitcher_id = "TBD", None
+    try:
+        pitchers = _get_probable_pitchers(run_date)
+    except Exception:
+        pitchers = {}
+    for pitcher_team, pitcher_info in pitchers.items():
+        if _team_match(pitcher_team, opp_name):
+            pitcher_name = pitcher_info.get("name") or "TBD"
+            pitcher_id = pitcher_info.get("id")
+            break
+    try:
+        pitcher_history = _hrr_top10_vs_pitcher(player_id, pitcher_id)
+    except Exception:
+        pitcher_history = {
+            "display": "N/A", "sample": "N/A", "avg": None, "ab": 0,
+            "hrr_total": None, "hits": 0, "runs": 0, "rbi": 0,
+        }
+
+    return {
+        "hrr_context_loaded": True,
+        "last10_hrr_count": l10_hrr,
+        "last10_hrr_games": len(l10_log),
+        "last10_hrr_pct": (round(l10_hrr / len(l10_log) * 100)
+                           if l10_log else None),
+        "last10_hrr_display": (
+            f"{l10_hrr}/{len(l10_log)}" if l10_log else "N/A"),
+        "last10_hrr_log": l10_log,
+        "recent_hrr_log": l10_log,
+        "vs_team_hrr_count": team_hrr,
+        "vs_team_hrr_games": len(team_log),
+        "vs_team_hrr_pct": (round(team_hrr / len(team_log) * 100)
+                            if team_log else None),
+        "vs_team_hrr_display": (
+            f"{team_hrr}/{len(team_log)}" if team_log else "N/A"),
+        "vs_team_hrr_log": team_log,
+        "vs_team_hit_count": team_hits,
+        "vs_team_hit_games": len(team_log),
+        "vs_team_hit_pct": (round(team_hits / len(team_log) * 100)
+                            if team_log else None),
+        "vs_team_hit_display": (
+            f"{team_hits}/{len(team_log)}" if team_log else "N/A"),
+        "pitcher": pitcher_name,
+        "pitcher_id": pitcher_id,
+        "vs_pitcher_hrr_display": pitcher_history.get("display", "N/A"),
+        "vs_pitcher_hrr_sample": pitcher_history.get("sample", "N/A"),
+        "vs_pitcher_avg": pitcher_history.get("avg"),
+        "vs_pitcher_ab": pitcher_history.get("ab", 0),
+        "vs_pitcher_hrr_total": pitcher_history.get("hrr_total"),
+        "vs_pitcher_hits": pitcher_history.get("hits", 0),
+        "vs_pitcher_runs": pitcher_history.get("runs", 0),
+        "vs_pitcher_rbi": pitcher_history.get("rbi", 0),
+    }
+
+
 def run_hrr_top10_picks(run_date: str, team_schedule: dict,
                         source_boards: dict, emit=None) -> list:
     """Coach-only 1+ HRR applicable-series-position split qualifiers.
@@ -3337,6 +3417,7 @@ def run_hrr_top10_picks(run_date: str, team_schedule: dict,
             ],
             "source_boards": ent["sources"],
             "hrr_series_qualifier": True,
+            "hrr_context_loaded": True,
             "series_scope": "TODAY_APP_HITTERS_CURRENT_SEASON_HOME_AWAY",
             "series_game": series_game, "series_gno": series_game,
             "series_splits": series_splits,
