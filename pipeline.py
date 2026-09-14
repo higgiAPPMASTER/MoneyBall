@@ -660,26 +660,26 @@ def _last10_ha_ba(player_id, side: str, n: int = 10):
 
 
 def fetch_series_splits(player_id, today_opp: str, run_date: str, side: str = "") -> dict:
-    """G1/G2/G3+ BA splits — current season, all venues.
-
-    Series position and venue are independent dimensions. Home/away filtering
-    here previously made cards for the same player disagree about G1/G2/G3+
-    batting average, because some consumers showed the all-venue series value
-    while others received only today's venue subset.
-    """
+    """Current-season G1/G2/G3+ BA splits at today's home/away venue."""
     _EMPTY = {"today_pos": 1,
                "g1_ba": None, "g1_ba_any": None, "g1_ab": 0,
                "g2_ba": None, "g2_ba_any": None, "g2_ab": 0,
                "g3_ba": None, "g3_ba_any": None, "g3_ab": 0,
-               "ha": "ALL"}
+               "ha": side.upper() if side else ""}
     if not player_id:
         return _EMPTY
     try:
         from mlb_stats_splits import _get_game_logs
         from datetime import date as _dt
-        cy = _dt.today().year
+        try:
+            cy = int(str(run_date)[:4])
+        except (TypeError, ValueError):
+            cy = _dt.today().year
+        want_home = (side.upper() == "HOME") if side else None
         all_games = []
         for sp in _get_game_logs(player_id, cy):
+            if want_home is not None and bool(sp.get("isHome")) != want_home:
+                continue
             stat = sp.get("stat", {})
             ab = int(stat.get("atBats", 0) or 0)
             if ab < 1:
@@ -746,7 +746,7 @@ def fetch_series_splits(player_id, today_opp: str, run_date: str, side: str = ""
             "g2_ba_any": _ba_any(pos_stats[2][0], pos_stats[2][1]), "g2_ab": pos_stats[2][1],
             "g3_ba": _ba(pos_stats[3][0], pos_stats[3][1]),
             "g3_ba_any": _ba_any(pos_stats[3][0], pos_stats[3][1]), "g3_ab": pos_stats[3][1],
-            "ha": "ALL",
+            "ha": side.upper() if side else "",
         }
     except Exception:
         return _EMPTY
@@ -4528,57 +4528,23 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     # HRR board. The result is consumed only by the Edge Coach preset.
     hrr_top10_list = []
     try:
-        from under_picks import (
-            run_hrr_top10_picks, _under_roster_candidates,
-            _team_match as _hrr_team_match,
-        )
-        # Start from every active non-pitcher on today's MLB rosters. The old
-        # generated-row union was still bounded by the upstream top-30 hitter
-        # pipeline, which silently removed valid .300+ series qualifiers.
-        _hrr_active_rows = _under_roster_candidates(run_date, team_schedule, emit)
-        from lineup_check import build_lineup_map, get_lineup_status
-        (_hrr_lu_ids, _hrr_lu_names, _hrr_lu_confirmed,
-         _hrr_rw_lineups, _hrr_rw_teams) = build_lineup_map(run_date)
-        _hrr_starter_rows = []
-        for _row in _hrr_active_rows:
-            _team = _row.get("roster_team", "")
-            _home = _row.get("home_team", "")
-            _away = _row.get("away_team", "")
-            _row["team"] = _team
-            if _hrr_team_match(_team, _home):
-                _row["opp"], _row["side"] = _away, "HOME"
-            elif _hrr_team_match(_team, _away):
-                _row["opp"], _row["side"] = _home, "AWAY"
-            _status = get_lineup_status(
-                _row.get("batter_id"), _row.get("name", ""), _team,
-                _hrr_lu_ids, _hrr_lu_names, _hrr_lu_confirmed,
-                _hrr_rw_lineups, _hrr_rw_teams)
-            _row["lineup_status"] = _status
-            if _status == "IN_LINEUP":
-                _hrr_starter_rows.append(_row)
-        emit({"type": "log",
-              "msg": f"  Coach 1+ HRR starters: {len(_hrr_starter_rows)}/"
-                     f"{len(_hrr_active_rows)} active hitters confirmed/projected IN"})
-        _hrr_starter_ids = {
-            int(_s.get("batter_id")) for _s in _hrr_starter_rows
-            if _s.get("batter_id")
-        }
-
-        # Start from confirmed/projected starters only. Merge generated rows
-        # afterward solely for optional display context on those same IDs.
+        from under_picks import run_hrr_top10_picks
+        # The candidate universe is exactly the union of today's generated
+        # hitter-category outputs. It is neither the full active MLB roster nor
+        # a separately lineup-gated subset.
         _hrr_by_id = {}
-        _hrr_lists = [_hrr_starter_rows, lineup_qualified, top9, also_ran, under_picks_list,
+        _hrr_lists = [top9, also_ran, under_picks_list,
                       runs_picks_list, tb_picks_list, tb_over_picks_list,
                       rbi_picks_list, walks_picks_list, hrr_picks_list,
-                      hrr_special_list, batter_k_picks_list, hr_picks_list]
+                      hrr_special_list, batter_k_picks_list, hr_picks_list,
+                      triple_split_list, five_star_split_list, club_plays_list,
+                      hot_split_list, cold_split_list]
         for _lst in _hrr_lists:
             for _row in _lst:
                 _bid = _row.get("batter_id") or _row.get("player_id")
                 if not _bid:
                     continue
                 _bid = int(_bid)
-                if _bid not in _hrr_starter_ids:
-                    continue
                 if _bid not in _hrr_by_id:
                     _hrr_by_id[_bid] = dict(_row)
                     continue
@@ -4586,12 +4552,12 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                 for _key, _value in _row.items():
                     if (_key not in _dst or _dst[_key] in (None, "", [], {})) and _value not in (None, "", [], {}):
                         _dst[_key] = _value
-        # This Coach category is based only on series position. Fetch the
-        # all-venue G1/G2/G3+ history concurrently for the full active roster.
+        # Fetch this season's G1/G2/G3+ history at today's home/away venue
+        # concurrently for the generated hitter-category union.
         def _hrr_series_stamp(_item):
             _bid, _row = _item
             return _bid, fetch_series_splits(
-                _bid, _row.get("opp", ""), run_date, "")
+                _bid, _row.get("opp", ""), run_date, _row.get("side", ""))
         with _TPEx(max_workers=8) as _hrr_ex:
             for _bid, _splits in _hrr_ex.map(
                     _hrr_series_stamp, list(_hrr_by_id.items())):
@@ -4606,7 +4572,8 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     for _ht in hrr_top10_list:
         _ht["game_start"] = _game_start_for(_ht.get("team", ""))
         _ht["series_splits"] = fetch_series_splits(
-            _ht.get("batter_id"), _ht.get("opp", ""), run_date, "")
+            _ht.get("batter_id"), _ht.get("opp", ""), run_date,
+            _ht.get("side", ""))
 
     # ── Final popup-detail contract for derived hitter boards ───────────────
     # These boards are copies of qualifying player rows and can be created
