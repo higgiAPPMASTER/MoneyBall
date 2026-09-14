@@ -4981,7 +4981,7 @@ function _mlbCoachAllProps() {
 
   // 1+ HRR Top 10 is a confluence board, not a priced-only board. Keep
   // unpriced candidates available to the dedicated Coach preset.
-  (res.hrr_top10_picks||[]).forEach(function(p) {
+  (res.hrr_top10_picks||[]).forEach(function(p, consensusIndex) {
     var player=p.full_name||p.name||'';
     if(!player) return;
     var model=p.model_prob!=null?Number(p.model_prob)*100:null;
@@ -4993,6 +4993,7 @@ function _mlbCoachAllProps() {
       edge:p.edge==null?null:Number(p.edge)*100, isPitcher:false, alternate:false,
       blurb:'Source boards ('+(p.source_count||0)+'): '+(p.source_names||[]).join(' · '),
       proj:null, book:p.book||'', source_count:p.source_count||0,
+       consensus_rank:consensusIndex+1,
       src:p
     });
   });
@@ -5037,10 +5038,9 @@ function _mlbCoachSelectRows(props, preset) {
     case 'hitter_alt_hrr':
       out=rows.filter(function(p){return p.alternate&&p.market==='H+R+RBI'&&p.edge>0;}).sort(byEdge).slice(0,10); break;
      case 'hitter_hrr_top10':
-       out=rows.filter(function(p){return p.market==='H+R+RBI'&&p.source_count;}).sort(function(a,b){
-         return (b.source_count||0)-(a.source_count||0) ||
-           (b.model_probability||0)-(a.model_probability||0);
-       }).slice(0,10); break;
+       out=rows.filter(function(p){return p.market==='H+R+RBI'&&p.source_count;})
+         .sort(function(a,b){return (a.consensus_rank||999)-(b.consensus_rank||999);})
+         .slice(0,10); break;
     case 'pitcher_alt_k':
       out=rows.filter(function(p){return p.alternate;}).sort(byEdge).slice(0,10); break;
     case 'hitter_hits':
@@ -5277,14 +5277,23 @@ function _mlbCoachRender(question, rows, totalPriced, isSafest, gameLabel, allow
 
   var table = rows.map(function(p, i) {
     var clickKey=_nameReg(p.src);
+    var impliedText=p.implied==null||!isFinite(Number(p.implied))
+      ?'<span style="color:#64748b">N/A</span>'
+      :Number(p.implied).toFixed(1)+'%';
+    var edgeText=p.edge==null||!isFinite(Number(p.edge))
+      ?'<span style="color:#64748b">N/A</span>'
+      :_mlbCoachSigned(p.edge)+' pts';
     return '<tr'+(clickKey?' onclick="_playerForm(&#39;'+clickKey+'&#39;)" style="cursor:pointer" title="Click to open this player card"':'')+'><td>'+(i+1)+'</td><td><b style="color:#fff;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px">'+_mlbEsc(p.player)+'</b><br><span style="color:#64748b">'+_mlbEsc(p.team)+' vs '+_mlbEsc(p.opp)+'</span></td>'
       +'<td>'+_mlbEsc(p.market)+'<br><b style="color:'+(p.side==='OVER'?'#4ade80':'#f87171')+'">'+p.side+' '+_mlbEsc(p.line)+'</b>'+(p.proj!=null?' <span style="color:#94a3b8;font-size:.6rem">proj '+_mlbEsc(p.proj.toFixed(2))+'</span>':'')+'</td>'
       +'<td>'+_mlbCoachOdds(p.odds)+'<br><span style="color:#64748b;font-size:.6rem">'+_mlbEsc(p.book)+'</span></td>'
-      +'<td>'+p.appProb.toFixed(1)+'%</td><td>'+p.implied.toFixed(1)+'%</td>'
-      +'<td style="color:'+(p.edge>=0?'#4ade80':'#f87171')+'!important;font-weight:700">'+_mlbCoachSigned(p.edge)+' pts</td></tr>';
+      +'<td>'+Number(p.appProb||0).toFixed(1)+'%</td><td>'+impliedText+'</td>'
+      +'<td style="color:'+(p.edge==null?'#64748b':p.edge>=0?'#4ade80':'#f87171')+'!important;font-weight:700">'+edgeText+'</td></tr>';
   }).join('');
 
-  var summaryText = allowAnyEdge
+  var isHrrConsensus=rows.some(function(p){return !!p.source_count;});
+  var summaryText = isHrrConsensus
+    ?'This separate 1+ HRR list is ranked by agreement across Record a Hit, Total Bases Over, Hot Hitters, Triple Split Club, and 5-Star, followed by true last-10 and matchup history. Genuine Over 0.5 HRR prices are shown when available; unpriced players remain eligible and display N/A rather than being removed.'
+    : allowAnyEdge
     ? 'I used up to five qualified normal-board picks for this pitcher market and kept their calculated Coach Edge visible, including negative values.'
     : isSafest
     ? 'I checked only the exact sides that qualified for the loaded board, removed every zero or negative Coach Edge play, and ranked the remaining plays by app probability.'
