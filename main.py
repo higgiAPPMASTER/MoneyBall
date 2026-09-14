@@ -1883,7 +1883,7 @@ _MLB_COACH_CATEGORIES = {
     "hitter_safest": "Hitter · Safest Bets",
     "hitter_edge": "Hitter · Coach Edge",
     "hitter_alt_hrr": "Hitter · Best Alt-Line HRR 1+",
-    "hitter_hrr_top10": "Hitter · 1+ HRR Game 1 Split Qualifiers",
+    "hitter_hrr_top10": "Hitter · 1+ HRR .300 Series BA",
     "hitter_hits": "Hitter · To Record a Hit",
     "hitter_tb": "Hitter · Total Bases",
     "hitter_production": "Hitter · Production",
@@ -2086,8 +2086,8 @@ def _mlb_coach_all_props(result):
             odds=lambda p, s: p.get("under_odds") if s == "UNDER"
             else p.get("over_odds"),
             projection=lambda p: p.get("proj", p.get("blended")))
-    # This Hot Hitters matchup-history category intentionally allows unpriced
-    # candidates and is not subject to the positive-edge gate.
+    # This series-position BA category intentionally allows unpriced candidates
+    # and is not subject to any day/night, matchup, odds, or edge gate.
     for consensus_rank, p in enumerate(result.get("hrr_top10_picks") or [], 1):
         prob = p.get("model_prob")
         if prob is None:
@@ -4482,7 +4482,7 @@ _HTML = """
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the safest hitter bets?')">Safest bets</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Hitter Coach Edge plays?')">Coach Edge</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Best Alt-Line Hitter H+R+RBI 1+ Edge Plays? — Top 10')" style="border-color:#f59e0b;color:#fde68a">Best Alt-Line HRR 1+ · Top 10</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('Show the 1+ HRR applicable series split qualifiers')" style="border-color:#fb923c;color:#fed7aa">1+ HRR · Series Split Qualifiers</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('Show every hitter batting over .300 in today\\'s series position')" style="border-color:#fb923c;color:#fed7aa">1+ HRR · .300 Series BA</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best plays to record a hit?')">To record a hit</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Total Bases plays?')">Total Bases</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best hitter production props?')">Production</button>
@@ -5003,7 +5003,7 @@ function _mlbCoachAllProps() {
 // The parlay builder and the visible Coach answer therefore cannot drift apart.
 var _MLB_COACH_PRESET_LABELS = {
   hitter_safest:'Safest hitter bets', hitter_edge:'Hitter Coach Edge',
-  hitter_alt_hrr:'Alt-Line HRR 1+ · Top 10', hitter_hrr_top10:'1+ HRR · Series Split Qualifiers', hitter_hits:'To record a hit',
+  hitter_alt_hrr:'Alt-Line HRR 1+ · Top 10', hitter_hrr_top10:'1+ HRR · .300 Series BA', hitter_hits:'To record a hit',
   hitter_tb:'Total Bases', hitter_production:'Hitter production',
   hitter_batter_k:'Batter Strikeouts', hitter_unders:'Hitter unders',
   hitter_top3:'Top 3 hitter plays',
@@ -5075,7 +5075,7 @@ function _mlbCoachPresetForQuestion(q, isHitterQ, isPitcherQ) {
   var p=/pitcher|pitching|hits allowed|outs|earned runs|walks allowed/.test(q) ||
         (isPitcherQ&&!isHitterQ);
   var h=!p && (isHitterQ||/hitter|batter|record a hit|total bases|production/.test(q));
-  if(/1\+\s*hrr|hrr top 10|source.board confluence|source confluence|hot matchup history|g1 split qualifier/.test(q))
+  if(/1\+\s*hrr|hrr top 10|series position|series ba|series split qualifier/.test(q))
     return 'hitter_hrr_top10';
   if(q.indexOf('alt-line')>=0||q.indexOf('alternate')>=0) return h?'hitter_alt_hrr':(p?'pitcher_alt_k':'');
   if(q.indexOf('safest')>=0) return h?'hitter_safest':(p?'pitcher_safest':'');
@@ -5185,9 +5185,10 @@ function askMlbCoach() {
   if(coachPreset){
     var coachRows=_mlbCoachSelectRows(pool,coachPreset);
     var coachAnyEdge=/^(pitcher_alt_k|pitcher_k|pitcher_hits_allowed|pitcher_outs|pitcher_earned_runs|pitcher_walks)$/.test(coachPreset);
+    var coachSeriesOnly=coachPreset==='hitter_hrr_top10';
     _mlbCoachRender(question,coachRows,props.length,
                     coachPreset==='hitter_safest'||coachPreset==='pitcher_safest',
-                    gameLabel,coachAnyEdge);
+                    gameLabel,coachAnyEdge,coachSeriesOnly);
     return;
   }
 
@@ -5267,10 +5268,14 @@ function askMlbCoach() {
                   isPitcherMarketList);
 }
 
-function _mlbCoachRender(question, rows, totalPriced, isSafest, gameLabel, allowAnyEdge) {
+function _mlbCoachRender(question, rows, totalPriced, isSafest, gameLabel, allowAnyEdge, seriesOnly) {
   var qHtml = '<div class="mlb-coach-question">'+_mlbEsc(question)+'</div>';
   if(!rows.length) {
-    _mlbCoachCommit('<div>'+qHtml+'<div style="margin-top:11px;color:#cbd5e1;font-size:.78rem;line-height:1.5">No loaded MLB prop'+(gameLabel?' in '+_mlbEsc(gameLabel):'')+' matched that request with a real sportsbook price'+(allowAnyEdge?'.':' and a green positive Coach Edge.')+'</div></div>');
+    _mlbCoachCommit('<div>'+qHtml+'<div style="margin-top:11px;color:#cbd5e1;font-size:.78rem;line-height:1.5">'+
+      (seriesOnly
+       ?'No loaded hitter is batting over .300 in the historical split matching today\\'s series position.'
+       :'No loaded MLB prop'+(gameLabel?' in '+_mlbEsc(gameLabel):'')+' matched that request with a real sportsbook price'+(allowAnyEdge?'.':' and a green positive Coach Edge.'))+
+      '</div></div>');
     return;
   }
 
@@ -5289,9 +5294,9 @@ function _mlbCoachRender(question, rows, totalPriced, isSafest, gameLabel, allow
       +'<td style="color:'+(p.edge==null?'#64748b':p.edge>=0?'#4ade80':'#f87171')+'!important;font-weight:700">'+edgeText+'</td></tr>';
   }).join('');
 
-  var isHrrConsensus=rows.some(function(p){return !!p.source_count;});
+  var isHrrConsensus=seriesOnly||rows.some(function(p){return !!p.source_count;});
   var summaryText = isHrrConsensus
-    ?'This Coach-only 1+ HRR list uses today\\'s series position automatically: Game 1 uses G1 BA, Game 2 uses G2 BA, and Game 3 or later uses G3+ BA. The applicable series BA must be over .300, today\\'s day/night split over .250, career against today\\'s probable pitcher over .250, and against today\\'s opponent in the applicable home/away split over .250. Genuine Over 0.5 HRR prices are shown when available; unpriced qualifiers remain eligible.'
+    ?'This list has one requirement only. Game 1 uses G1 BA, Game 2 uses G2 BA, and Game 3 or later uses G3+ BA. Every loaded hitter batting over .300 in the applicable series-position split is shown. Day/night, pitcher history, opponent history, sportsbook odds, and Coach Edge are not requirements.'
     : allowAnyEdge
     ? 'I used up to five qualified normal-board picks for this pitcher market and kept their calculated Coach Edge visible, including negative values.'
     : isSafest
@@ -5299,7 +5304,7 @@ function _mlbCoachRender(question, rows, totalPriced, isSafest, gameLabel, allow
     : 'I checked '+totalPriced+' priced props from the loaded board'+(gameLabel?' and restricted the answer to '+_mlbEsc(gameLabel):'')+'. I ranked only matching green positive-edge plays. Probability edge is shown in percentage points, not traditional expected ROI.';
 
   var summaryHtml = '<div style="margin-top:11px;color:#e5e7eb;font-size:.76rem;line-height:1.5">'+summaryText+'</div>';
-  var tableWrap = '<div class="mlb-coach-table-wrap"><table class="mlb-coach-table"><thead><tr><th>#</th><th>Player</th><th>Play</th><th>Odds</th><th>App Prob</th><th>Implied</th><th>Coach Edge</th></tr></thead><tbody>'+table+'</tbody></table></div>';
+  var tableWrap = '<div class="mlb-coach-table-wrap"><table class="mlb-coach-table"><thead><tr><th>#</th><th>Player</th><th>Play</th><th>Odds</th><th>'+(seriesOnly?'Series BA':'App Prob')+'</th><th>Implied</th><th>Coach Edge</th></tr></thead><tbody>'+table+'</tbody></table></div>';
 
   _mlbCoachCommit('<div>'+qHtml+summaryHtml+tableWrap+'</div>');
 }
@@ -10108,11 +10113,8 @@ function _hrrForm(key){
   var qualifierHtml=p.hrr_series_qualifier
     ?'<div style="margin-bottom:14px;padding:12px;background:#1c1208;border:1px solid rgba(251,146,60,.35);border-radius:10px">'
       +'<div style="color:#fb923c;font-size:.72rem;font-weight:900;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Coach 1+ HRR qualification stats</div>'
-      +'<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px">'
+      +'<div style="display:grid;grid-template-columns:minmax(0,1fr);gap:8px">'
         +'<div style="background:#0f172a;border-radius:8px;padding:9px"><div style="font-size:.62rem;color:#64748b">SERIES GAME '+_esc(String(p.series_gno||p.series_game||1)+((p.series_gno||p.series_game||1)>=3?'+':''))+' BA</div><b style="color:#fff">'+_qualBa(p.series_ba)+'</b></div>'
-        +'<div style="background:#0f172a;border-radius:8px;padding:9px"><div style="font-size:.62rem;color:#64748b">'+_esc((p.dn_label||'DAY/NIGHT')+' BA')+'</div><b style="color:#fff">'+_qualBa(p.dn_ba)+'</b></div>'
-        +'<div style="background:#0f172a;border-radius:8px;padding:9px"><div style="font-size:.62rem;color:#64748b">VS TODAY\\'S PITCHER</div><b style="color:#fff">'+_esc((p.s1&&p.s1.display)||p.s1_disp||'N/A')+'</b></div>'
-        +'<div style="background:#0f172a;border-radius:8px;padding:9px"><div style="font-size:.62rem;color:#64748b">VS OPPONENT · '+_esc(p.side||'H/A')+'</div><b style="color:#fff">'+_esc(p.vs_team_ba_display||'N/A')+'</b></div>'
       +'</div></div>'
     :'';
   var rows=log.length?log.map(function(g){
