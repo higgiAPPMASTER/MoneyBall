@@ -4527,6 +4527,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
     # Separate from both standard 1.5 HRR and the existing genuine alternate
     # HRR board. The result is consumed only by the Edge Coach preset.
     hrr_top10_list = []
+    _hrr_lists = []
     try:
         from under_picks import run_hrr_top10_picks
         # The candidate universe is exactly the union of today's generated
@@ -4574,6 +4575,23 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         _ht["series_splits"] = fetch_series_splits(
             _ht.get("batter_id"), _ht.get("opp", ""), run_date,
             _ht.get("side", ""))
+    # Attach the complete HRR Coach context directly to every selected hitter's
+    # source rows. Browser clicks then use this authoritative object instead of
+    # falling back to a thinner Walks/TB/alternate-HRR card.
+    _hrr_context_by_id = {
+        int(_ht.get("batter_id") or _ht.get("player_id")): dict(_ht)
+        for _ht in hrr_top10_list
+        if (_ht.get("batter_id") or _ht.get("player_id"))
+    }
+    for _lst in _hrr_lists:
+        for _row in _lst:
+            try:
+                _context = _hrr_context_by_id.get(
+                    int(_row.get("batter_id") or _row.get("player_id")))
+            except (TypeError, ValueError):
+                _context = None
+            if _context:
+                _row["hrr_coach_context"] = _context
 
     # ── Final popup-detail contract for derived hitter boards ───────────────
     # These boards are copies of qualifying player rows and can be created
