@@ -3245,6 +3245,7 @@ def run_hrr_top10_picks(run_date: str, team_schedule: dict,
         return []
 
     team_map = _get_teams_batch(list(by_id))
+    probable_pitchers = _get_probable_pitchers(run_date)
     def _matchup(pid, row):
         team = team_map.get(pid, "") or row.get("team", "")
         home, away = row.get("home_team", ""), row.get("away_team", "")
@@ -3294,6 +3295,7 @@ def run_hrr_top10_picks(run_date: str, team_schedule: dict,
             pid, side, season, opp_name=opp, max_games=10)
         l10_hits = sum(1 for game in l10_log if game["hrr"] >= 1)
         vs_team_hits = sum(1 for game in vs_team_log if game["hrr"] >= 1)
+        vs_team_hit_games = sum(1 for game in vs_team_log if game["h"] >= 1)
         l10 = {
             "hrr_games": l10_hits, "games": len(l10_log),
             "display": f"{l10_hits}/{len(l10_log)}" if l10_log else "N/A",
@@ -3357,6 +3359,13 @@ def run_hrr_top10_picks(run_date: str, team_schedule: dict,
             "vs_team_hrr_pct": vs_team["score"] if vs_team["games"] else None,
             "vs_team_hrr_display": vs_team["display"],
             "vs_team_hrr_log": vs_team_log,
+            "vs_team_hit_count": vs_team_hit_games,
+            "vs_team_hit_games": len(vs_team_log),
+            "vs_team_hit_pct": (round(vs_team_hit_games / len(vs_team_log) * 100)
+                                if vs_team_log else None),
+            "vs_team_hit_display": (
+                f"{vs_team_hit_games}/{len(vs_team_log)}"
+                if vs_team_log else "N/A"),
             "vs_pitcher_hrr_count": 0, "vs_pitcher_hrr_games": 0,
             "vs_pitcher_hrr_rate": None, "vs_pitcher_hrr_pct": None,
             "vs_pitcher_hrr_display": "N/A",
@@ -3388,6 +3397,31 @@ def run_hrr_top10_picks(run_date: str, team_schedule: dict,
         -(p.get("series_ba") or 0),
         (p.get("full_name") or p.get("name") or "").lower()))
     picks = picks[:20]
+
+    def _pitcher_history(pick):
+        pitcher_name, pitcher_id = "TBD", None
+        for pitcher_team, pitcher_info in probable_pitchers.items():
+            if _team_match(pitcher_team, pick.get("opp", "")):
+                pitcher_name = pitcher_info.get("name") or "TBD"
+                pitcher_id = pitcher_info.get("id")
+                break
+        history = _hrr_top10_vs_pitcher(pick.get("batter_id"), pitcher_id)
+        return pick, pitcher_name, pitcher_id, history
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        for pick, pitcher_name, pitcher_id, history in executor.map(
+                _pitcher_history, picks):
+            pick["pitcher"] = pitcher_name
+            pick["pitcher_id"] = pitcher_id
+            pick["vs_pitcher_hrr_display"] = history.get("display", "N/A")
+            pick["vs_pitcher_hrr_sample"] = history.get("sample", "N/A")
+            pick["vs_pitcher_avg"] = history.get("avg")
+            pick["vs_pitcher_ab"] = history.get("ab", 0)
+            pick["vs_pitcher_hrr_total"] = history.get("hrr_total")
+            pick["vs_pitcher_hits"] = history.get("hits", 0)
+            pick["vs_pitcher_runs"] = history.get("runs", 0)
+            pick["vs_pitcher_rbi"] = history.get("rbi", 0)
+
     _log(emit, f"✅ Coach 1+ HRR Series BA ≥.300 · 10+ AB: {len(picks)} players (max 20; "
                f"unpriced allowed; {sum(p.get('hrr_over_odds') is not None for p in picks)} priced)")
     return picks
