@@ -2086,12 +2086,68 @@ def _mlb_coach_all_props(result):
             odds=lambda p, s: p.get("under_odds") if s == "UNDER"
             else p.get("over_odds"),
             projection=lambda p: p.get("proj", p.get("blended")))
-    # This series-position BA category intentionally allows unpriced candidates
-    # and is not subject to any day/night, matchup, odds, or edge gate.
-    for consensus_rank, p in enumerate(result.get("hrr_top10_picks") or [], 1):
-        prob = p.get("model_prob")
-        if prob is None:
+    # Rebuild the series-position category from every loaded hitter row. Do not
+    # trust only hrr_top10_picks: older/cached pipeline results may contain an
+    # incomplete precomputed list even though the loaded cards already carry
+    # the correct all-venue G1/G2/G3+ splits.
+    hrr_sources = []
+    for key in (
+        "top9", "also_ran", "under_picks", "tb_picks", "tb_over_picks",
+        "runs_picks", "rbi_picks", "walks_picks", "batter_k_picks",
+        "hrr_picks", "hr_picks", "hot_split_picks", "cold_split_picks",
+        "triple_split_picks", "five_star_split_picks", "club_plays_picks",
+        "hrr_top10_picks",
+    ):
+        hrr_sources.extend(result.get(key) or [])
+    hrr_by_player = {}
+    for p in hrr_sources:
+        if not isinstance(p, dict):
             continue
+        pid = p.get("batter_id") or p.get("player_id")
+        name = p.get("full_name") or p.get("name") or ""
+        identity = str(pid) if pid else name.strip().lower()
+        if not identity:
+            continue
+        current = hrr_by_player.get(identity)
+        if current is None or (not current.get("series_splits")
+                               and p.get("series_splits")):
+            hrr_by_player[identity] = p
+
+    hrr_qualifiers = []
+    for p in hrr_by_player.values():
+        splits = p.get("series_splits") or {}
+        try:
+            game_no = int(p.get("series_game")
+                          or splits.get("today_pos") or 1)
+        except (TypeError, ValueError):
+            game_no = 1
+        split_no = min(3, max(1, game_no))
+        raw_ba = splits.get(f"g{split_no}_ba_any")
+        if raw_ba is None:
+            raw_ba = splits.get(f"g{split_no}_ba")
+        try:
+            series_ba = float(raw_ba)
+        except (TypeError, ValueError):
+            continue
+        if series_ba < .300:
+            continue
+        q = dict(p)
+        q["_coach_series_ba"] = series_ba
+        q["_coach_series_game"] = split_no
+        hrr_qualifiers.append(q)
+    hrr_qualifiers.sort(
+        key=lambda p: (p["_coach_series_ba"],
+                       p.get("full_name") or p.get("name") or ""),
+        reverse=True)
+
+    # This category intentionally allows unpriced candidates and is not subject
+    # to any day/night, matchup, odds, or edge gate.
+    for consensus_rank, p in enumerate(hrr_qualifiers, 1):
+        prob = p["_coach_series_ba"]
+        source_label = (
+            f"G{p['_coach_series_game']}"
+            f"{'+' if p['_coach_series_game'] == 3 else ''} BA ≥.300"
+        )
         props.append({
             "player": p.get("full_name") or p.get("name") or "",
             "player_id": p.get("player_id") or p.get("batter_id"),
@@ -2109,8 +2165,8 @@ def _mlb_coach_all_props(result):
             "projection": None,
             "is_pitcher": False, "alternate": False,
             "coach_preset_only": "hitter_hrr_top10",
-            "source_count": p.get("source_count"),
-            "source_names": p.get("source_names") or [],
+            "source_count": 1,
+            "source_names": [source_label],
             "consensus_rank": consensus_rank,
         })
     return props
@@ -4482,7 +4538,7 @@ _HTML = """
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the safest hitter bets?')">Safest bets</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Hitter Coach Edge plays?')">Coach Edge</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Best Alt-Line Hitter H+R+RBI 1+ Edge Plays? — Top 10')" style="border-color:#f59e0b;color:#fde68a">Best Alt-Line HRR 1+ · Top 10</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('Show every hitter batting over .300 in today\\'s series position')" style="border-color:#fb923c;color:#fed7aa">1+ HRR · .300 Series BA</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('Show every hitter batting .300 or better in today\\'s series position')" style="border-color:#fb923c;color:#fed7aa">1+ HRR · .300+ Series BA</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best plays to record a hit?')">To record a hit</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Total Bases plays?')">Total Bases</button>
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best hitter production props?')">Production</button>
@@ -4974,22 +5030,42 @@ function _mlbCoachAllProps() {
     });
   });
 
-  // Coach-only 1+ HRR series-split qualifiers are not price-gated. Keep unpriced
-  // qualified candidates available to the dedicated Coach preset.
-  (res.hrr_top10_picks||[]).forEach(function(p, consensusIndex) {
-    var player=p.full_name||p.name||'';
-    if(!player) return;
-    var model=p.model_prob!=null?Number(p.model_prob)*100:null;
-    if(!isFinite(model)) return;
+  // Rebuild the Coach-only .300+ series category from all loaded hitter cards.
+  // This makes the visible card splits authoritative even if a cached backend
+  // hrr_top10_picks list is incomplete.
+  var hrrRows=[], hrrSeen={};
+  ['top9','also_ran','under_picks','tb_picks','tb_over_picks','runs_picks',
+   'rbi_picks','walks_picks','batter_k_picks','hrr_picks','hr_picks',
+   'hot_split_picks','cold_split_picks','triple_split_picks',
+   'five_star_split_picks','club_plays_picks','hrr_top10_picks'].forEach(function(k){
+    (res[k]||[]).forEach(function(p){
+      if(!p) return;
+      var player=p.full_name||p.name||'', id=p.batter_id||p.player_id||player.toLowerCase();
+      if(!player||!id) return;
+      var ss=p.series_splits||{}, game=Number(p.series_game||ss.today_pos||1);
+      game=Math.max(1,Math.min(3,isFinite(game)?game:1));
+      var ba=ss['g'+game+'_ba_any'];
+      if(ba==null) ba=ss['g'+game+'_ba'];
+      ba=Number(ba);
+      if(!isFinite(ba)||ba<.300) return;
+      var key=String(id), old=hrrSeen[key];
+      if(!old||ba>old.ba) hrrSeen[key]={p:p,ba:ba,game:game,player:player};
+    });
+  });
+  Object.keys(hrrSeen).forEach(function(k){hrrRows.push(hrrSeen[k]);});
+  hrrRows.sort(function(a,b){return b.ba-a.ba||a.player.localeCompare(b.player);});
+  hrrRows.forEach(function(q, consensusIndex) {
+    var p=q.p, player=q.player, model=q.ba*100;
+    var source='G'+q.game+(q.game===3?'+':'')+' BA ≥.300';
     arr.push({
       player:player, team:p.team||'', opp:p.opp||'', market:'H+R+RBI',
       side:'OVER', line:.5, odds:p.hrr_over_odds==null?null:Number(p.hrr_over_odds),
       appProb:model, implied:p.implied_prob==null?null:Number(p.implied_prob)*100,
       edge:p.edge==null?null:Number(p.edge)*100, isPitcher:false, alternate:false,
-       blurb:'Passed: '+(p.source_names||[]).join(' · '),
-      proj:null, book:p.book||'', source_count:p.source_count||0,
-       consensus_rank:consensusIndex+1,
-       coachPresetOnly:'hitter_hrr_top10',
+      blurb:'Passed: '+source,
+      proj:null, book:p.book||'', source_count:1,
+      consensus_rank:consensusIndex+1,
+      coachPresetOnly:'hitter_hrr_top10',
       src:p
     });
   });
@@ -5003,7 +5079,7 @@ function _mlbCoachAllProps() {
 // The parlay builder and the visible Coach answer therefore cannot drift apart.
 var _MLB_COACH_PRESET_LABELS = {
   hitter_safest:'Safest hitter bets', hitter_edge:'Hitter Coach Edge',
-  hitter_alt_hrr:'Alt-Line HRR 1+ · Top 10', hitter_hrr_top10:'1+ HRR · .300 Series BA', hitter_hits:'To record a hit',
+  hitter_alt_hrr:'Alt-Line HRR 1+ · Top 10', hitter_hrr_top10:'1+ HRR · .300+ Series BA', hitter_hits:'To record a hit',
   hitter_tb:'Total Bases', hitter_production:'Hitter production',
   hitter_batter_k:'Batter Strikeouts', hitter_unders:'Hitter unders',
   hitter_top3:'Top 3 hitter plays',
@@ -5273,7 +5349,7 @@ function _mlbCoachRender(question, rows, totalPriced, isSafest, gameLabel, allow
   if(!rows.length) {
     _mlbCoachCommit('<div>'+qHtml+'<div style="margin-top:11px;color:#cbd5e1;font-size:.78rem;line-height:1.5">'+
       (seriesOnly
-       ?'No loaded hitter is batting over .300 in the historical split matching today\\'s series position.'
+       ?'No loaded hitter is batting .300 or better in the all-venue historical split matching today\\'s series position.'
        :'No loaded MLB prop'+(gameLabel?' in '+_mlbEsc(gameLabel):'')+' matched that request with a real sportsbook price'+(allowAnyEdge?'.':' and a green positive Coach Edge.'))+
       '</div></div>');
     return;
@@ -5296,7 +5372,7 @@ function _mlbCoachRender(question, rows, totalPriced, isSafest, gameLabel, allow
 
   var isHrrConsensus=seriesOnly||rows.some(function(p){return !!p.source_count;});
   var summaryText = isHrrConsensus
-    ?'This list has one requirement only. Game 1 uses G1 BA, Game 2 uses G2 BA, and Game 3 or later uses G3+ BA. Every loaded hitter batting over .300 in the applicable series-position split is shown. Day/night, pitcher history, opponent history, sportsbook odds, and Coach Edge are not requirements.'
+    ?'This list has one requirement only. Game 1 uses all-venue G1 BA, Game 2 uses all-venue G2 BA, and Game 3 or later uses all-venue G3+ BA. Every loaded hitter batting .300 or better in the applicable series-position split is shown. Day/night, home/away, pitcher history, opponent history, sportsbook odds, and Coach Edge are not requirements.'
     : allowAnyEdge
     ? 'I used up to five qualified normal-board picks for this pitcher market and kept their calculated Coach Edge visible, including negative values.'
     : isSafest
