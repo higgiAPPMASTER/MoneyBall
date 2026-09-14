@@ -5125,7 +5125,8 @@ function _mlbCoachAllProps() {
   hrrRows.sort(function(a,b){return b.ba-a.ba||a.player.localeCompare(b.player);});
   hrrRows.slice(0,20).forEach(function(q, consensusIndex) {
     var p=q.p, player=q.player, model=q.ba*100;
-    var detail=hrrDetail[String(p.batter_id||p.player_id||player.toLowerCase())]
+    var detail=p.hrr_coach_context
+      ||hrrDetail[String(p.batter_id||p.player_id||player.toLowerCase())]
       ||hrrDetail[player.toLowerCase()]||{};
     var exactOdds=detail.hrr_over_odds==null?null:Number(detail.hrr_over_odds);
     var exactImplied=exactOdds==null?null:_mlbCoachOddsImplied(exactOdds);
@@ -10302,6 +10303,16 @@ function _hrrForm(key){
         +'<b style="color:#fff;font-family:monospace">'+summary+'</b></div>'
       +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse"><tbody>'+bodyRows+'</tbody></table></div></div>';
   }
+  var pitcherName=p.pitcher||'TBD';
+  var pitcherSummary=p.vs_pitcher_hrr_display||'N/A';
+  var pitcherSample=p.vs_pitcher_hrr_sample||'N/A';
+  var pitcherAvg=_qualBa(p.vs_pitcher_avg);
+  var pitcherBlock='<div style="margin-top:12px;border:1px solid #1e293b;border-radius:10px;padding:11px 12px;background:#111827">'
+    +'<div style="font-size:.72rem;font-weight:900;color:#60a5fa">CAREER VS TODAY\\'S PITCHER · '+_esc(pitcherName.toUpperCase())+'</div>'
+    +'<div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-end;margin-top:8px;flex-wrap:wrap">'
+      +'<div><div style="font-size:.62rem;color:#64748b">HITS · RUNS · RBI · HRR</div><b style="color:#fff">'+_esc(pitcherSummary)+'</b></div>'
+      +'<div style="text-align:right"><div style="font-size:.62rem;color:#64748b">BATTING AVG · SAMPLE</div><b style="color:#fff">'+pitcherAvg+' · '+_esc(pitcherSample)+'</b></div>'
+    +'</div></div>';
   var coachBody=qualifierHtml
     +_hrrHistoryBlock(
       '1+ HRR · LAST 10 '+String(p.side||'').toUpperCase(),
@@ -10310,7 +10321,12 @@ function _hrrForm(key){
     +_hrrHistoryBlock(
       '1+ HRR · VS '+_esc(String(p.opp||'').toUpperCase())+' · '+String(p.side||'').toUpperCase(),
       'Games against today\\'s opponent matching today\\'s venue',
-      _hrrPct(p.vs_team_hrr_count,p.vs_team_hrr_games),teamRows);
+      _hrrPct(p.vs_team_hrr_count,p.vs_team_hrr_games),teamRows)
+    +_hrrHistoryBlock(
+      '1+ HIT · VS '+_esc(String(p.opp||'').toUpperCase())+' · '+String(p.side||'').toUpperCase(),
+      'Hit rate in up to 10 games against today\\'s opponent at today\\'s venue',
+      _hrrPct(p.vs_team_hit_count,p.vs_team_hit_games),teamRows)
+    +pitcherBlock;
   var name=p.name||'';
   ov.innerHTML='<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:820px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">'
     +'<div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid #1e293b">'
