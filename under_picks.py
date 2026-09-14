@@ -3204,12 +3204,13 @@ def run_hrr_top10_picks(run_date: str, team_schedule: dict,
     """Coach-only 1+ HRR applicable-series-position split qualifiers.
 
     This is deliberately separate from the existing standard 1.5 HRR and
-    alternate-HRR boards. Its only qualification is batting over .300 in the
+    alternate-HRR boards. Its qualification is batting over .300 with at least
+    10 at-bats in the
     current-season home/away split matching today's venue and series position:
-    G1, G2, or G3+. A .300 average qualifies.
+    G1, G2, or G3+. A .300 average with 10+ AB qualifies.
     Day/night, pitcher, opponent, odds, and positive edge are not gates.
     """
-    _log(emit, "▸ Coach 1+ HRR — applicable series-position BA ≥.300", "section")
+    _log(emit, "▸ Coach 1+ HRR — applicable series-position BA ≥.300 · 10+ AB", "section")
     season = int(run_date[:4])
     _build_player_map(season)
     # Resolve exact 0.5 HRR alternate quotes by MLB player ID as well as
@@ -3277,6 +3278,12 @@ def run_hrr_top10_picks(run_date: str, team_schedule: dict,
             series_ba = float(series_splits.get(f"g{series_game}_ba_any"))
         except (TypeError, ValueError):
             return None
+        try:
+            series_ab = int(series_splits.get(f"g{series_game}_ab", 0) or 0)
+        except (TypeError, ValueError):
+            series_ab = 0
+        if series_ab < 10:
+            return None
         if series_ba < 0.300:
             return None
 
@@ -3322,14 +3329,17 @@ def run_hrr_top10_picks(run_date: str, team_schedule: dict,
             "team": team, "opp": opp, "side": side, "pick": "OVER", "line": 0.5,
             "lineup_status": row.get("lineup_status", ""),
             "pitcher": "", "source_count": len(ent["sources"]),
-            "source_names": [f"G{series_game}{'+' if series_game == 3 else ''} BA ≥.300"],
+            "source_names": [
+                f"G{series_game}{'+' if series_game == 3 else ''} "
+                f"BA ≥.300 · {series_ab} AB"
+            ],
             "source_boards": ent["sources"],
             "hrr_series_qualifier": True,
             "series_scope": "TODAY_APP_HITTERS_CURRENT_SEASON_HOME_AWAY",
             "series_game": series_game, "series_gno": series_game,
             "series_splits": series_splits,
             "series_ba": series_ba,
-            "series_ab": series_splits.get(f"g{series_game}_ab", 0),
+            "series_ab": series_ab,
             "series_disp": f".{int(series_ba * 1000):03d}",
             "dn_ba": (row.get("s5") or {}).get("ba"),
             "dn_disp": (row.get("s5") or {}).get("display", "N/A"),
@@ -3376,10 +3386,9 @@ def run_hrr_top10_picks(run_date: str, team_schedule: dict,
                 picks.append(pick)
     picks.sort(key=lambda p: (
         -(p.get("series_ba") or 0),
-        -p["last10_hrr_count"],
-        -(p["last10_hrr_rate"] or 0), -(p["model_prob"] or 0)))
+        (p.get("full_name") or p.get("name") or "").lower()))
     picks = picks[:20]
-    _log(emit, f"✅ Coach 1+ HRR Series BA ≥.300: {len(picks)} players (max 20; "
+    _log(emit, f"✅ Coach 1+ HRR Series BA ≥.300 · 10+ AB: {len(picks)} players (max 20; "
                f"unpriced allowed; {sum(p.get('hrr_over_odds') is not None for p in picks)} priced)")
     return picks
 
