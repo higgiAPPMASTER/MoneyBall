@@ -3166,20 +3166,19 @@ def _hrr_top10_vs_pitcher(batter_id, pitcher_id) -> dict:
 
 def run_hrr_top10_picks(run_date: str, team_schedule: dict,
                         source_boards: dict, emit=None) -> list:
-    """MLB Edge Coach: 1+ HRR Hot Matchup History.
+    """Coach-only 1+ HRR Game 1 split qualifiers.
 
     This is deliberately a separate confluence category, not the existing
-    standard 1.5 HRR board or the alternate HRR board.  Membership is the
-    Hot Hitters is mandatory, along with favorable history against both today's
-    opponent and probable pitcher. It has no positive-edge gate and keeps
-    qualified candidates when the genuine HRR O0.5 quote is unavailable.
+    standard 1.5 HRR board or alternate HRR board. A hitter must be over .300
+    in Series Game 1, over .250 in today's day/night split, over .250 career
+    against today's probable pitcher, and over .250 against today's opponent
+    in the applicable home/away split. Odds and positive edge are not gates.
     """
-    _log(emit, "▸ 1+ HRR — Hot Hitters with pitcher + opponent history", "section")
+    _log(emit, "▸ Coach 1+ HRR — G1 + D/N + pitcher + opponent H/A", "section")
     season = int(run_date[:4])
     _build_player_map(season)
 
-    # Hot Hitters is the mandatory candidate pool. Other memberships are
-    # retained only as supporting context and never qualify a player.
+    # IDs, rather than spelling variants, define a player.
     by_id = {}
     for board_name, rows in (source_boards or {}).items():
         for row in rows or []:
@@ -3195,13 +3194,11 @@ def run_hrr_top10_picks(run_date: str, team_schedule: dict,
             if not pid:
                 continue
             pid = int(pid)
-            ent = by_id.setdefault(pid, {"row": row, "hot_row": None, "sources": []})
+            ent = by_id.setdefault(pid, {"row": row, "sources": []})
             if board_name not in ent["sources"]:
                 ent["sources"].append(board_name)
-            if board_name == "Hot Hitters":
-                ent["hot_row"] = row
     if not by_id:
-        _log(emit, "  No qualified Hot Hitters with both matchup histories.")
+        _log(emit, "  No eligible batter rows were available.")
         return []
 
     team_map = _get_teams_batch(list(by_id))
@@ -3223,11 +3220,29 @@ def run_hrr_top10_picks(run_date: str, team_schedule: dict,
 
     def _eval(item):
         pid, ent = item
-        row = ent.get("hot_row")
+        row = ent.get("row")
         if not row:
             return None
         team, opp, side = _matchup(pid, row)
         if not team or not opp or side not in ("HOME", "AWAY"):
+            return None
+        series_splits = row.get("series_splits") or {}
+        try:
+            series_game = int(row.get("series_game")
+                              or series_splits.get("today_pos") or 1)
+        except (TypeError, ValueError):
+            series_game = 1
+        if series_game != 1:
+            return None
+        try:
+            series_ba = float(series_splits.get("g1_ba"))
+        except (TypeError, ValueError):
+            return None
+        try:
+            day_night_ba = float((row.get("s5") or {}).get("ba"))
+        except (TypeError, ValueError):
+            return None
+        if series_ba <= 0.300 or day_night_ba <= 0.250:
             return None
         pitcher_name, pitcher_id = "TBD", None
         for pteam, pinfo in pitchers.items():
@@ -3235,26 +3250,26 @@ def run_hrr_top10_picks(run_date: str, team_schedule: dict,
                 pitcher_name, pitcher_id = pinfo.get("name", "TBD"), pinfo.get("id")
                 break
 
-        # True last ten, venue-independent; relevant history is supplemental.
+        if not pitcher_id:
+            return None
+        vs_pit = _get_s1_vs_pitcher(pid, pitcher_id)
+        vs_team_ba = _last10_ba(pid, side, opp, 10)
+        if (vs_pit.get("ba") is None or vs_pit["ba"] <= 0.250
+                or (vs_pit.get("ab") or 0) < 1):
+            return None
+        if (vs_team_ba.get("ba") is None
+                or vs_team_ba["ba"] <= 0.250):
+            return None
+
+        # True last ten and opponent HRR rates drive the displayed probability;
+        # the four batting-average conditions above are the qualification gates.
         l10 = _hrr_consistency_over(pid, side, "", 10, ignore_ha=True,
                                     threshold=1)
         vs_team = _hrr_consistency_over(pid, side, opp, 10, threshold=1)
-        vs_pit = _hrr_top10_vs_pitcher(pid, pitcher_id)
-        # Strict matchup-history gates requested for this category.
-        if vs_team["games"] < 2 or vs_team["score"] < 60:
-            return None
-        if (vs_pit.get("ab") or 0) < 3:
-            return None
-        if vs_pit.get("avg") is None or vs_pit["avg"] < 0.250:
-            return None
-        if (vs_pit.get("hrr_total") or 0) < 2:
-            return None
         rates = [l10["score"] / 100.0]
         weights = [0.55]
         if vs_team["games"]:
             rates.append(vs_team["score"] / 100.0); weights.append(0.25)
-        if vs_pit["rate"] is not None:
-            rates.append(vs_pit["rate"]); weights.append(0.20)
         model_prob = sum(r * w for r, w in zip(rates, weights)) / sum(weights)
 
         # HRR_ALT_ODDS is the genuine batter_hits_runs_rbis alternate O0.5
@@ -3276,8 +3291,19 @@ def run_hrr_top10_picks(run_date: str, team_schedule: dict,
             "batter_id": pid, "player_id": row.get("player_id") or pid,
             "team": team, "opp": opp, "side": side, "pick": "OVER", "line": 0.5,
             "pitcher": pitcher_name, "source_count": len(ent["sources"]),
-            "source_names": ent["sources"], "source_boards": ent["sources"],
-            "hot_score": row.get("tsch_min"),
+            "source_names": ["G1 >.300", "D/N >.250",
+                             "vs Pitcher >.250", "vs Team H/A >.250"],
+            "source_boards": ent["sources"],
+            "hrr_g1_qualifier": True,
+            "series_game": series_game, "series_gno": series_game,
+            "series_splits": series_splits,
+            "series_ba": series_ba,
+            "series_disp": f".{int(series_ba * 1000):03d}",
+            "dn_ba": day_night_ba,
+            "dn_disp": f".{int(day_night_ba * 1000):03d}",
+            "dn_label": row.get("dn_label", ""),
+            "vs_team_ba": vs_team_ba.get("ba"),
+            "vs_team_ba_display": vs_team_ba.get("display", "N/A"),
             "last10_hrr_count": l10["hrr_games"], "last10_hrr_games": l10["games"],
             "last10_hrr_rate": l10["score"] / 100.0 if l10["games"] else None,
             "last10_hrr_pct": l10["score"] if l10["games"] else None,
@@ -3288,15 +3314,15 @@ def run_hrr_top10_picks(run_date: str, team_schedule: dict,
             "vs_team_hrr_rate": vs_team["score"] / 100.0 if vs_team["games"] else None,
             "vs_team_hrr_pct": vs_team["score"] if vs_team["games"] else None,
             "vs_team_hrr_display": vs_team["display"],
-            "vs_pitcher_hrr_count": vs_pit["hrr_games"],
-            "vs_pitcher_hrr_games": vs_pit["games"],
-            "vs_pitcher_hrr_rate": vs_pit["rate"],
-            "vs_pitcher_hrr_pct": round(vs_pit["rate"] * 100) if vs_pit["rate"] is not None else None,
-            "vs_pitcher_hrr_display": vs_pit["display"],
-            "vs_pitcher_hrr_sample": vs_pit["sample"],
-            "vs_pitcher_avg": vs_pit.get("avg"),
+            "vs_pitcher_hrr_count": 0, "vs_pitcher_hrr_games": 0,
+            "vs_pitcher_hrr_rate": None, "vs_pitcher_hrr_pct": None,
+            "vs_pitcher_hrr_display": vs_pit.get("display", "N/A"),
+            "vs_pitcher_hrr_sample": f"{vs_pit.get('ab', 0)} AB",
+            "vs_pitcher_avg": vs_pit.get("ba"),
             "vs_pitcher_ab": vs_pit.get("ab"),
-            "vs_pitcher_hrr_total": vs_pit.get("hrr_total"),
+            "vs_pitcher_hrr_total": None,
+            "s1": vs_pit, "s1_ab": vs_pit.get("ab", 0),
+            "s1_disp": vs_pit.get("display", "N/A"),
             "model_prob": round(model_prob, 4), "hrr_over_odds": odds,
             "book": book, "implied_prob": round(implied, 4) if implied is not None else None,
             "edge": round(edge, 4) if edge is not None else None,
@@ -3316,11 +3342,11 @@ def run_hrr_top10_picks(run_date: str, team_schedule: dict,
             if pick:
                 picks.append(pick)
     picks.sort(key=lambda p: (
-        -(p.get("hot_score") or 0), -(p.get("vs_pitcher_avg") or 0),
-        -(p["vs_team_hrr_rate"] or 0), -p["last10_hrr_count"],
+        -(p.get("series_ba") or 0), -(p.get("dn_ba") or 0),
+        -(p.get("vs_pitcher_avg") or 0), -(p.get("vs_team_ba") or 0),
+        -p["last10_hrr_count"],
         -(p["last10_hrr_rate"] or 0), -(p["model_prob"] or 0)))
-    picks = picks[:10]
-    _log(emit, f"✅ 1+ HRR Hot Matchup History: {len(picks)} candidates "
+    _log(emit, f"✅ Coach 1+ HRR Game 1 Split Qualifiers: {len(picks)} candidates "
                f"(unpriced allowed; {sum(p.get('hrr_over_odds') is not None for p in picks)} priced)")
     return picks
 
