@@ -4534,13 +4534,12 @@ def run_pipeline(run_date: str, emit=None) -> dict:
         # their display stamps so one incomplete market row cannot hide a
         # player's series or day/night data.
         _hrr_by_id = {}
-        _hrr_lists = [top9, also_ran, runs_picks_list, tb_over_picks_list,
+        _hrr_lists = [lineup_qualified, top9, also_ran, under_picks_list,
+                      runs_picks_list, tb_picks_list, tb_over_picks_list,
                       rbi_picks_list, walks_picks_list, hrr_picks_list,
                       hrr_special_list, batter_k_picks_list, hr_picks_list]
         for _lst in _hrr_lists:
             for _row in _lst:
-                if str(_row.get("pick") or "").upper() == "UNDER":
-                    continue
                 _bid = _row.get("batter_id") or _row.get("player_id")
                 if not _bid:
                     continue
