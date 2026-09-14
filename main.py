@@ -2115,6 +2115,8 @@ def _mlb_coach_all_props(result):
 
     hrr_qualifiers = []
     for p in hrr_by_player.values():
+        if p.get("lineup_status") != "IN_LINEUP":
+            continue
         splits = p.get("series_splits") or {}
         try:
             game_no = int(p.get("series_game")
@@ -5040,6 +5042,7 @@ function _mlbCoachAllProps() {
    'five_star_split_picks','club_plays_picks','hrr_top10_picks'].forEach(function(k){
     (res[k]||[]).forEach(function(p){
       if(!p) return;
+      if(p.lineup_status!=='IN_LINEUP') return;
       var player=p.full_name||p.name||'', id=p.batter_id||p.player_id||player.toLowerCase();
       if(!player||!id) return;
       var ss=p.series_splits||{}, game=Number(p.series_game||ss.today_pos||1);
