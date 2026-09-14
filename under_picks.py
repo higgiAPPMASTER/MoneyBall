@@ -3177,6 +3177,14 @@ def run_hrr_top10_picks(run_date: str, team_schedule: dict,
     _log(emit, "▸ Coach 1+ HRR — applicable series-position BA ≥.300", "section")
     season = int(run_date[:4])
     _build_player_map(season)
+    # Resolve exact 0.5 HRR alternate quotes by MLB player ID as well as
+    # normalized spelling. This preserves genuine sportsbook lines while
+    # recovering accent, suffix, and abbreviated-name mismatches.
+    hrr_alt_by_id = {}
+    for _alt in HRR_ALT_ODDS.values():
+        _alt_pid = _resolve_id(_alt.get("name", ""))
+        if _alt_pid:
+            hrr_alt_by_id[int(_alt_pid)] = _alt
 
     # IDs, rather than spelling variants, define a player.
     by_id = {}
@@ -3245,7 +3253,9 @@ def run_hrr_top10_picks(run_date: str, team_schedule: dict,
 
         # HRR_ALT_ODDS is the genuine batter_hits_runs_rbis alternate O0.5
         # quote. It is read here without changing the existing alt board.
-        quote = HRR_ALT_ODDS.get(_norm_name(row.get("full_name") or row.get("name", "")))
+        quote = (HRR_ALT_ODDS.get(
+                    _norm_name(row.get("full_name") or row.get("name", "")))
+                 or hrr_alt_by_id.get(pid))
         if quote:
             qteam, qopp = quote.get("home_team", ""), quote.get("away_team", "")
             if not ((_team_match(team, qteam) and _team_match(opp, qopp)) or
