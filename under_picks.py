@@ -3170,10 +3170,11 @@ def run_hrr_top10_picks(run_date: str, team_schedule: dict,
 
     This is deliberately separate from the existing standard 1.5 HRR and
     alternate-HRR boards. Its only qualification is batting over .300 in the
-    historical split matching today's series position: G1, G2, or G3+.
+    historical all-venue split matching today's series position: G1, G2, or
+    G3+. A .300 average qualifies.
     Day/night, pitcher, opponent, odds, and positive edge are not gates.
     """
-    _log(emit, "▸ Coach 1+ HRR — applicable series-position BA >.300", "section")
+    _log(emit, "▸ Coach 1+ HRR — applicable series-position BA ≥.300", "section")
     season = int(run_date[:4])
     _build_player_map(season)
 
@@ -3183,10 +3184,9 @@ def run_hrr_top10_picks(run_date: str, team_schedule: dict,
         for row in rows or []:
             if not isinstance(row, dict):
                 continue
-            # The five inputs are positive/OVER boards. Never let an under
-            # row leak into this independent confluence union.
-            if str(row.get("pick") or row.get("side") or "").upper() == "UNDER":
-                continue
+            # This preset evaluates active hitters, not preselected bet sides.
+            # A player's unrelated Under pick must not remove him from the
+            # independent series-position BA list.
             pid = row.get("batter_id") or row.get("player_id")
             if not pid:
                 pid = _resolve_id(row.get("full_name") or row.get("name", ""))
@@ -3234,7 +3234,7 @@ def run_hrr_top10_picks(run_date: str, team_schedule: dict,
             series_ba = float(series_splits.get(f"g{series_game}_ba_any"))
         except (TypeError, ValueError):
             return None
-        if series_ba <= 0.300:
+        if series_ba < 0.300:
             return None
 
         # Recent HRR is display context only. It never qualifies or rejects.
@@ -3262,9 +3262,10 @@ def run_hrr_top10_picks(run_date: str, team_schedule: dict,
             "batter_id": pid, "player_id": row.get("player_id") or pid,
             "team": team, "opp": opp, "side": side, "pick": "OVER", "line": 0.5,
             "pitcher": "", "source_count": len(ent["sources"]),
-            "source_names": [f"G{series_game}{'+' if series_game == 3 else ''} BA >.300"],
+            "source_names": [f"G{series_game}{'+' if series_game == 3 else ''} BA ≥.300"],
             "source_boards": ent["sources"],
             "hrr_series_qualifier": True,
+            "series_scope": "ALL_ACTIVE_HITTERS_ALL_VENUES",
             "series_game": series_game, "series_gno": series_game,
             "series_splits": series_splits,
             "series_ba": series_ba,
@@ -3316,7 +3317,7 @@ def run_hrr_top10_picks(run_date: str, team_schedule: dict,
         -(p.get("series_ba") or 0),
         -p["last10_hrr_count"],
         -(p["last10_hrr_rate"] or 0), -(p["model_prob"] or 0)))
-    _log(emit, f"✅ Coach 1+ HRR Series Split Qualifiers: {len(picks)} candidates "
+    _log(emit, f"✅ Coach 1+ HRR Series BA ≥.300: {len(picks)} candidates "
                f"(unpriced allowed; {sum(p.get('hrr_over_odds') is not None for p in picks)} priced)")
     return picks
 
