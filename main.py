@@ -4087,10 +4087,18 @@ _HTML = """
     .mlb-coach-presets{display:flex;gap:7px;flex-wrap:wrap;margin:14px 0 10px}
     .mlb-coach-preset{background:#111827;color:#cbd5e1;border:1px solid #334155;border-radius:999px;padding:7px 11px;font-size:.69rem;font-weight:900;cursor:pointer}
     .mlb-coach-preset:hover{border-color:#f59e0b;color:#fde68a}
-    .mlb-coach-sidebar{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:14px 0 4px;padding:9px 10px;border:1px solid #334155;border-radius:10px;background:#0b1220}
-    .mlb-coach-side{background:#111827;color:#94a3b8;border:1px solid #475569;border-radius:7px;padding:7px 16px;font-size:.7rem;font-weight:950;cursor:pointer;letter-spacing:.05em}
+    .mlb-coach-sidebar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:13px 0 5px;padding:7px 8px;border:1px solid #334155;border-radius:9px;background:#0b1220;position:relative}
+    .mlb-coach-side{background:#111827;color:#94a3b8;border:1px solid #475569;border-radius:7px;padding:6px 12px;font-size:.67rem;font-weight:950;cursor:pointer;letter-spacing:.05em}
     .mlb-coach-side.over.active{background:#14532d;border-color:#22c55e;color:#bbf7d0}
     .mlb-coach-side.under.active{background:#7f1d1d;border-color:#ef4444;color:#fecaca}
+    .mlb-coach-menu{position:relative}
+    .mlb-coach-menu>summary{list-style:none;background:#111827;color:#e2e8f0;border:1px solid #475569;border-radius:7px;padding:6px 11px;font-size:.67rem;font-weight:900;cursor:pointer;white-space:nowrap}
+    .mlb-coach-menu>summary::-webkit-details-marker{display:none}
+    .mlb-coach-menu[open]>summary{border-color:#f59e0b;color:#fde68a}
+    .mlb-coach-menu-panel{position:absolute;z-index:60;top:34px;left:0;width:300px;max-width:calc(100vw - 44px);max-height:340px;overflow:auto;background:#0b1220;border:1px solid #475569;border-radius:10px;padding:8px;box-shadow:0 16px 38px rgba(0,0,0,.65)}
+    .mlb-coach-menu.pitchers .mlb-coach-menu-panel{left:auto;right:0}
+    .mlb-coach-menu-panel .mlb-coach-preset{display:block;width:100%;text-align:left;margin:0 0 6px;border-radius:7px}
+    .mlb-coach-menu-panel .mlb-coach-preset:last-child{margin-bottom:0}
     .mlb-coach-row{display:flex;gap:8px}
     .mlb-coach-input{flex:1;min-width:0;background:#070d18;color:#fff;border:1px solid #334155;border-radius:11px;padding:12px 14px;font:inherit;font-size:.84rem;outline:none}
     .mlb-coach-input:focus{border-color:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,.1)}
@@ -4601,40 +4609,41 @@ _HTML = """
         </div>
 
         <div class="mlb-coach-sidebar">
-          <span style="font-size:.65rem;font-weight:900;color:#fbbf24;letter-spacing:.06em;margin-right:3px">SIDE FILTER</span>
+          <span style="font-size:.62rem;font-weight:900;color:#fbbf24;letter-spacing:.05em;margin-right:2px">SIDE</span>
           <button id="mlbCoachSideOver" class="mlb-coach-side over" onclick="_setMlbCoachSide('OVER')">OVER</button>
           <button id="mlbCoachSideUnder" class="mlb-coach-side under" onclick="_setMlbCoachSide('UNDER')">UNDER</button>
-          <span id="mlbCoachSideHint" style="font-size:.62rem;color:#64748b">Choose a side, then choose any hitter or pitcher market</span>
-        </div>
-
-        <div style="margin-top:18px;font-size:.75rem;font-weight:800;color:#facc15;border-bottom:1px solid rgba(255,255,255,.1);padding-bottom:5px;letter-spacing:.05em;text-transform:uppercase">Hitters</div>
-        <div class="mlb-coach-presets">
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('Give me all 100% app probability hitter plays today')" style="border-color:#22c55e;color:#86efac">100% App Plays</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the safest hitter bets?')">Safest bets</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Hitter Coach Edge plays?')">Coach Edge</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Best Alt-Line Hitter H+R+RBI 1+ Edge Plays? — Top 10')" style="border-color:#f59e0b;color:#fde68a">Best Alt-Line HRR 1+ · Top 10</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('Show the top 20 hitters batting .300 or better with at least 10 at-bats in today\\'s series position')" style="border-color:#fb923c;color:#fed7aa">1+ HRR · .300+ Series BA · 10+ AB</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best plays to record a hit?')">To record a hit</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Total Bases plays?')">Total Bases</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best hitter production props?')">Production</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Batter Strikeout plays?')">Batter Strikeouts</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best hitter unders?')">Hitter unders</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Top 3 hitter plays today?')">Top 3 hitter plays today</button>
-        </div>
-
-        <div style="margin-top:16px;font-size:.75rem;font-weight:800;color:#60a5fa;border-bottom:1px solid rgba(255,255,255,.1);padding-bottom:5px;letter-spacing:.05em;text-transform:uppercase">Pitchers</div>
-        <div class="mlb-coach-presets">
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('Give me all 100% app probability pitcher plays today')" style="border-color:#22c55e;color:#86efac">100% App Plays</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the safest pitcher bets?')">Safest bets</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Pitcher Coach Edge plays?')">Coach Edge</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Best Alt-Line Pitcher Edge Plays? — Top 10')" style="border-color:#60a5fa;color:#bfdbfe">Best Alt-Line Edge Plays · Top 10</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Pitcher Strikeout plays?')">Pitcher Strikeouts</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Hits Allowed plays?')">Hits Allowed</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Pitching Outs plays?')">Pitching Outs</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Earned Runs plays?')">Earned Runs</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Walks Allowed plays?')">Walks Allowed</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best pitcher unders?')">Pitcher unders</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Top 3 pitcher plays today?')">Top 3 pitcher plays today</button>
+          <details class="mlb-coach-menu hitters">
+            <summary>HITTERS &#9662;</summary>
+            <div class="mlb-coach-menu-panel">
+              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('Give me all 100% app probability hitter plays today')" style="border-color:#22c55e;color:#86efac">100% App Plays</button>
+              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the safest hitter bets?')">Safest bets</button>
+              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Hitter Coach Edge plays?')">Coach Edge</button>
+              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Best Alt-Line Hitter H+R+RBI 1+ Edge Plays? — Top 10')" style="border-color:#f59e0b;color:#fde68a">Best Alt-Line HRR 1+ · Top 10</button>
+              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('Show the top 20 hitters batting .300 or better with at least 10 at-bats in today\\'s series position')" style="border-color:#fb923c;color:#fed7aa">1+ HRR · .300+ Series BA · 10+ AB</button>
+              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best plays to record a hit?')">To record a hit</button>
+              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Total Bases plays?')">Total Bases</button>
+              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best hitter production props?')">Production</button>
+              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Batter Strikeout plays?')">Batter Strikeouts</button>
+              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best hitter unders?')">Hitter unders</button>
+              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Top 3 hitter plays today?')">Top 3 hitter plays today</button>
+            </div>
+          </details>
+          <details class="mlb-coach-menu pitchers">
+            <summary>PITCHERS &#9662;</summary>
+            <div class="mlb-coach-menu-panel">
+              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('Give me all 100% app probability pitcher plays today')" style="border-color:#22c55e;color:#86efac">100% App Plays</button>
+              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the safest pitcher bets?')">Safest bets</button>
+              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Pitcher Coach Edge plays?')">Coach Edge</button>
+              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Best Alt-Line Pitcher Edge Plays? — Top 10')" style="border-color:#60a5fa;color:#bfdbfe">Best Alt-Line Edge Plays · Top 10</button>
+              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Pitcher Strikeout plays?')">Pitcher Strikeouts</button>
+              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Hits Allowed plays?')">Hits Allowed</button>
+              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Pitching Outs plays?')">Pitching Outs</button>
+              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Earned Runs plays?')">Earned Runs</button>
+              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Walks Allowed plays?')">Walks Allowed</button>
+              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best pitcher unders?')">Pitcher unders</button>
+              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Top 3 pitcher plays today?')">Top 3 pitcher plays today</button>
+            </div>
+          </details>
         </div>
 
         <div class="mlb-coach-row" style="margin-top:16px">
@@ -5282,6 +5291,9 @@ function _mlbCoachPresetForQuestion(q, isHitterQ, isPitcherQ) {
 function askMlbCoachPreset(question) {
   var input = document.getElementById('mlbCoachInput');
   if(input) input.value = question;
+  document.querySelectorAll('.mlb-coach-menu[open]').forEach(function(menu){
+    menu.removeAttribute('open');
+  });
   askMlbCoach();
 }
 
