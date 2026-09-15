@@ -1902,9 +1902,11 @@ _MLB_COACH_CATEGORIES = {
     "hitter_safest": "Hitter · Safest Bets",
     "hitter_edge": "Hitter · Coach Edge",
     "hitter_alt_hrr": "Hitter · Best Alt-Line HRR 1+",
+    "hitter_alt_hrr_prob": "Hitter · Alt-Line HRR 1+ by App Probability",
     "hitter_hrr_top10": "Hitter · 1+ HRR .300 Series BA · 10+ AB",
     "hitter_hits": "Hitter · To Record a Hit",
     "hitter_tb": "Hitter · Total Bases",
+    "hitter_walks": "Hitter · Best Walks",
     "hitter_production": "Hitter · Production",
     "hitter_batter_k": "Hitter · Batter Strikeouts",
     "hitter_unders": "Hitter · Best Unders",
@@ -1961,7 +1963,8 @@ def _mlb_coach_all_props(result):
 
     def add(items, market, stat_key, stat_label, *, pitcher=False,
             side=None, line=None, odds=None, book=None, alternate=False,
-            probability=None, accept=None, projection=None):
+            probability=None, accept=None, projection=None,
+            allow_unpriced=False):
         for p in items or []:
             if not isinstance(p, dict) or (accept and not accept(p)):
                 continue
@@ -1978,14 +1981,19 @@ def _mlb_coach_all_props(result):
                              (p.get("under_book") if pick_side == "UNDER"
                               else p.get("over_book")) or "")
             try:
-                raw_line, raw_odds = float(raw_line), int(float(raw_odds))
+                raw_line = float(raw_line)
             except (TypeError, ValueError):
                 continue
-            if not resolved_book:
+            try:
+                raw_odds = int(float(raw_odds))
+            except (TypeError, ValueError):
+                raw_odds = None
+            if not allow_unpriced and (raw_odds is None or implied is None or
+                                       not resolved_book):
                 continue
             prob = (probability(p, pick_side, implied) if callable(probability)
                     else _mlb_coach_probability(p, implied, pick_side))
-            if implied is None or prob is None:
+            if prob is None:
                 continue
             player = p.get("full_name") or p.get("name") or p.get("player")
             if not player:
@@ -2015,19 +2023,24 @@ def _mlb_coach_all_props(result):
                 "side": pick_side, "line": raw_line, "odds": raw_odds,
                 "book": resolved_book,
                 "model_probability": float(prob),
-                "implied_probability": float(implied),
-                "coach_edge": float(prob) - float(implied),
+                "implied_probability": (float(implied)
+                                        if implied is not None else None),
+                "coach_edge": (float(prob) - float(implied)
+                               if implied is not None else None),
                 "projection": proj, "is_pitcher": bool(pitcher),
                 "alternate": bool(alternate(p) if callable(alternate)
                                   else alternate),
             })
 
     add(result.get("top9"), "Hits", "hits", "Hits", side="OVER",
-        line=lambda p, s: p.get("line"), odds=lambda p, s: p.get("hit_odds"))
+        line=lambda p, s: p.get("line"), odds=lambda p, s: p.get("hit_odds"),
+        allow_unpriced=True)
     add(result.get("also_ran"), "Hits", "hits", "Hits", side="OVER",
-        line=lambda p, s: p.get("line"), odds=lambda p, s: p.get("hit_odds"))
+        line=lambda p, s: p.get("line"), odds=lambda p, s: p.get("hit_odds"),
+        allow_unpriced=True)
     add(result.get("under_picks"), "Hits", "hits", "Hits", side="UNDER",
-        line=lambda p, s: p.get("line"), odds=lambda p, s: p.get("under_odds"))
+        line=lambda p, s: p.get("line"), odds=lambda p, s: p.get("under_odds"),
+        allow_unpriced=True)
     add(result.get("tb_picks"), "Total Bases", "total_bases", "Total Bases",
         side="UNDER", line=lambda p, s: p.get("line"),
         odds=lambda p, s: p.get("tb_under_odds"))
@@ -2244,7 +2257,8 @@ def _mlb_coach_select_categories(result):
     def choose(pool, *, market=None, markets=None, side=None, alternate=None,
                safest=False, positive_only=True, limit=10):
         rows = [dict(p) for p in pool
-                if not positive_only or p["coach_edge"] > 0]
+                if not positive_only or
+                (p.get("coach_edge") is not None and p["coach_edge"] > 0)]
         if market:
             rows = [p for p in rows if p["market"] == market]
         if markets:
@@ -2266,13 +2280,23 @@ def _mlb_coach_select_categories(result):
         "hitter_safest": choose(regular_hitters, safest=True),
         "hitter_edge": choose(regular_hitters),
         "hitter_alt_hrr": choose(regular_hitters, market="H+R+RBI", alternate=True),
+        "hitter_alt_hrr_prob": sorted(
+            [dict(p) for p in regular_hitters
+             if p["market"] == "H+R+RBI" and p["alternate"] is True],
+            key=lambda p: (-p["model_probability"],
+                           str(p["player"]).lower()))[:10],
         "hitter_hrr_top10": sorted(
             [p for p in hitters
              if p.get("source_count") and p.get("market") == "H+R+RBI"
              and p.get("alternate") is False],
             key=lambda p: p.get("consensus_rank", 999))[:20],
-        "hitter_hits": choose(regular_hitters, market="Hits"),
+        "hitter_hits": sorted(
+            [dict(p) for p in regular_hitters
+             if p["market"] == "Hits" and p["side"] == "OVER"],
+            key=lambda p: (-p["model_probability"],
+                           str(p["player"]).lower()))[:10],
         "hitter_tb": choose(regular_hitters, market="Total Bases"),
+        "hitter_walks": choose(regular_hitters, market="Batter Walks"),
         "hitter_production": choose(regular_hitters, markets=production),
         "hitter_batter_k": choose(regular_hitters, market="Batter Strikeouts"),
         "hitter_unders": choose(regular_hitters, side="UNDER"),
@@ -2320,7 +2344,7 @@ def _mlb_coach_rows(date_str=None, unlocked_only=False):
         offset += page_size
 
 def _save_mlb_coach_snapshot_unlocked(date_str, result):
-    """Automatically bank all 19 Coach presets; no preset click is involved."""
+    """Automatically bank all 21 Coach presets; no preset click is involved."""
     if not (_SB_URL and _SB_KEY):
         return False
     try:
@@ -4087,18 +4111,10 @@ _HTML = """
     .mlb-coach-presets{display:flex;gap:7px;flex-wrap:wrap;margin:14px 0 10px}
     .mlb-coach-preset{background:#111827;color:#cbd5e1;border:1px solid #334155;border-radius:999px;padding:7px 11px;font-size:.69rem;font-weight:900;cursor:pointer}
     .mlb-coach-preset:hover{border-color:#f59e0b;color:#fde68a}
-    .mlb-coach-sidebar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:13px 0 5px;padding:7px 8px;border:1px solid #334155;border-radius:9px;background:#0b1220;position:relative}
-    .mlb-coach-side{background:#111827;color:#94a3b8;border:1px solid #475569;border-radius:7px;padding:6px 12px;font-size:.67rem;font-weight:950;cursor:pointer;letter-spacing:.05em}
+    .mlb-coach-sidebar{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:14px 0 4px;padding:9px 10px;border:1px solid #334155;border-radius:10px;background:#0b1220}
+    .mlb-coach-side{background:#111827;color:#94a3b8;border:1px solid #475569;border-radius:7px;padding:7px 16px;font-size:.7rem;font-weight:950;cursor:pointer;letter-spacing:.05em}
     .mlb-coach-side.over.active{background:#14532d;border-color:#22c55e;color:#bbf7d0}
     .mlb-coach-side.under.active{background:#7f1d1d;border-color:#ef4444;color:#fecaca}
-    .mlb-coach-menu{position:relative}
-    .mlb-coach-menu>summary{list-style:none;background:#111827;color:#e2e8f0;border:1px solid #475569;border-radius:7px;padding:6px 11px;font-size:.67rem;font-weight:900;cursor:pointer;white-space:nowrap}
-    .mlb-coach-menu>summary::-webkit-details-marker{display:none}
-    .mlb-coach-menu[open]>summary{border-color:#f59e0b;color:#fde68a}
-    .mlb-coach-menu-panel{position:absolute;z-index:60;top:34px;left:0;width:300px;max-width:calc(100vw - 44px);max-height:340px;overflow:auto;background:#0b1220;border:1px solid #475569;border-radius:10px;padding:8px;box-shadow:0 16px 38px rgba(0,0,0,.65)}
-    .mlb-coach-menu.pitchers .mlb-coach-menu-panel{left:auto;right:0}
-    .mlb-coach-menu-panel .mlb-coach-preset{display:block;width:100%;text-align:left;margin:0 0 6px;border-radius:7px}
-    .mlb-coach-menu-panel .mlb-coach-preset:last-child{margin-bottom:0}
     .mlb-coach-row{display:flex;gap:8px}
     .mlb-coach-input{flex:1;min-width:0;background:#070d18;color:#fff;border:1px solid #334155;border-radius:11px;padding:12px 14px;font:inherit;font-size:.84rem;outline:none}
     .mlb-coach-input:focus{border-color:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,.1)}
@@ -4538,7 +4554,7 @@ _HTML = """
             </div>
           </div>
           <div style="position:relative;display:inline-block">
-            <button class="btn-primary" id="parlay-coach-btn" onclick="toggleCoachMenu(event)" style="background:#1f2937;color:#fff">&#9889; Coach Edge (0/19) &#9662;</button>
+            <button class="btn-primary" id="parlay-coach-btn" onclick="toggleCoachMenu(event)" style="background:#1f2937;color:#fff">&#9889; Coach Edge (0/21) &#9662;</button>
             <div id="parlay-coach-menu" style="display:none;position:absolute;z-index:60;top:calc(100% + 6px);left:0;background:#0e0e0e;border:1px solid #2a2a2a;border-radius:10px;padding:10px 12px;min-width:255px;max-height:390px;overflow:auto;box-shadow:0 12px 34px rgba(0,0,0,.55)">
               <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px">
                 <span style="font-size:.63rem;color:#fbbf24;font-weight:800;letter-spacing:.06em">COACH EDGE PRESETS</span>
@@ -4549,8 +4565,10 @@ _HTML = """
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="hitter_safest" onchange="_coachChanged()"> Safest hitter bets</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="hitter_edge" onchange="_coachChanged()"> Hitter Coach Edge</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="hitter_alt_hrr" onchange="_coachChanged()"> Alt-Line HRR 1+ · Top 10</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="hitter_alt_hrr_prob" onchange="_coachChanged()"> Alt-Line HRR 1+ · App Probability</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="hitter_hits" onchange="_coachChanged()"> To record a hit</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="hitter_tb" onchange="_coachChanged()"> Total Bases</label>
+                <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="hitter_walks" onchange="_coachChanged()"> Best Hitter Walks</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="hitter_production" onchange="_coachChanged()"> Hitter production</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="hitter_batter_k" onchange="_coachChanged()"> Batter Strikeouts</label>
                 <label class="parlay-cat-row"><input type="checkbox" class="parlay-coach-cb" value="hitter_unders" onchange="_coachChanged()"> Hitter unders</label>
@@ -4609,48 +4627,49 @@ _HTML = """
         </div>
 
         <div class="mlb-coach-sidebar">
-          <span style="font-size:.62rem;font-weight:900;color:#fbbf24;letter-spacing:.05em;margin-right:2px">SIDE</span>
+          <span style="font-size:.65rem;font-weight:900;color:#fbbf24;letter-spacing:.06em;margin-right:3px">SIDE FILTER</span>
           <button id="mlbCoachSideOver" class="mlb-coach-side over" onclick="_setMlbCoachSide('OVER')">OVER</button>
           <button id="mlbCoachSideUnder" class="mlb-coach-side under" onclick="_setMlbCoachSide('UNDER')">UNDER</button>
-          <details class="mlb-coach-menu hitters">
-            <summary>HITTERS &#9662;</summary>
-            <div class="mlb-coach-menu-panel">
-              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('Give me all 100% app probability hitter plays today')" style="border-color:#22c55e;color:#86efac">100% App Plays</button>
-              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the safest hitter bets?')">Safest bets</button>
-              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Hitter Coach Edge plays?')">Coach Edge</button>
-              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Best Alt-Line Hitter H+R+RBI 1+ Edge Plays? — Top 10')" style="border-color:#f59e0b;color:#fde68a">Best Alt-Line HRR 1+ · Top 10</button>
-              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('Show the top 20 hitters batting .300 or better with at least 10 at-bats in today\\'s series position')" style="border-color:#fb923c;color:#fed7aa">1+ HRR · .300+ Series BA · 10+ AB</button>
-              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best plays to record a hit?')">To record a hit</button>
-              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Total Bases plays?')">Total Bases</button>
-              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best hitter production props?')">Production</button>
-              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Batter Strikeout plays?')">Batter Strikeouts</button>
-              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best hitter unders?')">Hitter unders</button>
-              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Top 3 hitter plays today?')">Top 3 hitter plays today</button>
-            </div>
-          </details>
-          <details class="mlb-coach-menu pitchers">
-            <summary>PITCHERS &#9662;</summary>
-            <div class="mlb-coach-menu-panel">
-              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('Give me all 100% app probability pitcher plays today')" style="border-color:#22c55e;color:#86efac">100% App Plays</button>
-              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the safest pitcher bets?')">Safest bets</button>
-              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Pitcher Coach Edge plays?')">Coach Edge</button>
-              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Best Alt-Line Pitcher Edge Plays? — Top 10')" style="border-color:#60a5fa;color:#bfdbfe">Best Alt-Line Edge Plays · Top 10</button>
-              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Pitcher Strikeout plays?')">Pitcher Strikeouts</button>
-              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Hits Allowed plays?')">Hits Allowed</button>
-              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Pitching Outs plays?')">Pitching Outs</button>
-              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Earned Runs plays?')">Earned Runs</button>
-              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Walks Allowed plays?')">Walks Allowed</button>
-              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best pitcher unders?')">Pitcher unders</button>
-              <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Top 3 pitcher plays today?')">Top 3 pitcher plays today</button>
-            </div>
-          </details>
+          <span id="mlbCoachSideHint" style="font-size:.62rem;color:#64748b">Choose a side, then choose any hitter or pitcher market</span>
+        </div>
+
+        <div style="margin-top:18px;font-size:.75rem;font-weight:800;color:#facc15;border-bottom:1px solid rgba(255,255,255,.1);padding-bottom:5px;letter-spacing:.05em;text-transform:uppercase">Hitters</div>
+        <div class="mlb-coach-presets">
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('Give me all 100% app probability hitter plays today')" style="border-color:#22c55e;color:#86efac">100% App Plays</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the safest hitter bets?')">Safest bets</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Hitter Coach Edge plays?')">Coach Edge</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Best Alt-Line Hitter H+R+RBI 1+ Edge Plays? — Top 10')" style="border-color:#f59e0b;color:#fde68a">Best Alt-Line HRR 1+ · Top 10</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Best Alt-Line Hitter H+R+RBI 1+ Plays by App Probability? No Edge Required — Top 10')" style="border-color:#a78bfa;color:#ddd6fe">Alt-Line HRR 1+ · App Probability</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('Show the top 20 hitters batting .300 or better with at least 10 at-bats in today\\'s series position')" style="border-color:#fb923c;color:#fed7aa">1+ HRR · .300+ Series BA · 10+ AB</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best plays to record a hit?')">To record a hit</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Total Bases plays?')">Total Bases</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Hitter Walks plays?')">Best Hitter Walks</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best hitter production props?')">Production</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Batter Strikeout plays?')">Batter Strikeouts</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best hitter unders?')">Hitter unders</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Top 3 hitter plays today?')">Top 3 hitter plays today</button>
+        </div>
+
+        <div style="margin-top:16px;font-size:.75rem;font-weight:800;color:#60a5fa;border-bottom:1px solid rgba(255,255,255,.1);padding-bottom:5px;letter-spacing:.05em;text-transform:uppercase">Pitchers</div>
+        <div class="mlb-coach-presets">
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('Give me all 100% app probability pitcher plays today')" style="border-color:#22c55e;color:#86efac">100% App Plays</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the safest pitcher bets?')">Safest bets</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Pitcher Coach Edge plays?')">Coach Edge</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Best Alt-Line Pitcher Edge Plays? — Top 10')" style="border-color:#60a5fa;color:#bfdbfe">Best Alt-Line Edge Plays · Top 10</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Pitcher Strikeout plays?')">Pitcher Strikeouts</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Hits Allowed plays?')">Hits Allowed</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Pitching Outs plays?')">Pitching Outs</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Earned Runs plays?')">Earned Runs</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Walks Allowed plays?')">Walks Allowed</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best pitcher unders?')">Pitcher unders</button>
+          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Top 3 pitcher plays today?')">Top 3 pitcher plays today</button>
         </div>
 
         <div class="mlb-coach-row" style="margin-top:16px">
           <input id="mlbCoachInput" class="mlb-coach-input" placeholder="Type a question..." onkeydown="if(event.key==='Enter')askMlbCoach()"/>
           <button class="mlb-coach-send" onclick="askMlbCoach()">Analyze</button>
         </div>
-        <div style="color:#64748b;font-size:.65rem;line-height:1.45;margin-top:8px">Requires a loaded MLB board and genuine sportsbook prices. Safest Bets ranks qualified sides by app probability; Coach Edge equals app probability minus sportsbook-implied probability.</div>
+        <div style="color:#64748b;font-size:.65rem;line-height:1.45;margin-top:8px">Requires a loaded MLB board. To Record a Hit ranks generated hit candidates by app probability and shows odds only when available; other Coach categories use genuine sportsbook prices. Coach Edge equals app probability minus sportsbook-implied probability.</div>
         <div id="mlbCoachAnswer" class="mlb-coach-answer"></div>
       </div>
       <div class="card p-6 hidden" id="mlb-coach-track-card" style="max-width:1100px;margin:0 auto 16px;border-color:rgba(34,211,238,.35)">
@@ -4658,7 +4677,7 @@ _HTML = """
           <div>
             <div style="color:#22d3ee;font-size:.65rem;font-weight:900;letter-spacing:.1em;text-transform:uppercase">Automatic pre-game snapshots</div>
             <h2 style="font-family:'Playfair Display',serif;color:#fff;font-size:1.35rem;margin-top:4px">MLB Coach Edge Track Record</h2>
-            <div style="color:#94a3b8;font-size:.73rem;margin-top:4px">All 19 Coach questions populate during the picks run. You never need to click a Coach button to save its plays.</div>
+            <div style="color:#94a3b8;font-size:.73rem;margin-top:4px">All 21 Coach questions populate during the picks run. You never need to click a Coach button to save its plays.</div>
           </div>
           <button onclick="hide('mlb-coach-track-card')" style="background:#1f2937;color:#cbd5e1;border:0;border-radius:8px;padding:8px 12px;font-weight:800;cursor:pointer">Close</button>
         </div>
@@ -4981,6 +5000,7 @@ function _mlbCoachAllProps() {
       : (p.true_prob != null ? p.true_prob : p.win_pct));
     if(raw == null || raw === '') {
       if(p.edge == null || !isFinite(Number(p.edge))) return null;
+      if(implied == null || !isFinite(Number(implied))) return null;
       raw = implied + Number(p.edge) * 100;
     } else {
       raw = Number(raw);
@@ -5001,9 +5021,10 @@ function _mlbCoachAllProps() {
       var side = String(configuredSide || p.pick || p._90_dir || p.dir || p.side || '').toUpperCase();
       if(side !== 'OVER' && side !== 'UNDER') return;
       var odds = cfg.odds ? cfg.odds(p, side) : p.odds;
-      if(odds == null || odds === '' || !isFinite(Number(odds))) return;
-      var implied = _mlbCoachOddsImplied(odds);
-      if(implied == null) return;
+      var hasOdds=odds != null && odds !== '' && isFinite(Number(odds));
+      if(!hasOdds && !cfg.allowUnpriced) return;
+      var implied = hasOdds ? _mlbCoachOddsImplied(odds) : null;
+      if(implied == null && !cfg.allowUnpriced) return;
       var probability = cfg.prob ? cfg.prob(p, side, implied) : appProb(p, implied);
       probability = Number(probability);
       if(probability <= 1.0001) probability *= 100;
@@ -5017,7 +5038,7 @@ function _mlbCoachAllProps() {
       if(!player || !mkt) return;
       var team = p.team || '';
       var opp = p.opp || p.opponent || '';
-      var edge = probability - implied;
+      var edge = implied == null ? null : probability - implied;
       var k = player+'|'+mkt+'|'+side+'|'+line;
       if(seen[k]) return;
       seen[k] = 1;
@@ -5036,7 +5057,7 @@ function _mlbCoachAllProps() {
 
       arr.push({
         player: player, team: team, opp: opp, market: mkt, side: side, line: line,
-        odds: Number(odds), appProb: probability, implied: implied, edge: edge,
+        odds: hasOdds ? Number(odds) : null, appProb: probability, implied: implied, edge: edge,
         isPitcher: !!cfg.pitcher, alternate: alternate,
         blurb: blurb, proj: projection, book: book,
         src: cfg.src ? cfg.src(p, side) : p
@@ -5044,10 +5065,10 @@ function _mlbCoachAllProps() {
     });
   }
 
-  var hitOver = {market:'Hits',side:'OVER',line:function(){return .5;},odds:function(p){return p.hit_odds;}};
+  var hitOver = {market:'Hits',side:'OVER',allowUnpriced:true,line:function(){return .5;},odds:function(p){return p.hit_odds;}};
   add(res.top9, hitOver);
   add(res.also_ran, hitOver);
-  add(res.under_picks, {market:'Hits',side:'UNDER',line:function(){return 1.5;},odds:function(p){return p.under_odds;}});
+  add(res.under_picks, {market:'Hits',side:'UNDER',allowUnpriced:true,line:function(){return 1.5;},odds:function(p){return p.under_odds;}});
   add(res.tb_picks, {market:'Total Bases',side:'UNDER',line:function(){return 1.5;},odds:function(p){return p.tb_under_odds;}});
   add(res.tb_over_picks, {market:'Total Bases',side:'OVER',line:function(){return 1.5;},odds:function(p){return p.tb_over_odds;}});
   add(res.hr_picks, {market:'Home Runs',line:function(p){return p.line != null ? p.line : .5;},odds:function(p,s){return s==='UNDER'?p.under_odds:p.over_odds;}});
@@ -5192,14 +5213,14 @@ function _mlbCoachAllProps() {
   return arr;
 }
 
-// The 19 Coach buttons are also the 19 independently selectable parlay presets.
+// The 21 Coach buttons are also the 21 independently selectable parlay presets.
 // Keep this selector pure: it receives the exact priced rows produced by
 // _mlbCoachAllProps and applies the same gates, ordering, and caps as askMlbCoach.
 // The parlay builder and the visible Coach answer therefore cannot drift apart.
 var _MLB_COACH_PRESET_LABELS = {
   hitter_safest:'Safest hitter bets', hitter_edge:'Hitter Coach Edge',
-  hitter_alt_hrr:'Alt-Line HRR 1+ · Top 10', hitter_hrr_top10:'1+ HRR · .300+ Series BA · 10+ AB', hitter_hits:'To record a hit',
-  hitter_tb:'Total Bases', hitter_production:'Hitter production',
+  hitter_alt_hrr:'Alt-Line HRR 1+ · Top 10', hitter_alt_hrr_prob:'Alt-Line HRR 1+ · App Probability', hitter_hrr_top10:'1+ HRR · .300+ Series BA · 10+ AB', hitter_hits:'To record a hit',
+  hitter_tb:'Total Bases', hitter_walks:'Best Hitter Walks', hitter_production:'Hitter production',
   hitter_batter_k:'Batter Strikeouts', hitter_unders:'Hitter unders',
   hitter_top3:'Top 3 hitter plays',
   pitcher_safest:'Safest pitcher bets', pitcher_edge:'Pitcher Coach Edge',
@@ -5209,13 +5230,13 @@ var _MLB_COACH_PRESET_LABELS = {
   pitcher_unders:'Pitcher unders', pitcher_top3:'Top 3 pitcher plays'
 };
 var _MLB_COACH_PRESET_ORDER = [
-  'hitter_safest','hitter_edge','hitter_alt_hrr','hitter_hrr_top10','hitter_hits','hitter_tb',
+  'hitter_safest','hitter_edge','hitter_alt_hrr','hitter_alt_hrr_prob','hitter_hrr_top10','hitter_hits','hitter_tb','hitter_walks',
   'hitter_production','hitter_batter_k','hitter_unders','hitter_top3',
   'pitcher_safest','pitcher_edge','pitcher_alt_k','pitcher_k',
   'pitcher_hits_allowed','pitcher_outs','pitcher_earned_runs','pitcher_walks',
   'pitcher_unders','pitcher_top3'
 ];
-function _mlbCoachSelectRows(props, preset) {
+function _mlbCoachSelectRows(props, preset, sideFilter) {
   var rows=(props||[]).slice(), isPit=String(preset||'').indexOf('pitcher_')===0;
    rows=rows.filter(function(p){
      return !!p.isPitcher===isPit &&
@@ -5224,6 +5245,7 @@ function _mlbCoachSelectRows(props, preset) {
   var out=rows.slice(), positive=function(p){ return p.edge>0; };
   function byEdge(a,b){ return b.edge-a.edge; }
   function bySafe(a,b){ return b.appProb-a.appProb || b.edge-a.edge; }
+  function byProbability(a,b){ return b.appProb-a.appProb || a.player.localeCompare(b.player); }
   switch(preset){
     case 'hitter_safest': case 'pitcher_safest':
       out=rows.filter(positive).sort(bySafe).slice(0,10); break;
@@ -5231,6 +5253,8 @@ function _mlbCoachSelectRows(props, preset) {
       out=rows.filter(positive).sort(byEdge).slice(0,10); break;
     case 'hitter_alt_hrr':
       out=rows.filter(function(p){return p.alternate&&p.market==='H+R+RBI'&&p.edge>0;}).sort(byEdge).slice(0,10); break;
+    case 'hitter_alt_hrr_prob':
+      out=rows.filter(function(p){return p.alternate&&p.market==='H+R+RBI';}).sort(byProbability).slice(0,10); break;
      case 'hitter_hrr_top10':
        out=rows.filter(function(p){return p.market==='H+R+RBI'&&p.source_count;})
          .sort(function(a,b){return (a.consensus_rank||999)-(b.consensus_rank||999);})
@@ -5238,9 +5262,12 @@ function _mlbCoachSelectRows(props, preset) {
     case 'pitcher_alt_k':
       out=rows.filter(function(p){return p.alternate;}).sort(byEdge).slice(0,10); break;
     case 'hitter_hits':
-      out=rows.filter(function(p){return p.edge>0&&p.market==='Hits';}).sort(byEdge).slice(0,10); break;
+      var hitSide=String(sideFilter||'').toUpperCase()==='UNDER'?'UNDER':'OVER';
+      out=rows.filter(function(p){return p.market==='Hits'&&p.side===hitSide;}).sort(byProbability).slice(0,10); break;
     case 'hitter_tb':
       out=rows.filter(function(p){return p.edge>0&&p.market==='Total Bases';}).sort(byEdge).slice(0,10); break;
+    case 'hitter_walks':
+      out=rows.filter(function(p){return p.edge>0&&p.market==='Batter Walks';}).sort(byEdge).slice(0,10); break;
     case 'hitter_production':
       out=rows.filter(function(p){return p.edge>0&&['Runs','RBIs','H+R+RBI','Home Runs','Batter Walks'].indexOf(p.market)>=0;}).sort(byEdge).slice(0,10); break;
     case 'hitter_batter_k':
@@ -5272,11 +5299,17 @@ function _mlbCoachPresetForQuestion(q, isHitterQ, isPitcherQ) {
   var h=!p && (isHitterQ||/hitter|batter|record a hit|total bases|production/.test(q));
   if(/1\+\s*hrr|hrr top 10|series position|series ba|series split qualifier/.test(q))
     return 'hitter_hrr_top10';
-  if(q.indexOf('alt-line')>=0||q.indexOf('alternate')>=0) return h?'hitter_alt_hrr':(p?'pitcher_alt_k':'');
+  if(q.indexOf('alt-line')>=0||q.indexOf('alternate')>=0||
+     (' '+q+' ').indexOf(' alt ')>=0) {
+    if(h && (/no edge|without edge|regardless of edge|app probability/.test(q)))
+      return 'hitter_alt_hrr_prob';
+    return h?'hitter_alt_hrr':(p?'pitcher_alt_k':'');
+  }
   if(q.indexOf('safest')>=0) return h?'hitter_safest':(p?'pitcher_safest':'');
   if(q.indexOf('under')>=0) return h?'hitter_unders':(p?'pitcher_unders':'');
   if(q.indexOf('production')>=0) return h?'hitter_production':'';
   if(q.indexOf('total bases')>=0) return h?'hitter_tb':'';
+  if(q.indexOf('hitter walks')>=0||q.indexOf('batter walks')>=0) return h?'hitter_walks':'';
   if(q.indexOf('record a hit')>=0) return h?'hitter_hits':'';
   if(q.indexOf('strikeout')>=0) return h?'hitter_batter_k':(p?'pitcher_k':'');
   if(q.indexOf('hits allowed')>=0) return p?'pitcher_hits_allowed':'';
@@ -5291,9 +5324,6 @@ function _mlbCoachPresetForQuestion(q, isHitterQ, isPitcherQ) {
 function askMlbCoachPreset(question) {
   var input = document.getElementById('mlbCoachInput');
   if(input) input.value = question;
-  document.querySelectorAll('.mlb-coach-menu[open]').forEach(function(menu){
-    menu.removeAttribute('open');
-  });
   askMlbCoach();
 }
 
@@ -5398,12 +5428,15 @@ function askMlbCoach() {
   if(coachPreset){
     var coachSide=window._MLB_COACH_SIDE_FILTER||'';
     if(coachSide) pool=pool.filter(function(p){return p.side===coachSide;});
-    var coachRows=_mlbCoachSelectRows(pool,coachPreset);
+    var coachRows=_mlbCoachSelectRows(pool,coachPreset,coachSide);
     var coachAnyEdge=/^(pitcher_alt_k|pitcher_k|pitcher_hits_allowed|pitcher_outs|pitcher_earned_runs|pitcher_walks)$/.test(coachPreset);
     var coachSeriesOnly=coachPreset==='hitter_hrr_top10';
+    var coachProbabilityMode=coachPreset==='hitter_hits'?'hits':
+      (coachPreset==='hitter_alt_hrr_prob'?'alt_hrr':'');
     _mlbCoachRender(question+(coachSide?' · '+coachSide+' only':''),coachRows,props.length,
                     coachPreset==='hitter_safest'||coachPreset==='pitcher_safest',
-                    gameLabel,coachAnyEdge,coachSeriesOnly);
+                    gameLabel,coachAnyEdge,coachSeriesOnly,
+                    coachProbabilityMode);
     return;
   }
 
@@ -5483,12 +5516,16 @@ function askMlbCoach() {
                   isPitcherMarketList);
 }
 
-function _mlbCoachRender(question, rows, totalPriced, isSafest, gameLabel, allowAnyEdge, seriesOnly) {
+function _mlbCoachRender(question, rows, totalPriced, isSafest, gameLabel, allowAnyEdge, seriesOnly, probabilityMode) {
   var qHtml = '<div class="mlb-coach-question">'+_mlbEsc(question)+'</div>';
   if(!rows.length) {
     _mlbCoachCommit('<div>'+qHtml+'<div style="margin-top:11px;color:#cbd5e1;font-size:.78rem;line-height:1.5">'+
       (seriesOnly
        ?'No hitter generated in today\\'s app categories has at least 10 at-bats and a .300 or better average in this season\\'s home/away split matching today\\'s series position.'
+       :probabilityMode==='hits'
+       ?'No generated hitter matched this Hits side. OVER uses the generated Over 0.5 hit pool; select UNDER to view the generated Under 1.5 hit pool.'
+       :probabilityMode==='alt_hrr'
+       ?'No genuine sportsbook Alt-Line H+R+RBI Over 0.5 play was available for this request. No standard line was substituted.'
        :'No loaded MLB prop'+(gameLabel?' in '+_mlbEsc(gameLabel):'')+' matched that request with a real sportsbook price'+(allowAnyEdge?'.':' and a green positive Coach Edge.'))+
       '</div></div>');
     return;
@@ -5512,6 +5549,10 @@ function _mlbCoachRender(question, rows, totalPriced, isSafest, gameLabel, allow
   var isHrrConsensus=seriesOnly||rows.some(function(p){return !!p.source_count;});
   var summaryText = isHrrConsensus
     ?'This list uses every unique hitter generated in today\\'s app categories. Game 1 uses this season\\'s G1 BA at today\\'s home/away venue, Game 2 uses the matching G2 BA, and Game 3 or later uses G3+ BA. A hitter needs at least 10 at-bats in that exact split and a .300 or better average; the list is capped at 20. Pitcher history, opponent history, sportsbook odds, and Coach Edge are not requirements. Genuine exact HRR Over 0.5 odds are shown when posted.'
+    : probabilityMode==='hits'
+    ? 'I ranked the generated '+(rows[0]&&rows[0].side==='UNDER'?'Hit Under 1.5':'Hit Over 0.5')+' candidates by app/model hit probability, not sportsbook price or Coach Edge. Odds are optional and shown when available.'
+    : probabilityMode==='alt_hrr'
+    ? 'I ranked genuine sportsbook H+R+RBI Over 0.5 alternate plays by app probability. Positive Coach Edge is not required, and no standard line is substituted.'
     : allowAnyEdge
     ? 'I used up to five qualified normal-board picks for this pitcher market and kept their calculated Coach Edge visible, including negative values.'
     : isSafest
