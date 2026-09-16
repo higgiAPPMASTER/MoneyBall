@@ -4115,6 +4115,16 @@ _HTML = """
     .mlb-coach-side{background:#111827;color:#94a3b8;border:1px solid #475569;border-radius:7px;padding:7px 16px;font-size:.7rem;font-weight:950;cursor:pointer;letter-spacing:.05em}
     .mlb-coach-side.over.active{background:#14532d;border-color:#22c55e;color:#bbf7d0}
     .mlb-coach-side.under.active{background:#7f1d1d;border-color:#ef4444;color:#fecaca}
+    .mlb-coach-games{position:relative;display:inline-flex;align-items:center;gap:7px}
+    .mlb-coach-games-btn{background:#111827;color:#e2e8f0;border:1px solid #475569;border-radius:7px;padding:7px 11px;font-size:.68rem;font-weight:900;cursor:pointer;white-space:nowrap}
+    .mlb-coach-games-btn.active{background:#164e63;border-color:#22d3ee;color:#cffafe}
+    .mlb-coach-games-menu{display:none;position:absolute;z-index:50;top:calc(100% + 7px);left:0;width:min(340px,82vw);max-height:310px;overflow:auto;background:#07111f;border:1px solid #475569;border-radius:11px;padding:9px;box-shadow:0 18px 45px rgba(0,0,0,.55)}
+    .mlb-coach-games-menu.open{display:block}
+    .mlb-coach-games-actions{display:flex;gap:7px;padding-bottom:8px;margin-bottom:5px;border-bottom:1px solid #1e293b}
+    .mlb-coach-games-action{flex:1;background:#172033;color:#cbd5e1;border:1px solid #334155;border-radius:7px;padding:6px;font-size:.64rem;font-weight:900;cursor:pointer}
+    .mlb-coach-game-option{display:flex;align-items:center;gap:8px;padding:7px 6px;border-radius:7px;color:#dbeafe;font-size:.7rem;font-weight:750;cursor:pointer}
+    .mlb-coach-game-option:hover{background:#111f31}
+    .mlb-coach-game-option input{accent-color:#22d3ee;width:15px;height:15px}
     .mlb-coach-row{display:flex;gap:8px}
     .mlb-coach-input{flex:1;min-width:0;background:#070d18;color:#fff;border:1px solid #334155;border-radius:11px;padding:12px 14px;font:inherit;font-size:.84rem;outline:none}
     .mlb-coach-input:focus{border-color:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,.1)}
@@ -4631,6 +4641,20 @@ _HTML = """
           <button id="mlbCoachSideOver" class="mlb-coach-side over" onclick="_setMlbCoachSide('OVER')">OVER</button>
           <button id="mlbCoachSideUnder" class="mlb-coach-side under" onclick="_setMlbCoachSide('UNDER')">UNDER</button>
           <span id="mlbCoachSideHint" style="font-size:.62rem;color:#64748b">Choose a side, then choose any hitter or pitcher market</span>
+        </div>
+        <div class="mlb-coach-sidebar" style="margin-top:8px">
+          <span style="font-size:.65rem;font-weight:900;color:#22d3ee;letter-spacing:.06em;margin-right:3px">GAME FILTER</span>
+          <div class="mlb-coach-games">
+            <button id="mlbCoachGamesBtn" class="mlb-coach-games-btn" onclick="_toggleMlbCoachGames(event)">All games &#9662;</button>
+            <div id="mlbCoachGamesMenu" class="mlb-coach-games-menu" onclick="event.stopPropagation()">
+              <div class="mlb-coach-games-actions">
+                <button class="mlb-coach-games-action" onclick="_mlbCoachSelectAllGames()">All games</button>
+                <button class="mlb-coach-games-action" onclick="_mlbCoachClearGames()">Clear</button>
+              </div>
+              <div id="mlbCoachGamesList"><div style="padding:8px;color:#64748b;font-size:.68rem">Load an MLB board to choose games.</div></div>
+            </div>
+          </div>
+          <span id="mlbCoachGamesHint" style="font-size:.62rem;color:#64748b">Choose any number of matchups; all Coach questions use this filter</span>
         </div>
 
         <div style="margin-top:18px;font-size:.75rem;font-weight:800;color:#facc15;border-bottom:1px solid rgba(255,255,255,.1);padding-bottom:5px;letter-spacing:.05em;text-transform:uppercase">Hitters</div>
@@ -5342,6 +5366,81 @@ function _setMlbCoachSide(side){
     :'Choose a side, then choose any hitter or pitcher market';
 }
 
+window._MLB_COACH_GAME_FILTER=null;
+function _mlbCoachGameKey(p){
+  var a=String((p&&p.team)||'').trim().toLowerCase();
+  var b=String((p&&(p.opp||p.opponent))||'').trim().toLowerCase();
+  if(!a||!b) return '';
+  return [a,b].sort().join('|');
+}
+function _mlbCoachGameOptions(props){
+  var seen={},out=[];
+  (props||[]).forEach(function(p){
+    var key=_mlbCoachGameKey(p);
+    if(!key||seen[key]) return;
+    seen[key]=1;
+    var team=String(p.team||'').trim(),opp=String(p.opp||p.opponent||'').trim();
+    out.push({key:key,label:team+' vs '+opp});
+  });
+  out.sort(function(a,b){return a.label.localeCompare(b.label);});
+  return out;
+}
+function _mlbCoachRenderGameFilter(){
+  var opts=_mlbCoachGameOptions(_mlbCoachAllProps());
+  var list=document.getElementById('mlbCoachGamesList');
+  var btn=document.getElementById('mlbCoachGamesBtn');
+  var selected=window._MLB_COACH_GAME_FILTER;
+  if(selected!==null){
+    var valid={}; opts.forEach(function(o){valid[o.key]=1;});
+    Object.keys(selected).forEach(function(k){if(!valid[k]) delete selected[k];});
+  }
+  if(list){
+    list.innerHTML=opts.length?opts.map(function(o){
+      var checked=selected===null||!!selected[o.key];
+      return '<label class="mlb-coach-game-option"><input type="checkbox" '+(checked?'checked ':'')+
+        'onchange="_mlbCoachToggleGame(&#39;'+_mlbEsc(o.key)+'&#39;,this.checked)"> <span>'+_mlbEsc(o.label)+'</span></label>';
+    }).join(''):'<div style="padding:8px;color:#64748b;font-size:.68rem">No matchups are available on the loaded board.</div>';
+  }
+  if(btn){
+    var count=selected===null?opts.length:Object.keys(selected).filter(function(k){return selected[k];}).length;
+    btn.innerHTML=(selected===null?'All games':count+' game'+(count===1?'':'s')+' selected')+' &#9662;';
+    btn.classList.toggle('active',selected!==null);
+  }
+}
+function _toggleMlbCoachGames(event){
+  if(event) event.stopPropagation();
+  _mlbCoachRenderGameFilter();
+  var menu=document.getElementById('mlbCoachGamesMenu');
+  if(menu) menu.classList.toggle('open');
+}
+function _mlbCoachSelectAllGames(){
+  window._MLB_COACH_GAME_FILTER=null;
+  _mlbCoachRenderGameFilter();
+}
+function _mlbCoachClearGames(){
+  window._MLB_COACH_GAME_FILTER={};
+  _mlbCoachRenderGameFilter();
+}
+function _mlbCoachToggleGame(key,checked){
+  var opts=_mlbCoachGameOptions(_mlbCoachAllProps());
+  if(window._MLB_COACH_GAME_FILTER===null){
+    window._MLB_COACH_GAME_FILTER={};
+    opts.forEach(function(o){window._MLB_COACH_GAME_FILTER[o.key]=true;});
+  }
+  if(checked) window._MLB_COACH_GAME_FILTER[key]=true;
+  else delete window._MLB_COACH_GAME_FILTER[key];
+  _mlbCoachRenderGameFilter();
+}
+function _mlbCoachApplyGameFilter(props){
+  var selected=window._MLB_COACH_GAME_FILTER;
+  if(selected===null) return (props||[]).slice();
+  return (props||[]).filter(function(p){return !!selected[_mlbCoachGameKey(p)];});
+}
+document.addEventListener('click',function(){
+  var menu=document.getElementById('mlbCoachGamesMenu');
+  if(menu) menu.classList.remove('open');
+});
+
 function _mlbCoachCommit(html) {
   var ans = document.getElementById('mlbCoachAnswer');
   if(!ans) return;
@@ -5397,7 +5496,13 @@ function askMlbCoach() {
   var isHitterQ = q.indexOf('hitter')>=0 || q.indexOf('batter')>=0 || q.indexOf('hit')>=0 || q.indexOf('total bases')>=0 || q.indexOf('production')>=0;
   var isPitcherQ = q.indexOf('pitcher')>=0 || q.indexOf('pitching')>=0 || (q.indexOf('strikeout')>=0 && q.indexOf('batter')<0) || q.indexOf('hits allowed')>=0 || q.indexOf('outs')>=0 || q.indexOf('earned runs')>=0 || q.indexOf('walks allowed')>=0;
 
-  var pool = props;
+  var pool = _mlbCoachApplyGameFilter(props);
+  if(window._MLB_COACH_GAME_FILTER!==null){
+    var selectedCount=Object.keys(window._MLB_COACH_GAME_FILTER).filter(function(k){
+      return window._MLB_COACH_GAME_FILTER[k];
+    }).length;
+    gameLabel=selectedCount+' selected game'+(selectedCount===1?'':'s');
+  }
   if(requestedTeams.length >= 2) {
     var gameA=requestedTeams[0].toLowerCase(),gameB=requestedTeams[1].toLowerCase();
     pool=pool.filter(function(p){
@@ -6377,6 +6482,8 @@ function _openGamePred(i){
 function showResults(result) {
   result = _filterStarted(result);
   window._lastResult = result;
+  window._MLB_COACH_GAME_FILTER=null;
+  _mlbCoachRenderGameFilter();
 
   var _mlbAns = document.getElementById('mlbCoachAnswer');
   if(_mlbAns) {
