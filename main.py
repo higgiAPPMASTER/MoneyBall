@@ -4125,6 +4125,9 @@ _HTML = """
     .mlb-coach-game-option{display:flex;align-items:center;gap:8px;padding:7px 6px;border-radius:7px;color:#dbeafe;font-size:.7rem;font-weight:750;cursor:pointer}
     .mlb-coach-game-option:hover{background:#111f31}
     .mlb-coach-game-option input{accent-color:#22d3ee;width:15px;height:15px}
+    .mlb-coach-history-select{background:#111827;color:#f8fafc;border:1px solid #475569;border-radius:8px;padding:8px 10px;font-size:.72rem;font-weight:800;outline:none;min-width:150px}
+    .mlb-coach-history-select:focus{border-color:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,.1)}
+    .mlb-coach-history-run{background:linear-gradient(135deg,#b45309,#f59e0b);color:#fff;border:0;border-radius:8px;padding:9px 16px;font-size:.72rem;font-weight:950;cursor:pointer;white-space:nowrap}
     .mlb-coach-row{display:flex;gap:8px}
     .mlb-coach-input{flex:1;min-width:0;background:#070d18;color:#fff;border:1px solid #334155;border-radius:11px;padding:12px 14px;font:inherit;font-size:.84rem;outline:none}
     .mlb-coach-input:focus{border-color:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,.1)}
@@ -4655,6 +4658,30 @@ _HTML = """
             </div>
           </div>
           <span id="mlbCoachGamesHint" style="font-size:.62rem;color:#64748b">Choose any number of matchups; all Coach questions use this filter</span>
+        </div>
+        <div class="mlb-coach-sidebar" style="margin-top:8px;border-color:rgba(245,158,11,.45)">
+          <span style="font-size:.65rem;font-weight:900;color:#fbbf24;letter-spacing:.06em;margin-right:3px">TOP 10 VS TEAM</span>
+          <select id="mlbCoachHistoryCategory" class="mlb-coach-history-select" aria-label="MLB prop category">
+            <option value="Hits">Hitter Hits</option>
+            <option value="Total Bases">Total Bases</option>
+            <option value="Home Runs">Home Runs</option>
+            <option value="RBIs">RBIs</option>
+            <option value="H+R+RBI">H+R+RBI</option>
+            <option value="Runs">Runs</option>
+            <option value="Batter Walks">Batter Walks</option>
+            <option value="Batter Strikeouts">Batter Strikeouts</option>
+            <option value="Pitcher Strikeouts">Pitcher Strikeouts</option>
+            <option value="Hits Allowed">Pitcher Hits Allowed</option>
+            <option value="Pitching Outs">Pitching Outs</option>
+            <option value="Earned Runs">Pitcher Earned Runs</option>
+            <option value="Walks Allowed">Pitcher Walks Allowed</option>
+          </select>
+          <select id="mlbCoachHistorySide" class="mlb-coach-history-select" style="min-width:105px" aria-label="Over or Under">
+            <option value="OVER">OVER</option>
+            <option value="UNDER">UNDER</option>
+          </select>
+          <button class="mlb-coach-history-run" onclick="runMlbCoachHistoryTop10()">SHOW TOP 10</button>
+          <span style="font-size:.62rem;color:#64748b">Ranks current plays by historical success against today&#39;s opponent; Day/Night BA is shown for hitters</span>
         </div>
 
         <div style="margin-top:18px;font-size:.75rem;font-weight:800;color:#facc15;border-bottom:1px solid rgba(255,255,255,.1);padding-bottom:5px;letter-spacing:.05em;text-transform:uppercase">Hitters</div>
@@ -5436,6 +5463,123 @@ function _mlbCoachApplyGameFilter(props){
   if(selected===null) return (props||[]).slice();
   return (props||[]).filter(function(p){return !!selected[_mlbCoachGameKey(p)];});
 }
+
+function _mlbCoachHistoryDisplay(value, invert){
+  var text=String(value==null?'':value).trim();
+  if(!text||text.toUpperCase()==='N/A') return null;
+  var m=text.match(/(\d+)\s*\/\s*(\d+)/);
+  if(!m) return null;
+  var hits=Number(m[1]),total=Number(m[2]);
+  if(!isFinite(hits)||!isFinite(total)||total<=0) return null;
+  if(invert) hits=Math.max(0,total-hits);
+  return {hits:hits,total:total,rate:hits/total*100};
+}
+
+function _mlbCoachVsTeamHistory(p){
+  var s=(p&&p.src)||{}, side=String(p&&p.side||'').toUpperCase();
+  if(p&&p.isPitcher){
+    var log=Array.isArray(s.vs_opp_log)?s.vs_opp_log:[];
+    var vals=log.map(function(g){
+      if(p.market==='Pitcher Strikeouts') return g.k!=null?g.k:g.v;
+      if(p.market==='Hits Allowed') return g.h!=null?g.h:g.v;
+      if(p.market==='Pitching Outs') return g.outs!=null?g.outs:g.v;
+      if(p.market==='Earned Runs') return g.er!=null?g.er:g.v;
+      if(p.market==='Walks Allowed') return g.bb!=null?g.bb:g.v;
+      return g.v;
+    }).map(Number).filter(function(v){return isFinite(v);});
+    if(!vals.length) return null;
+    var ph=vals.filter(function(v){return side==='UNDER'?v<p.line:v>p.line;}).length;
+    return {hits:ph,total:vals.length,rate:ph/vals.length*100};
+  }
+
+  // Most hitter generators carry a side-aware head-to-head display.
+  var hist=_mlbCoachHistoryDisplay(s.h2h_disp,false);
+  if(hist) return hist;
+  if(p.market==='H+R+RBI'){
+    hist=_mlbCoachHistoryDisplay(s.vs_team_hrr_display,side==='UNDER');
+    if(hist) return hist;
+  }
+  if(p.market==='Home Runs'){
+    hist=_mlbCoachHistoryDisplay(s.team_disp,side==='UNDER');
+    if(hist) return hist;
+  }
+  if(p.market==='Hits'){
+    hist=_mlbCoachHistoryDisplay(s.vsteam_disp,side==='UNDER');
+    if(hist) return hist;
+    hist=_mlbCoachHistoryDisplay(s.s4&&s.s4.display,side==='UNDER');
+    if(hist) return hist;
+  }
+  // A rate explicitly based on the opponent is valid; L10 fallbacks are not.
+  if(/vs\s*(opp|team)/i.test(String(s.basis||''))){
+    hist=_mlbCoachHistoryDisplay(s.rate_disp,false);
+    if(hist) return hist;
+  }
+  return null;
+}
+
+function _mlbCoachDayNightBa(p){
+  if(!p||p.isPitcher) return {label:'—',value:'—'};
+  var s=p.src||{}, raw=(s.s5&&s.s5.display)||s.dn_disp||'';
+  if(!raw||String(raw).toUpperCase()==='N/A') return {label:'Day/Night BA',value:'N/A'};
+  raw=String(raw);
+  if(raw.charAt(0)==='0'&&raw.charAt(1)==='.') raw=raw.slice(1);
+  var lbl=String(s.dn_label||'D/N').toUpperCase();
+  if(lbl==='DAY') lbl='Day'; else if(lbl==='NIGHT') lbl='Night'; else lbl='Day/Night';
+  return {label:lbl+' BA',value:raw};
+}
+
+function runMlbCoachHistoryTop10(){
+  var categoryEl=document.getElementById('mlbCoachHistoryCategory');
+  var sideEl=document.getElementById('mlbCoachHistorySide');
+  var category=String(categoryEl&&categoryEl.value||'');
+  var side=String(sideEl&&sideEl.value||'OVER').toUpperCase();
+  var all=_mlbCoachApplyGameFilter(_mlbCoachAllProps());
+  if(!all.length){
+    _mlbCoachCommit('<div class="mlb-coach-empty">Load today&#39;s MLB board before using Top 10 vs Team.</div>');
+    return;
+  }
+  var rows=all.filter(function(p){
+    return p.market===category&&p.side===side&&!p.alternate&&!p.coachPresetOnly;
+  }).map(function(p){
+    p._vsTeamHistory=_mlbCoachVsTeamHistory(p);
+    return p;
+  }).filter(function(p){return !!p._vsTeamHistory;});
+
+  rows.sort(function(a,b){
+    var ah=a._vsTeamHistory,bh=b._vsTeamHistory;
+    return bh.rate-ah.rate||bh.total-ah.total||b.appProb-a.appProb||a.player.localeCompare(b.player);
+  });
+  var seen={};
+  rows=rows.filter(function(p){
+    var key=String(p.player||'').toLowerCase();
+    if(seen[key]) return false;
+    seen[key]=1; return true;
+  }).slice(0,10);
+
+  var qHtml='<div class="mlb-coach-question">'+_mlbEsc(category)+' &middot; '+side+' &middot; Top 10 by history vs today&#39;s team</div>';
+  if(!rows.length){
+    _mlbCoachCommit(qHtml+'<div class="mlb-coach-empty">No current '+_mlbEsc(side)+' '+_mlbEsc(category)+' plays have stored history against today&#39;s opponent. No app-probability or Coach Edge fallback was used.</div>');
+    return;
+  }
+  var body=rows.map(function(p,i){
+    var h=p._vsTeamHistory,dn=_mlbCoachDayNightBa(p),clickKey=_nameReg(p.src);
+    var od=p.odds==null?'<span style="color:#64748b">N/A</span>':_mlbCoachOdds(p.odds);
+    var historyColor=h.rate>=70?'#4ade80':(h.rate>=55?'#fbbf24':'#f87171');
+    return '<tr'+(clickKey?' onclick="_playerForm(&#39;'+clickKey+'&#39;)" style="cursor:pointer" title="Click to open this player card"':'')+'>'
+      +'<td>'+(i+1)+'</td>'
+      +'<td><b style="color:#fff;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px">'+_mlbEsc(p.player)+'</b><br><span style="color:#64748b">'+_mlbEsc(p.team)+' vs '+_mlbEsc(p.opp)+'</span></td>'
+      +'<td>'+_mlbEsc(p.market)+'<br><b style="color:'+(side==='OVER'?'#4ade80':'#f87171')+'">'+side+' '+_mlbEsc(p.line)+'</b></td>'
+      +'<td><b style="color:'+historyColor+'">'+h.hits+'/'+h.total+' ('+h.rate.toFixed(1)+'%)</b><br><span style="color:#64748b;font-size:.6rem">vs '+_mlbEsc(p.opp)+'</span></td>'
+      +'<td><b style="color:#7dd3fc">'+_mlbEsc(dn.value)+'</b><br><span style="color:#64748b;font-size:.6rem">'+_mlbEsc(dn.label)+'</span></td>'
+      +'<td>'+Number(p.appProb||0).toFixed(1)+'%</td>'
+      +'<td>'+od+'<br><span style="color:#64748b;font-size:.6rem">'+_mlbEsc(p.book||'')+'</span></td>'
+      +'</tr>';
+  }).join('');
+  var summary='<div style="margin-top:11px;color:#e5e7eb;font-size:.76rem;line-height:1.5">Ranked strictly by each play&#39;s historical success rate against today&#39;s opponent, then by matchup sample size. Day/Night BA is shown for hitters. App probability and odds are context only; Coach Edge and Day-of-Week data do not affect this order.</div>';
+  var table='<div class="mlb-coach-table-wrap"><table class="mlb-coach-table"><thead><tr><th>#</th><th>Player</th><th>Play</th><th>Vs Team</th><th>Day/Night BA</th><th>App Prob</th><th>Odds</th></tr></thead><tbody>'+body+'</tbody></table></div>';
+  _mlbCoachCommit(qHtml+summary+table);
+}
+
 document.addEventListener('click',function(){
   var menu=document.getElementById('mlbCoachGamesMenu');
   if(menu) menu.classList.remove('open');
