@@ -10816,6 +10816,7 @@ function _hrrForm(key){
     +'<div style="margin-top:8px"><b style="color:#fff;font-size:1.05rem">'+pitcherAvg+' BA</b>'
       +'<span style="color:#64748b;font-size:.72rem;margin-left:8px">'+(pitcherAb?('('+pitcherAb+' AB)'):'(No recorded AB)')+'</span></div></div>';
   var coachBody=qualifierHtml
+    +_ssBlock(p)
     +_hrrHistoryBlock(
       '1+ HRR · LAST 10 '+String(p.side||'').toUpperCase(),
       'Newest games matching today\\'s '+(String(p.side||'').toUpperCase()==='HOME'?'home':'away')+' venue',
