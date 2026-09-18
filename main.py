@@ -3527,9 +3527,12 @@ _TRACK_START = "2026-06-15"
 
 
 @app.get("/api/track-record")
-async def track_record(request: Request, token: str = "", admin: str = "", history: str = ""):
+async def track_record(request: Request, token: str = "", admin: str = "",
+                       history: str = "", refresh: bool = True):
     """Admin-only. All-time + daily W/L record per category (Over vs Under) from the
-    permanent ledger. Grades any past cached day not yet locked, then aggregates.
+    permanent ledger. By default grades any past cached day not yet locked, then
+    aggregates. Read-only consumers can pass refresh=false to return only banked
+    data without making any external grading requests.
     The By Day report passes history=all to read the complete stored history without
     changing the normal running-record cutoff used by the other panels."""
     tok = token or request.headers.get("Authorization", "").replace("Bearer ", "").strip()
@@ -3540,7 +3543,7 @@ async def track_record(request: Request, token: str = "", admin: str = "", histo
         raise HTTPException(status_code=403, detail="Admin only")
 
     full_history = str(history).lower() in ("all", "full", "true", "1")
-    led = _update_track_ledger()
+    led = _update_track_ledger() if refresh else _load_ledger()
     det = _load_detail()
 
     alltime: dict = {}   # {category: {side: [W, L]}}
@@ -10603,6 +10606,10 @@ function _coldSplitCard(p, rank, pfx) {
   const s4 = p.s4 || {};
   const s4Score = s4.score!=null ? s4.score+'%' : null;
   const s4G     = s4.games  || 0;
+  const vpTb = p.tb_under_vs_pitcher || {};
+  const vtTb = p.tb_under_vs_team || {};
+  const vpTbDisp = (vpTb.games||0)>0 ? (vpTb.under||0)+'/'+vpTb.games+' games' : 'No history';
+  const vtTbDisp = (vtTb.games||0)>0 ? (vtTb.under||0)+'/'+vtTb.games+' games' : 'No history';
   const od = (p.tb_under_odds!=null)?p.tb_under_odds:null;
   window.__COLD_REG__ = window.__COLD_REG__ || {};
   window.__COLD_REG__[pfx+rank] = p;
@@ -10626,6 +10633,8 @@ function _coldSplitCard(p, rank, pfx) {
         ${ssnDisp?_row('Season BA (contrast)', ssnDisp, '#94a3b8'):''}
         ${vpDisp?_row('Career vs '+_esc(p.pitcher||'starter'), vpDisp, '#cbd5e1'):''}
         ${s4Score?_row('Hit rate vs '+_esc(p.opp||'team')+(s4G?' ('+s4G+'g)':''), s4Score, '#cbd5e1'):''}
+        ${_row('Under 1.5 TB vs '+_esc(p.pitcher||'pitcher'), vpTbDisp, '#93c5fd')}
+        ${_row('Under 1.5 TB vs '+_esc(p.opp||'team'), vtTbDisp, '#93c5fd')}
       </div>
       <div style="margin-top:8px;padding-top:8px;border-top:1px solid #1f1f1f;font-size:.68rem;color:#475569">
         ${od!=null?('<span style="color:#94a3b8">Under 1.5 TB odds: </span><span style="color:#93c5fd;font-weight:800;font-family:monospace">'+(od>0?'+':'')+od+'</span><br>'):''}
@@ -14645,16 +14654,19 @@ async function openDowReport(){
   var btn=document.getElementById('dow-btn'); var lbl=btn.textContent; btn.disabled=true; btn.textContent='Loading...';
   show('dow-card'); document.getElementById('dow-card').scrollIntoView({behavior:'smooth',block:'start'});
   document.getElementById('dow-spinner').classList.remove('hidden'); document.getElementById('dow-body').innerHTML='';
+  var ctl=new AbortController(); var timer=setTimeout(function(){ ctl.abort(); },15000);
   try{
-    var res=await fetch('/api/track-record'+_betAuthQS());
+    var res=await fetch('/api/track-record'+_betAuthQS()+'&history=all&refresh=false',{signal:ctl.signal});
     if(!res.ok){ throw new Error(await res.text()); }
     window.__DOWTR__=await res.json();
     if(!window.__DOW_MX__) window.__DOW_MX__='disp';
     if(!window.__DOW_WIN__) window.__DOW_WIN__='all';
     renderDowReport(window.__DOWTR__);
   }catch(e){
-    document.getElementById('dow-body').innerHTML='<p style="color:#f87171;padding:16px">'+(e.message||'Error loading day-of-week report')+'</p>';
+    var msg=(e&&e.name==='AbortError')?'The stored report took too long to load. No external data requests were made.':(e.message||'Error loading day-of-week report');
+    document.getElementById('dow-body').innerHTML='<p style="color:#f87171;padding:16px">'+msg+'</p>';
   }finally{
+    clearTimeout(timer);
     btn.disabled=false; btn.textContent=lbl; document.getElementById('dow-spinner').classList.add('hidden');
   }
 }
