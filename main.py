@@ -858,7 +858,7 @@ def _mlb_coach_team_ba(rows):
         _MLB_COACH_TEAM_BA_CACHE[cache_key] = dict(out)
         return out
 
-    safe_rows = [row for row in (rows or [])[:5] if isinstance(row, dict)]
+    safe_rows = [row for row in (rows or [])[:10] if isinstance(row, dict)]
     with ThreadPoolExecutor(max_workers=min(5, max(1, len(safe_rows)))) as pool:
         return list(pool.map(fetch_one, safe_rows))
 
@@ -4864,8 +4864,8 @@ _HTML = """
             <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Batter Strikeout plays?')">Batter Strikeouts</button>
             <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best hitter unders?')">Hitter unders</button>
             <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Top 3 hitter plays today?')">Top 3 hitter plays today</button>
-            <button class="mlb-coach-preset preset-green" onclick="showMlbVsPitcherBaCoach('best')">Best 5 BA vs Today&#39;s Pitcher</button>
-            <button class="mlb-coach-preset preset-blue" onclick="showMlbVsPitcherBaCoach('worst')">Worst 5 BA vs Today&#39;s Pitcher</button>
+            <button class="mlb-coach-preset preset-green" onclick="showMlbVsPitcherBaCoach('best')">Best 10 BA vs Today&#39;s Pitcher</button>
+            <button class="mlb-coach-preset preset-blue" onclick="showMlbVsPitcherBaCoach('worst')">Worst 10 BA vs Today&#39;s Pitcher</button>
             
             <button class="mlb-coach-preset preset-orange" onclick="showMlbHotColdCoach('hot')">&#128293; Hot Batters · Top 10 to Record a Hit</button>
             <button class="mlb-coach-preset preset-blue" onclick="showMlbHotColdCoach('cold')">&#10052;&#65039; Cold Batters · Top 10 Under 1.5 TB</button>
@@ -5865,15 +5865,17 @@ function _mlbVsPitcherBaCandidates() {
 
 async function showMlbVsPitcherBaCoach(kind) {
   var worst=String(kind||'').toLowerCase()==='worst';
-  var title=(worst?'Worst':'Best')+' 5 BA vs Today\\'s Pitcher';
-  var candidates=_mlbCoachApplyGameFilter(_mlbVsPitcherBaCandidates());
+  var title=(worst?'Worst':'Best')+' 10 BA vs Today\\'s Pitcher';
+  var candidates=_mlbCoachApplyGameFilter(_mlbVsPitcherBaCandidates()).filter(function(row){
+    return Number(row.pitcher_ab||0)>=3;
+  });
   candidates.sort(function(a,b){
     return (worst?a.pitcher_ba-b.pitcher_ba:b.pitcher_ba-a.pitcher_ba)
       ||b.pitcher_ab-a.pitcher_ab||a.player.localeCompare(b.player);
   });
-  var rows=candidates.slice(0,5);
+  var rows=candidates.slice(0,10);
   if(!rows.length) {
-    _mlbCoachCommit('<div><div class="mlb-coach-question">'+_mlbEsc(title)+'</div><div class="mlb-coach-empty">Load today&#39;s MLB board first. No batter with career at-bats against today&#39;s probable pitcher is available for the selected games.</div></div>');
+    _mlbCoachCommit('<div><div class="mlb-coach-question">'+_mlbEsc(title)+'</div><div class="mlb-coach-empty">Load today&#39;s MLB board first. No batter with at least 3 career at-bats against today&#39;s probable pitcher is available for the selected games.</div></div>');
     return;
   }
   _mlbCoachCommit('<div><div class="mlb-coach-question">'+_mlbEsc(title)+'</div><div style="margin-top:11px;color:#94a3b8;font-size:.76rem">Loading batting averages against today&#39;s opponent team&#8230;</div></div>');
@@ -5901,7 +5903,7 @@ async function showMlbVsPitcherBaCoach(kind) {
       +'<td><b style="color:#7dd3fc">'+teamBa+'</b><br><span style="color:#64748b">'+Number(team.ab||0)+' AB vs '+_mlbEsc(row.opponent)+'</span></td>'
       +'</tr>';
   }).join('');
-  var explanation='Ranked only by career batting average against today&#39;s probable pitcher. Opponent-team career BA is shown beside it and does not change the order. No minimum at-bat threshold was added.';
+  var explanation='Ranked only by career batting average against today&#39;s probable pitcher, with a minimum of 3 career at-bats. Opponent-team career BA is shown beside it and does not change the order.';
   var table='<div class="mlb-coach-table-wrap"><table class="mlb-coach-table"><thead><tr><th>#</th><th>Batter</th><th>BA vs Pitcher</th><th>BA vs Team</th></tr></thead><tbody>'+body+'</tbody></table></div>';
   _mlbCoachCommit('<div><div class="mlb-coach-question">'+_mlbEsc(title)+'</div><div style="margin:11px 0;color:#e5e7eb;font-size:.76rem;line-height:1.5">'+explanation+'</div>'+table+'</div>');
 }
