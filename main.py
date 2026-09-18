@@ -5124,6 +5124,29 @@ function _mlbCoachAllProps() {
   if(!res) return [];
   var arr = [];
   var seen = {};
+  var seriesByPlayer = {};
+
+  function seriesKeys(p) {
+    if(!p) return [];
+    var out=[];
+    var id=p.batter_id||p.player_id||p.id;
+    if(id!=null&&String(id)!=='') out.push('id:'+String(id));
+    var nm=p.full_name||p.name||p.player||'';
+    if(nm) out.push('nm:'+String(nm).toLowerCase().replace(/[^a-z0-9]/g,''));
+    return out;
+  }
+  function indexSeries(list) {
+    if(!Array.isArray(list)) return;
+    list.forEach(function(p){
+      if(!p||!p.series_splits) return;
+      seriesKeys(p).forEach(function(k){if(!seriesByPlayer[k])seriesByPlayer[k]=p;});
+    });
+  }
+  [
+    res.top9,res.also_ran,res.under_picks,res.tb_picks,res.tb_over_picks,
+    res.hr_picks,res.rbi_picks,res.hrr_picks,res.runs_picks,res.walks_picks,
+    res.batter_k_picks
+  ].forEach(indexSeries);
 
   function appProb(p, implied) {
     var raw = p.ev_prob != null ? p.ev_prob
@@ -5185,13 +5208,26 @@ function _mlbCoachAllProps() {
         : (p.book || (side === 'UNDER' ? p.under_book : p.over_book) || '');
       var alternate = typeof cfg.alternate === 'function'
         ? !!cfg.alternate(p) : !!cfg.alternate;
+      var source = cfg.src ? cfg.src(p, side) : p;
+      if(alternate && !cfg.pitcher && mkt==='H+R+RBI'
+          && !(source&&source.series_splits)){
+        var seriesSource=null, keys=seriesKeys(p);
+        for(var si=0;si<keys.length&&!seriesSource;si++) seriesSource=seriesByPlayer[keys[si]];
+        if(seriesSource){
+          source=Object.assign({},source||p,{
+            series_splits:seriesSource.series_splits,
+            series_game:seriesSource.series_game,
+            series_of:seriesSource.series_of
+          });
+        }
+      }
 
       arr.push({
         player: player, team: team, opp: opp, market: mkt, side: side, line: line,
         odds: hasOdds ? Number(odds) : null, appProb: probability, implied: implied, edge: edge,
         isPitcher: !!cfg.pitcher, alternate: alternate,
         blurb: blurb, proj: projection, book: book,
-        src: cfg.src ? cfg.src(p, side) : p
+        src: source
       });
     });
   }
