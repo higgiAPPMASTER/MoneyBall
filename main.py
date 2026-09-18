@@ -902,6 +902,8 @@ def _mlb_box_lookup(date_str: str):
                     "final":  final,
                     "name":   full_name,
                     "player_id": int(pid),
+                    "batting_appeared": bool(bat),
+                    "pitching_appeared": bool(pit),
                     "game_identity": _game_identity(
                         (_sched_meta.get(pk) or {}).get("game_date")),
                 }))
@@ -2449,7 +2451,29 @@ def _mlb_grade_coach_ledger_unlocked():
                 actual = st.get(row.get("stat_key")) if st else None
                 final = bool((st or {}).get("final"))
                 result = "PENDING"
-                if actual is None and (final or all_final) and not game_id:
+                # StatsAPI lists full rosters in a box score, including players
+                # who never appeared. Only infer an omitted counting stat as
+                # zero when the matching batting/pitching group confirms that
+                # the player participated.
+                stat_key = row.get("stat_key")
+                batter_keys = {
+                    "hits", "runs", "total_bases", "rbi", "walks_bat",
+                    "homeRuns", "hrr", "bat_strikeOuts",
+                }
+                pitcher_keys = {
+                    "strikeOuts", "earnedRuns", "outs", "hits_allowed", "walks",
+                }
+                appeared = bool(
+                    (stat_key in batter_keys and
+                     (st or {}).get("batting_appeared")) or
+                    (stat_key in pitcher_keys and
+                     (st or {}).get("pitching_appeared")))
+                if st and final and actual is None and appeared:
+                    actual = 0.0
+                # A clean, fully-final slate with no matching participant means
+                # DNP/scratched. Game-scoped rows are the normal Coach shape;
+                # requiring game_id to be absent stranded them as PENDING.
+                if actual is None and all_final and (not st or not appeared):
                     result = "VOID"
                 elif actual is not None and final:
                     actual_f, line = float(actual), float(row["line"])
@@ -14758,6 +14782,8 @@ _AUTO_RUN_WINDOW_MIN = 180             # catch-up window after a slot (minutes)
 _AUTO_RUN_RETRY_SEC = 300              # wait between retries after a failure
 _auto_run_done: set = set()            # slot keys that completed (e.g. "2026-05-29-11-0")
 _auto_run_next: dict = {}              # slot key -> monotonic time of next allowed retry
+_COACH_GRADE_INTERVAL_SEC = 15 * 60    # settle unlocked Coach rows without rerunning picks
+_coach_grade_state = {"next": 0.0}
 
 
 def _auto_run_pipeline(date_str: str, label: str):
@@ -14810,6 +14836,20 @@ def _scheduler_loop():
             ds = now.strftime("%Y-%m-%d")
             now_min = now.hour * 60 + now.minute
             mono = _time.monotonic()
+            # Daytime pick runs normally finish before the games do. Regrade
+            # unlocked Coach dates independently so final stats settle even
+            # when nobody opens the record or launches another pipeline run.
+            # Starting at zero also performs a catch-up pass after every deploy,
+            # restart, or wake from sleep.
+            if mono >= _coach_grade_state["next"]:
+                try:
+                    touched = _mlb_grade_coach_ledger()
+                    if touched:
+                        print(f"[mlb_coach_track] heartbeat graded {touched} category rows")
+                except Exception as _ce:
+                    print(f"[mlb_coach_track] heartbeat failed: {_ce}")
+                finally:
+                    _coach_grade_state["next"] = mono + _COACH_GRADE_INTERVAL_SEC
             for (h, m) in _AUTO_RUN_SLOTS:
                 key = f"{ds}-{h}-{m}"
                 if key in _auto_run_done:
