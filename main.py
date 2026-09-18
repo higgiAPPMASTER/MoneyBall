@@ -2198,6 +2198,7 @@ def _mlb_coach_all_props(result):
         q = dict(p)
         q["_coach_series_ba"] = series_ba
         q["_coach_series_game"] = split_no
+        q["_coach_actual_series_game"] = game_no
         q["_coach_series_ab"] = series_ab
         identities = []
         pid = p.get("batter_id") or p.get("player_id")
@@ -2230,6 +2231,9 @@ def _mlb_coach_all_props(result):
             "player": p.get("full_name") or p.get("name") or "",
             "player_id": p.get("player_id") or p.get("batter_id"),
             "team": p.get("team", ""), "opponent": p.get("opp", ""),
+            "series_game": p.get("_coach_actual_series_game"),
+            "series_of": p.get("series_of"),
+            "series_splits": p.get("series_splits") or {},
             "game_start": p.get("game_start", ""),
             "game_identity": _game_identity(p.get("game_start")),
             "market": "H+R+RBI", "market_label": "H+R+RBI",
@@ -5296,8 +5300,9 @@ function _mlbCoachAllProps() {
       if(!p) return;
       var player=p.full_name||p.name||'', id=p.batter_id||p.player_id||player.toLowerCase();
       if(!player||!id) return;
-      var ss=p.series_splits||{}, game=Number(p.series_game||ss.today_pos||1);
-      game=Math.max(1,Math.min(3,isFinite(game)?game:1));
+      var ss=p.series_splits||{}, actualGame=Number(p.series_game||ss.today_pos||1);
+      actualGame=Math.max(1,isFinite(actualGame)?actualGame:1);
+      var game=Math.min(3,actualGame);
       var ba=ss['g'+game+'_ba_any'];
       if(ba==null) ba=ss['g'+game+'_ba'];
       ba=Number(ba);
@@ -5305,7 +5310,7 @@ function _mlbCoachAllProps() {
       if(!isFinite(ab)||ab<10) return;
       if(!isFinite(ba)||ba<.300) return;
       var key=String(id), old=hrrSeen[key];
-      if(!old||ba>old.ba) hrrSeen[key]={p:p,ba:ba,ab:ab,game:game,player:player};
+      if(!old||ba>old.ba) hrrSeen[key]={p:p,ba:ba,ab:ab,game:game,actualGame:actualGame,player:player};
     });
   });
   Object.keys(hrrSeen).forEach(function(k){hrrRows.push(hrrSeen[k]);});
@@ -5321,7 +5326,13 @@ function _mlbCoachAllProps() {
       name:player,full_name:player,team:p.team||detail.team||'',
       opp:p.opp||detail.opp||'',side:p.side||detail.side||'',
       line:.5,pick:'OVER',hrr_series_qualifier:true,
-      series_ba:q.ba,series_ab:q.ab,series_game:q.game,series_gno:q.game
+      // The odds/context enrichment may carry an empty series_splits value.
+      // Restore the generated hitter row's complete G1/G2/G3+ history last so
+      // the Coach popup cannot lose the shared series panel.
+      series_splits:p.series_splits||detail.series_splits||{},
+      series_of:p.series_of||detail.series_of||0,
+      series_ba:q.ba,series_ab:q.ab,series_game:q.actualGame,series_gno:q.actualGame,
+      series_model_game:q.game
     });
     var source='G'+q.game+(q.game===3?'+':'')+' BA ≥.300 · '+q.ab+' AB';
     arr.push({
@@ -5895,13 +5906,25 @@ function _mlbCoachRender(question, rows, totalPriced, isSafest, gameLabel, allow
 
   var table = rows.map(function(p, i) {
     var clickKey=_nameReg(p.src);
+    var coachSs=(p.src&&p.src.series_splits)||{};
+    var coachGame=Number((p.src&&p.src.series_game)||coachSs.today_pos||0);
+    var coachOf=Number((p.src&&p.src.series_of)||0);
+    var coachBaKey=coachGame>=4?'g4':('g'+Math.max(1,Math.min(3,coachGame)));
+    var coachBa=coachSs[coachBaKey+'_ba'];
+    if(coachBa==null) coachBa=coachSs[coachBaKey+'_ba_any'];
+    var coachBaText=coachBa!=null&&isFinite(Number(coachBa))
+      ?' · BA '+Number(coachBa).toFixed(3).replace('0.','.')
+      :'';
+    var coachGameLabel=(!p.isPitcher&&coachGame)
+      ?'<br><span style="display:inline-block;margin-top:3px;padding:1px 6px;border-radius:4px;background:rgba(250,204,21,.12);border:1px solid rgba(250,204,21,.35);color:#facc15;font-size:.58rem;font-weight:900;letter-spacing:.04em">SERIES GAME '+coachGame+(coachOf?(' OF '+coachOf):'')+coachBaText+'</span>'
+      :'';
     var impliedText=p.implied==null||!isFinite(Number(p.implied))
       ?'<span style="color:#64748b">N/A</span>'
       :Number(p.implied).toFixed(1)+'%';
     var edgeText=p.edge==null||!isFinite(Number(p.edge))
       ?'<span style="color:#64748b">N/A</span>'
       :_mlbCoachSigned(p.edge)+' pts';
-    return '<tr'+(clickKey?' onclick="_playerForm(&#39;'+clickKey+'&#39;)" style="cursor:pointer" title="Click to open this player card"':'')+'><td>'+(i+1)+'</td><td><b style="color:#fff;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px">'+_mlbEsc(p.player)+'</b><br><span style="color:#64748b">'+_mlbEsc(p.team)+' vs '+_mlbEsc(p.opp)+'</span></td>'
+    return '<tr'+(clickKey?' onclick="_playerForm(&#39;'+clickKey+'&#39;)" style="cursor:pointer" title="Click to open this player card"':'')+'><td>'+(i+1)+'</td><td><b style="color:#fff;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px">'+_mlbEsc(p.player)+'</b><br><span style="color:#64748b">'+_mlbEsc(p.team)+' vs '+_mlbEsc(p.opp)+'</span>'+coachGameLabel+'</td>'
       +'<td>'+_mlbEsc(p.market)+'<br><b style="color:'+(p.side==='OVER'?'#4ade80':'#f87171')+'">'+p.side+' '+_mlbEsc(p.line)+'</b>'+(p.proj!=null?' <span style="color:#94a3b8;font-size:.6rem">proj '+_mlbEsc(p.proj.toFixed(2))+'</span>':'')+'</td>'
       +'<td>'+_mlbCoachOdds(p.odds)+'<br><span style="color:#64748b;font-size:.6rem">'+_mlbEsc(p.book)+'</span></td>'
       +'<td>'+Number(p.appProb||0).toFixed(1)+'%</td><td>'+impliedText+'</td>'
@@ -9221,8 +9244,9 @@ function _bpChip(p){
 }
 function _ssInner(p){
   var ss=p.series_splits||{}; var sp=p.series_game||ss.today_pos||1;
-  if(!ss.g1_ab&&!ss.g2_ab&&!ss.g3_ab) return '';
+  if(!ss.g1_ab&&!ss.g2_ab&&!ss.g3_ab&&!ss.g4_ab) return '';
   var slots=[{lbl:'Game 1',ba:ss.g1_ba,ab:ss.g1_ab||0,pos:1},{lbl:'Game 2',ba:ss.g2_ba,ab:ss.g2_ab||0,pos:2},{lbl:'Game 3+',ba:ss.g3_ba,ab:ss.g3_ab||0,pos:3}];
+  if(ss.g4_ab||Number(sp)===4) slots.push({lbl:'Game 4',ba:(ss.g4_ba!=null?ss.g4_ba:ss.g4_ba_any),ab:ss.g4_ab||0,pos:4});
   function _sba(ba){ return ba!=null?ba.toFixed(3).replace('0.','.'):'\u2014'; }
   function _sclr(ba){ return ba==null?'#64748b':ba>=0.300?'#4ade80':ba>=0.250?'#fbbf24':'#f87171'; }
   var cols=slots.map(function(s){
@@ -9248,6 +9272,7 @@ function _seriesChip(p){
   var ss=p.series_splits; if(!ss) return '';
   var pos=p.series_game||ss.today_pos||1;
   var slots=[{lbl:'G1',ba:ss.g1_ba,ab:ss.g1_ab},{lbl:'G2',ba:ss.g2_ba,ab:ss.g2_ab},{lbl:'G3+',ba:ss.g3_ba,ab:ss.g3_ab}];
+  if(ss.g4_ab||Number(pos)===4) slots.push({lbl:'G4',ba:(ss.g4_ba!=null?ss.g4_ba:ss.g4_ba_any),ab:ss.g4_ab});
   var parts=slots.map(function(s,i){
     var isToday=(i+1)===pos;
     var baStr=s.ba!=null?(s.ba).toFixed(3).replace('0.','.'):'\u2014';
@@ -9307,15 +9332,22 @@ function _t10DotIsRed(p, side, isPit, catIdx){
   if(!arr||catIdx==null||arr[catIdx]==null) return false;
   return arr[catIdx]!==side;                     // chart leans opposite the pick = red
 }
-function _gameNoChip(p){
+function _gameNoChip(p,showBa){
   var g=p&&p.series_game; if(!g) return '';
   var of=p.series_of||0;
-  var lbl='G'+g+(of?('/'+of):'');
+  var lbl='SERIES G'+g+(of?('/'+of):'');
+  if(showBa){
+    var ss=p.series_splits||{};
+    var baKey=Number(g)>=4?'g4':('g'+Math.max(1,Math.min(3,Number(g))));
+    var ba=ss[baKey+'_ba'];
+    if(ba==null) ba=ss[baKey+'_ba_any'];
+    if(ba!=null&&isFinite(Number(ba))) lbl+=' · BA '+Number(ba).toFixed(3).replace('0.','.');
+  }
   var tip='Game '+g+(of?(' of '+of):'')+' of this series';
   return '<span title="'+tip+'" style="font-size:.58rem;font-weight:800;padding:1px 5px;border-radius:4px;background:rgba(148,163,184,.16);color:#cbd5e1;letter-spacing:.04em;margin-right:4px">'+lbl+'</span>';
 }
 function _seriesTag(p, side, isPit, catIdx){
-  return _gameNoChip(p)+_seriesBadge(p,isPit)+_matrixDot(p, side, isPit, catIdx);
+  return _gameNoChip(p,!isPit)+_seriesBadge(p,isPit)+_matrixDot(p, side, isPit, catIdx);
 }
 // Muted "MLB · CAT" label (gray MLB + accent category). Empty cat => just "MLB".
 function _catLbl(cat, accent){
@@ -10778,7 +10810,7 @@ function _hrrForm(key){
     ?'<div style="margin-bottom:14px;padding:12px;background:#1c1208;border:1px solid rgba(251,146,60,.35);border-radius:10px">'
       +'<div style="color:#fb923c;font-size:.72rem;font-weight:900;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Coach 1+ HRR qualification stats</div>'
       +'<div style="display:grid;grid-template-columns:minmax(0,1fr);gap:8px">'
-        +'<div style="background:#0f172a;border-radius:8px;padding:9px"><div style="font-size:.62rem;color:#64748b">SERIES GAME '+_esc(String(p.series_gno||p.series_game||1)+((p.series_gno||p.series_game||1)>=3?'+':''))+' BA · 10+ AB REQUIRED</div><b style="color:#fff">'+_qualBa(p.series_ba)+' · '+_esc(String(p.series_ab||0))+' AB</b></div>'
+        +'<div style="background:#0f172a;border-radius:8px;padding:9px"><div style="font-size:.62rem;color:#64748b">TODAY: SERIES GAME '+_esc(String(p.series_gno||p.series_game||1))+' · QUALIFICATION '+_esc('G'+String(p.series_model_game||Math.min(Number(p.series_gno||p.series_game||1),3))+((p.series_model_game||Math.min(Number(p.series_gno||p.series_game||1),3))>=3?'+':''))+' BA · 10+ AB REQUIRED</div><b style="color:#fff">'+_qualBa(p.series_ba)+' · '+_esc(String(p.series_ab||0))+' AB</b></div>'
       +'</div></div>'
     :'';
   function _hrrLogRows(data,emptyText){
