@@ -782,6 +782,99 @@ async def get_hrr_coach_context_endpoint(
             detail="HRR context helper is not installed with this server build") from exc
 
 
+_MLB_COACH_TEAM_BA_CACHE = {}
+_MLB_COACH_TEAM_IDS = None
+
+
+def _mlb_coach_team_key(value):
+    return "".join(ch for ch in str(value or "").lower() if ch.isalnum())
+
+
+def _mlb_coach_team_ids():
+    global _MLB_COACH_TEAM_IDS
+    if _MLB_COACH_TEAM_IDS is not None:
+        return _MLB_COACH_TEAM_IDS
+    aliases = {}
+    try:
+        import requests
+        response = requests.get(
+            "https://statsapi.mlb.com/api/v1/teams",
+            params={"sportId": 1}, timeout=12)
+        response.raise_for_status()
+        for team in response.json().get("teams", []):
+            team_id = team.get("id")
+            for field in (
+                "name", "teamName", "clubName", "shortName",
+                "abbreviation", "fileCode",
+            ):
+                key = _mlb_coach_team_key(team.get(field))
+                if key and team_id:
+                    aliases[key] = int(team_id)
+    except Exception as exc:
+        print(f"[mlb_coach_team_ba] team lookup failed: {exc}")
+    _MLB_COACH_TEAM_IDS = aliases
+    return aliases
+
+
+def _mlb_coach_team_ba(rows):
+    import requests
+    team_ids = _mlb_coach_team_ids()
+
+    def fetch_one(row):
+        player_id = row.get("player_id")
+        opponent = str(row.get("opponent") or "")
+        try:
+            player_id = int(player_id)
+        except (TypeError, ValueError):
+            return {"player_id": str(player_id or ""), "opponent": opponent,
+                    "ba": None, "ab": 0, "hits": 0}
+        team_id = team_ids.get(_mlb_coach_team_key(opponent))
+        cache_key = (player_id, team_id)
+        if cache_key in _MLB_COACH_TEAM_BA_CACHE:
+            return dict(_MLB_COACH_TEAM_BA_CACHE[cache_key])
+        out = {"player_id": str(player_id), "opponent": opponent,
+               "ba": None, "ab": 0, "hits": 0}
+        if not team_id:
+            return out
+        try:
+            response = requests.get(
+                f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats",
+                params={"stats": "vsTeam", "opposingTeamId": team_id,
+                        "group": "hitting"},
+                timeout=12)
+            response.raise_for_status()
+            splits = []
+            for block in response.json().get("stats", []):
+                splits.extend(block.get("splits") or [])
+            hits = sum(int((split.get("stat") or {}).get("hits", 0) or 0)
+                       for split in splits)
+            at_bats = sum(
+                int((split.get("stat") or {}).get("atBats", 0) or 0)
+                for split in splits)
+            out.update({"ba": (hits / at_bats if at_bats else None),
+                        "ab": at_bats, "hits": hits})
+        except Exception as exc:
+            print(f"[mlb_coach_team_ba] {player_id} vs {opponent}: {exc}")
+        _MLB_COACH_TEAM_BA_CACHE[cache_key] = dict(out)
+        return out
+
+    safe_rows = [row for row in (rows or [])[:5] if isinstance(row, dict)]
+    with ThreadPoolExecutor(max_workers=min(5, max(1, len(safe_rows)))) as pool:
+        return list(pool.map(fetch_one, safe_rows))
+
+
+@app.post("/api/mlb-coach-team-ba")
+async def mlb_coach_team_ba_endpoint(request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    rows = payload.get("rows") if isinstance(payload, dict) else []
+    if not isinstance(rows, list):
+        raise HTTPException(status_code=400, detail="rows must be a list")
+    return {"rows": await asyncio.to_thread(_mlb_coach_team_ba, rows)}
+
+
 def _norm_name(s) -> str:
     """Normalize a player name for matching: strip accents, lowercase, drop
     periods, collapse whitespace. Box scores spell names with accents while
@@ -4771,6 +4864,8 @@ _HTML = """
             <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Batter Strikeout plays?')">Batter Strikeouts</button>
             <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best hitter unders?')">Hitter unders</button>
             <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Top 3 hitter plays today?')">Top 3 hitter plays today</button>
+            <button class="mlb-coach-preset preset-green" onclick="showMlbVsPitcherBaCoach('best')">Best 5 BA vs Today&#39;s Pitcher</button>
+            <button class="mlb-coach-preset preset-blue" onclick="showMlbVsPitcherBaCoach('worst')">Worst 5 BA vs Today&#39;s Pitcher</button>
             
             <button class="mlb-coach-preset preset-orange" onclick="showMlbHotColdCoach('hot')">&#128293; Hot Batters · Top 10 to Record a Hit</button>
             <button class="mlb-coach-preset preset-blue" onclick="showMlbHotColdCoach('cold')">&#10052;&#65039; Cold Batters · Top 10 Under 1.5 TB</button>
@@ -5713,6 +5808,102 @@ function _mlbCoachCommit(html) {
   if(!ans) return;
   ans.style.display = 'block';
   ans.innerHTML = html;
+}
+
+function _mlbCareerVsPitcher(row) {
+  row=row||{};
+  var career=row.s1_career||{}, pit=row.vs_pit||{};
+  var ba=Number(career.ba), ab=Number(career.ab||0);
+  if(!isFinite(ba)) {
+    ba=Number(pit.ba);
+    ab=Number(pit.ab||ab||0);
+  }
+  if(!isFinite(ba) && row.s1 && typeof row.s1==='object') {
+    ba=Number(row.s1.ba);
+    ab=Number(row.s1.ab||row.s1_ab||ab||0);
+  }
+  if(!isFinite(ba) && row.s1!=null && typeof row.s1!=='object') {
+    ba=Number(row.s1);
+    ab=Number(row.s1_ab||ab||0);
+  }
+  if(!isFinite(ba)) {
+    var display=String(career.display||pit.display||row.s1_disp||'');
+    var match=display.match(/[.]([0-9]{3})/);
+    if(match) ba=Number(match[1])/1000;
+  }
+  return isFinite(ba)&&ab>0?{ba:ba,ab:ab}:null;
+}
+
+function _mlbVsPitcherBaCandidates() {
+  var result=window._lastResult||{}, byPlayer={};
+  [
+    'top9','also_ran','under_picks','tb_picks','tb_over_picks',
+    'hr_picks','rbi_picks','hrr_picks','hrr_alt_picks','runs_picks',
+    'walks_picks','batter_k_picks','hot_split_picks','cold_split_picks',
+    'triple_split_picks','five_star_split_picks','club_plays_picks'
+  ].forEach(function(key){
+    (result[key]||[]).forEach(function(row){
+      if(!row) return;
+      var player=row.full_name||row.name||row.player||'';
+      var playerId=row.batter_id||row.player_id;
+      var history=_mlbCareerVsPitcher(row);
+      if(!player||!playerId||!history) return;
+      var identity=String(playerId);
+      var candidate={
+        player:player,player_id:playerId,team:row.team||'',
+        opponent:row.opp||row.opponent||'',pitcher:row.pitcher||'TBD',
+        pitcher_ba:history.ba,pitcher_ab:history.ab,src:row
+      };
+      if(!byPlayer[identity]||candidate.pitcher_ab>byPlayer[identity].pitcher_ab
+          ||(candidate.pitcher_ab===byPlayer[identity].pitcher_ab
+             && byPlayer[identity].pitcher==='TBD'&&candidate.pitcher!=='TBD'))
+        byPlayer[identity]=candidate;
+    });
+  });
+  return Object.keys(byPlayer).map(function(key){return byPlayer[key];});
+}
+
+async function showMlbVsPitcherBaCoach(kind) {
+  var worst=String(kind||'').toLowerCase()==='worst';
+  var title=(worst?'Worst':'Best')+' 5 BA vs Today\\'s Pitcher';
+  var candidates=_mlbCoachApplyGameFilter(_mlbVsPitcherBaCandidates());
+  candidates.sort(function(a,b){
+    return (worst?a.pitcher_ba-b.pitcher_ba:b.pitcher_ba-a.pitcher_ba)
+      ||b.pitcher_ab-a.pitcher_ab||a.player.localeCompare(b.player);
+  });
+  var rows=candidates.slice(0,5);
+  if(!rows.length) {
+    _mlbCoachCommit('<div><div class="mlb-coach-question">'+_mlbEsc(title)+'</div><div class="mlb-coach-empty">Load today&#39;s MLB board first. No batter with career at-bats against today&#39;s probable pitcher is available for the selected games.</div></div>');
+    return;
+  }
+  _mlbCoachCommit('<div><div class="mlb-coach-question">'+_mlbEsc(title)+'</div><div style="margin-top:11px;color:#94a3b8;font-size:.76rem">Loading batting averages against today&#39;s opponent team&#8230;</div></div>');
+  var teamRows=[];
+  try {
+    var response=await fetch('/api/mlb-coach-team-ba',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({rows:rows.map(function(row){
+        return {player_id:row.player_id,opponent:row.opponent};
+      })})
+    });
+    if(response.ok) teamRows=(await response.json()).rows||[];
+  } catch(error) {}
+  var teamByPlayer={};
+  teamRows.forEach(function(row){teamByPlayer[String(row.player_id||'')]=row;});
+  var body=rows.map(function(row,index){
+    var team=teamByPlayer[String(row.player_id)]||{};
+    var teamBa=team.ba==null?'N/A':Number(team.ba).toFixed(3).replace(/^0/,'');
+    var pitcherBa=Number(row.pitcher_ba).toFixed(3).replace(/^0/,'');
+    var clickKey=_nameReg(row.src);
+    return '<tr'+(clickKey?' onclick="_playerForm(&#39;'+clickKey+'&#39;)" style="cursor:pointer" title="Click to open this batter card"':'')+'>'
+      +'<td>'+(index+1)+'</td>'
+      +'<td><b style="color:#fff">'+_mlbEsc(row.player)+'</b><br><span style="color:#64748b">'+_mlbEsc(row.team)+' vs '+_mlbEsc(row.opponent)+'</span></td>'
+      +'<td><b style="color:'+(worst?'#f87171':'#4ade80')+'">'+pitcherBa+'</b><br><span style="color:#64748b">'+row.pitcher_ab+' AB vs '+_mlbEsc(row.pitcher)+'</span></td>'
+      +'<td><b style="color:#7dd3fc">'+teamBa+'</b><br><span style="color:#64748b">'+Number(team.ab||0)+' AB vs '+_mlbEsc(row.opponent)+'</span></td>'
+      +'</tr>';
+  }).join('');
+  var explanation='Ranked only by career batting average against today&#39;s probable pitcher. Opponent-team career BA is shown beside it and does not change the order. No minimum at-bat threshold was added.';
+  var table='<div class="mlb-coach-table-wrap"><table class="mlb-coach-table"><thead><tr><th>#</th><th>Batter</th><th>BA vs Pitcher</th><th>BA vs Team</th></tr></thead><tbody>'+body+'</tbody></table></div>';
+  _mlbCoachCommit('<div><div class="mlb-coach-question">'+_mlbEsc(title)+'</div><div style="margin:11px 0;color:#e5e7eb;font-size:.76rem;line-height:1.5">'+explanation+'</div>'+table+'</div>');
 }
 
 function showMlbHotColdCoach(kind) {
