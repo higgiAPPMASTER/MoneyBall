@@ -30,8 +30,82 @@ _SAVANT_HDRS = {
 }
 
 _BATTER_SAV_CACHE: dict = {}   # {year: {player_id: {xba, hard_hit_pct}}}
+_COLD_BVP_TB_CACHE: dict = {}  # (batter_id, pitcher_id, cutoff_date) -> display-only game counts
 LEAGUE_HARD_HIT   = 35.0       # MLB avg hard-hit rate % (exit velo >= 95 mph), 2024-2025
 LEAGUE_XBA        = 0.245      # MLB avg expected batting average (xBA), 2024-2025
+
+def _cold_bvp_tb_history(args) -> dict:
+    """Exact game-level TB against today's pitcher from Statcast PA results.
+
+    This is display-only Cold Batters context. It is intentionally isolated
+    from every qualification, score, probability, price, and ranking field.
+    """
+    import csv, io
+    from datetime import datetime as _dt, timedelta as _td
+
+    batter_id, pitcher_id, cutoff_date = args
+    if not batter_id or not pitcher_id or not cutoff_date:
+        return {"under": 0, "games": 0}
+    key = (int(batter_id), int(pitcher_id), str(cutoff_date))
+    if key in _COLD_BVP_TB_CACHE:
+        return _COLD_BVP_TB_CACHE[key]
+    try:
+        end_date = (_dt.strptime(str(cutoff_date)[:10], "%Y-%m-%d") -
+                    _td(days=1)).strftime("%Y-%m-%d")
+    except Exception:
+        return {"under": 0, "games": 0}
+
+    params = {
+        "all": "true", "hfPT": "", "hfAB": "", "hfBBT": "", "hfPR": "",
+        "hfZ": "", "stadium": "", "hfBBL": "", "hfNewZones": "",
+        "hfGT": "R|", "hfSea": "", "hfSit": "", "player_type": "batter",
+        "hfOuts": "", "opponent": "", "pitcher_throws": "",
+        "batter_stands": "", "hfSA": "", "game_date_gt": "2015-03-01",
+        "game_date_lt": end_date, "batters_lookup[]": int(batter_id),
+        "pitchers_lookup[]": int(pitcher_id), "team": "", "position": "",
+        "hfRO": "", "home_road": "", "hfFlag": "", "metric_1": "",
+        "hfInn": "", "min_pitches": "0", "min_results": "0",
+        "group_by": "name", "sort_col": "pitches",
+        "player_event_sort": "h_launch_speed", "sort_order": "desc",
+        "min_abs": "0", "type": "details",
+    }
+    bases = {"single": 1, "double": 2, "triple": 3, "home_run": 4}
+    for attempt in range(2):
+        try:
+            r = requests.get(
+                "https://baseballsavant.mlb.com/statcast_search/csv",
+                params=params, headers=_SAVANT_HDRS, timeout=18)
+            r.raise_for_status()
+            text = r.text.lstrip("\ufeff").strip()
+            if not text or text.startswith("<"):
+                raise ValueError("empty or non-CSV Statcast response")
+            rows = list(csv.DictReader(io.StringIO(text)))
+            fields = set(rows[0].keys()) if rows else set(
+                next(csv.reader(io.StringIO(text)), []))
+            if "events" not in fields or "game_date" not in fields:
+                raise ValueError("Statcast response missing game-level fields")
+            game_tb, seen_pa = {}, set()
+            for row in rows:
+                event = (row.get("events") or "").strip().lower()
+                game_date = (row.get("game_date") or "").strip()
+                if not event or not game_date:
+                    continue
+                game_key = (row.get("game_pk") or game_date).strip()
+                pa_key = (game_key, (row.get("at_bat_number") or "").strip())
+                if pa_key in seen_pa:
+                    continue
+                seen_pa.add(pa_key)
+                game_tb[game_key] = game_tb.get(game_key, 0) + bases.get(event, 0)
+            result = {
+                "under": sum(1 for tb in game_tb.values() if tb <= 1),
+                "games": len(game_tb),
+            }
+            _COLD_BVP_TB_CACHE[key] = result
+            return result
+        except Exception:
+            if attempt == 0:
+                time.sleep(0.4)
+    return {"under": 0, "games": 0}
 
 def _fetch_batter_savant(year: str) -> dict:
     """Bulk-fetch hitter xBA + hard-hit% from Baseball Savant. Cached per year."""
@@ -4436,7 +4510,37 @@ def run_pipeline(run_date: str, emit=None) -> dict:
             _COLD_MAX_HA  = 0.220   # coldness ceiling at their venue
             _COLD_MAX_L10 = 40      # max true-L10 hit % to qualify
             _COLD_MIN_G   = 5       # minimum L10 H/A games for reliability
-            from under_picks import TB_ALL_ODDS, _norm_name
+            from under_picks import TB_ALL_ODDS, _norm_name, _team_match
+
+            def _cold_team_tb_history(player_id, side, opp_name):
+                """Last 10 prior same-venue games vs today's team, by actual TB."""
+                if not player_id or not opp_name:
+                    return {"under": 0, "games": 0}
+                matching = []
+                for _yr in range(_TSCH_CY, _TSCH_CY - 5, -1):
+                    for _sp in reversed(_tsch_gl(int(player_id), _yr)):
+                        _date = str(_sp.get("date") or "")
+                        if _date and _date >= str(run_date)[:10]:
+                            continue
+                        if bool(_sp.get("isHome")) != (side == "HOME"):
+                            continue
+                        _opp = (_sp.get("opponent") or {}).get("name", "")
+                        if not _team_match(_opp, opp_name):
+                            continue
+                        _st = _sp.get("stat") or {}
+                        _pa = int(_st.get("plateAppearances", 0) or 0)
+                        if _pa < 1:
+                            continue
+                        matching.append(int(_st.get("totalBases", 0) or 0))
+                        if len(matching) >= 10:
+                            break
+                    if len(matching) >= 10:
+                        break
+                return {
+                    "under": sum(1 for _tb in matching if _tb <= 1),
+                    "games": len(matching),
+                }
+
             _tb_under_by_id = {
                 str(p.get("batter_id")): p for p in tb_picks_list
                 if p.get("batter_id") is not None
@@ -4478,6 +4582,7 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                     "team": _r.get("team", ""),
                     "opp": _r.get("opp", ""),
                     "pitcher": _r.get("pitcher", ""),
+                    "pit_id": _r.get("pit_id"),
                     "side": _cside,
                     "dn_label": _r.get("dn_label", ""),
                     "s5": _r.get("s5"),
@@ -4511,6 +4616,22 @@ def run_pipeline(run_date: str, emit=None) -> dict:
             # Coldest (lowest L10 H/A BA) at top
             cold_split_list.sort(key=lambda x: x["ha_ba"])
             cold_split_list = cold_split_list[:30]
+            # Display-only exact Under 1.5 TB history. Team counts reuse the
+            # already-cached game logs; pitcher counts use bounded cached
+            # Statcast requests and are attached only after ordering is final.
+            for _cold in cold_split_list:
+                _cold["tb_under_vs_team"] = _cold_team_tb_history(
+                    _cold.get("batter_id"), _cold.get("side", ""),
+                    _cold.get("opp", ""))
+            _bvp_args = [
+                (_cold.get("batter_id"), _cold.get("pit_id"), run_date)
+                for _cold in cold_split_list
+            ]
+            if _bvp_args:
+                with _TPEx(max_workers=4) as _cold_ex:
+                    _bvp_rows = list(_cold_ex.map(_cold_bvp_tb_history, _bvp_args))
+                for _cold, _hist in zip(cold_split_list, _bvp_rows):
+                    _cold["tb_under_vs_pitcher"] = _hist
             try:
                 _tsc_vsp_backfill(cold_split_list, "Cold Batters")
             except Exception as _bf_exc:
