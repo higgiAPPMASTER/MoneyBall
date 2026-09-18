@@ -4701,6 +4701,12 @@ _HTML = """
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Top 3 hitter plays today?')">Top 3 hitter plays today</button>
         </div>
 
+        <div style="margin-top:16px;font-size:.75rem;font-weight:800;color:#fb923c;border-bottom:1px solid rgba(255,255,255,.1);padding-bottom:5px;letter-spacing:.05em;text-transform:uppercase">Hot / Cold Batters</div>
+        <div class="mlb-coach-presets">
+          <button class="mlb-coach-preset" onclick="showMlbHotColdCoach('hot')" style="border-color:#fb923c;color:#fed7aa">&#128293; Hot Batters · Top 10 to Record a Hit</button>
+          <button class="mlb-coach-preset" onclick="showMlbHotColdCoach('cold')" style="border-color:#60a5fa;color:#bfdbfe">&#10052;&#65039; Cold Batters · Top 10 Under 1.5 TB</button>
+        </div>
+
         <div style="margin-top:16px;font-size:.75rem;font-weight:800;color:#60a5fa;border-bottom:1px solid rgba(255,255,255,.1);padding-bottom:5px;letter-spacing:.05em;text-transform:uppercase">Pitchers</div>
         <div class="mlb-coach-presets">
           <button class="mlb-coach-preset" onclick="askMlbCoachPreset('Give me all 100% app probability pitcher plays today')" style="border-color:#22c55e;color:#86efac">100% App Plays</button>
@@ -5590,6 +5596,43 @@ function _mlbCoachCommit(html) {
   if(!ans) return;
   ans.style.display = 'block';
   ans.innerHTML = html;
+}
+
+function showMlbHotColdCoach(kind) {
+  var res=window._lastResult;
+  var isCold=String(kind||'').toLowerCase()==='cold';
+  var source=res&&(isCold?res.cold_split_picks:res.hot_split_picks);
+  var title=isCold
+    ?'Cold Batters · Top 10 Under 1.5 Total Bases'
+    :'Hot Batters · Top 10 to Record a Hit';
+  if(!Array.isArray(source)){
+    _mlbCoachCommit('<div><div class="mlb-coach-question">'+_mlbEsc(title)+'</div><div class="mlb-coach-empty">Load today&#39;s MLB board before opening this section.</div></div>');
+    return;
+  }
+  var rows=_mlbCoachApplyGameFilter(source).slice(0,10);
+  var gameLabel='';
+  if(window._MLB_COACH_GAME_FILTER!==null){
+    var selectedCount=Object.keys(window._MLB_COACH_GAME_FILTER).filter(function(k){
+      return window._MLB_COACH_GAME_FILTER[k];
+    }).length;
+    gameLabel=' · '+selectedCount+' selected game'+(selectedCount===1?'':'s');
+  }
+  var summary=isCold
+    ?'Uses the existing Cold Batters slump qualifications and keeps the requested UNDER 1.5 Total Bases market. The qualification rules and board order are unchanged.'
+    :'Uses the existing four-gate Hot Hitters qualifications and keeps the requested OVER 0.5 Hits play to record a hit. The qualification rules and board order are unchanged.';
+  var qHtml='<div class="mlb-coach-question">'+_mlbEsc(title+gameLabel)+'</div>';
+  if(!rows.length){
+    _mlbCoachCommit('<div>'+qHtml+'<div style="margin-top:11px;color:#cbd5e1;font-size:.78rem;line-height:1.5">No '+(isCold?'Cold Batters':'Hot Batters')+' qualified for the selected games on this loaded board.</div></div>');
+    return;
+  }
+  var cards=rows.map(function(p,i){
+    return isCold
+      ?_coldSplitCard(p,i+1,'coachCold')
+      :_hotSplitCard(p,i+1,'coachHot');
+  }).join('');
+  _mlbCoachCommit('<div>'+qHtml
+    +'<div style="margin:11px 0;color:#e5e7eb;font-size:.76rem;line-height:1.5">'+summary+'</div>'
+    +'<div class="mlb-picks-grid">'+cards+'</div></div>');
 }
 
 function _mlbCoachRequestedTeams(question, props) {
