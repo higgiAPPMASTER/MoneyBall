@@ -34,6 +34,38 @@ _COLD_BVP_TB_CACHE: dict = {}  # (batter_id, pitcher_id, cutoff_date) -> display
 LEAGUE_HARD_HIT   = 35.0       # MLB avg hard-hit rate % (exit velo >= 95 mph), 2024-2025
 LEAGUE_XBA        = 0.245      # MLB avg expected batting average (xBA), 2024-2025
 
+def _cold_bvp_low_tb_fallback(batter_id, pitcher_id) -> dict:
+    """Exact fallback for BvP aggregates totaling at most one career base.
+
+    If career total bases against this pitcher are 0 or 1, every individual
+    matchup game was necessarily Under 1.5 TB. MLB's gamesPlayed can therefore
+    supply the exact Under-game count even when Statcast returns no detail rows.
+    Higher aggregate totals cannot be split safely and remain no-history.
+    """
+    try:
+        r = requests.get(
+            f"https://statsapi.mlb.com/api/v1/people/{int(batter_id)}/stats",
+            params={
+                "stats": "vsPlayerTotal",
+                "opposingPlayerId": int(pitcher_id),
+                "group": "hitting",
+                "gameType": "R",
+            },
+            timeout=10,
+        )
+        r.raise_for_status()
+        splits = r.json().get("stats", [{}])[0].get("splits", [])
+        if not splits:
+            return {"under": 0, "games": 0}
+        stat = splits[0].get("stat") or {}
+        games = int(stat.get("gamesPlayed", 0) or 0)
+        total_bases = int(stat.get("totalBases", 0) or 0)
+        if games > 0 and total_bases <= 1:
+            return {"under": games, "games": games}
+    except Exception:
+        pass
+    return {"under": 0, "games": 0}
+
 def _cold_bvp_tb_history(args) -> dict:
     """Exact game-level TB against today's pitcher from Statcast PA results.
 
@@ -100,12 +132,16 @@ def _cold_bvp_tb_history(args) -> dict:
                 "under": sum(1 for tb in game_tb.values() if tb <= 1),
                 "games": len(game_tb),
             }
+            if not result["games"]:
+                result = _cold_bvp_low_tb_fallback(batter_id, pitcher_id)
             _COLD_BVP_TB_CACHE[key] = result
             return result
         except Exception:
             if attempt == 0:
                 time.sleep(0.4)
-    return {"under": 0, "games": 0}
+    result = _cold_bvp_low_tb_fallback(batter_id, pitcher_id)
+    _COLD_BVP_TB_CACHE[key] = result
+    return result
 
 def _fetch_batter_savant(year: str) -> dict:
     """Bulk-fetch hitter xBA + hard-hit% from Baseball Savant. Cached per year."""
@@ -4582,7 +4618,8 @@ def run_pipeline(run_date: str, emit=None) -> dict:
                     "team": _r.get("team", ""),
                     "opp": _r.get("opp", ""),
                     "pitcher": _r.get("pitcher", ""),
-                    "pit_id": _r.get("pit_id"),
+                    "pit_id": (_r.get("pit_id")
+                               or _opp_pit_id(_r.get("opp", ""))),
                     "side": _cside,
                     "dn_label": _r.get("dn_label", ""),
                     "s5": _r.get("s5"),
