@@ -4132,7 +4132,7 @@ _HTML = """
     @keyframes spin { to { transform: rotate(360deg); } }
 
     .mlb-coach{border:1px solid rgba(245,158,11,.35)!important;background:linear-gradient(145deg,#1f1406,#0d0802)!important}
-    .mlb-coach-controls-container{display:flex;flex-direction:column;gap:10px;margin:16px 0;padding:12px;background:rgba(15,23,42,.35);border:1px solid rgba(51,65,85,.5);border-radius:12px}
+    .mlb-coach-controls-container{display:flex;flex-direction:column;gap:6px;margin:12px 0 14px;padding:9px 11px;background:rgba(15,23,42,.35);border:1px solid rgba(51,65,85,.5);border-radius:10px}
     .mlb-coach-controls-row{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
     .mlb-coach-control-group{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
     .mlb-coach-control-label{font-size:.65rem;font-weight:800;color:#94a3b8;letter-spacing:.08em;text-transform:uppercase}
@@ -4160,6 +4160,8 @@ _HTML = """
     .mlb-coach-category-title{font-size:.8rem;font-weight:900;color:#e2e8f0;border-bottom:1px solid rgba(255,255,255,.08);padding-bottom:6px;margin-bottom:12px;letter-spacing:.05em;text-transform:uppercase;display:flex;align-items:center;gap:8px}
     .mlb-coach-category-title.hitters{color:#facc15}
     .mlb-coach-category-title.pitchers{color:#60a5fa}
+    .mlb-coach-title-side{display:flex;align-items:center;gap:6px;margin-left:4px}
+    .mlb-coach-title-side .mlb-coach-side{padding:5px 13px;font-size:.66rem}
     .mlb-coach-presets{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:8px}
     .mlb-coach-preset{background:#111827;color:#cbd5e1;border:1px solid #334155;border-radius:8px;padding:8px 10px;min-height:42px;font-size:.68rem;font-weight:750;cursor:pointer;text-align:left;transition:all .2s cubic-bezier(.4,0,.2,1);line-height:1.25;display:flex;align-items:center;height:100%}
     .mlb-coach-preset:hover{background:#1e293b;border-color:#64748b;color:#f8fafc;transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,0,0,.2)}
@@ -4195,6 +4197,7 @@ _HTML = """
       .mlb-coach-controls-container{padding:10px}
       .mlb-coach-controls-row,.mlb-coach-control-group{gap:8px}
       .mlb-coach-control-group{width:100%}
+      .mlb-coach-title-side{margin-left:auto}
       .mlb-coach-presets{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
       .mlb-coach-preset{padding:8px;font-size:.65rem;min-height:44px}
       .mlb-coach-chat-box{padding:9px}
@@ -4698,28 +4701,6 @@ _HTML = """
         <div class="mlb-coach-controls-container">
           <div class="mlb-coach-controls-row">
             <div class="mlb-coach-control-group">
-              <div class="mlb-coach-control-label">Side Filter</div>
-              <div class="mlb-coach-control-content">
-                <button id="mlbCoachSideOver" class="mlb-coach-side over" onclick="_setMlbCoachSide('OVER')">OVER</button>
-                <button id="mlbCoachSideUnder" class="mlb-coach-side under" onclick="_setMlbCoachSide('UNDER')">UNDER</button>
-              </div>
-            </div>
-            <div class="mlb-coach-control-group" style="margin-left:auto">
-              <div class="mlb-coach-control-label">Game Filter</div>
-              <div class="mlb-coach-control-content mlb-coach-games">
-                <button id="mlbCoachGamesBtn" class="mlb-coach-games-btn" onclick="_toggleMlbCoachGames(event)">All games &#9662;</button>
-                <div id="mlbCoachGamesMenu" class="mlb-coach-games-menu" onclick="event.stopPropagation()">
-                  <div class="mlb-coach-games-actions">
-                    <button class="mlb-coach-games-action" onclick="_mlbCoachSelectAllGames()">All games</button>
-                    <button class="mlb-coach-games-action" onclick="_mlbCoachClearGames()">Clear</button>
-                  </div>
-                  <div id="mlbCoachGamesList"><div style="padding:8px;color:#64748b;font-size:.68rem">Load an MLB board to choose games.</div></div>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div class="mlb-coach-controls-row" style="margin-top:4px">
-            <div class="mlb-coach-control-group">
               <div class="mlb-coach-control-label" style="color:#fbbf24">Top 10 vs Team</div>
               <div class="mlb-coach-control-content">
                 <select id="mlbCoachHistoryCategory" class="mlb-coach-history-select" aria-label="MLB prop category">
@@ -4744,12 +4725,31 @@ _HTML = """
                 <button class="mlb-coach-history-run" onclick="runMlbCoachHistoryTop10()">SHOW TOP 10</button>
               </div>
             </div>
-            <div style="font-size:.62rem;color:#64748b;margin-top:2px">Ranks current plays by historical success against today's opponent; Day/Night BA is shown for hitters</div>
+            <div class="mlb-coach-control-group" style="margin-left:auto">
+              <div class="mlb-coach-control-label">Game Filter</div>
+              <div class="mlb-coach-control-content mlb-coach-games">
+                <button id="mlbCoachGamesBtn" class="mlb-coach-games-btn" onclick="_toggleMlbCoachGames(event)">All games &#9662;</button>
+                <div id="mlbCoachGamesMenu" class="mlb-coach-games-menu" onclick="event.stopPropagation()">
+                  <div class="mlb-coach-games-actions">
+                    <button class="mlb-coach-games-action" onclick="_mlbCoachSelectAllGames()">All games</button>
+                    <button class="mlb-coach-games-action" onclick="_mlbCoachClearGames()">Clear</button>
+                  </div>
+                  <div id="mlbCoachGamesList"><div style="padding:8px;color:#64748b;font-size:.68rem">Load an MLB board to choose games.</div></div>
+                </div>
+              </div>
+            </div>
           </div>
+          <div style="font-size:.6rem;color:#64748b">Ranks current plays by historical success against today's opponent; Day/Night BA is shown for hitters</div>
         </div>
 
         <div class="mlb-coach-category-section">
-          <div class="mlb-coach-category-title hitters">Hitters</div>
+          <div class="mlb-coach-category-title hitters">
+            <span>Hitters</span>
+            <div class="mlb-coach-title-side" aria-label="Hitter side filter">
+              <button id="mlbCoachSideOver" class="mlb-coach-side over" onclick="_setMlbCoachSide('OVER')">OVER</button>
+              <button id="mlbCoachSideUnder" class="mlb-coach-side under" onclick="_setMlbCoachSide('UNDER')">UNDER</button>
+            </div>
+          </div>
           <div class="mlb-coach-presets">
             <button class="mlb-coach-preset preset-green" onclick="askMlbCoachPreset('Give me all 100% app probability hitter plays today')">100% App Plays</button>
             <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the safest hitter bets?')">Safest bets</button>
