@@ -7521,7 +7521,14 @@ function _oppPitBlock(p, market, statLabel, unit){
 function _popSig(p, rateLbl, oddsLbl, oddsVal, isOver){
   var chips=(_envChip(p)||'')+(_umpChip(p)||'')+(_bpChip(p)||'')+(_platoonChip(p)||'');
   var chipRow=chips?('<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">'+chips+'</div>'):'';
-  var rate=(rateLbl&&p.rate_disp)?('<div style="margin-top:2px;font-size:.82rem"><span style="color:#94a3b8">'+rateLbl+'</span> <span style="font-family:monospace;font-weight:700;color:#86efac;font-size:1rem">'+p.rate_disp+'</span> <span style="color:#64748b;font-size:.66rem">'+(p.basis||'')+'</span></div>'):'';
+  var basis=String(p.basis||'');
+  var venue=String(p.side||'').toUpperCase()==='HOME'?'home':(String(p.side||'').toUpperCase()==='AWAY'?'away':'');
+  if(venue){
+    if(basis.toLowerCase()==='vs opp') basis=venue+' games';
+    else if(basis.toUpperCase()==='L10 H/A') basis='last 10 '+venue;
+    else if(basis.indexOf('H/A')>=0) basis=basis.replace('H/A',venue);
+  }
+  var rate=(rateLbl&&p.rate_disp)?('<div style="margin-top:2px;font-size:.82rem"><span style="color:#94a3b8">'+rateLbl+'</span> <span style="font-family:monospace;font-weight:700;color:#86efac;font-size:1rem">'+p.rate_disp+'</span> <span style="color:#64748b;font-size:.66rem">'+basis+'</span></div>'):'';
   var conv=p.conv_flag?'<div style="font-size:.82rem;color:#4ade80;font-weight:600;margin-top:3px">&#10003; Converged &middot; L10 '+(p.recent_l10||'N/A')+' L5 '+(p.recent_l5||'N/A')+'</div>':(p.cold_flag?'<div style="font-size:.82rem;color:#fb923c;font-weight:600;margin-top:3px">&#9888; Recent diverges &middot; L5 '+(p.recent_l5||'N/A')+'</div>':((p.recent_l10||p.recent_l5)?'<div style="font-size:.82rem;color:#64748b;margin-top:3px">L10 '+(p.recent_l10||'N/A')+' &middot; L5 '+(p.recent_l5||'N/A')+'</div>':''));
   var hot=(isOver&&p.hot_disp)?'<div style="font-size:.82rem;color:#fbbf24;font-weight:700;margin-top:3px">&#128293; Hot hand &middot; '+p.hot_disp+' (+'+p.hot_bonus+')</div>':'';
   var dn=(typeof _dnChip==='function')?_dnChip(p):'';
@@ -10832,7 +10839,7 @@ function _hrrForm(key){
     +'<div style="padding:16px 18px">'
     +(p.hrr_series_qualifier?coachBody:
       qualifierHtml
-      +_twoBox(p,'HRR Rate','HRR Odds',(isUnder?p.hrr_under_odds:p.hrr_over_odds),!isUnder,(isUnder?('H+R+RBI < '+threshold+' = UNDER'):('H+R+RBI \u2265 '+threshold+' = OVER'))+' \u00b7 Last '+log.length+' Games',rows)
+      +_twoBox(Object.assign({},p,{basis:'last 10 '+(String(p.side||'').toUpperCase()==='HOME'?'home':'away')}),'HRR','HRR Odds',(isUnder?p.hrr_under_odds:p.hrr_over_odds),!isUnder,(isUnder?('H+R+RBI < '+threshold+' = UNDER'):('H+R+RBI \u2265 '+threshold+' = OVER'))+' \u00b7 Last '+log.length+' Games',rows)
       +_oppPitBlock(p,'pitcher_hits_allowed','Hits Allowed','H')
       +_matrixWriteup(p,(isUnder?'U':'O'),threshold,false,'HRR (hits+runs+RBI)',(isUnder?'Under ':'Over ')+line+' H+R+RBI'))
     +'</div></div>';
