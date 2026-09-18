@@ -4131,17 +4131,20 @@ _HTML = """
     .dq-row:last-child { border-bottom: none; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    .mlb-coach{border:1px solid rgba(245,158,11,.45)!important;background:linear-gradient(145deg,#1f1406,#100902)!important}
-    .mlb-coach-presets{display:flex;gap:7px;flex-wrap:wrap;margin:14px 0 10px}
-    .mlb-coach-preset{background:#111827;color:#cbd5e1;border:1px solid #334155;border-radius:999px;padding:7px 11px;font-size:.69rem;font-weight:900;cursor:pointer}
-    .mlb-coach-preset:hover{border-color:#f59e0b;color:#fde68a}
-    .mlb-coach-sidebar{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:14px 0 4px;padding:9px 10px;border:1px solid #334155;border-radius:10px;background:#0b1220}
-    .mlb-coach-side{background:#111827;color:#94a3b8;border:1px solid #475569;border-radius:7px;padding:7px 16px;font-size:.7rem;font-weight:950;cursor:pointer;letter-spacing:.05em}
-    .mlb-coach-side.over.active{background:#14532d;border-color:#22c55e;color:#bbf7d0}
-    .mlb-coach-side.under.active{background:#7f1d1d;border-color:#ef4444;color:#fecaca}
+    .mlb-coach{border:1px solid rgba(245,158,11,.35)!important;background:linear-gradient(145deg,#1f1406,#0d0802)!important}
+    .mlb-coach-controls-container{display:flex;flex-direction:column;gap:10px;margin:16px 0;padding:12px;background:rgba(15,23,42,.35);border:1px solid rgba(51,65,85,.5);border-radius:12px}
+    .mlb-coach-controls-row{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+    .mlb-coach-control-group{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+    .mlb-coach-control-label{font-size:.65rem;font-weight:800;color:#94a3b8;letter-spacing:.08em;text-transform:uppercase}
+    .mlb-coach-control-content{display:flex;align-items:center;gap:6px}
+    .mlb-coach-side{background:#1e293b;color:#cbd5e1;border:1px solid rgba(71,85,105,.6);border-radius:6px;padding:6px 14px;font-size:.7rem;font-weight:800;cursor:pointer;transition:all .2s ease;letter-spacing:.05em}
+    .mlb-coach-side:hover{background:#334155;border-color:#64748b}
+    .mlb-coach-side.over.active{background:rgba(22,101,52,.8);border-color:#22c55e;color:#bbf7d0;box-shadow:0 0 10px rgba(34,197,94,.2)}
+    .mlb-coach-side.under.active{background:rgba(153,27,27,.8);border-color:#ef4444;color:#fecaca;box-shadow:0 0 10px rgba(239,68,68,.2)}
     .mlb-coach-games{position:relative;display:inline-flex;align-items:center;gap:7px}
-    .mlb-coach-games-btn{background:#111827;color:#e2e8f0;border:1px solid #475569;border-radius:7px;padding:7px 11px;font-size:.68rem;font-weight:900;cursor:pointer;white-space:nowrap}
-    .mlb-coach-games-btn.active{background:#164e63;border-color:#22d3ee;color:#cffafe}
+    .mlb-coach-games-btn{background:#1e293b;color:#cbd5e1;border:1px solid rgba(71,85,105,.6);border-radius:6px;padding:6px 14px;font-size:.7rem;font-weight:800;cursor:pointer;transition:all .2s ease;white-space:nowrap}
+    .mlb-coach-games-btn:hover{background:#334155;border-color:#64748b}
+    .mlb-coach-games-btn.active{background:rgba(8,145,178,.8);border-color:#06b6d4;color:#cffafe;box-shadow:0 0 10px rgba(6,182,212,.2)}
     .mlb-coach-games-menu{display:none;position:absolute;z-index:50;top:calc(100% + 7px);left:0;width:min(340px,82vw);max-height:310px;overflow:auto;background:#07111f;border:1px solid #475569;border-radius:11px;padding:9px;box-shadow:0 18px 45px rgba(0,0,0,.55)}
     .mlb-coach-games-menu.open{display:block}
     .mlb-coach-games-actions{display:flex;gap:7px;padding-bottom:8px;margin-bottom:5px;border-bottom:1px solid #1e293b}
@@ -4149,14 +4152,34 @@ _HTML = """
     .mlb-coach-game-option{display:flex;align-items:center;gap:8px;padding:7px 6px;border-radius:7px;color:#dbeafe;font-size:.7rem;font-weight:750;cursor:pointer}
     .mlb-coach-game-option:hover{background:#111f31}
     .mlb-coach-game-option input{accent-color:#22d3ee;width:15px;height:15px}
-    .mlb-coach-history-select{background:#111827;color:#f8fafc;border:1px solid #475569;border-radius:8px;padding:8px 10px;font-size:.72rem;font-weight:800;outline:none;min-width:150px}
-    .mlb-coach-history-select:focus{border-color:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,.1)}
-    .mlb-coach-history-run{background:linear-gradient(135deg,#b45309,#f59e0b);color:#fff;border:0;border-radius:8px;padding:9px 16px;font-size:.72rem;font-weight:950;cursor:pointer;white-space:nowrap}
-    .mlb-coach-row{display:flex;gap:8px}
-    .mlb-coach-input{flex:1;min-width:0;background:#070d18;color:#fff;border:1px solid #334155;border-radius:11px;padding:12px 14px;font:inherit;font-size:.84rem;outline:none}
-    .mlb-coach-input:focus{border-color:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,.1)}
-    .mlb-coach-send{background:linear-gradient(135deg,#d97706,#f59e0b);color:#fff;border:0;border-radius:11px;padding:0 18px;font-weight:900;cursor:pointer}
-    .mlb-coach-answer{display:none;margin-top:14px;border-top:1px solid rgba(245,158,11,.25);padding-top:14px}
+    .mlb-coach-history-select{background:#1e293b;color:#e2e8f0;border:1px solid rgba(71,85,105,.6);border-radius:6px;padding:6px 10px;font-size:.72rem;font-weight:700;outline:none;transition:border-color .2s ease}
+    .mlb-coach-history-select:focus{border-color:#f59e0b;box-shadow:0 0 0 2px rgba(245,158,11,.2)}
+    .mlb-coach-history-run{background:linear-gradient(135deg,#b45309,#d97706);color:#fff;border:0;border-radius:6px;padding:7px 14px;font-size:.72rem;font-weight:900;cursor:pointer;transition:all .2s ease;white-space:nowrap}
+    .mlb-coach-history-run:hover{background:linear-gradient(135deg,#d97706,#f59e0b);transform:translateY(-1px);box-shadow:0 4px 12px rgba(245,158,11,.2)}
+    .mlb-coach-category-section{margin-top:18px}
+    .mlb-coach-category-title{font-size:.8rem;font-weight:900;color:#e2e8f0;border-bottom:1px solid rgba(255,255,255,.08);padding-bottom:6px;margin-bottom:12px;letter-spacing:.05em;text-transform:uppercase;display:flex;align-items:center;gap:8px}
+    .mlb-coach-category-title.hitters{color:#facc15}
+    .mlb-coach-category-title.pitchers{color:#60a5fa}
+    .mlb-coach-presets{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:8px}
+    .mlb-coach-preset{background:#111827;color:#cbd5e1;border:1px solid #334155;border-radius:8px;padding:8px 10px;min-height:42px;font-size:.68rem;font-weight:750;cursor:pointer;text-align:left;transition:all .2s cubic-bezier(.4,0,.2,1);line-height:1.25;display:flex;align-items:center;height:100%}
+    .mlb-coach-preset:hover{background:#1e293b;border-color:#64748b;color:#f8fafc;transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,0,0,.2)}
+    .mlb-coach-preset.preset-green{border-left:3px solid #22c55e;color:#86efac}
+    .mlb-coach-preset.preset-green:hover{border-color:#22c55e;background:rgba(21,128,61,.1)}
+    .mlb-coach-preset.preset-amber{border-left:3px solid #f59e0b;color:#fde68a}
+    .mlb-coach-preset.preset-amber:hover{border-color:#f59e0b;background:rgba(180,83,9,.1)}
+    .mlb-coach-preset.preset-purple{border-left:3px solid #a78bfa;color:#ddd6fe}
+    .mlb-coach-preset.preset-purple:hover{border-color:#a78bfa;background:rgba(109,40,217,.1)}
+    .mlb-coach-preset.preset-orange{border-left:3px solid #fb923c;color:#fed7aa}
+    .mlb-coach-preset.preset-orange:hover{border-color:#fb923c;background:rgba(194,65,12,.1)}
+    .mlb-coach-preset.preset-blue{border-left:3px solid #60a5fa;color:#bfdbfe}
+    .mlb-coach-preset.preset-blue:hover{border-color:#60a5fa;background:rgba(37,99,235,.1)}
+    .mlb-coach-chat-box{margin-top:24px;background:rgba(15,23,42,.4);border:1px solid rgba(51,65,85,.5);border-radius:12px;padding:12px}
+    .mlb-coach-row{display:flex;gap:10px}
+    .mlb-coach-input{flex:1;min-width:0;background:#0f172a;color:#f8fafc;border:1px solid #334155;border-radius:8px;padding:12px 16px;font:inherit;font-size:.85rem;outline:none;transition:all .2s ease}
+    .mlb-coach-input:focus{border-color:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,.15)}
+    .mlb-coach-send{background:linear-gradient(135deg,#d97706,#f59e0b);color:#fff;border:0;border-radius:8px;padding:0 20px;font-weight:800;font-size:.8rem;cursor:pointer;transition:all .2s ease;letter-spacing:.05em}
+    .mlb-coach-send:hover{background:linear-gradient(135deg,#f59e0b,#fbbf24);transform:translateY(-1px);box-shadow:0 4px 12px rgba(245,158,11,.2)}
+    .mlb-coach-answer{display:none;margin-top:16px;border-top:1px solid rgba(245,158,11,.25);padding-top:16px}
     .mlb-coach-question{margin-left:auto;max-width:82%;background:#271604;border:1px solid rgba(245,158,11,.3);border-radius:12px 12px 3px 12px;padding:9px 12px;color:#fde68a;font-size:.75rem}
     .mlb-coach-stat{display:flex;justify-content:space-between;align-items:center;padding:8px 4px;border-bottom:1px solid #1c1c1c;font-size:.85rem}
     .mlb-coach-stat:last-child{border-bottom:none}
@@ -4168,6 +4191,15 @@ _HTML = """
     .mlb-coach-table td{padding:9px;border-top:1px solid #222;color:#e5e7eb;vertical-align:top}
     .mlb-coach-empty{color:#cbd5e1;font-size:.78rem;line-height:1.5;padding:8px 4px}
     .mlb-coach-play-copy{font-size:.72rem;color:#94a3b8;margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,.05);line-height:1.5}
+    @media (max-width:600px){
+      .mlb-coach-controls-container{padding:10px}
+      .mlb-coach-controls-row,.mlb-coach-control-group{gap:8px}
+      .mlb-coach-control-group{width:100%}
+      .mlb-coach-presets{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
+      .mlb-coach-preset{padding:8px;font-size:.65rem;min-height:44px}
+      .mlb-coach-chat-box{padding:9px}
+      .mlb-coach-send{padding:0 13px}
+    }
 
     .spinner { width: 18px; height: 18px; border: 3px solid rgba(255,255,255,.15); border-top-color: #3b82f6; border-radius: 50%; animation: spin .7s linear infinite; display: inline-block; }
     .login-input { background: var(--navy3); border: 1px solid rgba(255,255,255,.15); color: #e2e8f0; border-radius: 8px; padding: 11px 16px; width: 100%; font-size: 1rem; outline: none; transition: border-color .2s; }
@@ -4658,99 +4690,110 @@ _HTML = """
             <div style="color:#94a3b8;font-size:.76rem;margin-top:5px">Find safer sportsbook sides or scan the loaded MLB board for positive Coach Edge.</div>
           </div>
           <div>
-            <div style="color:#86efac;border:1px solid rgba(74,222,128,.35);border-radius:999px;padding:5px 9px;height:max-content;font-size:.62rem;font-weight:900;margin-top:6px;white-space:nowrap">NO INVENTED PLAYS</div>
-            <button onclick="openMlbCoachTrack()" style="width:100%;margin-top:8px;background:#0e7490;color:#fff;border:0;border-radius:8px;padding:7px 10px;font-size:.68rem;font-weight:900;cursor:pointer;white-space:nowrap">Coach Track Record</button>
+            <div style="color:#86efac;border:1px solid rgba(74,222,128,.35);border-radius:999px;padding:5px 9px;height:max-content;font-size:.62rem;font-weight:900;margin-top:6px;white-space:nowrap;text-align:center">NO INVENTED PLAYS</div>
+            <button onclick="openMlbCoachTrack()" style="width:100%;margin-top:8px;background:linear-gradient(135deg,#0891b2,#0e7490);color:#fff;border:0;border-radius:6px;padding:7px 10px;font-size:.68rem;font-weight:900;cursor:pointer;white-space:nowrap;transition:all .2s ease" onmouseover="this.style.filter='brightness(1.1)'" onmouseout="this.style.filter='none'">Coach Track Record</button>
           </div>
         </div>
 
-        <div class="mlb-coach-sidebar">
-          <span style="font-size:.65rem;font-weight:900;color:#fbbf24;letter-spacing:.06em;margin-right:3px">SIDE FILTER</span>
-          <button id="mlbCoachSideOver" class="mlb-coach-side over" onclick="_setMlbCoachSide('OVER')">OVER</button>
-          <button id="mlbCoachSideUnder" class="mlb-coach-side under" onclick="_setMlbCoachSide('UNDER')">UNDER</button>
-          <span id="mlbCoachSideHint" style="font-size:.62rem;color:#64748b">Choose a side, then choose any hitter or pitcher market</span>
-        </div>
-        <div class="mlb-coach-sidebar" style="margin-top:8px">
-          <span style="font-size:.65rem;font-weight:900;color:#22d3ee;letter-spacing:.06em;margin-right:3px">GAME FILTER</span>
-          <div class="mlb-coach-games">
-            <button id="mlbCoachGamesBtn" class="mlb-coach-games-btn" onclick="_toggleMlbCoachGames(event)">All games &#9662;</button>
-            <div id="mlbCoachGamesMenu" class="mlb-coach-games-menu" onclick="event.stopPropagation()">
-              <div class="mlb-coach-games-actions">
-                <button class="mlb-coach-games-action" onclick="_mlbCoachSelectAllGames()">All games</button>
-                <button class="mlb-coach-games-action" onclick="_mlbCoachClearGames()">Clear</button>
+        <div class="mlb-coach-controls-container">
+          <div class="mlb-coach-controls-row">
+            <div class="mlb-coach-control-group">
+              <div class="mlb-coach-control-label">Side Filter</div>
+              <div class="mlb-coach-control-content">
+                <button id="mlbCoachSideOver" class="mlb-coach-side over" onclick="_setMlbCoachSide('OVER')">OVER</button>
+                <button id="mlbCoachSideUnder" class="mlb-coach-side under" onclick="_setMlbCoachSide('UNDER')">UNDER</button>
               </div>
-              <div id="mlbCoachGamesList"><div style="padding:8px;color:#64748b;font-size:.68rem">Load an MLB board to choose games.</div></div>
+            </div>
+            <div class="mlb-coach-control-group" style="margin-left:auto">
+              <div class="mlb-coach-control-label">Game Filter</div>
+              <div class="mlb-coach-control-content mlb-coach-games">
+                <button id="mlbCoachGamesBtn" class="mlb-coach-games-btn" onclick="_toggleMlbCoachGames(event)">All games &#9662;</button>
+                <div id="mlbCoachGamesMenu" class="mlb-coach-games-menu" onclick="event.stopPropagation()">
+                  <div class="mlb-coach-games-actions">
+                    <button class="mlb-coach-games-action" onclick="_mlbCoachSelectAllGames()">All games</button>
+                    <button class="mlb-coach-games-action" onclick="_mlbCoachClearGames()">Clear</button>
+                  </div>
+                  <div id="mlbCoachGamesList"><div style="padding:8px;color:#64748b;font-size:.68rem">Load an MLB board to choose games.</div></div>
+                </div>
+              </div>
             </div>
           </div>
-          <span id="mlbCoachGamesHint" style="font-size:.62rem;color:#64748b">Choose any number of matchups; all Coach questions use this filter</span>
-        </div>
-        <div class="mlb-coach-sidebar" style="margin-top:8px;border-color:rgba(245,158,11,.45)">
-          <span style="font-size:.65rem;font-weight:900;color:#fbbf24;letter-spacing:.06em;margin-right:3px">TOP 10 VS TEAM</span>
-          <select id="mlbCoachHistoryCategory" class="mlb-coach-history-select" aria-label="MLB prop category">
-            <option value="Hits">Hitter Hits</option>
-            <option value="Total Bases">Total Bases</option>
-            <option value="Home Runs">Home Runs</option>
-            <option value="RBIs">RBIs</option>
-            <option value="H+R+RBI">H+R+RBI</option>
-            <option value="Runs">Runs</option>
-            <option value="Batter Walks">Batter Walks</option>
-            <option value="Batter Strikeouts">Batter Strikeouts</option>
-            <option value="Pitcher Strikeouts">Pitcher Strikeouts</option>
-            <option value="Hits Allowed">Pitcher Hits Allowed</option>
-            <option value="Pitching Outs">Pitching Outs</option>
-            <option value="Earned Runs">Pitcher Earned Runs</option>
-            <option value="Walks Allowed">Pitcher Walks Allowed</option>
-          </select>
-          <select id="mlbCoachHistorySide" class="mlb-coach-history-select" style="min-width:105px" aria-label="Over or Under">
-            <option value="OVER">OVER</option>
-            <option value="UNDER">UNDER</option>
-          </select>
-          <button class="mlb-coach-history-run" onclick="runMlbCoachHistoryTop10()">SHOW TOP 10</button>
-          <span style="font-size:.62rem;color:#64748b">Ranks current plays by historical success against today&#39;s opponent; Day/Night BA is shown for hitters</span>
-        </div>
-
-        <div style="margin-top:18px;font-size:.75rem;font-weight:800;color:#facc15;border-bottom:1px solid rgba(255,255,255,.1);padding-bottom:5px;letter-spacing:.05em;text-transform:uppercase">Hitters</div>
-        <div class="mlb-coach-presets">
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('Give me all 100% app probability hitter plays today')" style="border-color:#22c55e;color:#86efac">100% App Plays</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the safest hitter bets?')">Safest bets</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Hitter Coach Edge plays?')">Coach Edge</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Best Alt-Line Hitter H+R+RBI 1+ Edge Plays? — Top 10')" style="border-color:#f59e0b;color:#fde68a">Best Alt-Line HRR 1+ · Top 10</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Best Alt-Line Hitter H+R+RBI 1+ Plays by App Probability? No Edge Required — Top 10')" style="border-color:#a78bfa;color:#ddd6fe">Alt-Line HRR 1+ · App Probability</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('Show the top 20 hitters batting .300 or better with at least 10 at-bats in today\\'s series position')" style="border-color:#fb923c;color:#fed7aa">1+ HRR · .300+ Series BA · 10+ AB</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best plays to record a hit?')">To record a hit</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Total Bases plays?')">Total Bases</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Hitter Walks plays?')">Best Hitter Walks</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best hitter production props?')">Production</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Batter Strikeout plays?')">Batter Strikeouts</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best hitter unders?')">Hitter unders</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Top 3 hitter plays today?')">Top 3 hitter plays today</button>
+          <div class="mlb-coach-controls-row" style="margin-top:4px">
+            <div class="mlb-coach-control-group">
+              <div class="mlb-coach-control-label" style="color:#fbbf24">Top 10 vs Team</div>
+              <div class="mlb-coach-control-content">
+                <select id="mlbCoachHistoryCategory" class="mlb-coach-history-select" aria-label="MLB prop category">
+                  <option value="Hits">Hitter Hits</option>
+                  <option value="Total Bases">Total Bases</option>
+                  <option value="Home Runs">Home Runs</option>
+                  <option value="RBIs">RBIs</option>
+                  <option value="H+R+RBI">H+R+RBI</option>
+                  <option value="Runs">Runs</option>
+                  <option value="Batter Walks">Batter Walks</option>
+                  <option value="Batter Strikeouts">Batter Strikeouts</option>
+                  <option value="Pitcher Strikeouts">Pitcher Strikeouts</option>
+                  <option value="Hits Allowed">Pitcher Hits Allowed</option>
+                  <option value="Pitching Outs">Pitching Outs</option>
+                  <option value="Earned Runs">Pitcher Earned Runs</option>
+                  <option value="Walks Allowed">Pitcher Walks Allowed</option>
+                </select>
+                <select id="mlbCoachHistorySide" class="mlb-coach-history-select" style="min-width:90px" aria-label="Over or Under">
+                  <option value="OVER">OVER</option>
+                  <option value="UNDER">UNDER</option>
+                </select>
+                <button class="mlb-coach-history-run" onclick="runMlbCoachHistoryTop10()">SHOW TOP 10</button>
+              </div>
+            </div>
+            <div style="font-size:.62rem;color:#64748b;margin-top:2px">Ranks current plays by historical success against today's opponent; Day/Night BA is shown for hitters</div>
+          </div>
         </div>
 
-        <div style="margin-top:16px;font-size:.75rem;font-weight:800;color:#fb923c;border-bottom:1px solid rgba(255,255,255,.1);padding-bottom:5px;letter-spacing:.05em;text-transform:uppercase">Hot / Cold Batters</div>
-        <div class="mlb-coach-presets">
-          <button class="mlb-coach-preset" onclick="showMlbHotColdCoach('hot')" style="border-color:#fb923c;color:#fed7aa">&#128293; Hot Batters · Top 10 to Record a Hit</button>
-          <button class="mlb-coach-preset" onclick="showMlbHotColdCoach('cold')" style="border-color:#60a5fa;color:#bfdbfe">&#10052;&#65039; Cold Batters · Top 10 Under 1.5 TB</button>
+        <div class="mlb-coach-category-section">
+          <div class="mlb-coach-category-title hitters">Hitters</div>
+          <div class="mlb-coach-presets">
+            <button class="mlb-coach-preset preset-green" onclick="askMlbCoachPreset('Give me all 100% app probability hitter plays today')">100% App Plays</button>
+            <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the safest hitter bets?')">Safest bets</button>
+            <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Hitter Coach Edge plays?')">Coach Edge</button>
+            <button class="mlb-coach-preset preset-amber" onclick="askMlbCoachPreset('What are the Best Alt-Line Hitter H+R+RBI 1+ Edge Plays? — Top 10')">Best Alt-Line HRR 1+ · Top 10</button>
+            <button class="mlb-coach-preset preset-purple" onclick="askMlbCoachPreset('What are the Best Alt-Line Hitter H+R+RBI 1+ Plays by App Probability? No Edge Required — Top 10')">Alt-Line HRR 1+ · App Probability</button>
+            <button class="mlb-coach-preset preset-orange" onclick="askMlbCoachPreset('Show the top 20 hitters batting .300 or better with at least 10 at-bats in today\\'s series position')">1+ HRR · .300+ Series BA · 10+ AB</button>
+            <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best plays to record a hit?')">To record a hit</button>
+            <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Total Bases plays?')">Total Bases</button>
+            <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Hitter Walks plays?')">Best Hitter Walks</button>
+            <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best hitter production props?')">Production</button>
+            <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Batter Strikeout plays?')">Batter Strikeouts</button>
+            <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best hitter unders?')">Hitter unders</button>
+            <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Top 3 hitter plays today?')">Top 3 hitter plays today</button>
+            
+            <button class="mlb-coach-preset preset-orange" onclick="showMlbHotColdCoach('hot')">&#128293; Hot Batters · Top 10 to Record a Hit</button>
+            <button class="mlb-coach-preset preset-blue" onclick="showMlbHotColdCoach('cold')">&#10052;&#65039; Cold Batters · Top 10 Under 1.5 TB</button>
+          </div>
         </div>
 
-        <div style="margin-top:16px;font-size:.75rem;font-weight:800;color:#60a5fa;border-bottom:1px solid rgba(255,255,255,.1);padding-bottom:5px;letter-spacing:.05em;text-transform:uppercase">Pitchers</div>
-        <div class="mlb-coach-presets">
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('Give me all 100% app probability pitcher plays today')" style="border-color:#22c55e;color:#86efac">100% App Plays</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the safest pitcher bets?')">Safest bets</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Pitcher Coach Edge plays?')">Coach Edge</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Best Alt-Line Pitcher Edge Plays? — Top 10')" style="border-color:#60a5fa;color:#bfdbfe">Best Alt-Line Edge Plays · Top 10</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Pitcher Strikeout plays?')">Pitcher Strikeouts</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Hits Allowed plays?')">Hits Allowed</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Pitching Outs plays?')">Pitching Outs</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Earned Runs plays?')">Earned Runs</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Walks Allowed plays?')">Walks Allowed</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best pitcher unders?')">Pitcher unders</button>
-          <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Top 3 pitcher plays today?')">Top 3 pitcher plays today</button>
+        <div class="mlb-coach-category-section">
+          <div class="mlb-coach-category-title pitchers">Pitchers</div>
+          <div class="mlb-coach-presets">
+            <button class="mlb-coach-preset preset-green" onclick="askMlbCoachPreset('Give me all 100% app probability pitcher plays today')">100% App Plays</button>
+            <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the safest pitcher bets?')">Safest bets</button>
+            <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Pitcher Coach Edge plays?')">Coach Edge</button>
+            <button class="mlb-coach-preset preset-blue" onclick="askMlbCoachPreset('What are the Best Alt-Line Pitcher Edge Plays? — Top 10')">Best Alt-Line Edge Plays · Top 10</button>
+            <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Pitcher Strikeout plays?')">Pitcher Strikeouts</button>
+            <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Hits Allowed plays?')">Hits Allowed</button>
+            <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Pitching Outs plays?')">Pitching Outs</button>
+            <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Earned Runs plays?')">Earned Runs</button>
+            <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best Walks Allowed plays?')">Walks Allowed</button>
+            <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the best pitcher unders?')">Pitcher unders</button>
+            <button class="mlb-coach-preset" onclick="askMlbCoachPreset('What are the Top 3 pitcher plays today?')">Top 3 pitcher plays today</button>
+          </div>
         </div>
 
-        <div class="mlb-coach-row" style="margin-top:16px">
-          <input id="mlbCoachInput" class="mlb-coach-input" placeholder="Type a question..." onkeydown="if(event.key==='Enter')askMlbCoach()"/>
-          <button class="mlb-coach-send" onclick="askMlbCoach()">Analyze</button>
+        <div class="mlb-coach-chat-box">
+          <div class="mlb-coach-row">
+            <input id="mlbCoachInput" class="mlb-coach-input" placeholder="Type a question..." onkeydown="if(event.key==='Enter')askMlbCoach()"/>
+            <button class="mlb-coach-send" onclick="askMlbCoach()">Analyze</button>
+          </div>
+          <div class="mlb-coach-disclaimer">Requires a loaded MLB board. To Record a Hit ranks generated hit candidates by app probability and shows odds only when available; other Coach categories use genuine sportsbook prices. Coach Edge equals app probability minus sportsbook-implied probability.</div>
         </div>
-        <div style="color:#64748b;font-size:.65rem;line-height:1.45;margin-top:8px">Requires a loaded MLB board. To Record a Hit ranks generated hit candidates by app probability and shows odds only when available; other Coach categories use genuine sportsbook prices. Coach Edge equals app probability minus sportsbook-implied probability.</div>
         <div id="mlbCoachAnswer" class="mlb-coach-answer"></div>
       </div>
       <div class="card p-6 hidden" id="mlb-coach-track-card" style="max-width:1100px;margin:0 auto 16px;border-color:rgba(34,211,238,.35)">
