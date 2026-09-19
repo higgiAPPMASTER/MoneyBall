@@ -6,7 +6,7 @@ main.py — FastAPI app for MoneyBall
   • GET  /api/results/{date} — fetch cached results
   • GET  /                   — serves the frontend SPA
 """
-import asyncio, json, os, uuid, glob as _glob, unicodedata as _ud
+import asyncio, json, os, uuid, glob as _glob, unicodedata as _ud, time as _time
 import datetime as _dt, copy as _copy
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
@@ -4130,13 +4130,89 @@ def api_player_deep(name: str = "", date_str: str = ""):
                 splits_out[k] = {"avg": str(st.get("avg", "") or ""), "ab": ab}
     except Exception:
         pass
-    return {"found": True, "full_name": full, "team": teams.get(team_id, ""),
+    return {"found": True, "player_id": pid, "full_name": full, "team": teams.get(team_id, ""),
             "side": side, "opp": teams.get(opp_id, "") if opp_id else "",
             "opp_abbr": abbr.get(opp_id, "") if opp_id else "",
             "pitcher": opp_pname or "", "in_game": bool(side),
             "s1_ba": s1_ba, "s1_ab": s1_ab, "splits": splits_out,
             "series": series_out, "today_dn": today_dn,
             "today_series": today_series, "games": games}
+
+_MLB_WEEKDAY_SPLIT_CACHE = {}
+
+def _mlb_weekday_split_one(pid, season, weekday):
+    key = (int(pid), str(season), int(weekday))
+    cached = _MLB_WEEKDAY_SPLIT_CACHE.get(key)
+    if cached and (_time.time() - cached[0]) < 600:
+        return cached[1]
+    import requests as _rq
+    try:
+        data = _rq.get(
+            f"https://statsapi.mlb.com/api/v1/people/{int(pid)}/stats",
+            params={"stats": "gameLog", "group": "hitting", "season": season,
+                    "gameType": "R"},
+            timeout=10,
+        ).json()
+        games = []
+        for group in data.get("stats", []):
+            games.extend(group.get("splits", []))
+        day_ab = day_h = day_games = all_ab = all_h = 0
+        for game in games:
+            try:
+                game_date = _dt.date.fromisoformat(str(game.get("date", ""))[:10])
+            except Exception:
+                continue
+            stat = game.get("stat", {}) or {}
+            try:
+                ab = int(stat.get("atBats", 0) or 0)
+                hits = int(stat.get("hits", 0) or 0)
+            except Exception:
+                continue
+            all_ab += ab
+            all_h += hits
+            if game_date.weekday() == weekday:
+                day_games += 1
+                day_ab += ab
+                day_h += hits
+        day_avg = round(day_h / day_ab, 3) if day_ab else None
+        overall_avg = round(all_h / all_ab, 3) if all_ab else None
+        result = {
+            "player_id": int(pid), "games": day_games, "ab": day_ab, "hits": day_h,
+            "avg": day_avg, "overall_avg": overall_avg,
+            "delta": round(day_avg - overall_avg, 3)
+                     if day_avg is not None and overall_avg is not None else None,
+        }
+    except Exception:
+        result = {"player_id": int(pid), "games": 0, "ab": 0, "hits": 0,
+                  "avg": None, "overall_avg": None, "delta": None}
+    _MLB_WEEKDAY_SPLIT_CACHE[key] = (_time.time(), result)
+    return result
+
+@app.get("/api/player-weekday-splits")
+def api_player_weekday_splits(ids: str = "", date_str: str = ""):
+    """Display-only season BA for the selected slate's weekday, batched by player."""
+    try:
+        slate = _dt.date.fromisoformat((date_str or date.today().isoformat())[:10])
+    except Exception:
+        slate = date.today()
+    safe_ids = []
+    for raw in str(ids or "").split(","):
+        try:
+            pid = int(raw.strip())
+        except Exception:
+            continue
+        if pid > 0 and pid not in safe_ids:
+            safe_ids.append(pid)
+        if len(safe_ids) >= 120:
+            break
+    if not safe_ids:
+        return {"weekday": slate.strftime("%A"), "season": str(slate.year), "players": []}
+    with ThreadPoolExecutor(max_workers=min(8, len(safe_ids))) as pool:
+        rows = list(pool.map(
+            lambda pid: _mlb_weekday_split_one(pid, str(slate.year), slate.weekday()),
+            safe_ids,
+        ))
+    return {"weekday": slate.strftime("%A"), "season": str(slate.year), "players": rows}
 
 @app.get("/api/whoami")
 async def whoami(request: Request, token: str = ""):
@@ -7872,9 +7948,10 @@ function _popSig(p, rateLbl, oddsLbl, oddsVal, isOver){
   var conv=p.conv_flag?'<div style="font-size:.82rem;color:#4ade80;font-weight:600;margin-top:3px">&#10003; Converged &middot; L10 '+(p.recent_l10||'N/A')+' L5 '+(p.recent_l5||'N/A')+'</div>':(p.cold_flag?'<div style="font-size:.82rem;color:#fb923c;font-weight:600;margin-top:3px">&#9888; Recent diverges &middot; L5 '+(p.recent_l5||'N/A')+'</div>':((p.recent_l10||p.recent_l5)?'<div style="font-size:.82rem;color:#64748b;margin-top:3px">L10 '+(p.recent_l10||'N/A')+' &middot; L5 '+(p.recent_l5||'N/A')+'</div>':''));
   var hot=(isOver&&p.hot_disp)?'<div style="font-size:.82rem;color:#fbbf24;font-weight:700;margin-top:3px">&#128293; Hot hand &middot; '+p.hot_disp+' (+'+p.hot_bonus+')</div>':'';
   var dn=(typeof _dnChip==='function')?_dnChip(p):'';
+  var dow=(typeof _weekdayChip==='function')?_weekdayChip(p):'';
   var odStr=(oddsVal!=null)?((oddsVal>0?'+':'')+oddsVal):'\u2014';
   var odds='<div style="margin-top:8px;padding-top:8px;border-top:1px solid #1f2937"><span style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">'+(oddsLbl||'Odds')+'</span> <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:1rem">'+odStr+_bookTag(p)+'</span></div>';
-  return chipRow+rate+conv+hot+dn+odds;
+  return chipRow+rate+conv+hot+dn+dow+odds;
 }
 
 // ── Two even boxes: matchup signals (left) + series splits & last games (right) ──
@@ -9375,6 +9452,7 @@ function _deepCard(d){
     +'<div style="padding:14px 18px">'
       +splitRow
       +seriesRow
+       +_weekdayChip(d)
       +'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">'
         +'<span style="background:'+vcol+'22;color:'+vcol+';border:1px solid '+vcol+'55;border-radius:6px;padding:3px 10px;font-weight:800;font-size:.78rem">'+vtxt+'</span>'
         +'<span style="color:#cbd5e1;font-size:.82rem">'+ba+' last '+n+(careerLine?(' &#183; '+careerLine):'')+(hot5>=2?(' &#183; &#128293; '+hot5+' HR in L5'):'')+'</span>'
@@ -9861,6 +9939,54 @@ function _dnChip(p){
     +'<span style="font-size:.72rem;color:#64748b">'+lbl+' BA</span>'
     +'<span style="font-family:monospace;font-weight:700;color:#7dd3fc;font-size:.82rem">'+v+'</span></div>';
 }
+var _mlbWeekdayHydrateTimer=null,_mlbWeekdayHydrateKey='';
+function _weekdayChip(p){
+  var pid=Number((p&&p.batter_id)||(p&&p.player_id)||0);
+  if(!pid)return '';
+  clearTimeout(_mlbWeekdayHydrateTimer);
+  _mlbWeekdayHydrateTimer=setTimeout(_hydrateWeekdayChips,80);
+  return '<div class="mlb-dow-split" data-pid="'+pid+'" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:5px;padding:5px 7px;background:rgba(14,116,144,.08);border:1px solid rgba(14,116,144,.22);border-radius:6px">'+
+    '<span class="mlb-dow-label" style="font-size:.66rem;color:#67e8f9;font-weight:800">Weekday BA</span>'+
+    '<span class="mlb-dow-value" style="font-family:monospace;font-size:.68rem;color:#64748b">Loading…</span></div>';
+}
+function _mlbBa(v){
+  if(v==null||!isFinite(Number(v)))return '—';
+  var s=Number(v).toFixed(3);return s.indexOf('0.')===0?s.slice(1):s;
+}
+async function _hydrateWeekdayChips(){
+  var nodes=[].slice.call(document.querySelectorAll('.mlb-dow-split[data-pid]'));
+  if(!nodes.length)return;
+  var ids=[],seen={};
+  nodes.forEach(function(el){var id=String(el.getAttribute('data-pid')||'');if(id&&!seen[id]){seen[id]=1;ids.push(id);}});
+  var runDate=(window._lastResult&&window._lastResult.date)||(document.getElementById('date-picker')||{}).value||'';
+  var key=runDate+'|'+ids.sort().join(',');
+  if(_mlbWeekdayHydrateKey===key&&nodes.every(function(el){return el.getAttribute('data-loaded')==='1';}))return;
+  _mlbWeekdayHydrateKey=key;
+  try{
+    var chunks=[];for(var i=0;i<ids.length;i+=40)chunks.push(ids.slice(i,i+40));
+    var replies=await Promise.all(chunks.map(function(part){
+      return fetch('/api/player-weekday-splits?ids='+encodeURIComponent(part.join(','))+'&date_str='+encodeURIComponent(runDate)).then(function(r){if(!r.ok)throw new Error('weekday split unavailable');return r.json();});
+    }));
+    var byId={};
+    replies.forEach(function(data){(data.players||[]).forEach(function(x){byId[String(x.player_id)]=Object.assign({weekday:data.weekday,season:data.season},x);});});
+    nodes.forEach(function(el){
+      var x=byId[String(el.getAttribute('data-pid')||'')],lbl=el.querySelector('.mlb-dow-label'),val=el.querySelector('.mlb-dow-value');
+      if(!x){if(val)val.textContent='N/A';return;}
+      if(lbl)lbl.textContent=(x.weekday||'Weekday')+' BA';
+      if(val){
+        if(x.avg==null)val.textContent='N/A · 0 AB';
+        else{
+          var delta=x.delta==null?'':(' · '+(x.delta>=0?'+':'')+Number(x.delta).toFixed(3).replace(/^0/,'' )+' vs overall');
+          val.textContent=_mlbBa(x.avg)+' · '+x.ab+' AB'+delta+(x.ab<20?' · SMALL SAMPLE':'');
+          val.style.color=x.ab<20?'#fbbf24':'#a5f3fc';
+        }
+      }
+      el.setAttribute('data-loaded','1');
+    });
+  }catch(e){
+    nodes.forEach(function(el){var v=el.querySelector('.mlb-dow-value');if(v)v.textContent='Unavailable';});
+  }
+}
 function _mlbCard(p, rank, dim, pfx) {
   const abbr = _mlbTeamAbbr(p.team);
   const teamLogo = abbr ? `https://a.espncdn.com/i/teamlogos/mlb/500/${abbr}.png` : '';
@@ -9910,6 +10036,7 @@ function _mlbCard(p, rank, dim, pfx) {
       ${_xbaBadge(p)}
       ${_seriesChip(p)}
     </div>
+  ${_weekdayChip(p)}
   ${_betBtn(p,'Hitter Hits','OVER','hits','Hits',0.5,p.hit_odds)}
   </div>`;
 }
@@ -9961,6 +10088,7 @@ function _underCard(p, rank) {
       ${_evBadge(p)}
       ${underBlurb ? `<div style="margin-top:5px;font-size:.72rem;color:#94a3b8;line-height:1.5;font-style:italic">${underBlurb}</div>` : ''}
     </div>
+  ${_weekdayChip(p)}
   ${_betBtn(p,'Hitter Hits',(p.pick||'UNDER'),'hits','Hits',1.5,(p.pick==='OVER'?p.over_odds:p.under_odds))}
   </div>`;
 }
@@ -10029,6 +10157,7 @@ function _runsCard(p, rank, pfx) {
       ${_evBadge(p)}
       ${adminStats}
     </div>
+  ${_weekdayChip(p)}
   ${_betBtn(p,'Runs',p.pick,'runs','Runs',(p.line!=null?p.line:0.5),(p.pick==='OVER'?p.over_odds:p.under_odds))}
   </div>`;
 }
@@ -10078,6 +10207,7 @@ function _rbiCard(p, rank, pfx) {
       ${_evBadge(p)}
       ${adminStats}
     </div>
+  ${_weekdayChip(p)}
   ${_betBtn(p,'RBI',p.pick,'rbi','RBI',(p.line!=null?p.line:0.5),(p.pick==='OVER'?p.over_odds:p.under_odds))}
   </div>`;
 }
@@ -10180,6 +10310,7 @@ function _hrCard(p, rank, pfx) {
       ${_evBadge(p)}
       ${adminStats}
     </div>
+  ${_weekdayChip(p)}
   ${_betBtn(p,'HR',p.pick,'homeRuns','HR',(p.line!=null?p.line:0.5),(p.pick==='OVER'?p.over_odds:p.under_odds))}
   </div>`;
 }
@@ -10266,6 +10397,7 @@ function _batKCard(p, rank, pfx) {
       ${_evBadge(p)}
       ${adminStats}
     </div>
+  ${_weekdayChip(p)}
   ${_betBtn(p,'Batter Ks',p.pick,'bat_strikeOuts','Ks',(p.line!=null?p.line:0.5),(p.pick==='OVER'?p.over_odds:p.under_odds))}
   </div>`;
 }
@@ -10464,6 +10596,7 @@ function _walksCard(p, rank, pfx) {
       ${_evBadge(p)}
       ${adminStats}
     </div>
+  ${_weekdayChip(p)}
   ${_betBtn(p,'Batter Walks',p.pick,'walks_bat','Walks',(p.line!=null?p.line:0.5),(p.pick==='OVER'?p.over_odds:p.under_odds))}
   </div>`;
 }
@@ -10554,6 +10687,7 @@ function _tbCard(p, rank, pfx) {
       </div>
       ${adminStats}
     </div>
+  ${_weekdayChip(p)}
   ${_betBtn(p,'TB Under','UNDER','total_bases','Total Bases',1.5,p.tb_under_odds)}
   </div>`;
 }
@@ -10600,6 +10734,7 @@ function _tbOverCard(p, rank, pfx) {
       ${_evBadge(p)}
       ${adminStats}
     </div>
+  ${_weekdayChip(p)}
   ${_betBtn(p,'TB Over','OVER','total_bases','Total Bases',1.5,p.tb_over_odds)}
   </div>`;
 }
@@ -10811,6 +10946,7 @@ function _hrrTop10Card(p, rank, pfx) {
       </div>
       <div style="font-size:.65rem;color:#64748b;margin-top:4px">True last-10 log: ${(p.last10_hrr_log||[]).length} games · click for game-by-game detail</div>
     </div>
+  ${_weekdayChip(p)}
   ${_betBtn(p,'1+ HRR Hot Matchup History','OVER','hrr','H+R+RBI',0.5,od)}
   </div>`;
 }
@@ -10861,6 +10997,7 @@ function _hrrCard(p, rank, pfx) {
       ${_evBadge(p)}
       ${adminStats}
     </div>
+  ${_weekdayChip(p)}
   ${_betBtn(p,'HRR',(isOver?'OVER':'UNDER'),'hrr','H+R+RBI',1.5,od)}
   </div>`;
 }
@@ -10902,6 +11039,7 @@ function _hrrSpCard(p, rank, pfx) {
         <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}${_bookTag(p)}</span>
       </div>
     </div>
+  ${_weekdayChip(p)}
   ${_betBtn(p,'HRR','OVER','hrr','H+R+RBI',1.5,od)}
   </div>`;
 }
@@ -10942,6 +11080,7 @@ function _hotSplitCard(p, rank, pfx) {
         <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}${_bookTag(p)}</span>
       </div>
     </div>
+  ${_weekdayChip(p)}
   ${_betBtn(p,'Hot Hitters','OVER','hits','Hits',0.5,od)}
   </div>`;
 }
@@ -10994,6 +11133,7 @@ function _coldSplitCard(p, rank, pfx) {
       </div>
       <div style="margin-top:8px;padding-top:8px;border-top:1px solid #1f1f1f;font-size:.68rem;color:#475569">
         ${od!=null?('<span style="color:#94a3b8">Under 1.5 TB odds: </span><span style="color:#93c5fd;font-weight:800;font-family:monospace">'+(od>0?'+':'')+od+'</span><br>'):''}
+        ${_weekdayChip(p)}
         ${_betBtn(p,'Cold Batters','UNDER','total_bases','Total Bases',1.5,od)}
       </div>
     </div>
@@ -11071,6 +11211,7 @@ function _tscCard(p, rank, pfx) {
         <span style="font-family:monospace;color:#fbbf24;font-weight:700;font-size:.95rem">${odDisp}${_bookTag(p)}</span>
       </div>
     </div>
+  ${_weekdayChip(p)}
   ${_betBtn(p,'Triple Split Club','OVER','hits','Hits',0.5,od)}
   </div>`;
 }
@@ -12665,6 +12806,7 @@ function _fssCard(p, rank, pfx) {
       </div>
       ${vpRow}
     </div>
+  ${_weekdayChip(p)}
   ${_betBtn(p,'5 Star Split','OVER',_fssBoxKey(p),(p.stat_label||'Total Bases'),(p.line!=null?p.line:1.5),od)}
   </div>`;
 }
@@ -12814,6 +12956,7 @@ function _clubCard(p, rank, pfx) {
       </div>
       ${vpRow}
     </div>
+  ${_weekdayChip(p)}
   ${_betBtn(p,'Club Plays','OVER',_clubBoxKey(p),(p.stat_label||'Total Bases'),(p.line!=null?p.line:1.5),od)}
   </div>`;
 }
