@@ -5673,29 +5673,29 @@ function askMlbCoachPreset(question) {
   askMlbCoach();
 }
 
-function showMlbPerfectParlayBuilder() {
-  var options='';
-  for(var i=2;i<=10;i++) options+='<option value="'+i+'"'+(i===3?' selected':'')+'>'+i+' legs</option>';
-  _mlbCoachCommit(
-    '<div><div class="mlb-coach-question">&#10024; Perfect Parlay</div>'+
-    '<div style="margin-top:10px;color:#cbd5e1;font-size:.77rem;line-height:1.55">Choose the number of legs. The Coach will combine the strongest positive-edge Hitter and Pitcher Coach Edge plays, using only one play per player.</div>'+
-    '<div style="display:flex;align-items:end;gap:9px;flex-wrap:wrap;margin-top:14px;padding:12px;background:#0f172a;border:1px solid #334155;border-radius:10px">'+
-      '<label style="color:#94a3b8;font-size:.68rem;font-weight:800">PARLAY SIZE<br>'+
-        '<select id="mlbPerfectParlayLegs" style="margin-top:5px;min-width:120px;background:#020617;color:#fff;border:1px solid #475569;border-radius:7px;padding:9px 10px;font-weight:800">'+options+'</select>'+
-      '</label>'+
-      '<button onclick="buildMlbPerfectParlay()" style="background:linear-gradient(135deg,#d97706,#7c3aed);color:#fff;border:0;border-radius:8px;padding:10px 15px;font-weight:950;cursor:pointer">BUILD PERFECT PARLAY</button>'+
-    '</div></div>'
-  );
-}
+window.__mlbPerfectParlaySettings=window.__mlbPerfectParlaySettings||{legs:3,side:'ALL',categories:[],stake:100};
+window.__mlbPerfectParlayPool=window.__mlbPerfectParlayPool||[];
+window.__mlbPerfectParlayLegs=window.__mlbPerfectParlayLegs||[];
+window.__mlbPerfectParlayCursor=window.__mlbPerfectParlayCursor||0;
+window.__mlbPerfectParlayNotice=window.__mlbPerfectParlayNotice||'';
 
-function _mlbPerfectParlayPool() {
+function _mlbPerfectParlayCandidates() {
   var props=_mlbCoachApplyGameFilter(_mlbCoachAllProps());
-  var pool=_mlbCoachSelectRows(props,'hitter_edge')
+  return _mlbCoachSelectRows(props,'hitter_edge')
     .concat(_mlbCoachSelectRows(props,'pitcher_edge'))
     .filter(function(p){
       return p&&p.edge!=null&&Number(p.edge)>0&&p.odds!=null
         &&isFinite(Number(p.odds))&&Number(p.odds)>=-1000&&!!p.book;
     });
+}
+
+function _mlbPerfectParlayPool(side,categories) {
+  var wanted=String(side||'ALL').toUpperCase();
+  var selected=Array.isArray(categories)?categories:[];
+  var pool=_mlbPerfectParlayCandidates().filter(function(p){
+    if(wanted!=='ALL'&&String(p.side||'').toUpperCase()!==wanted)return false;
+    return !selected.length||selected.indexOf(String(p.market||'MLB Prop'))>=0;
+  });
   var byPlayer={};
   pool.forEach(function(p){
     var key=String(p.player||'').toLowerCase().replace(/[^a-z0-9]/g,'');
@@ -5713,6 +5713,42 @@ function _mlbPerfectParlayPool() {
     });
 }
 
+function setMlbPerfectParlayCategories(on){
+  document.querySelectorAll('input[name="mlbPerfectParlayCat"]:not(:disabled)').forEach(function(cb){cb.checked=!!on;});
+}
+
+function showMlbPerfectParlayBuilder() {
+  var saved=window.__mlbPerfectParlaySettings||{},savedLegs=Math.max(2,Math.min(10,Number(saved.legs)||3));
+  var all=_mlbPerfectParlayCandidates(),counts={},order=[];
+  all.forEach(function(p){
+    var market=String(p.market||'MLB Prop');
+    if(!Object.prototype.hasOwnProperty.call(counts,market))order.push(market);
+    counts[market]=(counts[market]||0)+1;
+  });
+  order.sort();
+  var selected=(saved.categories&&saved.categories.length)?saved.categories.slice():order.slice();
+  var cats=order.map(function(market){
+    var checked=selected.indexOf(market)>=0;
+    return '<label style="display:flex;align-items:center;gap:6px;padding:7px 9px;background:'+(checked?'rgba(217,119,6,.15)':'#020617')+';border:1px solid '+(checked?'#d97706':'#334155')+';border-radius:7px;color:#e2e8f0;font-size:.68rem;font-weight:800;cursor:pointer"><input type="checkbox" name="mlbPerfectParlayCat" value="'+_mlbEsc(market)+'"'+(checked?' checked':'')+' style="accent-color:#d97706"> '+_mlbEsc(market)+' <span style="color:#64748b">('+counts[market]+')</span></label>';
+  }).join('');
+  var sizes='';
+  for(var i=2;i<=10;i++) sizes+='<option value="'+i+'"'+(i===savedLegs?' selected':'')+'>'+i+' legs</option>';
+  var side=String(saved.side||'ALL'),field='margin-top:5px;min-width:145px;background:#020617;color:#fff;border:1px solid #475569;border-radius:7px;padding:9px 10px;font-weight:800';
+  _mlbCoachCommit(
+    '<div><div class="mlb-coach-question">&#10024; Perfect Parlay</div>'+
+    '<div style="margin-top:10px;color:#cbd5e1;font-size:.77rem;line-height:1.55">Choose categories, side, size, and wager. Every leg keeps the existing genuine-price, positive Coach Edge, active-game-filter, and one-play-per-player rules.</div>'+
+    '<div style="margin-top:12px;padding:12px;background:#0f172a;border:1px solid #334155;border-radius:10px">'+
+      '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px"><b style="color:#94a3b8;font-size:.68rem">CATEGORIES — SELECT ONE OR MORE</b><span><button onclick="setMlbPerfectParlayCategories(true)" style="background:#1e293b;color:#fde68a;border:1px solid #334155;border-radius:6px;padding:5px 8px;font-weight:800;cursor:pointer">Select all</button> <button onclick="setMlbPerfectParlayCategories(false)" style="background:#1e293b;color:#94a3b8;border:1px solid #334155;border-radius:6px;padding:5px 8px;font-weight:800;cursor:pointer">Clear</button></span></div>'+
+      '<div style="display:flex;flex-wrap:wrap;gap:7px">'+cats+'</div>'+
+      '<div style="display:flex;align-items:end;gap:9px;flex-wrap:wrap;margin-top:13px">'+
+        '<label style="color:#94a3b8;font-size:.68rem;font-weight:800">PARLAY SIZE<br><select id="mlbPerfectParlayLegs" style="'+field+'">'+sizes+'</select></label>'+
+        '<label style="color:#94a3b8;font-size:.68rem;font-weight:800">SIDE<br><select id="mlbPerfectParlaySide" style="'+field+'"><option value="ALL"'+(side==='ALL'?' selected':'')+'>Best available</option><option value="OVER"'+(side==='OVER'?' selected':'')+'>Overs only</option><option value="UNDER"'+(side==='UNDER'?' selected':'')+'>Unders only</option></select></label>'+
+        '<label style="color:#94a3b8;font-size:.68rem;font-weight:800">BET AMOUNT ($)<br><input id="mlbPerfectParlayStake" type="number" min="0.01" step="0.01" value="'+Number(saved.stake||100).toFixed(2)+'" style="'+field+';width:125px"></label>'+
+        '<button onclick="buildMlbPerfectParlay()" style="background:linear-gradient(135deg,#d97706,#7c3aed);color:#fff;border:0;border-radius:8px;padding:10px 15px;font-weight:950;cursor:pointer">BUILD PERFECT PARLAY</button>'+
+      '</div></div></div>'
+  );
+}
+
 function _mlbPerfectParlayAmerican(decimalOdds) {
   var d=Number(decimalOdds);
   if(!isFinite(d)||d<=1) return 'N/A';
@@ -5721,22 +5757,58 @@ function _mlbPerfectParlayAmerican(decimalOdds) {
   return (rounded>0?'+':'')+rounded;
 }
 
-function buildMlbPerfectParlay() {
-  var select=document.getElementById('mlbPerfectParlayLegs');
-  var legsRequested=Math.max(2,Math.min(10,parseInt(select&&select.value||'3',10)||3));
-  if(!window._lastResult){
-    _mlbCoachCommit('<div><div class="mlb-coach-question">&#10024; Perfect Parlay</div><div class="mlb-coach-empty">Load today&#39;s MLB board first.</div></div>');
-    return;
+function _mlbPerfectParlayPlayerKey(p){
+  return String((p&&p.player)||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+}
+
+function changeMlbPerfectParlayLeg(index,poolIndex){
+  var next=window.__mlbPerfectParlayPool[Number(poolIndex)];
+  if(!next||!window.__mlbPerfectParlayLegs[index])return;
+  var nextKey=_mlbPerfectParlayPlayerKey(next);
+  if(window.__mlbPerfectParlayLegs.some(function(p,i){return i!==index&&_mlbPerfectParlayPlayerKey(p)===nextKey;}))return;
+  window.__mlbPerfectParlayLegs[index]=next;
+  window.__mlbPerfectParlayNotice='Leg replaced. Payout updated.';
+  renderMlbPerfectParlay();
+}
+
+function generateNewMlbPerfectParlay(){
+  var pool=window.__mlbPerfectParlayPool||[],count=(window.__mlbPerfectParlayLegs||[]).length;
+  if(!count||pool.length<count)return;
+  window.__mlbPerfectParlayCursor=(window.__mlbPerfectParlayCursor+count)%pool.length;
+  var next=[],seen={};
+  for(var step=0;step<pool.length&&next.length<count;step++){
+    var p=pool[(window.__mlbPerfectParlayCursor+step)%pool.length],key=_mlbPerfectParlayPlayerKey(p);
+    if(key&&!seen[key]){seen[key]=1;next.push(p);}
   }
-  var pool=_mlbPerfectParlayPool();
-  if(pool.length<legsRequested){
-    _mlbCoachCommit('<div><div class="mlb-coach-question">&#10024; Perfect Parlay · '+legsRequested+' Legs</div><div class="mlb-coach-empty">Only '+pool.length+' unique player'+(pool.length===1?'':'s')+' currently qualify with a genuine sportsbook price and positive Coach Edge. Choose fewer legs or expand the Coach game filter.</div><div style="margin-top:12px"><button onclick="showMlbPerfectParlayBuilder()" style="background:#1e293b;color:#fff;border:1px solid #475569;border-radius:7px;padding:8px 11px;font-weight:800;cursor:pointer">Choose another size</button></div></div>');
-    return;
+  if(next.length===count){
+    window.__mlbPerfectParlayLegs=next;
+    window.__mlbPerfectParlayNotice='Generated a new combination from the same qualifying pool.';
+    renderMlbPerfectParlay();
   }
-  var legs=pool.slice(0,legsRequested), combined=1;
-  legs.forEach(function(p){combined*=Number(_amToDec(p.odds)||1);});
+}
+
+function updateMlbPerfectParlayStake(el){
+  var stake=Math.max(.01,Number(el&&el.value)||0);
+  window.__mlbPerfectParlaySettings.stake=stake;
+  var combined=1;(window.__mlbPerfectParlayLegs||[]).forEach(function(p){combined*=Number(_amToDec(p.odds)||1);});
+  var profit=document.getElementById('mlbPerfectParlayProfit'),total=document.getElementById('mlbPerfectParlayReturn');
+  if(profit)profit.textContent='$'+(stake*(combined-1)).toFixed(2);
+  if(total)total.textContent='$'+(stake*combined).toFixed(2);
+}
+
+function renderMlbPerfectParlay(){
+  var legs=window.__mlbPerfectParlayLegs||[],pool=window.__mlbPerfectParlayPool||[];
+  if(!legs.length)return;
+  var combined=1,used={};
+  legs.forEach(function(p){combined*=Number(_amToDec(p.odds)||1);used[_mlbPerfectParlayPlayerKey(p)]=1;});
   var rows=legs.map(function(p,index){
-    var clickKey=_nameReg(p.src);
+    var clickKey=_nameReg(p.src),currentKey=_mlbPerfectParlayPlayerKey(p);
+    var options=pool.map(function(alt,pi){
+      var key=_mlbPerfectParlayPlayerKey(alt);
+      if(key!==currentKey&&used[key])return '';
+      var label=(key===currentKey?'Current: ':'')+alt.player+' · '+alt.market+' '+alt.side+' '+alt.line+' · '+_mlbCoachOdds(alt.odds);
+      return '<option value="'+pi+'"'+(key===currentKey?' selected':'')+'>'+_mlbEsc(label)+'</option>';
+    }).join('');
     return '<tr'+(clickKey?' onclick="_playerForm(&#39;'+clickKey+'&#39;)" style="cursor:pointer" title="Click to open this player card"':'')+'>'+
       '<td>'+(index+1)+'</td>'+
       '<td><b style="color:#fff">'+_mlbEsc(p.player)+'</b><br><span style="color:#64748b">'+_mlbEsc(p.team)+' vs '+_mlbEsc(p.opp)+'</span></td>'+
@@ -5744,20 +5816,47 @@ function buildMlbPerfectParlay() {
       '<td>'+_mlbCoachOdds(p.odds)+'<br><span style="color:#64748b;font-size:.6rem">'+_mlbEsc(p.book)+'</span></td>'+
       '<td>'+Number(p.appProb).toFixed(1)+'%</td>'+
       '<td style="color:#4ade80!important;font-weight:900">'+_mlbCoachSigned(p.edge)+' pts</td>'+
+      '<td onclick="event.stopPropagation()"><select aria-label="Change '+_mlbEsc(p.player)+' leg" onchange="changeMlbPerfectParlayLeg('+index+',this.value)" style="max-width:235px;background:#111827;color:#fff;border:1px solid #7c3aed;border-radius:7px;padding:7px 8px;font-size:.65rem;font-weight:800;cursor:pointer">'+options+'</select></td>'+
     '</tr>';
   }).join('');
-  var combinedText=_mlbPerfectParlayAmerican(combined)+' · '+combined.toFixed(2)+' decimal';
+  var settings=window.__mlbPerfectParlaySettings,stake=Math.max(.01,Number(settings.stake)||100);
   var selectedGames=window._MLB_COACH_GAME_FILTER===null?'all selected games':'the active Coach game filter';
+  var canNew=pool.length>legs.length;
   _mlbCoachCommit(
-    '<div><div class="mlb-coach-question">&#10024; Perfect Parlay · '+legsRequested+' Legs</div>'+
-    '<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;margin-top:11px;padding:10px 12px;background:linear-gradient(135deg,rgba(180,83,9,.18),rgba(124,58,237,.18));border:1px solid rgba(251,191,36,.35);border-radius:10px">'+
-      '<div style="color:#e5e7eb;font-size:.74rem;line-height:1.5">Ranked by positive Coach Edge across the Hitter and Pitcher Coach Edge pools for '+selectedGames+'. One strongest play per player.</div>'+
-      '<div style="color:#fbbf24;font-size:.78rem;font-weight:950">COMBINED '+combinedText+'</div>'+
-    '</div>'+
-    '<div class="mlb-coach-table-wrap"><table class="mlb-coach-table"><thead><tr><th>#</th><th>Player</th><th>Play</th><th>Odds</th><th>App Prob</th><th>Coach Edge</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
-    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px"><button onclick="showMlbPerfectParlayBuilder()" style="background:#1e293b;color:#fff;border:1px solid #475569;border-radius:7px;padding:8px 11px;font-weight:800;cursor:pointer">Change leg count</button><span style="color:#64748b;font-size:.65rem">Model-ranked suggestion, not a guarantee. Verify lines and prices before betting.</span></div>'+
-    '</div>'
+    '<div><div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap"><div class="mlb-coach-question">&#10024; Perfect Parlay · '+legs.length+' Legs</div><button onclick="generateNewMlbPerfectParlay()"'+(canNew?'':' disabled')+' style="background:linear-gradient(135deg,#d97706,#7c3aed);color:#fff;border:0;border-radius:8px;padding:9px 12px;font-weight:900;cursor:'+(canNew?'pointer':'not-allowed')+';opacity:'+(canNew?'1':'.5')+'">&#8635; Generate New</button></div>'+
+    '<div style="margin-top:11px;padding:10px 12px;background:linear-gradient(135deg,rgba(180,83,9,.18),rgba(124,58,237,.18));border:1px solid rgba(251,191,36,.35);border-radius:10px;color:#e5e7eb;font-size:.74rem;line-height:1.5">Ranked by positive Coach Edge for '+selectedGames+'. One strongest play per player.'+
+      '<div style="display:flex;flex-wrap:wrap;gap:18px;align-items:center;margin-top:12px;padding-top:12px;border-top:1px solid #475569"><div><small style="color:#94a3b8">COMBINED ODDS</small><br><b style="color:#fbbf24;font-size:1.2rem">'+_mlbPerfectParlayAmerican(combined)+'</b><br><small style="color:#94a3b8">'+combined.toFixed(2)+' decimal</small></div><label style="color:#cbd5e1;font-size:.7rem">BET AMOUNT ($)<br><input type="number" min="0.01" step="0.01" value="'+stake.toFixed(2)+'" oninput="updateMlbPerfectParlayStake(this)" style="margin-top:5px;width:105px;padding:9px;background:#020617;border:1px solid #64748b;border-radius:7px;color:#fff;font-size:1rem"></label><div><small style="color:#94a3b8">NET PROFIT</small><br><b id="mlbPerfectParlayProfit" style="color:#4ade80;font-size:1.2rem">$'+(stake*(combined-1)).toFixed(2)+'</b></div><div><small style="color:#94a3b8">TOTAL RETURN</small><br><b id="mlbPerfectParlayReturn" style="color:#fff;font-size:1.2rem">$'+(stake*combined).toFixed(2)+'</b></div></div></div>'+
+    '<div style="margin:9px 0;color:#cbd5e1;font-size:.68rem">'+_mlbEsc(window.__mlbPerfectParlayNotice||pool.length+' unique qualifying players available.')+'</div>'+
+    '<div class="mlb-coach-table-wrap"><table class="mlb-coach-table" style="min-width:930px"><thead><tr><th>#</th><th>Player</th><th>Play</th><th>Odds</th><th>App Prob</th><th>Coach Edge</th><th>Change Leg</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
+    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px"><button onclick="showMlbPerfectParlayBuilder()" style="background:#1e293b;color:#fff;border:1px solid #475569;border-radius:7px;padding:8px 11px;font-weight:800;cursor:pointer">Edit parlay options</button><span style="color:#64748b;font-size:.65rem">Display-only suggestion. Verify lines and prices before betting.</span></div></div>'
   );
+}
+
+function buildMlbPerfectParlay() {
+  var select=document.getElementById('mlbPerfectParlayLegs'),sideEl=document.getElementById('mlbPerfectParlaySide'),stakeEl=document.getElementById('mlbPerfectParlayStake');
+  var legsRequested=Math.max(2,Math.min(10,parseInt(select&&select.value||'3',10)||3));
+  var side=String(sideEl&&sideEl.value||'ALL');
+  var categories=Array.prototype.slice.call(document.querySelectorAll('input[name="mlbPerfectParlayCat"]:checked')).map(function(cb){return cb.value;});
+  var stake=Math.max(.01,Number(stakeEl&&stakeEl.value)||100);
+  if(!window._lastResult){
+    _mlbCoachCommit('<div><div class="mlb-coach-question">&#10024; Perfect Parlay</div><div class="mlb-coach-empty">Load today&#39;s MLB board first.</div></div>');
+    return;
+  }
+  if(!categories.length){
+    _mlbCoachCommit('<div><div class="mlb-coach-question">&#10024; Perfect Parlay</div><div class="mlb-coach-empty">Select at least one category.</div><button onclick="showMlbPerfectParlayBuilder()" style="margin-top:12px;background:#1e293b;color:#fff;border:1px solid #475569;border-radius:7px;padding:8px 11px;font-weight:800;cursor:pointer">Edit parlay options</button></div>');
+    return;
+  }
+  var pool=_mlbPerfectParlayPool(side,categories);
+  if(pool.length<legsRequested){
+    _mlbCoachCommit('<div><div class="mlb-coach-question">&#10024; Perfect Parlay · '+legsRequested+' Legs</div><div class="mlb-coach-empty">Only '+pool.length+' unique player'+(pool.length===1?'':'s')+' match these category, side, price, and Coach Edge options. Choose fewer legs or broaden the options.</div><div style="margin-top:12px"><button onclick="showMlbPerfectParlayBuilder()" style="background:#1e293b;color:#fff;border:1px solid #475569;border-radius:7px;padding:8px 11px;font-weight:800;cursor:pointer">Edit parlay options</button></div></div>');
+    return;
+  }
+  window.__mlbPerfectParlaySettings={legs:legsRequested,side:side,categories:categories.slice(),stake:stake};
+  window.__mlbPerfectParlayPool=pool.slice();
+  window.__mlbPerfectParlayLegs=pool.slice(0,legsRequested);
+  window.__mlbPerfectParlayCursor=0;
+  window.__mlbPerfectParlayNotice='';
+  renderMlbPerfectParlay();
 }
 
 window._MLB_COACH_SIDE_FILTER=window._MLB_COACH_SIDE_FILTER||'';
