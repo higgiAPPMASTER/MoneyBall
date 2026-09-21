@@ -5681,12 +5681,23 @@ window.__mlbPerfectParlayNotice=window.__mlbPerfectParlayNotice||'';
 
 function _mlbPerfectParlayCandidates() {
   var props=_mlbCoachApplyGameFilter(_mlbCoachAllProps());
-  return _mlbCoachSelectRows(props,'hitter_edge')
-    .concat(_mlbCoachSelectRows(props,'pitcher_edge'))
-    .filter(function(p){
-      return p&&p.edge!=null&&Number(p.edge)>0&&p.odds!=null
-        &&isFinite(Number(p.odds))&&Number(p.odds)>=-1000&&!!p.book;
+  var byPlay={};
+  _MLB_COACH_PRESET_ORDER.forEach(function(preset){
+    _mlbCoachSelectRows(props,preset).forEach(function(p){
+      if(!p||p.edge==null||Number(p.edge)<=0||p.odds==null
+         ||!isFinite(Number(p.odds))||Number(p.odds)<-1000||!p.book)return;
+      var key=[
+        _mlbPerfectParlayPlayerKey(p),String(p.market||''),String(p.side||''),
+        String(p.line==null?'':p.line),String(p.odds),String(p.book||'')
+      ].join('|');
+      if(!byPlay[key]){
+        byPlay[key]=Object.assign({},p,{parlayCategories:[]});
+      }
+      if(byPlay[key].parlayCategories.indexOf(preset)<0)
+        byPlay[key].parlayCategories.push(preset);
     });
+  });
+  return Object.keys(byPlay).map(function(key){return byPlay[key];});
 }
 
 function _mlbPerfectParlayPool(side,categories) {
@@ -5694,7 +5705,7 @@ function _mlbPerfectParlayPool(side,categories) {
   var selected=Array.isArray(categories)?categories:[];
   var pool=_mlbPerfectParlayCandidates().filter(function(p){
     if(wanted!=='ALL'&&String(p.side||'').toUpperCase()!==wanted)return false;
-    return !selected.length||selected.indexOf(String(p.market||'MLB Prop'))>=0;
+    return !selected.length||(p.parlayCategories||[]).some(function(cat){return selected.indexOf(cat)>=0;});
   });
   var byPlayer={};
   pool.forEach(function(p){
@@ -5715,21 +5726,29 @@ function _mlbPerfectParlayPool(side,categories) {
 
 function setMlbPerfectParlayCategories(on){
   document.querySelectorAll('input[name="mlbPerfectParlayCat"]:not(:disabled)').forEach(function(cb){cb.checked=!!on;});
+  updateMlbPerfectParlayCategorySummary();
+}
+
+function updateMlbPerfectParlayCategorySummary(){
+  var all=document.querySelectorAll('input[name="mlbPerfectParlayCat"]:not(:disabled)');
+  var checked=document.querySelectorAll('input[name="mlbPerfectParlayCat"]:checked');
+  var label=document.getElementById('mlbPerfectParlayCategorySummary');
+  if(label)label.textContent='Choose Edge Coach categories · '+checked.length+' of '+all.length+' selected';
 }
 
 function showMlbPerfectParlayBuilder() {
   var saved=window.__mlbPerfectParlaySettings||{},savedLegs=Math.max(2,Math.min(10,Number(saved.legs)||3));
-  var all=_mlbPerfectParlayCandidates(),counts={},order=[];
+  var all=_mlbPerfectParlayCandidates(),counts={},order=_MLB_COACH_PRESET_ORDER.slice();
+  order.forEach(function(preset){counts[preset]=0;});
   all.forEach(function(p){
-    var market=String(p.market||'MLB Prop');
-    if(!Object.prototype.hasOwnProperty.call(counts,market))order.push(market);
-    counts[market]=(counts[market]||0)+1;
+    (p.parlayCategories||[]).forEach(function(preset){counts[preset]=(counts[preset]||0)+1;});
   });
-  order.sort();
-  var selected=(saved.categories&&saved.categories.length)?saved.categories.slice():order.slice();
-  var cats=order.map(function(market){
-    var checked=selected.indexOf(market)>=0;
-    return '<label style="display:flex;align-items:center;gap:6px;padding:7px 9px;background:'+(checked?'rgba(217,119,6,.15)':'#020617')+';border:1px solid '+(checked?'#d97706':'#334155')+';border-radius:7px;color:#e2e8f0;font-size:.68rem;font-weight:800;cursor:pointer"><input type="checkbox" name="mlbPerfectParlayCat" value="'+_mlbEsc(market)+'"'+(checked?' checked':'')+' style="accent-color:#d97706"> '+_mlbEsc(market)+' <span style="color:#64748b">('+counts[market]+')</span></label>';
+  var savedCats=Array.isArray(saved.categories)?saved.categories:[];
+  var selected=savedCats.filter(function(cat){return order.indexOf(cat)>=0;});
+  if(!selected.length)selected=order.slice();
+  var cats=order.map(function(preset){
+    var checked=selected.indexOf(preset)>=0,disabled=!counts[preset];
+    return '<label style="display:flex;align-items:center;gap:6px;padding:7px 9px;background:'+(checked&&!disabled?'rgba(217,119,6,.15)':'#020617')+';border:1px solid '+(checked&&!disabled?'#d97706':'#334155')+';border-radius:7px;color:'+(disabled?'#64748b':'#e2e8f0')+';font-size:.68rem;font-weight:800;cursor:'+(disabled?'not-allowed':'pointer')+';opacity:'+(disabled?'.65':'1')+'"><input type="checkbox" name="mlbPerfectParlayCat" value="'+_mlbEsc(preset)+'"'+(checked&&!disabled?' checked':'')+(disabled?' disabled':'')+' onchange="updateMlbPerfectParlayCategorySummary()" style="accent-color:#d97706"> '+_mlbEsc(_MLB_COACH_PRESET_LABELS[preset]||preset)+' <span style="color:#64748b">('+counts[preset]+')</span></label>';
   }).join('');
   var sizes='';
   for(var i=2;i<=10;i++) sizes+='<option value="'+i+'"'+(i===savedLegs?' selected':'')+'>'+i+' legs</option>';
@@ -5738,8 +5757,13 @@ function showMlbPerfectParlayBuilder() {
     '<div><div class="mlb-coach-question">&#10024; Perfect Parlay</div>'+
     '<div style="margin-top:10px;color:#cbd5e1;font-size:.77rem;line-height:1.55">Choose categories, side, size, and wager. Every leg keeps the existing genuine-price, positive Coach Edge, active-game-filter, and one-play-per-player rules.</div>'+
     '<div style="margin-top:12px;padding:12px;background:#0f172a;border:1px solid #334155;border-radius:10px">'+
-      '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px"><b style="color:#94a3b8;font-size:.68rem">CATEGORIES — SELECT ONE OR MORE</b><span><button onclick="setMlbPerfectParlayCategories(true)" style="background:#1e293b;color:#fde68a;border:1px solid #334155;border-radius:6px;padding:5px 8px;font-weight:800;cursor:pointer">Select all</button> <button onclick="setMlbPerfectParlayCategories(false)" style="background:#1e293b;color:#94a3b8;border:1px solid #334155;border-radius:6px;padding:5px 8px;font-weight:800;cursor:pointer">Clear</button></span></div>'+
-      '<div style="display:flex;flex-wrap:wrap;gap:7px">'+cats+'</div>'+
+      '<details style="background:#020617;border:1px solid #334155;border-radius:9px;overflow:hidden">'+
+        '<summary id="mlbPerfectParlayCategorySummary" style="list-style:none;display:flex;justify-content:space-between;align-items:center;gap:10px;padding:11px 12px;color:#fde68a;font-size:.72rem;font-weight:900;cursor:pointer">Choose Edge Coach categories · '+selected.filter(function(cat){return counts[cat]>0;}).length+' of '+order.filter(function(cat){return counts[cat]>0;}).length+' selected <span style="color:#d97706;font-size:1rem">&#9662;</span></summary>'+
+        '<div style="padding:11px 12px;border-top:1px solid #334155">'+
+          '<div style="display:flex;justify-content:flex-end;gap:6px;margin-bottom:9px"><button onclick="setMlbPerfectParlayCategories(true)" style="background:#1e293b;color:#fde68a;border:1px solid #334155;border-radius:6px;padding:5px 8px;font-weight:800;cursor:pointer">Select all</button><button onclick="setMlbPerfectParlayCategories(false)" style="background:#1e293b;color:#94a3b8;border:1px solid #334155;border-radius:6px;padding:5px 8px;font-weight:800;cursor:pointer">Clear</button></div>'+
+          '<div style="display:flex;flex-wrap:wrap;gap:7px;max-height:245px;overflow:auto">'+cats+'</div>'+
+        '</div>'+
+      '</details>'+
       '<div style="display:flex;align-items:end;gap:9px;flex-wrap:wrap;margin-top:13px">'+
         '<label style="color:#94a3b8;font-size:.68rem;font-weight:800">PARLAY SIZE<br><select id="mlbPerfectParlayLegs" style="'+field+'">'+sizes+'</select></label>'+
         '<label style="color:#94a3b8;font-size:.68rem;font-weight:800">SIDE<br><select id="mlbPerfectParlaySide" style="'+field+'"><option value="ALL"'+(side==='ALL'?' selected':'')+'>Best available</option><option value="OVER"'+(side==='OVER'?' selected':'')+'>Overs only</option><option value="UNDER"'+(side==='UNDER'?' selected':'')+'>Unders only</option></select></label>'+
