@@ -11341,6 +11341,9 @@ function _tscCard(p, rank, pfx) {
 
 function _hrrForm(key){
   var p=(key&&typeof key==='object')?key:(window.__HRR_REG__||{})[key]; if(!p) return;
+  var isUnder=(p.pick==='UNDER');
+  var line=(p.line!=null&&isFinite(Number(p.line)))?Number(p.line):1.5;
+  var isOnePlus=!isUnder&&Math.abs(line-.5)<.0001;
   var ov=document.getElementById('hrr-modal');
   if(!ov){
     ov=document.createElement('div');
@@ -11349,7 +11352,11 @@ function _hrrForm(key){
     ov.onclick=function(e){ if(e.target===ov) ov.style.display='none'; };
     document.body.appendChild(ov);
   }
-  if(p.hrr_series_qualifier&&!p.hrr_context_loaded&&!p.__hrr_context_loading){
+  // Every 1+ HRR card needs its own threshold-1, venue-matched last-10
+  // context. Do not reuse a five-game or standard O1.5 source row.
+  var needsFreshOnePlus=isOnePlus&&!p.__hrr_one_plus_context_refreshed;
+  var needsSeriesContext=p.hrr_series_qualifier&&!p.hrr_context_loaded;
+  if((needsFreshOnePlus||needsSeriesContext)&&!p.__hrr_context_loading){
     var pid=p.batter_id||p.player_id;
     var runDate=(window._lastResult&&window._lastResult.date)
       ||(document.getElementById('date-picker')||{}).value||'';
@@ -11368,6 +11375,7 @@ function _hrrForm(key){
         return r.json();
       }).then(function(data){
         Object.assign(p,data||{});
+        p.__hrr_one_plus_context_refreshed=true;
         p.__hrr_context_loading=false;
         _hrrForm(p);
       }).catch(function(err){
@@ -11377,8 +11385,6 @@ function _hrrForm(key){
       return;
     }
   }
-  var isUnder=(p.pick==='UNDER');
-  var line=(p.line!=null&&isFinite(Number(p.line)))?Number(p.line):1.5;
   var threshold=Math.floor(line)+1;
   var log=p.recent_hrr_log||[];
   var venueLog=p.last10_hrr_log||log;
@@ -11428,7 +11434,7 @@ function _hrrForm(key){
     +'<div style="font-size:.72rem;font-weight:900;color:#60a5fa">CAREER BA VS TODAY\\'S PITCHER · '+_esc(pitcherName.toUpperCase())+'</div>'
     +'<div style="margin-top:8px"><b style="color:#fff;font-size:1.05rem">'+pitcherAvg+' BA</b>'
       +'<span style="color:#64748b;font-size:.72rem;margin-left:8px">'+(pitcherAb?('('+pitcherAb+' AB)'):'(No recorded AB)')+'</span></div></div>';
-  var coachBody=qualifierHtml
+  var onePlusBody=qualifierHtml
     +_ssBlock(p)
     +_hrrHistoryBlock(
       '1+ HRR · LAST 10 '+String(p.side||'').toUpperCase(),
@@ -11451,7 +11457,7 @@ function _hrrForm(key){
       +'<button onclick="document.getElementById(&#39;hrr-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem">\u2715</button>'
     +'</div>'
     +'<div style="padding:16px 18px">'
-    +(p.hrr_series_qualifier?coachBody:
+    +(isOnePlus?onePlusBody:
       qualifierHtml
       +_twoBox(Object.assign({},p,{basis:'last 10 '+(String(p.side||'').toUpperCase()==='HOME'?'home':'away')}),'HRR','HRR Odds',(isUnder?p.hrr_under_odds:p.hrr_over_odds),!isUnder,(isUnder?('H+R+RBI < '+threshold+' = UNDER'):('H+R+RBI \u2265 '+threshold+' = OVER'))+' \u00b7 Last '+log.length+' Games',rows)
       +_oppPitBlock(p,'pitcher_hits_allowed','Hits Allowed','H')
