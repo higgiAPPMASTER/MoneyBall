@@ -7931,7 +7931,6 @@ function _vsPitLine(p){
   // consistent); fall back to MLB Stats API vs_pit when Statcast has no data.
   var sc=p.s1_career;
   var career=(sc&&(sc.ab||0)>0)?sc:((vp&&(vp.ab||0)>0)?vp:null);
-  if(!hasS1&&!career) return '';
   // BOTH numbers, stacked and labeled: today's venue split (Home or Away —
   // whichever today's game is) on top, lifetime career total right under it.
   var rows='';
