@@ -462,10 +462,14 @@ def _get_probable_pitchers(run_date: str) -> dict:
         r = requests.get(
             "https://statsapi.mlb.com/api/v1/schedule",
             params={"sportId": 1, "date": run_date,
-                    "hydrate": "probablePitcher,team", "gameType": "R"},
+                    "hydrate": "probablePitcher,team"},
             timeout=12)
         for d in r.json().get("dates", []):
             for game in d.get("games", []):
+                # MLB's regular-season-only schedule filter hides every playoff
+                # starter. Keep exhibition games out without hiding postseason.
+                if game.get("gameType") not in ("R", "F", "D", "L", "W"):
+                    continue
                 for side in ("home", "away"):
                     t         = game.get("teams", {}).get(side, {})
                     team_name = t.get("team", {}).get("name", "")
@@ -524,7 +528,8 @@ def _get_s1_vs_pitcher_ha(batter_id, pitcher_id) -> dict:
     matchup by venue via `inning_topbot` (Bot = batter's team batting at home,
     Top = batter on the road). Returns {"home": {ba,ab,h}, "away": {...}};
     a side is omitted when it has no at-bats. An empty/throttled CSV leaves
-    both sides empty so callers fall back to the combined-career line."""
+    both sides empty so callers fall back to the combined-career line.
+    Search all available Statcast seasons and regular-season/postseason games."""
     if not batter_id or not pitcher_id:
         return {"home": {}, "away": {}}
     _ck = (batter_id, pitcher_id)
@@ -537,7 +542,8 @@ def _get_s1_vs_pitcher_ha(batter_id, pitcher_id) -> dict:
             "https://baseballsavant.mlb.com/statcast_search/csv",
             params={"type": "details", "player_type": "batter",
                     "batters_lookup[]": batter_id, "pitchers_lookup[]": pitcher_id,
-                    "hfSea": "2021|2022|2023|2024|2025|2026|", "hfGT": "R|",
+                    "hfSea": "|".join(str(y) for y in range(2015, date.today().year + 1)) + "|",
+                    "hfGT": "R|F|D|L|W|",
                     "all": "true", "min_pitches": "0", "min_results": "0",
                     "group_by": "name", "sort_col": "pitches",
                     "player_event_sort": "api_p_release_speed", "sort_order": "desc"},
