@@ -702,7 +702,10 @@ def fetch_step4_consistency(player_id, side: str, opp_name: str = "",
         return {"hits_games": 0, "games": 0, "display": "ERR", "score": 0}
 
 
-def _recent_hit_log(player_id, n: int = 5) -> list:
+_HIT_POST_CACHE: dict = {}  # Last-5 hit card only; not used for picks or rates.
+
+
+def _recent_hit_log(player_id, n: int = 5, include_playoffs: bool = False) -> list:
     """Last n games (any opponent), newest-first: date, hits, total bases, opp, H/A.
        Mirrors the pitcher recent-form log so hitter cards/under picks can show
        a 'recent form' click-through popup."""
@@ -714,7 +717,33 @@ def _recent_hit_log(player_id, n: int = 5) -> list:
         cy = _dt.today().year
         games = []
         for season in range(cy, cy - 2, -1):        # current + prior season for recency
-            splits = _get_game_logs(player_id, season)
+            splits = list(_get_game_logs(player_id, season))
+            if include_playoffs and (season < cy or _dt.today().month >= 9):
+                key = (player_id, season)
+                cached = _HIT_POST_CACHE.get(key)
+                if cached and (season < cy or time.time() - cached[0] < 600):
+                    playoff = cached[1]
+                else:
+                    playoff = []
+                    try:
+                        response = requests.get(
+                            f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats",
+                            params={"stats": "gameLog", "group": "hitting",
+                                    "season": season, "gameType": "F,D,L,W"},
+                            timeout=10,
+                        )
+                        response.raise_for_status()
+                        playoff = [
+                            sp for group in response.json().get("stats", [])
+                            for sp in group.get("splits", [])
+                            if sp.get("gameType") in ("F", "D", "L", "W", None)
+                        ]
+                    except (requests.RequestException, ValueError) as exc:
+                        print(f"[hit card] Playoff game log unavailable for {player_id}: {exc}")
+                    _HIT_POST_CACHE[key] = (time.time(), playoff)
+                splits.extend(playoff)
+            splits.sort(key=lambda sp: (sp.get("date") or "",
+                         str((sp.get("game") or {}).get("gamePk") or "")))
             for sp in reversed(splits):             # splits oldest-first → iterate newest-first
                 stat = sp.get("stat", {})
                 ab = int(stat.get("atBats", 0) or 0)
@@ -2786,7 +2815,8 @@ def run_pipeline(run_date: str, emit=None) -> dict:
 
     # Recent form: last 5 games (date/opp/hits/total-bases) for the click-through popup
     for _hp in top9 + also_ran:
-        _hp["recent_hit_log"] = _recent_hit_log(_hp.get("player_id"))
+        _hp["recent_hit_log"] = _recent_hit_log(
+            _hp.get("player_id"), include_playoffs=True)
 
     # Series game-position splits (G1/G2/G3+)
     for _hp in top9 + also_ran:
@@ -2900,7 +2930,8 @@ def run_pipeline(run_date: str, emit=None) -> dict:
             _pb["over_sourced"] = True
             _pb["dq"]           = False
             _pb["total"]        = round((_pb.get("score") or 0) * 10)   # 0-1000, ranks vs pool A
-            _pb["recent_hit_log"] = _recent_hit_log(_pb.get("player_id"))
+            _pb["recent_hit_log"] = _recent_hit_log(
+                _pb.get("player_id"), include_playoffs=True)
             _pb["series_splits"]  = fetch_series_splits(
                 _pb.get("player_id"), _pb.get("opp", ""), run_date, _pb.get("side", ""))
             _pb["blurb"]          = _build_blurb(_pb)   # recent-form write-up (pool B branch)
