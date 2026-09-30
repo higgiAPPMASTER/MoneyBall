@@ -915,7 +915,7 @@ def _mlb_box_lookup(date_str: str):
         # "abbreviation" field, which left game_scores keyed ("","") and the
         # Game Predictor grader matching zero games forever.
         sched = _rq.get(f"{MLB_BASE}/schedule", params={
-            "sportId": 1, "date": date_str, "gameType": "R", "hydrate": "team",
+            "sportId": 1, "date": date_str, "hydrate": "team",
         }, timeout=30).json()
     except Exception as e:
         print(f"[box_lookup] schedule fetch failed {date_str}: {e}")
@@ -932,6 +932,10 @@ def _mlb_box_lookup(date_str: str):
     _sched_meta: dict = {}   # gamePk -> {away_abbr, home_abbr}
     for d in sched.get("dates", []):
         for game in d.get("games", []):
+            # Include regular-season and all MLB playoff rounds for every
+            # record/settlement caller, but never grade exhibitions as MLB picks.
+            if game.get("gameType") not in ("R", "F", "D", "L", "W"):
+                continue
             any_game = True
             status = game.get("status", {}).get("detailedState", "Scheduled")
             _sl    = status.lower()
@@ -1047,7 +1051,9 @@ def _mlb_box_lookup(date_str: str):
                 game_scores.append(score_entry)
         if not fetch_complete:
             all_final = False            # defer locking until a clean pass grades it
-    return player_stats, name_stats, any_game, all_final, game_scores
+    # No qualifying game (or an empty schedule response) is not a cleanly
+    # finished slate: keep its picks pending rather than marking all DNP/VOID.
+    return player_stats, name_stats, any_game, bool(any_game) and all_final, game_scores
 
 
 def _grade_date(date_str: str, picks: dict) -> dict:
