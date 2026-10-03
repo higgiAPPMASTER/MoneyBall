@@ -776,6 +776,11 @@ def _fetch_hits_lines(run_date: str, emit=None) -> list:
                         "markets": "batter_hits,batter_hits_alternate,batter_total_bases,batter_total_bases_alternate,batter_runs_scored,batter_rbis,batter_hits_runs_rbis,batter_hits_runs_rbis_alternate,batter_walks,batter_home_runs,batter_strikeouts,batter_strikeouts_alternate",
                         "oddsFormat": "american"}, emit=emit, label=f"{away_team} at {home_team}")
             if r2 is None: continue
+            try:
+                from lms_quotes import collect as _lms_collect
+                _lms_collect("mlb", run_date, r2.json())
+            except Exception as _lms_e:
+                print(f"[lms] quote collection unavailable: {type(_lms_e).__name__}")
             all_bms = r2.json().get("bookmakers", [])
             # Scan ALL books for both the 0.5 hit odds and the 1.5-line candidates.
             _bm_map = {b.get("key"): b for b in all_bms}
