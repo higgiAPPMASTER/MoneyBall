@@ -15572,3 +15572,6 @@ def _start_auto_run_scheduler():
     t = _threading.Thread(target=_scheduler_loop, name="mlb-autorun", daemon=True)
     t.start()
     print("[scheduler] auto-run thread started — slots 11:00, 14:00 & 17:40 ET")
+
+from lms import install as _install_lms
+_LMS = _install_lms("mlb", app, globals())
