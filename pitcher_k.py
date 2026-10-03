@@ -264,6 +264,11 @@ def _fetch_k_lines(run_date: str, emit=None) -> list:
                         "markets": K_MARKETS,
                         "oddsFormat": "american"}, timeout=15)
             if not r2.ok: continue
+            try:
+                from lms_quotes import collect as _lms_collect
+                _lms_collect("mlb", run_date, r2.json())
+            except Exception as _lms_e:
+                print(f"[lms] quote collection unavailable: {type(_lms_e).__name__}")
             for bm in r2.json().get("bookmakers", []):
                 bk = bm.get("key")
                 for mkt in bm.get("markets", []):
@@ -339,6 +344,11 @@ def _fetch_pitcher_props(run_date: str, emit=None) -> None:
                         "markets": ",".join(PROP_MARKETS),
                         "oddsFormat": "american"}, timeout=15)
             if not r2.ok: continue
+            try:
+                from lms_quotes import collect as _lms_collect
+                _lms_collect("mlb", run_date, r2.json())
+            except Exception as _lms_e:
+                print(f"[lms] quote collection unavailable: {type(_lms_e).__name__}")
             for bm in r2.json().get("bookmakers", []):
                 bk = bm.get("key")
                 for mkt in bm.get("markets", []):
@@ -1399,6 +1409,8 @@ def _build_prop_picks(name, team, opp, side, hist, rf, pid=None,
             "name": name, "team": team, "opp": opp, "side": side,
             "pid": pid,
             "line": line, "over_odds": odds.get("over_odds"), "under_odds": odds.get("under_odds"),
+            "over_book": _book_label(odds.get("over_odds_book")),
+            "under_book": _book_label(odds.get("under_odds_book")),
             "book": _book_label(odds.get("over_odds_book") if pick == "OVER" else odds.get("under_odds_book")),
             "career_avg": career_avg, "recent_avg": recent_avg, "recent_starts": recent_n,
             "blended": blended, "avg": blended, "blend_src": blend_src, "starts": starts,
