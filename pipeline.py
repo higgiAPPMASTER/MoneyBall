@@ -5174,5 +5174,12 @@ def run_pipeline(run_date: str, emit=None) -> dict:
             emit({"type": "log", "msg": f"Hit odds: {len(hit_rows)-priced} picks have no matching pre-game quote; saved-price recovery will be attempted, never fabricated"})
     except Exception as exc:
         emit({"type": "log", "msg": f"Hit odds final reconciliation failed: {type(exc).__name__}"})
+    try:
+        from lms_data import prepare as _lms_prepare
+        _lms_prepare("mlb", result, globals(), locals())
+        from lms import attach_registered as _lms_attach
+        _lms_attach("mlb", result)
+    except Exception as _lms_e:
+        result["_lms_preparation_error"] = type(_lms_e).__name__
     emit({"type": "done", "result": result})
     return result
