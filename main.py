@@ -521,7 +521,11 @@ async def start_run(request: Request, date_str: str, force: bool = False, token:
             if disk:
                 _cache[date_str] = disk
     if not force and date_str in _cache and not _cache[date_str].get("stats", {}).get("has_tbd"):
-        _save_mlb_coach_snapshot(date_str, _cache[date_str])
+        # Historical cached viewing stays read-only, as before. Recovery is
+        # explicit and must not turn a past view into a new pre-game capture.
+        from zoneinfo import ZoneInfo
+        if date_str == _dt.datetime.now(ZoneInfo("America/Toronto")).date().isoformat():
+            _save_mlb_coach_snapshot(date_str, _cache[date_str])
         task_id = str(uuid.uuid4())
         notify  = asyncio.Event()
         _tasks[task_id] = {
@@ -561,13 +565,14 @@ async def start_run(request: Request, date_str: str, force: bool = False, token:
             # can serve the slate even when a starter is still TBD. The MLB app's
             # own load re-runs when has_tbd to pick up late-named starters.
             _cache[date_str] = _snap
+            # Capture Coach before unrelated grading can delay it past first pitch.
+            _save_disk_cache(date_str, _snap)
+            _save_mlb_coach_snapshot(date_str, _snap)
             try: _update_track_ledger()
             except Exception as _le: print(f"[track_ledger] {_le}")
             try: _mlb_grade_coach_ledger()
             except Exception as _ce: print(f"[mlb_coach_track] grade failed: {_ce}")
-            _save_disk_cache(date_str, _snap)
             _save_sb_picks(date_str, _snap)
-            _save_mlb_coach_snapshot(date_str, _snap)
             _save_open_snapshot(date_str, result)
             try:
                 # Bake the picks into the page HTML so the Replit hub can serve
@@ -2451,7 +2456,7 @@ def _mlb_coach_rows(date_str=None, unlocked_only=False):
 def _save_mlb_coach_snapshot_unlocked(date_str, result):
     """Automatically bank all 21 Coach presets; no preset click is involved."""
     if not (_SB_URL and _SB_KEY):
-        return False
+        raise RuntimeError("Coach capture unavailable: permanent storage is not configured")
     try:
         from zoneinfo import ZoneInfo
         today_et = _dt.datetime.now(
@@ -2459,7 +2464,9 @@ def _save_mlb_coach_snapshot_unlocked(date_str, result):
     except Exception:
         today_et = date.today().isoformat()
     if date_str != today_et:
-        return False
+        raise RuntimeError(
+            f"Coach capture skipped: requested {date_str}, current Eastern date {today_et}. "
+            "Load past saved results read-only or use explicit Coach recovery.")
     grouped = _mlb_coach_select_categories(result)
     existing = {r.get("category"): r
                 for r in _mlb_coach_rows(date_str=date_str)}
@@ -2498,6 +2505,23 @@ def _save_mlb_coach_snapshot_unlocked(date_str, result):
                           if terminal else None),
             "detail": detail,
         })
+    # Preserve the exact category selections independently of the main
+    # snapshot and record. Network failures must not silently lose this data.
+    backup = {"version": 1, "date": date_str, "saved_at": stamp, "rows": out}
+    backup_path = os.path.join(_CACHE_DIR, f"_coach_capture_{date_str}.json")
+    try:
+        with open(backup_path + ".tmp", "w") as handle:
+            json.dump(backup, handle)
+        os.replace(backup_path + ".tmp", backup_path)
+    except (OSError, TypeError, ValueError) as exc:
+        print(f"[mlb_coach_track] local capture backup failed: {type(exc).__name__}")
+    backup_ok = _sb_upsert("mpa_track_ledger", [{
+        "app": "mlb_coach_backups", "date": date_str,
+        "category": "__pregame_capture__", "side": "ALL",
+        "wins": 0, "losses": 0, "locked": False, "detail": backup,
+    }], on_conflict="app,date,category,side", timeout=30)
+    if not backup_ok:
+        print(f"[mlb_coach_track] durable capture backup failed for {date_str}")
     import time as _time
     ok = False
     for attempt in range(3):
@@ -2513,8 +2537,8 @@ def _save_mlb_coach_snapshot_unlocked(date_str, result):
         raise RuntimeError("Coach snapshot failed after three persistence attempts")
     return True
 
-def _mlb_grade_coach_ledger_unlocked():
-    rows = _mlb_coach_rows(unlocked_only=True)
+def _mlb_grade_coach_ledger_unlocked(date_str=None):
+    rows = _mlb_coach_rows(date_str=date_str, unlocked_only=True)
     pending_by_date = {}
     for saved in rows:
         if not saved.get("locked") and isinstance(saved.get("detail"), list):
@@ -2634,9 +2658,93 @@ def _save_mlb_coach_snapshot(date_str, result):
     with _MLB_COACH_WRITE_LOCK:
         return _save_mlb_coach_snapshot_unlocked(date_str, result)
 
-def _mlb_grade_coach_ledger():
+def _mlb_grade_coach_ledger(date_str=None):
     with _MLB_COACH_WRITE_LOCK:
-        return _mlb_grade_coach_ledger_unlocked()
+        return _mlb_grade_coach_ledger_unlocked(date_str=date_str)
+
+
+def _mlb_recover_coach_day(date_str):
+    """Explicit recovery using saved predictions, never a model rerun."""
+    from zoneinfo import ZoneInfo
+    eastern = ZoneInfo("America/Toronto")
+    requested = date.fromisoformat(date_str)
+    if requested >= _dt.datetime.now(eastern).date():
+        raise ValueError("Recovery is only for completed past dates")
+    with _MLB_COACH_WRITE_LOCK:
+        existing = {row["category"] for row in _mlb_coach_rows(date_str=date_str)}
+        missing = [key for key in _MLB_COACH_CATEGORIES if key not in existing]
+        if not missing:
+            graded = _mlb_grade_coach_ledger_unlocked(date_str=date_str)
+            return {"date": date_str, "restored": 0, "graded": graded,
+                    "message": "Coach categories already exist; no selections overwritten."}
+        stored = _sb_get("mpa_track_ledger", {
+            "app": "eq.mlb_coach_backups", "date": f"eq.{date_str}",
+            "category": "eq.__pregame_capture__", "side": "eq.ALL",
+            "select": "detail", "limit": "1",
+        }, timeout=20)
+        if stored is None:
+            raise RuntimeError("Recovery source unreadable; no records changed")
+        backup = stored[0].get("detail") if stored else None
+        if not backup:
+            path = os.path.join(_CACHE_DIR, f"_coach_capture_{date_str}.json")
+            if os.path.exists(path):
+                with open(path) as handle:
+                    backup = json.load(handle)
+        if backup:
+            if not isinstance(backup, dict) or backup.get("date") != date_str:
+                raise ValueError("Saved Coach capture date mismatch")
+            grouped = {row["category"]: row.get("detail") or []
+                       for row in backup.get("rows") or []
+                       if isinstance(row, dict)}
+            source = "automatic_pregame_backup"
+        else:
+            # Use the existing game-frozen source also used by /api/grade.
+            # Outcomes are not used by the category selection/ranking code.
+            saved = _load_grading_picks(date_str) or _cache.get(date_str)
+            if not isinstance(saved, dict) or not saved:
+                raise ValueError("Original saved picks unavailable; records cannot be invented")
+            if saved.get("date") not in (None, "", date_str):
+                raise ValueError("Original saved-pick date mismatch")
+            grouped = _mlb_coach_select_categories(saved)
+            source = "frozen_saved_picks"
+        stamp = _dt.datetime.now(_dt.timezone.utc).isoformat()
+        out, skipped = [], 0
+        for category in missing:
+            if category not in grouped:
+                raise ValueError(f"Recovery source incomplete for {category}")
+            detail = []
+            for original in grouped[category]:
+                try:
+                    start = _dt.datetime.fromisoformat(
+                        str(original.get("game_start") or "").replace("Z", "+00:00"))
+                    if start.tzinfo is None or start.astimezone(eastern).date() != requested:
+                        raise ValueError("Game is not on the selected Eastern date")
+                except (TypeError, ValueError):
+                    skipped += 1
+                    continue
+                recovered = dict(original)
+                recovered.update({
+                    "result": "PENDING", "actual": None, "units": None,
+                    "recovered_at": stamp, "recovery_source": source,
+                })
+                if source == "frozen_saved_picks":
+                    recovered["captured_at"] = None
+                detail.append(recovered)
+            out.append({
+                "app": _MLB_COACH_APP, "date": date_str, "category": category,
+                "side": "ALL", "wins": 0, "losses": 0, "locked": False,
+                "locked_at": None, "detail": detail,
+            })
+        count = sum(len(row["detail"]) for row in out)
+        if not count:
+            raise ValueError("No recoverable dated plays; no empty day created")
+        if not _sb_upsert("mpa_track_ledger", out,
+                          on_conflict="app,date,category,side", timeout=30):
+            raise RuntimeError("Coach recovery could not be saved")
+        graded = _mlb_grade_coach_ledger_unlocked(date_str=date_str)
+        return {"date": date_str, "restored": count, "categories": len(out),
+                "skipped_without_dated_game": skipped, "source": source,
+                "graded": graded, "message": "Recovered saved predictions; no model or odds rerun."}
 
 def _attach_clv(date_str: str, rows: list):
     """Stamp each graded row with open_odds (first run of the day) + close_odds
@@ -3683,6 +3791,27 @@ async def track_record(request: Request, token: str = "", admin: str = "",
             detail.append(row)
 
     return {"alltime": rows, "daily": daily, "days": len(led), "detail": detail}
+
+
+@app.post("/api/mlb/coach-recover/{date_str}")
+async def mlb_coach_recover(date_str: str, request: Request,
+                            token: str = "", admin: str = ""):
+    tok = token or request.headers.get("Authorization", "").replace("Bearer ", "").strip()
+    import hmac
+    expected = os.environ.get("INTERNAL_API_TOKEN", "")
+    if not (_is_admin_token(tok) or
+            (bool(admin) and bool(expected) and hmac.compare_digest(admin, expected))):
+        raise HTTPException(status_code=403, detail="Admin only")
+    if not (_SB_URL and _SB_KEY):
+        raise HTTPException(status_code=503, detail="Permanent Coach storage unavailable")
+    try:
+        return await asyncio.to_thread(_mlb_recover_coach_day, date_str)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception:
+        raise HTTPException(status_code=503, detail="Recovery interrupted; retry without overwriting saved selections.")
 
 
 @app.get("/api/mlb/coach-track")
@@ -4997,6 +5126,10 @@ _HTML = """
           <button onclick="loadMlbCoachTrack()" style="background:#0e7490;color:#fff;border:0;border-radius:8px;padding:8px 13px;font-weight:900;cursor:pointer">Get Results</button>
         </div>
         <div id="mlbCoachTrackSummary"></div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+          <button id="mlbCoachRecoverButton" onclick="recoverMlbCoachDay()" style="background:#164e63;color:#cffafe;border:1px solid #22d3ee;border-radius:8px;padding:8px 12px;font-weight:800">Recover selected missing day</button>
+          <span id="mlbCoachRecoveryStatus" style="color:#94a3b8;font-size:.73rem">Recovery uses saved predictions only; existing Coach categories are never overwritten.</span>
+        </div>
         <div id="mlbCoachTrackBody"><p style="color:#94a3b8">Open the record to load automatic Coach snapshots.</p></div>
       </div>
 
@@ -6482,14 +6615,34 @@ function openMlbCoachTrack() {
   card.scrollIntoView({behavior:'smooth',block:'start'});
   loadMlbCoachTrack();
 }
-async function loadMlbCoachTrack() {
+async function recoverMlbCoachDay(){
+  var dateInput=document.getElementById('mlbCoachTrkDate'),status=document.getElementById('mlbCoachRecoveryStatus'),button=document.getElementById('mlbCoachRecoverButton');
+  var selected=dateInput&&dateInput.value;
+  if(!selected){if(status)status.textContent='Select the missing date first.';return;}
+  if(button)button.disabled=true;
+  if(status)status.textContent='Recovering saved predictions for '+selected+'...';
+  try{
+    var tok=localStorage.getItem('__mpa_token')||'',admin=new URLSearchParams(window.location.search).get('admin')||'';
+    var r=await fetch('/api/mlb/coach-recover/'+encodeURIComponent(selected)+'?token='+encodeURIComponent(tok)+'&admin='+encodeURIComponent(admin),{method:'POST',headers:{'Authorization':tok?'Bearer '+tok:''}});
+    var d=await r.json();if(!r.ok)throw new Error(d.detail||'Coach recovery failed');
+    await loadMlbCoachTrack(false);
+    if(status)status.textContent=d.restored?('Recovered '+d.restored+' category entries for '+selected+' from saved predictions. No original capture time was invented.'):(d.message||'Nothing overwritten.');
+  }catch(e){if(status)status.textContent=e.message||'Coach recovery failed';}
+  finally{if(button)button.disabled=false;}
+}
+async function loadMlbCoachTrack(grade) {
   var out=document.getElementById('mlbCoachTrackBody');
   if(out)out.innerHTML='<p style="color:#94a3b8;padding:12px">Grading final games and loading Coach records...</p>';
   try{
     var tok=localStorage.getItem('__mpa_token')||'';
-    var r=await fetch('/api/mlb/coach-track?grade=true&token='+encodeURIComponent(tok),{headers:{'Authorization':tok?'Bearer '+tok:''}});
+    var admin=new URLSearchParams(window.location.search).get('admin')||'';
+    var r=await fetch('/api/mlb/coach-track?grade='+(grade===false?'false':'true')+'&token='+encodeURIComponent(tok)+'&admin='+encodeURIComponent(admin),{headers:{'Authorization':tok?'Bearer '+tok:''}});
     if(!r.ok){var t=await r.text();throw new Error(t||('HTTP '+r.status));}
     _mlbCoachTrackData=await r.json();
+    var recovered=0;
+    (_mlbCoachTrackData.categories||[]).forEach(function(c){(c.rows||[]).forEach(function(p){if(p.recovery_source)recovered++;});});
+    var recoveryStatus=document.getElementById('mlbCoachRecoveryStatus');
+    if(recoveryStatus&&recovered)recoveryStatus.textContent=recovered+' recovered category entries are included. Recovery uses stored predictions, not a new model run.';
     renderMlbCoachTrack();
   }catch(e){
     if(out)out.innerHTML='<p style="color:#f87171;padding:12px">'+_mlbEsc(e.message||'Could not load Coach record')+'</p>';
@@ -15487,14 +15640,14 @@ def _auto_run_pipeline(date_str: str, label: str):
         # Always persist so the parlay hub's /api/results can serve the slate
         # even with a TBD starter. The MLB app's own load re-runs when has_tbd.
         _cache[date_str] = result
+        _snap = _recover_hit_prices(date_str, _freeze_started_picks(date_str, result))
+        _save_disk_cache(date_str, _snap)
+        _save_mlb_coach_snapshot(date_str, _snap)
         try: _update_track_ledger()
         except Exception as _le: print(f"[track_ledger] {_le}")
         try: _mlb_grade_coach_ledger()
         except Exception as _ce: print(f"[mlb_coach_track] grade failed: {_ce}")
-        _snap = _recover_hit_prices(date_str, _freeze_started_picks(date_str, result))
-        _save_disk_cache(date_str, _snap)
         _save_sb_picks(date_str, _snap)
-        _save_mlb_coach_snapshot(date_str, _snap)
         _save_open_snapshot(date_str, result)
         if result.get("stats", {}).get("has_tbd"):
             print(f"[auto-run] {label} — cached {date_str} (has TBD starters; app will re-run on load)")
