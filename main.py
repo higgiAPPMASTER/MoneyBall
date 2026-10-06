@@ -5126,10 +5126,6 @@ _HTML = """
           <button onclick="loadMlbCoachTrack()" style="background:#0e7490;color:#fff;border:0;border-radius:8px;padding:8px 13px;font-weight:900;cursor:pointer">Get Results</button>
         </div>
         <div id="mlbCoachTrackSummary"></div>
-        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
-          <button id="mlbCoachRecoverButton" onclick="recoverMlbCoachDay()" style="background:#164e63;color:#cffafe;border:1px solid #22d3ee;border-radius:8px;padding:8px 12px;font-weight:800">Recover selected missing day</button>
-          <span id="mlbCoachRecoveryStatus" style="color:#94a3b8;font-size:.73rem">Recovery uses saved predictions only; existing Coach categories are never overwritten.</span>
-        </div>
         <div id="mlbCoachTrackBody"><p style="color:#94a3b8">Open the record to load automatic Coach snapshots.</p></div>
       </div>
 
@@ -6615,21 +6611,6 @@ function openMlbCoachTrack() {
   card.scrollIntoView({behavior:'smooth',block:'start'});
   loadMlbCoachTrack();
 }
-async function recoverMlbCoachDay(){
-  var dateInput=document.getElementById('mlbCoachTrkDate'),status=document.getElementById('mlbCoachRecoveryStatus'),button=document.getElementById('mlbCoachRecoverButton');
-  var selected=dateInput&&dateInput.value;
-  if(!selected){if(status)status.textContent='Select the missing date first.';return;}
-  if(button)button.disabled=true;
-  if(status)status.textContent='Recovering saved predictions for '+selected+'...';
-  try{
-    var tok=localStorage.getItem('__mpa_token')||'',admin=new URLSearchParams(window.location.search).get('admin')||'';
-    var r=await fetch('/api/mlb/coach-recover/'+encodeURIComponent(selected)+'?token='+encodeURIComponent(tok)+'&admin='+encodeURIComponent(admin),{method:'POST',headers:{'Authorization':tok?'Bearer '+tok:''}});
-    var d=await r.json();if(!r.ok)throw new Error(d.detail||'Coach recovery failed');
-    await loadMlbCoachTrack(false);
-    if(status)status.textContent=d.restored?('Recovered '+d.restored+' category entries for '+selected+' from saved predictions. No original capture time was invented.'):(d.message||'Nothing overwritten.');
-  }catch(e){if(status)status.textContent=e.message||'Coach recovery failed';}
-  finally{if(button)button.disabled=false;}
-}
 async function loadMlbCoachTrack(grade) {
   var out=document.getElementById('mlbCoachTrackBody');
   if(out)out.innerHTML='<p style="color:#94a3b8;padding:12px">Grading final games and loading Coach records...</p>';
@@ -6639,10 +6620,6 @@ async function loadMlbCoachTrack(grade) {
     var r=await fetch('/api/mlb/coach-track?grade='+(grade===false?'false':'true')+'&token='+encodeURIComponent(tok)+'&admin='+encodeURIComponent(admin),{headers:{'Authorization':tok?'Bearer '+tok:''}});
     if(!r.ok){var t=await r.text();throw new Error(t||('HTTP '+r.status));}
     _mlbCoachTrackData=await r.json();
-    var recovered=0;
-    (_mlbCoachTrackData.categories||[]).forEach(function(c){(c.rows||[]).forEach(function(p){if(p.recovery_source)recovered++;});});
-    var recoveryStatus=document.getElementById('mlbCoachRecoveryStatus');
-    if(recoveryStatus&&recovered)recoveryStatus.textContent=recovered+' recovered category entries are included. Recovery uses stored predictions, not a new model run.';
     renderMlbCoachTrack();
   }catch(e){
     if(out)out.innerHTML='<p style="color:#f87171;padding:12px">'+_mlbEsc(e.message||'Could not load Coach record')+'</p>';
