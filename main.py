@@ -4111,8 +4111,139 @@ def api_lookup_matches(name: str, date_str: str):
     out.sort(key=lambda x: x["full_name"])
     return {"players": out[:8]}
 
+from threading import Lock as _MLBDisplayLock
+_MLB_RECENT_DISPLAY_CACHE = {}
+_MLB_RECENT_DISPLAY_LOCK = _MLBDisplayLock()
+
+
+def _mlb_recent_display(name: str, date_str: str, player_id: int = 0,
+                        stats_group: str = "hitting") -> dict:
+    """Read-only popup history. Never supplies prediction or settlement inputs."""
+    import math
+    import requests as _rq
+    try:
+        cutoff = date.fromisoformat(date_str)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="A valid board date is required.")
+    if stats_group not in ("hitting", "pitching"):
+        raise HTTPException(status_code=422, detail="Invalid recent-history group.")
+    pid = int(player_id or 0)
+    if not pid:
+        players, _ = _load_lookup_index(str(cutoff.year))
+        q = _norm_name((name or "").strip())
+        match = players.get(q)
+        if not match and q:
+            candidates = [p for k, p in players.items() if q in k]
+            if not candidates:
+                words = q.split()
+                candidates = [p for k, p in players.items()
+                              if k.split()[-1:] == words[-1:]
+                              and (len(words) == 1 or k[:1] == words[0][:1])]
+            if len({p["id"] for p in candidates}) == 1:
+                match = candidates[0]
+        if not match:
+            raise HTTPException(status_code=404, detail="Player identity could not be verified.")
+        pid = int(match["id"])
+    if pid < 1:
+        raise HTTPException(status_code=422, detail="Invalid MLB player ID.")
+    key = (pid, date_str, stats_group)
+    with _MLB_RECENT_DISPLAY_LOCK:
+        cached = _MLB_RECENT_DISPLAY_CACHE.get(key)
+        if cached and _time.time() - cached[0] < 600:
+            return _copy.deepcopy(cached[1])
+
+    def number(stat, field):
+        value = stat.get(field)
+        if value is None or value == "":
+            return None
+        try:
+            value = float(value)
+            return int(value) if math.isfinite(value) and value.is_integer() else None
+        except (TypeError, ValueError):
+            return None
+
+    games, seen = [], set()
+    try:
+        for season in range(cutoff.year, cutoff.year - 3, -1):
+            response = _rq.get(
+                f"https://statsapi.mlb.com/api/v1/people/{pid}/stats",
+                params={"stats": "gameLog", "group": stats_group,
+                        "season": season, "gameType": "R,F,D,L,W"}, timeout=12)
+            response.raise_for_status()
+            data = response.json()
+            if not isinstance(data.get("stats"), list):
+                raise ValueError("Invalid MLB game-log response")
+            for block in data["stats"]:
+                for order, split in enumerate(block.get("splits") or []):
+                    ds = str(split.get("date") or "")[:10]
+                    if len(ds) != 10 or ds >= date_str:
+                        continue  # Preserve the board's pregame historical cutoff.
+                    stat = split.get("stat") or {}
+                    if stats_group == "hitting":
+                        if (number(stat, "plateAppearances") or 0) < 1:
+                            continue
+                    elif (number(stat, "gamesStarted") or 0) < 1:
+                        continue  # These pitcher tables explicitly show starts.
+                    game = split.get("game") or {}
+                    opponent = split.get("opponent") or {}
+                    identity = game.get("gamePk") or (
+                        ds, opponent.get("id"), split.get("isHome"),
+                        game.get("gameNumber") or split.get("gameNumber") or order)
+                    if identity in seen:
+                        continue
+                    seen.add(identity)
+                    row = {
+                        "date": ds, "d": ds[5:], "gamePk": game.get("gamePk"),
+                        "opp": opponent.get("name", ""),
+                        "opponent_id": opponent.get("id"),
+                        "ha": "H" if split.get("isHome") else "A",
+                        "_order": order,
+                        "_game_number": int(game.get("gameNumber") or split.get("gameNumber") or 0),
+                    }
+                    if stats_group == "hitting":
+                        fields = {"ab": "atBats", "pa": "plateAppearances", "h": "hits",
+                                  "r": "runs", "rbi": "rbi", "bb": "baseOnBalls",
+                                  "hr": "homeRuns", "tb": "totalBases", "k": "strikeOuts"}
+                        row.update({k: number(stat, v) for k, v in fields.items()})
+                        row["hrr"] = (row["h"] + row["r"] + row["rbi"]
+                                      if all(row[k] is not None for k in ("h", "r", "rbi"))
+                                      else None)
+                    else:
+                        fields = {"k": "strikeOuts", "h": "hits", "er": "earnedRuns",
+                                  "bb": "baseOnBalls", "outs": "outs"}
+                        row.update({k: number(stat, v) for k, v in fields.items()})
+                        row["ip"] = stat.get("inningsPitched")
+                        if row["outs"] is None and row["ip"] is not None:
+                            ip = str(row["ip"]).split(".")
+                            if (ip[0].isdigit() and len(ip) <= 2
+                                    and (len(ip) == 1 or ip[1] in ("0", "1", "2"))):
+                                row["outs"] = int(ip[0]) * 3 + (int(ip[1]) if len(ip) == 2 else 0)
+                    games.append(row)
+            if len(games) >= 10:
+                break
+    except (_rq.RequestException, ValueError, TypeError, KeyError) as exc:
+        raise HTTPException(status_code=503, detail="Latest MLB game history could not be loaded.") from exc
+    games.sort(key=lambda row: (row["date"], row["_game_number"], row["_order"]), reverse=True)
+    games = games[:10]
+    for row in games:
+        row.pop("_order", None)
+        row.pop("_game_number", None)
+    payload = {"found": True, "player_id": pid, "group": stats_group,
+               "before": date_str, "games": games, "display_only": True}
+    # Bounded, expiring display cache; independent of all model/pick caches.
+    with _MLB_RECENT_DISPLAY_LOCK:
+        if len(_MLB_RECENT_DISPLAY_CACHE) >= 512:
+            oldest = min(_MLB_RECENT_DISPLAY_CACHE, key=lambda k: _MLB_RECENT_DISPLAY_CACHE[k][0])
+            _MLB_RECENT_DISPLAY_CACHE.pop(oldest, None)
+        _MLB_RECENT_DISPLAY_CACHE[key] = (_time.time(), _copy.deepcopy(payload))
+    return payload
+
+
 @app.get("/api/player_deep")
-def api_player_deep(name: str = "", date_str: str = ""):
+def api_player_deep(name: str = "", date_str: str = "", recent_only: bool = False,
+                    player_id: int = 0, stats_group: str = "hitting"):
+    if recent_only:
+        return _mlb_recent_display(name, date_str, player_id, stats_group)
     # Player Deep Dive (SEARCH BAR ONLY): resolve any hitter, return their last
     # 10 games (per-game H/R/RBI/BB/HR/TB) + career-vs-today's-pitcher, so the
     # search pop-up can show one consolidated card. One MLB gameLog call.
@@ -4265,13 +4396,24 @@ def api_player_deep(name: str = "", date_str: str = ""):
                 splits_out[k] = {"avg": str(st.get("avg", "") or ""), "ab": ab}
     except Exception:
         pass
+    recent_display_error = ""
+    try:
+        latest = _mlb_recent_display(full, date_str, pid)
+        games = [{
+            "date": g["date"], "opp": abbr.get(g.get("opponent_id"), "") or g["opp"],
+            "home": g["ha"] == "H",
+            **{k: g.get(k) for k in ("ab", "h", "r", "rbi", "bb", "hr", "tb")},
+        } for g in latest["games"]]
+    except HTTPException:
+        recent_display_error = "Latest regular-season + playoff history unavailable; saved history shown."
     return {"found": True, "player_id": pid, "full_name": full, "team": teams.get(team_id, ""),
             "side": side, "opp": teams.get(opp_id, "") if opp_id else "",
             "opp_abbr": abbr.get(opp_id, "") if opp_id else "",
             "pitcher": opp_pname or "", "in_game": bool(side),
             "s1_ba": s1_ba, "s1_ab": s1_ab, "splits": splits_out,
             "series": series_out, "today_dn": today_dn,
-            "today_series": today_series, "games": games}
+            "today_series": today_series, "games": games,
+            "recent_display_error": recent_display_error}
 
 _MLB_WEEKDAY_SPLIT_CACHE = {}
 
@@ -9620,6 +9762,7 @@ async function openPlayerDeep(name){
       return;
     }
     ov.innerHTML=_deepCard(d);
+    if(d.recent_display_error)_mlbRecentDisplayStatus(ov,d.recent_display_error,true);
   }catch(e){
     ov.innerHTML='<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;max-width:520px;width:100%;padding:24px;color:#fca5a5">Lookup failed. Try again.<div style="margin-top:14px"><button onclick="document.getElementById(&#39;deep-modal&#39;).style.display=&#39;none&#39;" style="background:#1e293b;border:none;color:#cbd5e1;padding:8px 16px;border-radius:8px;cursor:pointer">Close</button></div></div>';
   }
@@ -14905,6 +15048,161 @@ function _mpCalcCombined(){
   });
   return _decToAm(dec);
 }
+// Display-only history: use view copies, never mutate saved picks/model inputs.
+var _mlbRecentDisplayCache={},_mlbRecentDisplayPending={},_mlbRecentDisplayOwner=0;
+function _mlbRecentDisplayDate(){
+  var board=window._lastResult||{};
+  var input=document.getElementById('date-picker');
+  return String(board.date||(input&&input.value)||_trkTodayISO()).slice(0,10);
+}
+function _mlbRecentDisplayId(p){
+  var value=Number(p.player_id||p.batter_id||p.pitcher_id||p.pid||0);
+  return Number.isSafeInteger(value)&&value>0?value:0;
+}
+function _mlbRecentDisplayLoad(p,group,dt){
+  var id=_mlbRecentDisplayId(p),name=String(p.full_name||p.name||'');
+  var key=group+'|'+dt+'|'+(id||name.toLowerCase().trim());
+  var cached=_mlbRecentDisplayCache[key];
+  if(cached&&Date.now()-cached.time<300000)return Promise.resolve(cached.data);
+  if(_mlbRecentDisplayPending[key])return _mlbRecentDisplayPending[key];
+  var controller=new AbortController();
+  var timer=setTimeout(function(){controller.abort();},45000);
+  var qs='?recent_only=true&stats_group='+encodeURIComponent(group)
+    +'&date_str='+encodeURIComponent(dt)+'&name='+encodeURIComponent(name)
+    +(id?'&player_id='+encodeURIComponent(id):'');
+  var request=fetch('/api/player_deep'+qs,{signal:controller.signal}).then(function(response){
+    if(!response.ok)throw new Error('Recent history request failed');
+    return response.json();
+  }).then(function(data){
+    if(!data||!data.display_only||data.group!==group||data.before!==dt||!Array.isArray(data.games))
+      throw new Error('Invalid recent history response');
+    _mlbRecentDisplayCache[key]={time:Date.now(),data:data};
+    var keys=Object.keys(_mlbRecentDisplayCache);
+    if(keys.length>256){
+      keys.sort(function(a,b){return _mlbRecentDisplayCache[a].time-_mlbRecentDisplayCache[b].time;});
+      keys.slice(0,keys.length-256).forEach(function(k){delete _mlbRecentDisplayCache[k];});
+    }
+    return data;
+  }).finally(function(){clearTimeout(timer);delete _mlbRecentDisplayPending[key];});
+  _mlbRecentDisplayPending[key]=request;
+  return request;
+}
+function _mlbRecentDisplayView(p,data,field){
+  var view=Object.assign({},p);
+  var defaultCount=field==='recent_bk_log'?10:5;
+  var count=Math.min(10,Math.max(defaultCount,(p[field]||[]).length));
+  view[field]=data.games.slice(0,count).map(function(g){
+    var row=Object.assign({},g);
+    if(data.group==='pitching'){
+      var stat={pitcher_hits_allowed:'h',pitcher_outs:'outs',
+        pitcher_earned_runs:'er',pitcher_walks:'bb'}[p.market]||'k';
+      row.v=row[stat];
+    }
+    return row;
+  });
+  // The facing-starter K widget reads recent_log; K modals use recent_k_log.
+  if(data.group==='pitching'&&field==='recent_k_log')
+    view.recent_log=view[field].map(function(g){return Object.assign({},g,{v:g.k});});
+  view.__recentDisplayDate=data.before;
+  view.__recentDisplayUntil=Date.now()+300000;
+  return view;
+}
+function _mlbRecentDisplayStatus(ov,text,error){
+  if(!ov)return;
+  var box=ov.firstElementChild;if(!box)return;
+  var note=box.querySelector('.mlb-recent-display-status');
+  if(!note){
+    note=document.createElement('div');note.className='mlb-recent-display-status';
+    note.style.cssText='font-size:.68rem;padding:7px 12px;line-height:1.5';
+    box.appendChild(note);
+  }
+  note.style.color=error?'#fca5a5':'#94a3b8';note.textContent=text;
+}
+function _mlbRecentDisplayFacing(p,data,draw){
+  // Temporary display indexes only; the original source indexes are restored
+  // immediately after rendering, including when a popup renderer throws.
+  var oldPP=window.__PP_BY_NAME__,oldPK=window.__PK_BY_NAME__;
+  function same(obj){
+    return obj&&(_mlbRecentDisplayId(obj)===data.player_id
+      ||String(obj.name||obj.full_name||'').toLowerCase().trim()===String(p.pitcher||'').toLowerCase().trim());
+  }
+  var pp=Object.assign({},oldPP||{}),pk=Object.assign({},oldPK||{});
+  Object.keys(pp).forEach(function(key){
+    var rec=Object.assign({},pp[key]);
+    Object.keys(rec).forEach(function(market){
+      var entry=rec[market];
+      if(entry&&same(entry.obj))rec[market]=Object.assign({},entry,{
+        obj:_mlbRecentDisplayView(Object.assign({},entry.obj,{market:entry.obj.market||market}),data,'recent_log')});
+    });
+    pp[key]=rec;
+  });
+  Object.keys(pk).forEach(function(key){
+    if(same(pk[key]))pk[key]=_mlbRecentDisplayView(pk[key],data,'recent_k_log');
+  });
+  try{window.__PP_BY_NAME__=pp;window.__PK_BY_NAME__=pk;draw();}
+  finally{window.__PP_BY_NAME__=oldPP;window.__PK_BY_NAME__=oldPK;}
+}
+function _mlbRecentDisplayWrap(fnName,registry,modal,group,field){
+  var draw=window[fnName];if(typeof draw!=='function')return;
+  window[fnName]=function(key){
+    var source=(key&&typeof key==='object')?key:(window[registry]||{})[key];
+    if(!source)return draw(key);
+    var dt=_mlbRecentDisplayDate();
+    if(source.__recentDisplayDate===dt&&source.__recentDisplayUntil>Date.now()){
+      var readyModal=document.getElementById(modal);
+      if(source.__recentDisplayOwner&&
+          (source.__recentDisplayOwner!==_mlbRecentDisplayOwner||!readyModal||readyModal.style.display==='none'))return;
+      if(!source.__recentDisplayOwner){
+        source=Object.assign({},source,{__recentDisplayOwner:++_mlbRecentDisplayOwner});
+      }
+      return draw(source);
+    }
+    var owner=++_mlbRecentDisplayOwner;
+    draw(Object.assign({},source));
+    var ov=document.getElementById(modal);
+    if(!ov)return;
+    ov.__recentDisplayOwner=owner;
+    function current(){
+      return _mlbRecentDisplayOwner===owner&&ov.__recentDisplayOwner===owner
+        &&ov.isConnected&&ov.style.display!=='none';
+    }
+    _mlbRecentDisplayStatus(ov,'Loading recent regular-season + playoff games. Model signals are unchanged.',false);
+    var facingName=group==='hitting'&&source.pitcher&&source.pitcher!=='TBD'?String(source.pitcher):'';
+    var facing=facingName?_mlbRecentDisplayLoad({name:facingName},'pitching',dt)
+      .then(function(data){return {data:data};},function(){return {error:true};}):Promise.resolve(null);
+    _mlbRecentDisplayLoad(source,group,dt).then(function(data){
+      if(!current())return;
+      var view=_mlbRecentDisplayView(source,data,field);
+      view.__recentDisplayOwner=owner;
+      draw(view);
+      _mlbRecentDisplayStatus(ov,'Recent games include regular season + playoffs. Model signals are unchanged.',false);
+      facing.then(function(pit){
+        if(!current()||!pit)return;
+        if(pit.data)_mlbRecentDisplayFacing(source,pit.data,function(){draw(view);});
+        _mlbRecentDisplayStatus(ov,pit.error
+          ?'Player history updated; facing-starter history could not refresh. Saved starter games shown.'
+          :'Recent games include regular season + playoffs. Model signals are unchanged.',!!pit.error);
+      });
+    }).catch(function(){
+      if(current())_mlbRecentDisplayStatus(ov,
+        'Latest game history could not refresh; saved games are shown. Close and reopen to retry.',true);
+    });
+  };
+}
+[
+  ['_hitForm','__HIT_REG__','hit-modal','hitting','recent_hit_log'],
+  ['_runsForm','__RUNS_REG__','runs-modal','hitting','recent_runs_log'],
+  ['_rbiForm','__RBI_REG__','rbi-modal','hitting','recent_rbi_log'],
+  ['_hrForm','__HR_REG__','hr-modal','hitting','recent_hr_log'],
+  ['_batKForm','__BATK_REG__','bat-k-modal','hitting','recent_bk_log'],
+  ['_walksForm','__WALKS_REG__','walks-modal','hitting','recent_walks_log'],
+  ['_tbForm','__TB_REG__','tb-modal','hitting','recent_tb_log'],
+  ['_tbOverForm','__TBO_REG__','tb-over-modal','hitting','recent_tb_log'],
+  ['_hrrForm','__HRR_REG__','hrr-modal','hitting','recent_hrr_log'],
+  ['_pkForm','__PK_REG__','pk-modal','pitching','recent_k_log'],
+  ['_ppForm','__PP_REG__','pp-modal','pitching','recent_log']
+].forEach(function(spec){_mlbRecentDisplayWrap.apply(null,spec);});
+
 function _mpGetModal(){
   var m=document.getElementById('mp-modal');
   if(!m){
